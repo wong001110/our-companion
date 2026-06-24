@@ -1,0 +1,9 @@
+{
+  "name": "@our-companion/speech-engine",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0"
+  }
+}

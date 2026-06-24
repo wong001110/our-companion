@@ -1,0 +1,1 @@
+Quiet Night Developer. Movement 25. Discovery 35. Curiosity 80. Focus 85. Shyness 70. Reflection 95.

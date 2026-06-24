@@ -1,0 +1,36 @@
+{
+  "profile": "Quiet Night Developer",
+  "movement": 25,
+  "discovery": 35,
+  "curiosity": 80,
+  "focus": 85,
+  "shyness": 70,
+  "reflection": 95,
+  "room": "Night Developer Room with dual monitor, coffee, cat plush, headphones, notebook, bookshelf",
+  "requiredAnimations": [
+    "idle_laptop",
+    "walk",
+    "think",
+    "discovery"
+  ],
+  "futureAnimations": [
+    "idle",
+    "sleep",
+    "observe",
+    "discover",
+    "talk",
+    "task_start",
+    "task_success",
+    "task_fail",
+    "return",
+    "organize_backpack"
+  ],
+  "optionalVariants": [
+    "walk_excited",
+    "walk_tired",
+    "discover_shy",
+    "discover_excited",
+    "talk_happy",
+    "talk_confused"
+  ]
+}

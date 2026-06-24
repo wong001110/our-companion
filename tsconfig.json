@@ -1,0 +1,16 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/character-engine" },
+    { "path": "packages/memory-engine" },
+    { "path": "packages/discovery-engine" },
+    { "path": "packages/journey-engine" },
+    { "path": "packages/diary-engine" },
+    { "path": "packages/tool-engine" },
+    { "path": "packages/ai-engine" },
+    { "path": "packages/database" },
+    { "path": "packages/speech-engine" },
+    { "path": "apps/desktop" }
+  ]
+}

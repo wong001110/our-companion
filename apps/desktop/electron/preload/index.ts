@@ -1,0 +1,88 @@
+import { contextBridge, ipcRenderer } from 'electron';
+import type {
+  AddDiscoveryToJourneyInput,
+  AddJourneyMilestoneInput,
+  ChatInput,
+  CreateJourneyInput,
+  CreateMemoryEdgeInput,
+  CreateMemoryNodeInput,
+  DiscoveryFeedInput,
+  DiscoverySource,
+  OurCompanionApi,
+  ToolExecuteInput,
+  UpdateMemoryNodeInput
+} from '@our-companion/shared';
+
+function invoke<T>(channel: string, input?: unknown): Promise<T> {
+  return ipcRenderer.invoke(channel, input) as Promise<T>;
+}
+
+const api: OurCompanionApi = {
+  character: {
+    getState: (characterId?: string) => invoke('character:getState', characterId),
+    getActive: () => invoke('character:getActive'),
+    getBehaviorSettings: () => invoke('character:getBehaviorSettings'),
+    updateBehaviorSettings: (input) => invoke('character:updateBehaviorSettings', input),
+    setPrimary: (characterId: string) => invoke('character:setPrimary', characterId),
+    updatePosition: (input: { characterId?: string; x: number; y: number }) => invoke('character:updatePosition', input),
+    triggerBehavior: (input: { characterId?: string; event: string }) => invoke('character:triggerBehavior', input)
+  },
+  discovery: {
+    getFeed: (input?: DiscoveryFeedInput) => invoke('discovery:getFeed', input),
+    refresh: (input?: { sources?: DiscoverySource[] }) => invoke('discovery:refresh', input),
+    markInterested: (discoveryId: string) => invoke('discovery:markInterested', discoveryId),
+    markNotInterested: (discoveryId: string) => invoke('discovery:markNotInterested', discoveryId),
+    addToJourney: (input: AddDiscoveryToJourneyInput) => invoke('discovery:addToJourney', input)
+  },
+  memory: {
+    createNode: (input: CreateMemoryNodeInput) => invoke('memory:createNode', input),
+    updateNode: (input: UpdateMemoryNodeInput) => invoke('memory:updateNode', input),
+    deleteNode: (id: string) => invoke('memory:deleteNode', id),
+    createEdge: (input: CreateMemoryEdgeInput) => invoke('memory:createEdge', input),
+    getGraph: (input?: { query?: string }) => invoke('memory:getGraph', input),
+    search: (query: string) => invoke('memory:search', query)
+  },
+  journey: {
+    create: (input: CreateJourneyInput) => invoke('journey:create', input),
+    getActive: () => invoke('journey:getActive'),
+    getTimeline: (input?: { journeyId?: string }) => invoke('journey:getTimeline', input),
+    addMilestone: (input: AddJourneyMilestoneInput) => invoke('journey:addMilestone', input)
+  },
+  diary: {
+    getEntries: (input?: { type?: 'daily' | 'weekly' | 'milestone'; limit?: number }) => invoke('diary:getEntries', input),
+    generateDaily: (input?: { characterId?: string }) => invoke('diary:generateDaily', input)
+  },
+  tool: {
+    preview: (input: ToolExecuteInput) => invoke('tool:preview', input),
+    execute: (input: ToolExecuteInput) => invoke('tool:execute', input)
+  },
+  ai: {
+    getSettings: () => invoke('ai:getSettings'),
+    updateSettings: (input) => invoke('ai:updateSettings', input),
+    chat: (input: ChatInput) => invoke('ai:chat', input),
+    generateDiscoveryReason: (input) => invoke('ai:generateDiscoveryReason', input),
+    summarizeMemory: (input) => invoke('ai:summarizeMemory', input)
+  },
+  speech: {
+    getStatus: () => invoke('speech:getStatus'),
+    transcribe: (input) => invoke('speech:transcribe', input)
+  },
+  companion: {
+    turn: (input) => invoke('companion:turn', input),
+    onToggleListen: (listener: () => void) => {
+      const channel = 'companion:toggleListen';
+      const handler = () => listener();
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    }
+  },
+  window: {
+    openPanel: () => invoke('window:openPanel'),
+    getBounds: () => invoke('window:getBounds'),
+    getWorkArea: () => invoke('window:getWorkArea'),
+    moveTo: (input) => invoke('window:moveTo', input),
+    setMousePassthrough: (input) => invoke('window:setMousePassthrough', input)
+  }
+};
+
+contextBridge.exposeInMainWorld('ourCompanion', api);

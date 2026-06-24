@@ -1,0 +1,11 @@
+node_modules/
+dist/
+out/
+.vite/
+coverage/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+npm-debug.log*

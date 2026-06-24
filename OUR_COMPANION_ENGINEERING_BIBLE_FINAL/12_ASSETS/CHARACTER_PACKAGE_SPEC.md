@@ -1,0 +1,1 @@
+Character package supports SpriteSheet and Spine renderers.

@@ -1,0 +1,1 @@
+idle_laptop,idle_coffee,idle_notes,idle_window,walk,think,discover,talk,sleep,task_start,task_success,task_fail,return

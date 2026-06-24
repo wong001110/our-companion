@@ -1,0 +1,21 @@
+﻿{
+  "id": "ann",
+  "name": "Ann",
+  "version": "1.0.0",
+  "runtime": "pixijs",
+  "maxActiveCompanions": 3,
+  "mvpActiveCompanions": 1,
+  "defaultAnimation": "idle_laptop",
+  "referenceAssets": [
+    "ann-room-concept.png",
+    "ann-sprite-sheet.png",
+    "demo.png"
+  ],
+  "animationSource": {
+    "directory": "animations",
+    "config": "apps/desktop/renderer/src/character/ann/animationConfig.ts",
+    "frameWidth": 300,
+    "frameHeight": 300,
+    "layout": "horizontal single row"
+  }
+}

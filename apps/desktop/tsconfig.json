@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "jsx": "react-jsx",
+    "types": ["node", "vite/client"]
+  },
+  "references": [
+    { "path": "../../packages/shared" },
+    { "path": "../../packages/character-engine" },
+    { "path": "../../packages/memory-engine" },
+    { "path": "../../packages/discovery-engine" },
+    { "path": "../../packages/journey-engine" },
+    { "path": "../../packages/diary-engine" },
+    { "path": "../../packages/tool-engine" },
+    { "path": "../../packages/ai-engine" },
+    { "path": "../../packages/database" },
+    { "path": "../../packages/speech-engine" }
+  ],
+  "include": ["electron/**/*.ts", "renderer/src/**/*.ts", "renderer/src/**/*.tsx", "*.config.ts"]
+}
