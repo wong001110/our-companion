@@ -14,6 +14,9 @@ import { DEFAULT_CHARACTER_ID, nowIso } from '@our-companion/shared';
 import { createInitialCharacterState } from '@our-companion/character-engine';
 import { sqliteSchema } from './schema';
 
+const DISCOVERY_ANNOUNCED_KEY = 'discovery.announcedIds';
+const MAX_ANNOUNCED_DISCOVERY_IDS = 500;
+
 type SqliteDatabase = DatabaseSync;
 
 export interface DatabaseServiceOptions {
@@ -292,6 +295,28 @@ export class DatabaseService {
       .prepare("SELECT COUNT(*) as count FROM discoveries WHERE status = 'shared' AND shared_at LIKE ?")
       .get(`${today}%`) as { count: number };
     return Number(row.count);
+  }
+
+  getAnnouncedDiscoveryIds(): string[] {
+    return this.getAppSetting<string[]>(DISCOVERY_ANNOUNCED_KEY) ?? [];
+  }
+
+  isDiscoveryAnnounced(id: string): boolean {
+    return this.getAnnouncedDiscoveryIds().includes(id);
+  }
+
+  markDiscoveryAnnounced(id: string): void {
+    const announced = this.getAnnouncedDiscoveryIds();
+    if (announced.includes(id)) return;
+    const next = [...announced, id].slice(-MAX_ANNOUNCED_DISCOVERY_IDS);
+    this.setAppSetting(DISCOVERY_ANNOUNCED_KEY, next);
+  }
+
+  listUnannouncedShared(limit = 20): Discovery[] {
+    const announced = new Set(this.getAnnouncedDiscoveryIds());
+    return this.listDiscoveries({ status: 'shared', limit: limit + announced.size })
+      .filter((discovery) => !announced.has(discovery.id))
+      .slice(0, limit);
   }
 
   insertJourney(journey: Journey): Journey {

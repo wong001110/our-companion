@@ -30,6 +30,7 @@ import type {
   AiSettings,
   CharacterBehaviorSettings,
   ChatInput,
+  CompanionSessionPhase,
   CompanionTurnInput,
   CreateJourneyInput,
   CreateMemoryEdgeInput,
@@ -47,10 +48,15 @@ import type {
 import { DEFAULT_CHARACTER_ID } from '@our-companion/shared';
 import { executeTool, previewTool } from '@our-companion/tool-engine';
 import { getWhisperStatus, transcribeRecording } from '@our-companion/speech-engine';
+import type { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
+import type { DiscoveryRefreshResult } from './discoveryScheduler';
 
 export class AppServices {
   readonly db: DatabaseService;
   readonly databaseMode: 'persistent' | 'memory';
+  companionSessionPhase: CompanionSessionPhase = 'idle';
+  companionDragging = false;
+  private shareOrchestrator?: DiscoveryShareOrchestrator;
 
   constructor(dbPath = path.join(app.getPath('userData'), 'our-companion.db')) {
     const userDataDir = app.getPath('userData');
@@ -97,22 +103,9 @@ export class AppServices {
   discovery = {
     getFeed: async (input: DiscoveryFeedInput = {}) => this.db.listDiscoveries(input),
     refresh: async (input: { sources?: DiscoverySource[] } = {}) => {
-      const activeCharacter = this.db.getActiveCharacters()[0];
-      const connectors = (input.sources ?? ['github', 'hackernews', 'reddit', 'youtube']).map(createFallbackConnector);
-      const discoveries = await runDiscoveryPipeline(
-        connectors,
-        {
-          userInterests: ['frontend', 'ux', 'pixijs', 'local-first'],
-          recentMemoryTags: this.db.listMemoryNodes().flatMap((node) => [node.type, node.title.toLowerCase()]),
-          activeCharacter,
-          seenUrls: new Set(this.db.listDiscoveries({ limit: 200 }).map((item) => item.url).filter(Boolean) as string[])
-        },
-        this.db.countSharedToday()
-      );
-      discoveries.forEach((discovery) => this.db.insertDiscovery(discovery));
-      const state = this.db.getCharacterState();
-      this.db.saveCharacterState({ ...state, emotion: applyEmotionEvent(state.emotion, 'new_high_score_discovery') });
-      return discoveries;
+      const result = await this.runDiscoveryRefresh(input.sources);
+      this.queueDiscoveryAnnouncements(result.newlyInserted);
+      return result.discoveries;
     },
     markInterested: async (discoveryId: string) => {
       const discovery = this.db.updateDiscoveryStatus(discoveryId, 'saved');
@@ -278,8 +271,76 @@ export class AppServices {
         });
       }
       return reply;
+    },
+    reportSessionPhase: async (phase: CompanionSessionPhase) => {
+      this.companionSessionPhase = phase;
+    },
+    reportDragging: async (input: { dragging: boolean }) => {
+      this.companionDragging = input.dragging;
     }
   };
+
+  attachShareOrchestrator(orchestrator: DiscoveryShareOrchestrator): void {
+    this.shareOrchestrator = orchestrator;
+  }
+
+  async runDiscoveryRefresh(sources?: DiscoverySource[]): Promise<DiscoveryRefreshResult> {
+    const existingKeys = new Set(
+      this.db.listDiscoveries({ limit: 500 }).map((item) => item.url ?? `${item.source}:${item.title}`)
+    );
+    const activeCharacter = this.db.getActiveCharacters()[0];
+    const connectors = (sources ?? ['github', 'hackernews', 'reddit', 'youtube']).map(createFallbackConnector);
+    const discoveries = await runDiscoveryPipeline(
+      connectors,
+      {
+        userInterests: ['frontend', 'ux', 'pixijs', 'local-first'],
+        recentMemoryTags: this.db.listMemoryNodes().flatMap((node) => [node.type, node.title.toLowerCase()]),
+        activeCharacter,
+        seenUrls: new Set(this.db.listDiscoveries({ limit: 200 }).map((item) => item.url).filter(Boolean) as string[])
+      },
+      this.db.countSharedToday()
+    );
+
+    const newlyInserted: Discovery[] = [];
+    for (const discovery of discoveries) {
+      const key = discovery.url ?? `${discovery.source}:${discovery.title}`;
+      const isNew = !existingKeys.has(key);
+      this.db.insertDiscovery(discovery);
+      if (isNew) {
+        newlyInserted.push(discovery);
+        existingKeys.add(key);
+      }
+    }
+
+    return { discoveries, newlyInserted };
+  }
+
+  getEffectiveDiscoveryScore(): number {
+    const rules = this.db.getCharacterBehaviorRules(DEFAULT_CHARACTER_ID);
+    return clampScore(Number(rules.discovery ?? 35));
+  }
+
+  canAnnounceDiscovery(): boolean {
+    if (this.companionSessionPhase !== 'idle') return false;
+    if (this.companionDragging) return false;
+
+    const state = this.db.getCharacterState();
+    if (state.intent === 'helping_task' || state.intent === 'asking_permission') return false;
+    if (state.intent === 'sharing_discovery') return true;
+    if (['listening', 'executing'].includes(state.coreState)) return false;
+    return true;
+  }
+
+  shouldInterruptShare(): boolean {
+    return this.companionSessionPhase !== 'idle' || this.companionDragging;
+  }
+
+  private queueDiscoveryAnnouncements(discoveries: Discovery[]): void {
+    const shared = discoveries.filter((discovery) => discovery.status === 'shared');
+    if (shared.length > 0) {
+      this.shareOrchestrator?.enqueue(shared);
+    }
+  }
 
   private getStoredAiSettings(): StoredAiSettings {
     return this.db.getAppSetting<StoredAiSettings>(AI_SETTINGS_KEY) ?? {};

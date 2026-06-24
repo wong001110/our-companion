@@ -2,10 +2,14 @@ import path from 'node:path';
 import { app, BrowserWindow, globalShortcut, ipcMain, nativeImage, screen } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
 import { AppServices } from './services';
+import { DiscoveryScheduler } from './discoveryScheduler';
+import { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 
 let companionWindow: BrowserWindow | undefined;
 let panelWindow: BrowserWindow | undefined;
 let services: AppServices;
+let discoveryScheduler: DiscoveryScheduler | undefined;
+let discoveryShareOrchestrator: DiscoveryShareOrchestrator | undefined;
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const companionListenHotkey = 'CommandOrControl+Shift+Space';
@@ -169,7 +173,9 @@ function registerIpc(): void {
     'ai:summarizeMemory': services.ai.summarizeMemory,
     'speech:getStatus': services.speech.getStatus,
     'speech:transcribe': services.speech.transcribe,
-    'companion:turn': services.companion.turn
+    'companion:turn': services.companion.turn,
+    'companion:reportSessionPhase': services.companion.reportSessionPhase,
+    'companion:reportDragging': services.companion.reportDragging
   } as const;
 
   for (const [channel, handler] of Object.entries(routes)) {
@@ -241,6 +247,35 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function startDiscoveryAutomation(): void {
+  discoveryShareOrchestrator = new DiscoveryShareOrchestrator({
+    getState: () => services.db.getCharacterState(),
+    saveState: (state) => services.db.saveCharacterState(state),
+    generateReason: (discovery) => services.ai.generateDiscoveryReason({ discovery }),
+    markAnnounced: (id) => services.db.markDiscoveryAnnounced(id),
+    canAnnounce: () => services.canAnnounceDiscovery(),
+    shouldInterruptShare: () => services.shouldInterruptShare(),
+    getCompanionWindow: () => companionWindow
+  });
+  services.attachShareOrchestrator(discoveryShareOrchestrator);
+
+  discoveryScheduler = new DiscoveryScheduler({
+    refresh: () => services.runDiscoveryRefresh(),
+    listUnannouncedShared: (limit) => services.db.listUnannouncedShared(limit),
+    getDiscoveryScore: () => services.getEffectiveDiscoveryScore(),
+    countSharedToday: () => services.db.countSharedToday(),
+    shareOrchestrator: discoveryShareOrchestrator
+  });
+  discoveryScheduler.start();
+}
+
+function stopDiscoveryAutomation(): void {
+  discoveryScheduler?.stop();
+  discoveryShareOrchestrator?.stop();
+  discoveryScheduler = undefined;
+  discoveryShareOrchestrator = undefined;
+}
+
 app.whenReady().then(() => {
   try {
     services = new AppServices();
@@ -248,6 +283,7 @@ app.whenReady().then(() => {
     registerCompanionHotkey();
     createCompanionWindow();
     createPanelWindow();
+    startDiscoveryAutomation();
   } catch (error) {
     console.error('[our-companion] Fatal startup failure.', error);
     createStartupErrorWindow(error);
@@ -274,6 +310,7 @@ function escapeHtml(value: string): string {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     unregisterCompanionHotkey();
+    stopDiscoveryAutomation();
     services?.db.close();
     app.quit();
   }
@@ -281,4 +318,5 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   unregisterCompanionHotkey();
+  stopDiscoveryAutomation();
 });

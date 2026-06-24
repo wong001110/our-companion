@@ -181,3 +181,4 @@ export function advanceCharacter(state, context) {
         updatedAt: nowIso()
     };
 }
+export { getDiscoveryFetchDelay, getDiscoveryFetchDelayRange, DISCOVERY_STARTUP_DELAY_MS } from './discoveryTiming';

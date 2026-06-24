@@ -319,6 +319,12 @@ export interface DiscoveryReason {
   tags: string[];
 }
 
+export interface DiscoveryAnnouncePayload {
+  discoveryId: string;
+  title: string;
+  message: string;
+}
+
 export interface MemorySummary {
   type: MemoryNodeType;
   title: string;
@@ -342,6 +348,7 @@ export interface OurCompanionApi {
     setPrimary(characterId: string): Promise<CharacterProfile>;
     updatePosition(input: { characterId?: string; x: number; y: number }): Promise<CharacterRuntimeState>;
     triggerBehavior(input: { characterId?: string; event: string }): Promise<CharacterRuntimeState>;
+    onStateChange(listener: (state: CharacterRuntimeState) => void): () => void;
   };
   discovery: {
     getFeed(input?: DiscoveryFeedInput): Promise<Discovery[]>;
@@ -349,6 +356,7 @@ export interface OurCompanionApi {
     markInterested(discoveryId: string): Promise<Discovery>;
     markNotInterested(discoveryId: string): Promise<Discovery>;
     addToJourney(input: AddDiscoveryToJourneyInput): Promise<{ journey: Journey; milestone: JourneyMilestone; memory: MemoryNode }>;
+    onAnnounce(listener: (payload: DiscoveryAnnouncePayload) => void): () => void;
   };
   memory: {
     createNode(input: CreateMemoryNodeInput): Promise<MemoryNode>;
@@ -386,6 +394,8 @@ export interface OurCompanionApi {
   companion: {
     turn(input: CompanionTurnInput): Promise<{ message: string }>;
     onToggleListen(listener: () => void): () => void;
+    reportSessionPhase(phase: CompanionSessionPhase): Promise<void>;
+    reportDragging(input: { dragging: boolean }): Promise<void>;
   };
   window: {
     openPanel(): Promise<boolean>;

@@ -1,8 +1,13 @@
 import { DatabaseService } from '@our-companion/database';
-import type { AddDiscoveryToJourneyInput, AddJourneyMilestoneInput, AiSettings, CharacterBehaviorSettings, ChatInput, CompanionTurnInput, CreateJourneyInput, CreateMemoryEdgeInput, CreateMemoryNodeInput, Discovery, DiscoveryFeedInput, DiscoverySource, NormalizedDiscovery, ToolExecuteInput, TranscribeAudioInput, UpdateAiSettingsInput, UpdateCharacterBehaviorSettingsInput, UpdateMemoryNodeInput } from '@our-companion/shared';
+import type { AddDiscoveryToJourneyInput, AddJourneyMilestoneInput, AiSettings, CharacterBehaviorSettings, ChatInput, CompanionSessionPhase, CompanionTurnInput, CreateJourneyInput, CreateMemoryEdgeInput, CreateMemoryNodeInput, Discovery, DiscoveryFeedInput, DiscoverySource, NormalizedDiscovery, ToolExecuteInput, TranscribeAudioInput, UpdateAiSettingsInput, UpdateCharacterBehaviorSettingsInput, UpdateMemoryNodeInput } from '@our-companion/shared';
+import type { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
+import type { DiscoveryRefreshResult } from './discoveryScheduler';
 export declare class AppServices {
     readonly db: DatabaseService;
     readonly databaseMode: 'persistent' | 'memory';
+    companionSessionPhase: CompanionSessionPhase;
+    companionDragging: boolean;
+    private shareOrchestrator?;
     constructor(dbPath?: string);
     character: {
         getState: (characterId?: string) => Promise<import("@our-companion/shared").CharacterRuntimeState>;
@@ -104,7 +109,17 @@ export declare class AppServices {
         turn: (input: CompanionTurnInput) => Promise<{
             message: string;
         }>;
+        reportSessionPhase: (phase: CompanionSessionPhase) => Promise<void>;
+        reportDragging: (input: {
+            dragging: boolean;
+        }) => Promise<void>;
     };
+    attachShareOrchestrator(orchestrator: DiscoveryShareOrchestrator): void;
+    runDiscoveryRefresh(sources?: DiscoverySource[]): Promise<DiscoveryRefreshResult>;
+    getEffectiveDiscoveryScore(): number;
+    canAnnounceDiscovery(): boolean;
+    shouldInterruptShare(): boolean;
+    private queueDiscoveryAnnouncements;
     private getStoredAiSettings;
     private getAiSettings;
     private updateAiSettings;

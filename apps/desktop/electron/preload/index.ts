@@ -2,10 +2,13 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AddDiscoveryToJourneyInput,
   AddJourneyMilestoneInput,
+  CharacterRuntimeState,
   ChatInput,
+  CompanionSessionPhase,
   CreateJourneyInput,
   CreateMemoryEdgeInput,
   CreateMemoryNodeInput,
+  DiscoveryAnnouncePayload,
   DiscoveryFeedInput,
   DiscoverySource,
   OurCompanionApi,
@@ -25,14 +28,26 @@ const api: OurCompanionApi = {
     updateBehaviorSettings: (input) => invoke('character:updateBehaviorSettings', input),
     setPrimary: (characterId: string) => invoke('character:setPrimary', characterId),
     updatePosition: (input: { characterId?: string; x: number; y: number }) => invoke('character:updatePosition', input),
-    triggerBehavior: (input: { characterId?: string; event: string }) => invoke('character:triggerBehavior', input)
+    triggerBehavior: (input: { characterId?: string; event: string }) => invoke('character:triggerBehavior', input),
+    onStateChange: (listener: (state: CharacterRuntimeState) => void) => {
+      const channel = 'character:stateChanged';
+      const handler = (_event: Electron.IpcRendererEvent, state: CharacterRuntimeState) => listener(state);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    }
   },
   discovery: {
     getFeed: (input?: DiscoveryFeedInput) => invoke('discovery:getFeed', input),
     refresh: (input?: { sources?: DiscoverySource[] }) => invoke('discovery:refresh', input),
     markInterested: (discoveryId: string) => invoke('discovery:markInterested', discoveryId),
     markNotInterested: (discoveryId: string) => invoke('discovery:markNotInterested', discoveryId),
-    addToJourney: (input: AddDiscoveryToJourneyInput) => invoke('discovery:addToJourney', input)
+    addToJourney: (input: AddDiscoveryToJourneyInput) => invoke('discovery:addToJourney', input),
+    onAnnounce: (listener: (payload: DiscoveryAnnouncePayload) => void) => {
+      const channel = 'discovery:announce';
+      const handler = (_event: Electron.IpcRendererEvent, payload: DiscoveryAnnouncePayload) => listener(payload);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    }
   },
   memory: {
     createNode: (input: CreateMemoryNodeInput) => invoke('memory:createNode', input),
@@ -69,6 +84,8 @@ const api: OurCompanionApi = {
   },
   companion: {
     turn: (input) => invoke('companion:turn', input),
+    reportSessionPhase: (phase: CompanionSessionPhase) => invoke('companion:reportSessionPhase', phase),
+    reportDragging: (input: { dragging: boolean }) => invoke('companion:reportDragging', input),
     onToggleListen: (listener: () => void) => {
       const channel = 'companion:toggleListen';
       const handler = () => listener();

@@ -85,6 +85,18 @@ function CompanionShell() {
             void window.ourCompanion.window.setMousePassthrough({ passthrough: false });
         };
     }, []);
+    useEffect(() => {
+        const unsubscribeState = window.ourCompanion.character.onStateChange((next) => {
+            applyState(next);
+        });
+        const unsubscribeAnnounce = window.ourCompanion.discovery.onAnnounce((payload) => {
+            showInstantSpeech(payload.message);
+        });
+        return () => {
+            unsubscribeState();
+            unsubscribeAnnounce();
+        };
+    }, []);
     async function setMousePassthrough(passthrough) {
         if (mousePassthroughRef.current === passthrough)
             return;
@@ -102,6 +114,7 @@ function CompanionShell() {
     function handleDragStart(point) {
         isDraggingRef.current = true;
         dragOriginRef.current = undefined;
+        void window.ourCompanion.companion.reportDragging({ dragging: true });
         void setMousePassthrough(false);
         window.ourCompanion.window
             .getBounds()
@@ -129,6 +142,7 @@ function CompanionShell() {
     function handleDragEnd() {
         isDraggingRef.current = false;
         dragOriginRef.current = undefined;
+        void window.ourCompanion.companion.reportDragging({ dragging: false });
         window.ourCompanion.window
             .getBounds()
             .then((bounds) => window.ourCompanion.character.updatePosition({ x: bounds.x, y: bounds.y }))
@@ -163,9 +177,12 @@ function CompanionShell() {
                 updatedAt: new Date().toISOString()
             });
         }
+        function isAmbientPaused() {
+            return sessionActiveRef.current || stateRef.current?.intent === 'sharing_discovery';
+        }
         async function walkRandomly() {
             try {
-                if (cancelled || isDraggingRef.current || sessionActiveRef.current)
+                if (cancelled || isDraggingRef.current || isAmbientPaused())
                     return;
                 const [bounds, workArea] = await Promise.all([window.ourCompanion.window.getBounds(), window.ourCompanion.window.getWorkArea()]);
                 if (cancelled || isDraggingRef.current)
@@ -234,7 +251,7 @@ function CompanionShell() {
             if (cancelled)
                 return;
             walkTimeout = window.setTimeout(async () => {
-                if (sessionActiveRef.current) {
+                if (isAmbientPaused()) {
                     scheduleNextWalk();
                     return;
                 }
@@ -268,7 +285,7 @@ function CompanionShell() {
             if (cancelled)
                 return;
             ambientTimeout = window.setTimeout(() => {
-                if (isIdleState(stateRef.current) && !sessionActiveRef.current) {
+                if (isIdleState(stateRef.current) && !isAmbientPaused()) {
                     showInstantSpeech(selectSpeechLine('ambient'));
                 }
                 scheduleAmbientSpeech();
@@ -301,7 +318,7 @@ function CompanionShell() {
                 window.cancelAnimationFrame(animationFrame);
         };
     }, []);
-    return (_jsxs("main", { className: "companion-shell", children: [_jsx(CompanionCanvas, { state: state, facing: facing, isListening: phase === 'listening', animationOverride: isIdleState(state) && !isSessionActive ? idleAnimation : undefined, onPointerHitChange: handlePointerHitChange, onOpenPanel: () => window.ourCompanion.window.openPanel(), onToggleListen: toggleListening, onDragStart: handleDragStart, onDragMove: handleDragMove, onDragEnd: handleDragEnd }), typewriterMessage && (_jsx(TypewriterSpeechBubble, { message: typewriterMessage, onComplete: handleTypewriterComplete })), !typewriterMessage && speech && _jsx("div", { className: "speech-bubble", children: speech })] }));
+    return (_jsxs("main", { className: "companion-shell", children: [_jsx(CompanionCanvas, { state: state, facing: facing, isListening: phase === 'listening', animationOverride: isIdleState(state) && !isSessionActive && state?.intent !== 'sharing_discovery' ? idleAnimation : undefined, onPointerHitChange: handlePointerHitChange, onOpenPanel: () => window.ourCompanion.window.openPanel(), onToggleListen: toggleListening, onDragStart: handleDragStart, onDragMove: handleDragMove, onDragEnd: handleDragEnd }), typewriterMessage && (_jsx(TypewriterSpeechBubble, { message: typewriterMessage, onComplete: handleTypewriterComplete })), !typewriterMessage && speech && _jsx("div", { className: "speech-bubble", children: speech })] }));
 }
 function PanelShell() {
     const [tab, setTab] = useState('home');

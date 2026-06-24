@@ -48,6 +48,7 @@ export function useCompanionSession({
       setPhase(next);
       onSessionPhaseChange?.(next);
       pauseAmbient?.(next !== 'idle');
+      void window.ourCompanion.companion.reportSessionPhase(next);
     },
     [onSessionPhaseChange, pauseAmbient]
   );

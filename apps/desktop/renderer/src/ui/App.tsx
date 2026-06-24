@@ -113,6 +113,19 @@ function CompanionShell() {
     };
   }, []);
 
+  useEffect(() => {
+    const unsubscribeState = window.ourCompanion.character.onStateChange((next) => {
+      applyState(next);
+    });
+    const unsubscribeAnnounce = window.ourCompanion.discovery.onAnnounce((payload) => {
+      showInstantSpeech(payload.message);
+    });
+    return () => {
+      unsubscribeState();
+      unsubscribeAnnounce();
+    };
+  }, []);
+
   async function setMousePassthrough(passthrough: boolean) {
     if (mousePassthroughRef.current === passthrough) return;
     mousePassthroughRef.current = passthrough;
@@ -130,6 +143,7 @@ function CompanionShell() {
   function handleDragStart(point: CompanionDragPoint) {
     isDraggingRef.current = true;
     dragOriginRef.current = undefined;
+    void window.ourCompanion.companion.reportDragging({ dragging: true });
     void setMousePassthrough(false);
     window.ourCompanion.window
       .getBounds()
@@ -157,6 +171,7 @@ function CompanionShell() {
   function handleDragEnd() {
     isDraggingRef.current = false;
     dragOriginRef.current = undefined;
+    void window.ourCompanion.companion.reportDragging({ dragging: false });
     window.ourCompanion.window
       .getBounds()
       .then((bounds) => window.ourCompanion.character.updatePosition({ x: bounds.x, y: bounds.y }))
@@ -195,9 +210,13 @@ function CompanionShell() {
       });
     }
 
+    function isAmbientPaused() {
+      return sessionActiveRef.current || stateRef.current?.intent === 'sharing_discovery';
+    }
+
     async function walkRandomly() {
       try {
-        if (cancelled || isDraggingRef.current || sessionActiveRef.current) return;
+        if (cancelled || isDraggingRef.current || isAmbientPaused()) return;
 
         const [bounds, workArea] = await Promise.all([window.ourCompanion.window.getBounds(), window.ourCompanion.window.getWorkArea()]);
         if (cancelled || isDraggingRef.current) return;
@@ -269,7 +288,7 @@ function CompanionShell() {
     function scheduleNextWalk() {
       if (cancelled) return;
       walkTimeout = window.setTimeout(async () => {
-        if (sessionActiveRef.current) {
+        if (isAmbientPaused()) {
           scheduleNextWalk();
           return;
         }
@@ -302,7 +321,7 @@ function CompanionShell() {
     function scheduleAmbientSpeech() {
       if (cancelled) return;
       ambientTimeout = window.setTimeout(() => {
-        if (isIdleState(stateRef.current) && !sessionActiveRef.current) {
+        if (isIdleState(stateRef.current) && !isAmbientPaused()) {
           showInstantSpeech(selectSpeechLine('ambient'));
         }
         scheduleAmbientSpeech();
@@ -337,7 +356,7 @@ function CompanionShell() {
         state={state}
         facing={facing}
         isListening={phase === 'listening'}
-        animationOverride={isIdleState(state) && !isSessionActive ? idleAnimation : undefined}
+        animationOverride={isIdleState(state) && !isSessionActive && state?.intent !== 'sharing_discovery' ? idleAnimation : undefined}
         onPointerHitChange={handlePointerHitChange}
         onOpenPanel={() => window.ourCompanion.window.openPanel()}
         onToggleListen={toggleListening}

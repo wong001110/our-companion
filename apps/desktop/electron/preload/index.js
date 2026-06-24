@@ -10,14 +10,26 @@ const api = {
         updateBehaviorSettings: (input) => invoke('character:updateBehaviorSettings', input),
         setPrimary: (characterId) => invoke('character:setPrimary', characterId),
         updatePosition: (input) => invoke('character:updatePosition', input),
-        triggerBehavior: (input) => invoke('character:triggerBehavior', input)
+        triggerBehavior: (input) => invoke('character:triggerBehavior', input),
+        onStateChange: (listener) => {
+            const channel = 'character:stateChanged';
+            const handler = (_event, state) => listener(state);
+            ipcRenderer.on(channel, handler);
+            return () => ipcRenderer.removeListener(channel, handler);
+        }
     },
     discovery: {
         getFeed: (input) => invoke('discovery:getFeed', input),
         refresh: (input) => invoke('discovery:refresh', input),
         markInterested: (discoveryId) => invoke('discovery:markInterested', discoveryId),
         markNotInterested: (discoveryId) => invoke('discovery:markNotInterested', discoveryId),
-        addToJourney: (input) => invoke('discovery:addToJourney', input)
+        addToJourney: (input) => invoke('discovery:addToJourney', input),
+        onAnnounce: (listener) => {
+            const channel = 'discovery:announce';
+            const handler = (_event, payload) => listener(payload);
+            ipcRenderer.on(channel, handler);
+            return () => ipcRenderer.removeListener(channel, handler);
+        }
     },
     memory: {
         createNode: (input) => invoke('memory:createNode', input),
@@ -54,6 +66,8 @@ const api = {
     },
     companion: {
         turn: (input) => invoke('companion:turn', input),
+        reportSessionPhase: (phase) => invoke('companion:reportSessionPhase', phase),
+        reportDragging: (input) => invoke('companion:reportDragging', input),
         onToggleListen: (listener) => {
             const channel = 'companion:toggleListen';
             const handler = () => listener();

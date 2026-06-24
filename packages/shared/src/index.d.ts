@@ -240,6 +240,11 @@ export interface DiscoveryReason {
     short_message: string;
     tags: string[];
 }
+export interface DiscoveryAnnouncePayload {
+    discoveryId: string;
+    title: string;
+    message: string;
+}
 export interface MemorySummary {
     type: MemoryNodeType;
     title: string;
@@ -268,6 +273,7 @@ export interface OurCompanionApi {
             characterId?: string;
             event: string;
         }): Promise<CharacterRuntimeState>;
+        onStateChange(listener: (state: CharacterRuntimeState) => void): () => void;
     };
     discovery: {
         getFeed(input?: DiscoveryFeedInput): Promise<Discovery[]>;
@@ -281,6 +287,7 @@ export interface OurCompanionApi {
             milestone: JourneyMilestone;
             memory: MemoryNode;
         }>;
+        onAnnounce(listener: (payload: DiscoveryAnnouncePayload) => void): () => void;
     };
     memory: {
         createNode(input: CreateMemoryNodeInput): Promise<MemoryNode>;
@@ -340,6 +347,10 @@ export interface OurCompanionApi {
             message: string;
         }>;
         onToggleListen(listener: () => void): () => void;
+        reportSessionPhase(phase: CompanionSessionPhase): Promise<void>;
+        reportDragging(input: {
+            dragging: boolean;
+        }): Promise<void>;
     };
     window: {
         openPanel(): Promise<boolean>;

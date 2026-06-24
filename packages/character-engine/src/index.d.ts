@@ -19,3 +19,4 @@ export declare function selectIntent(state: CharacterRuntimeState, context: Inte
 export declare function transitionState(current: CoreState, intent: Intent, emotion: EmotionName): CoreState;
 export declare function animationFor(intent: Intent, state: CoreState, emotion: EmotionName, availableAnimations: string[]): string;
 export declare function advanceCharacter(state: CharacterRuntimeState, context: IntentContext): CharacterRuntimeState;
+export { getDiscoveryFetchDelay, getDiscoveryFetchDelayRange, DISCOVERY_STARTUP_DELAY_MS } from './discoveryTiming';

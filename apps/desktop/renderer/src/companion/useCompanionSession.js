@@ -19,6 +19,7 @@ export function useCompanionSession({ stateRef, applyState, onInstantSpeech, onT
         setPhase(next);
         onSessionPhaseChange?.(next);
         pauseAmbient?.(next !== 'idle');
+        void window.ourCompanion.companion.reportSessionPhase(next);
     }, [onSessionPhaseChange, pauseAmbient]);
     const applyPreview = useCallback((coreState, intent) => {
         const next = previewState(stateRef.current, coreState, intent);

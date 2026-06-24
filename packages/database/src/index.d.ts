@@ -27,6 +27,10 @@ export declare class DatabaseService {
         limit?: number;
     }): Discovery[];
     countSharedToday(): number;
+    getAnnouncedDiscoveryIds(): string[];
+    isDiscoveryAnnounced(id: string): boolean;
+    markDiscoveryAnnounced(id: string): void;
+    listUnannouncedShared(limit?: number): Discovery[];
     insertJourney(journey: Journey): Journey;
     listActiveJourneys(): Journey[];
     insertMilestone(milestone: JourneyMilestone): JourneyMilestone;

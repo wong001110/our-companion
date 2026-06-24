@@ -2,6 +2,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { DEFAULT_CHARACTER_ID, nowIso } from '@our-companion/shared';
 import { createInitialCharacterState } from '@our-companion/character-engine';
 import { sqliteSchema } from './schema';
+const DISCOVERY_ANNOUNCED_KEY = 'discovery.announcedIds';
+const MAX_ANNOUNCED_DISCOVERY_IDS = 500;
 export class DatabaseService {
     db;
     constructor(options = {}) {
@@ -172,6 +174,25 @@ export class DatabaseService {
             .prepare("SELECT COUNT(*) as count FROM discoveries WHERE status = 'shared' AND shared_at LIKE ?")
             .get(`${today}%`);
         return Number(row.count);
+    }
+    getAnnouncedDiscoveryIds() {
+        return this.getAppSetting(DISCOVERY_ANNOUNCED_KEY) ?? [];
+    }
+    isDiscoveryAnnounced(id) {
+        return this.getAnnouncedDiscoveryIds().includes(id);
+    }
+    markDiscoveryAnnounced(id) {
+        const announced = this.getAnnouncedDiscoveryIds();
+        if (announced.includes(id))
+            return;
+        const next = [...announced, id].slice(-MAX_ANNOUNCED_DISCOVERY_IDS);
+        this.setAppSetting(DISCOVERY_ANNOUNCED_KEY, next);
+    }
+    listUnannouncedShared(limit = 20) {
+        const announced = new Set(this.getAnnouncedDiscoveryIds());
+        return this.listDiscoveries({ status: 'shared', limit: limit + announced.size })
+            .filter((discovery) => !announced.has(discovery.id))
+            .slice(0, limit);
     }
     insertJourney(journey) {
         this.db

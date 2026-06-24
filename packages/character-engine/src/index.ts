@@ -201,3 +201,5 @@ export function advanceCharacter(state: CharacterRuntimeState, context: IntentCo
     updatedAt: nowIso()
   };
 }
+
+export { getDiscoveryFetchDelay, getDiscoveryFetchDelayRange, DISCOVERY_STARTUP_DELAY_MS } from './discoveryTiming';

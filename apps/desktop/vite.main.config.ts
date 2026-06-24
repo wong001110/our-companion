@@ -1,11 +1,17 @@
 import { builtinModules } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../..');
 const nodeBuiltins = [...builtinModules, ...builtinModules.map((m) => `node:${m}`)];
 
 export default defineConfig({
+  define: {
+    __dirname: 'import.meta.dirname',
+    __filename: 'import.meta.filename'
+  },
   resolve: {
     alias: {
       '@our-companion/shared': path.resolve(root, 'packages/shared/src/index.ts'),
@@ -29,7 +35,7 @@ export default defineConfig({
       fileName: () => 'index.js'
     },
     rollupOptions: {
-      external: ['electron', ...nodeBuiltins]
+      external: ['electron', 'ffmpeg-static', ...nodeBuiltins]
     }
   }
 });
