@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import type { CharacterRuntimeState, Discovery, DiscoveryReason, NormalizedDiscovery } from '@our-companion/shared';
+import { type EventBus } from '@our-companion/event-bus';
 export interface DiscoveryAnnouncePayload {
     discoveryId: string;
     title: string;
@@ -13,6 +14,7 @@ export interface DiscoveryShareOrchestratorDeps {
     canAnnounce: () => boolean;
     shouldInterruptShare: () => boolean;
     getCompanionWindow: () => BrowserWindow | undefined;
+    eventBus?: EventBus;
 }
 export declare class DiscoveryShareOrchestrator {
     private readonly deps;
@@ -24,6 +26,7 @@ export declare class DiscoveryShareOrchestrator {
     stop(): void;
     private broadcastState;
     private broadcastAnnounce;
+    private emitEvent;
     private processQueue;
     private announceDiscovery;
 }

@@ -1,9 +1,9 @@
-import { spawn } from 'node:child_process';
+import { transcribeWithAddon } from './whisperAddon.js';
 
 export interface WhisperOptions {
-  binaryPath: string;
   modelPath: string;
   language?: string;
+  useGpu?: boolean;
 }
 
 export interface TranscribeResult {
@@ -12,47 +12,39 @@ export interface TranscribeResult {
 }
 
 export async function transcribeAudioFile(wavPath: string, options: WhisperOptions): Promise<TranscribeResult> {
-  const args = [
-    '-m',
-    options.modelPath,
-    '-f',
-    wavPath,
-    '-l',
-    options.language ?? 'en',
-    '-nt',
-    '-np'
-  ];
+  const result = await transcribeWithAddon({
+    fname_inp: wavPath,
+    model: options.modelPath,
+    language: options.language ?? 'auto',
+    use_gpu: options.useGpu ?? false,
+    no_prints: true,
+    translate: false,
+    no_timestamps: true
+  });
 
-  const stdout = await runWhisper(options.binaryPath, args);
-  const text = stdout.trim();
+  const text = normalizeTranscript(result);
   if (!text) {
-    throw new Error('Whisper returned an empty transcript.');
+    throw new Error('I could not hear clear speech in that recording. Please try again a little closer to the microphone.');
   }
 
-  return { text, language: options.language ?? 'en' };
+  return { text, language: options.language ?? 'auto' };
 }
 
-function runWhisper(binaryPath: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(binaryPath, args, { windowsHide: true });
-    let stdout = '';
-    let stderr = '';
+function normalizeTranscript(result: { transcription: string[][] | string[] } | unknown): string {
+  if (!result || typeof result !== 'object' || !('transcription' in result)) {
+    return '';
+  }
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
+  const { transcription } = result as { transcription: string[][] | string[] };
+  if (Array.isArray(transcription)) {
+    if (transcription.length === 0) return '';
 
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
+    if (Array.isArray(transcription[0])) {
+      return (transcription as string[][]).flat().join(' ').trim();
+    }
 
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve(stdout);
-        return;
-      }
-      reject(new Error(stderr.trim() || stdout.trim() || `whisper exited with code ${code ?? 'unknown'}`));
-    });
-  });
+    return (transcription as string[]).join(' ').trim();
+  }
+
+  return String(transcription).trim();
 }

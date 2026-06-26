@@ -1,0 +1,26 @@
+{
+  "name": "Book of Ann Volume 04 Knowledge & Journey",
+  "depends_on": "Volume 03",
+  "next": "Volume 05",
+  "documents": [
+    "00_READ_ME_FIRST.md",
+    "01_KNOWLEDGE_OVERVIEW.md",
+    "02_MEMORY_MODEL.md",
+    "03_KNOWLEDGE_GRAPH.md",
+    "04_CONCEPT_LIFECYCLE.md",
+    "05_JOURNEY_SYSTEM.md",
+    "06_MILESTONE_SYSTEM.md",
+    "07_REFLECTION_ENGINE.md",
+    "08_DIARY_POLICY.md",
+    "09_ARCHIVE_AND_DECAY.md",
+    "10_REVIVAL_POLICY.md",
+    "11_QUERY_AND_RETRIEVAL.md",
+    "12_DATA_MODELS.md",
+    "13_EVENT_FLOW.md",
+    "14_IMPLEMENTATION_TASKS.md",
+    "15_MIGRATION_GUIDE.md",
+    "16_ARGENT.md",
+    "17_TEST_CASES.md",
+    "18_NEXT_VOLUME.md"
+  ]
+}

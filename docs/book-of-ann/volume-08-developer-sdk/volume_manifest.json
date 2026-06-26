@@ -1,0 +1,26 @@
+{
+  "name": "Book of Ann Volume 08 Developer SDK & Plugin RFC",
+  "depends_on": "Volume 07",
+  "status": "Engineering Specification",
+  "documents": [
+    "00_READ_ME_FIRST.md",
+    "01_SDK_OVERVIEW.md",
+    "02_PLUGIN_ARCHITECTURE.md",
+    "03_EXTENSION_POINTS.md",
+    "04_PROVIDER_INTERFACES.md",
+    "05_PLUGIN_LIFECYCLE.md",
+    "06_EVENT_REFERENCE.md",
+    "07_PROMPT_LIBRARY.md",
+    "08_JSON_SCHEMAS.md",
+    "09_FOLDER_LAYOUT.md",
+    "10_SAMPLE_PLUGIN.md",
+    "11_VERSIONING.md",
+    "12_SECURITY_GUIDE.md",
+    "13_TESTING_GUIDE.md",
+    "14_CI_CD.md",
+    "15_IMPLEMENTATION_TASKS.md",
+    "16_ACCEPTANCE_CRITERIA.md",
+    "17_ADR.md",
+    "18_ROADMAP.md"
+  ]
+}

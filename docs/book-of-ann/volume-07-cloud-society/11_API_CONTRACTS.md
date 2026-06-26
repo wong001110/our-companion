@@ -1,0 +1,7 @@
+# API Contracts
+
+CompanionRegistry
+RelationshipService
+KnowledgeExchangeService
+SyncService
+IdentityProvider

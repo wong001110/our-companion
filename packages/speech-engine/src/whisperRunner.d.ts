@@ -1,7 +1,7 @@
 export interface WhisperOptions {
-    binaryPath: string;
     modelPath: string;
     language?: string;
+    useGpu?: boolean;
 }
 export interface TranscribeResult {
     text: string;

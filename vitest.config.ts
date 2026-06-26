@@ -17,6 +17,7 @@ export default defineConfig({
       '@our-companion/journey-engine': path.resolve(root, 'packages/journey-engine/src/index.ts'),
       '@our-companion/diary-engine': path.resolve(root, 'packages/diary-engine/src/index.ts'),
       '@our-companion/tool-engine': path.resolve(root, 'packages/tool-engine/src/index.ts'),
+      '@our-companion/action-engine': path.resolve(root, 'packages/action-engine/src/index.ts'),
       '@our-companion/ai-engine': path.resolve(root, 'packages/ai-engine/src/index.ts'),
       '@our-companion/database': path.resolve(root, 'packages/database/src/index.ts')
     }

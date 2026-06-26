@@ -14,6 +14,7 @@ interface UseCompanionSessionOptions {
 export declare function useCompanionSession({ stateRef, applyState, onInstantSpeech, onTypewriterSpeech, onSessionPhaseChange, pauseAmbient }: UseCompanionSessionOptions): {
     phase: CompanionSessionPhase;
     toggleListening: () => void;
+    runTurn: (message: string, source: "voice" | "companion_text") => Promise<void>;
     onTypewriterComplete: () => void;
     isSessionActive: boolean;
 };

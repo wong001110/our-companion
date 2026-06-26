@@ -1,4 +1,5 @@
-import type { CharacterProfile, CharacterRuntimeState, DiaryEntry, Discovery, DiscoveryStatus, Journey, JourneyMilestone, MemoryEdge, MemoryNode } from '@our-companion/shared';
+import type { CharacterProfile, CharacterRuntimeState, CompanionAppendMessageInput, CompanionHistoryInput, CompanionInsight, CompanionMessage, CuriosityTarget, DebugDataResetInput, DebugDataResetResult, DiaryEntry, Discovery, DiscoveryCandidate, DiscoveryFeedback, DiscoveryStatus, ExplorationCycle, ExplorationLoopEvent, ExplorationPlan, InterestEdge, InterestGraph, InterestNode, Journey, JourneyMilestone, MemoryEdge, MemoryNode, Pattern } from '@our-companion/shared';
+import type { ActionPermissionState } from '@our-companion/shared';
 export interface DatabaseServiceOptions {
     path?: string;
 }
@@ -31,6 +32,27 @@ export declare class DatabaseService {
     isDiscoveryAnnounced(id: string): boolean;
     markDiscoveryAnnounced(id: string): void;
     listUnannouncedShared(limit?: number): Discovery[];
+    insertPattern(pattern: Pattern): Pattern;
+    listPatterns(userId?: string, limit?: number): Pattern[];
+    upsertInterestGraph(graph: InterestGraph): InterestGraph;
+    insertInterestNode(node: InterestNode): InterestNode;
+    insertInterestEdge(edge: InterestEdge): InterestEdge;
+    getInterestGraph(userId?: string): InterestGraph;
+    insertCuriosityTarget(target: CuriosityTarget): CuriosityTarget;
+    getCuriosityTarget(id: string): CuriosityTarget | undefined;
+    insertExplorationPlan(plan: ExplorationPlan): ExplorationPlan;
+    getExplorationPlan(id: string): ExplorationPlan | undefined;
+    insertDiscoveryCandidate(candidate: DiscoveryCandidate): DiscoveryCandidate;
+    getDiscoveryCandidate(id: string): DiscoveryCandidate | undefined;
+    insertCompanionInsight(insight: CompanionInsight): CompanionInsight;
+    getCompanionInsight(id: string): CompanionInsight | undefined;
+    insertExplorationCycle(cycle: ExplorationCycle): ExplorationCycle;
+    getExplorationCycle(id: string): ExplorationCycle | undefined;
+    getCurrentExplorationCycle(): ExplorationCycle | undefined;
+    listExplorationCycles(limit?: number): ExplorationCycle[];
+    insertExplorationEvent(event: ExplorationLoopEvent): ExplorationLoopEvent;
+    insertDiscoveryFeedback(feedback: DiscoveryFeedback): DiscoveryFeedback;
+    listDiscoveryFeedback(limit?: number): DiscoveryFeedback[];
     insertJourney(journey: Journey): Journey;
     listActiveJourneys(): Journey[];
     insertMilestone(milestone: JourneyMilestone): JourneyMilestone;
@@ -42,4 +64,13 @@ export declare class DatabaseService {
     }): DiaryEntry[];
     getAppSetting<T>(key: string): T | undefined;
     setAppSetting<T>(key: string, value: T): T;
+    getActionPermissions(): ActionPermissionState;
+    setActionPermissions(state: ActionPermissionState): ActionPermissionState;
+    getCompanionRetentionDays(): number;
+    pruneCompanionMessages(retentionDays?: number): void;
+    insertCompanionMessage(input: CompanionAppendMessageInput): CompanionMessage;
+    listCompanionMessages(input?: CompanionHistoryInput): CompanionMessage[];
+    listCompanionContext(characterId: string, limit: number): CompanionMessage[];
+    clearCompanionMessages(characterId?: string): void;
+    resetDebugData(input: DebugDataResetInput): DebugDataResetResult;
 }

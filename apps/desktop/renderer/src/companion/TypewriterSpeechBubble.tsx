@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { HOLD_AFTER_COMPLETE_MS, getMsPerWord, splitWords } from './typewriterSpeech';
+import { HOLD_AFTER_COMPLETE_MS, getMsPerCharacter, splitCharacters } from './typewriterSpeech';
 
 export interface TypewriterSpeechBubbleProps {
   message: string;
@@ -9,30 +9,30 @@ export interface TypewriterSpeechBubbleProps {
 export function TypewriterSpeechBubble({ message, onComplete }: TypewriterSpeechBubbleProps) {
   const [visibleText, setVisibleText] = useState('');
   const [isTyping, setIsTyping] = useState(true);
-  const wordsRef = useRef<string[]>([]);
+  const charactersRef = useRef<string[]>([]);
   const indexRef = useRef(0);
   const timeoutRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    wordsRef.current = splitWords(message);
+    charactersRef.current = splitCharacters(message);
     indexRef.current = 0;
     setVisibleText('');
     setIsTyping(true);
 
-    if (wordsRef.current.length === 0) {
+    if (charactersRef.current.length === 0) {
       setIsTyping(false);
       onComplete?.();
       return;
     }
 
-    const msPerWord = getMsPerWord(message);
+    const msPerCharacter = getMsPerCharacter(message);
 
     const tick = () => {
       const nextIndex = indexRef.current + 1;
       indexRef.current = nextIndex;
-      setVisibleText(wordsRef.current.slice(0, nextIndex).join(' '));
+      setVisibleText(charactersRef.current.slice(0, nextIndex).join(''));
 
-      if (nextIndex >= wordsRef.current.length) {
+      if (nextIndex >= charactersRef.current.length) {
         setIsTyping(false);
         timeoutRef.current = window.setTimeout(() => {
           onComplete?.();
@@ -40,10 +40,10 @@ export function TypewriterSpeechBubble({ message, onComplete }: TypewriterSpeech
         return;
       }
 
-      timeoutRef.current = window.setTimeout(tick, msPerWord);
+      timeoutRef.current = window.setTimeout(tick, msPerCharacter);
     };
 
-    timeoutRef.current = window.setTimeout(tick, msPerWord);
+    timeoutRef.current = window.setTimeout(tick, msPerCharacter);
 
     return () => {
       if (timeoutRef.current !== undefined) {

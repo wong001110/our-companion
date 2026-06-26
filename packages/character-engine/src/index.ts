@@ -1,12 +1,22 @@
 import type {
+  AnimationKey,
+  AnimationRequest,
+  AnnMood,
+  BehaviourState,
+  CharacterPackage,
   CharacterRuntimeState,
+  CharacterRuntimeDescriptor,
+  CharacterState,
+  CompanionDecision,
   CoreState,
   EmotionName,
   EmotionState,
   Intent,
-  NormalizedDiscovery
+  NormalizedDiscovery,
+  PerformanceScript,
+  ValidationResult
 } from '@our-companion/shared';
-import { DEFAULT_CHARACTER_ID, nowIso } from '@our-companion/shared';
+import { DEFAULT_CHARACTER_ID, createId, nowIso } from '@our-companion/shared';
 
 export const neutralEmotion: EmotionState = {
   neutral: 70,
@@ -21,6 +31,71 @@ export const neutralEmotion: EmotionState = {
   concerned: 0
 };
 
+export const requiredCreatorAnimations = [
+  'idle',
+  'walk',
+  'run',
+  'thinking',
+  'talk',
+  'present_discovery',
+  'task_start',
+  'task_success',
+  'task_failed',
+  'return',
+  'sleep'
+];
+
+export const defaultAnnPackage: CharacterPackage = {
+  id: 'ann',
+  name: 'Ann',
+  version: '1.0.0',
+  personalityPreset: {
+    traits: ['curious', 'calm', 'gentle', 'analytical'],
+    corePersonality: ['introverted', 'curious', 'warm', 'observant'],
+    expertise: ['web', 'frontend', 'ux'],
+    speakingStyle: {
+      tone: 'warm',
+      length: 'short',
+      avoid: ['romantic', 'clingy', 'preachy']
+    }
+  },
+  assetManifest: {
+    assets: [
+      {
+        id: 'ann-spritesheets',
+        type: 'spritesheet',
+        path: 'assets/characters/ann/animations',
+        version: '1.0.0',
+        frameWidth: 300,
+        frameHeight: 300
+      }
+    ]
+  },
+  animationManifest: {
+    required: requiredCreatorAnimations,
+    mappings: {
+      idle: 'idle_laptop',
+      walk: 'walk',
+      run: 'walk',
+      thinking: 'think',
+      talk: 'talk',
+      present_discovery: 'discovery',
+      task_start: 'task_start',
+      task_success: 'task_success',
+      task_failed: 'task_failed',
+      return: 'return',
+      sleep: 'idle_tired'
+    }
+  },
+  metadata: {
+    description: 'Default Our Companion character package.',
+    thumbnail: 'assets/characters/ann/demo.png',
+    tags: ['default', 'ann']
+  },
+  futureVoice: {},
+  futureTts: {}
+};
+
 export function createInitialCharacterState(characterId = DEFAULT_CHARACTER_ID): CharacterRuntimeState {
   return {
     characterId,
@@ -31,6 +106,108 @@ export function createInitialCharacterState(characterId = DEFAULT_CHARACTER_ID):
     lastActivityAt: nowIso(),
     updatedAt: nowIso()
   };
+}
+
+export function validateCharacterPackage(pkg: CharacterPackage): ValidationResult {
+  const issues: ValidationResult['issues'] = [];
+  if (!pkg.id.trim()) issues.push({ severity: 'error', code: 'missing_id', message: 'Character package id is required.' });
+  if (!/^\d+\.\d+\.\d+/.test(pkg.version)) {
+    issues.push({ severity: 'error', code: 'invalid_version', message: 'Character package version must be semantic.' });
+  }
+  if (pkg.assetManifest.assets.length === 0) {
+    issues.push({ severity: 'error', code: 'missing_assets', message: 'At least one character asset is required.' });
+  }
+  if (!pkg.animationManifest.mappings.idle) {
+    issues.push({ severity: 'error', code: 'missing_idle', message: 'The idle animation mapping is required.' });
+  }
+  for (const animation of requiredCreatorAnimations) {
+    if (!pkg.animationManifest.mappings[animation]) {
+      issues.push({ severity: animation === 'idle' ? 'error' : 'warning', code: 'missing_animation', message: `Missing animation mapping: ${animation}.` });
+    }
+  }
+  const frameSizes = new Set(
+    pkg.assetManifest.assets
+      .filter((asset) => asset.type === 'spritesheet' && asset.frameWidth && asset.frameHeight)
+      .map((asset) => `${asset.frameWidth}x${asset.frameHeight}`)
+  );
+  if (frameSizes.size > 1) {
+    issues.push({ severity: 'warning', code: 'inconsistent_frame_size', message: 'Spritesheet frame sizes are inconsistent.' });
+  }
+  return {
+    valid: !issues.some((issue) => issue.severity === 'error'),
+    issues
+  };
+}
+
+export class CharacterPackageRegistry {
+  private readonly packages = new Map<string, CharacterPackage>();
+  private activePackageId = defaultAnnPackage.id;
+
+  constructor(initialPackages: CharacterPackage[] = [defaultAnnPackage]) {
+    for (const pkg of initialPackages) {
+      this.register(pkg);
+    }
+  }
+
+  register(pkg: CharacterPackage): ValidationResult {
+    const result = validateCharacterPackage(pkg);
+    if (result.valid) {
+      this.packages.set(pkg.id, pkg);
+    }
+    return result;
+  }
+
+  get(id: string): CharacterPackage | undefined {
+    return this.packages.get(id);
+  }
+
+  list(): CharacterPackage[] {
+    return [...this.packages.values()];
+  }
+
+  activate(id: string): CharacterPackage {
+    const pkg = this.packages.get(id) ?? this.packages.get(defaultAnnPackage.id) ?? defaultAnnPackage;
+    this.activePackageId = pkg.id;
+    return pkg;
+  }
+
+  active(): CharacterPackage {
+    return this.activate(this.activePackageId);
+  }
+}
+
+export function createRuntimeDescriptor(pkg: CharacterPackage): CharacterRuntimeDescriptor {
+  const validation = validateCharacterPackage(pkg);
+  const safePackage = validation.valid ? pkg : defaultAnnPackage;
+  return {
+    packageId: safePackage.id,
+    characterId: safePackage.id,
+    displayName: safePackage.name,
+    defaultAnimation: safePackage.animationManifest.mappings.idle,
+    animations: safePackage.animationManifest.mappings,
+    personalityPreset: safePackage.personalityPreset
+  };
+}
+
+export function loadCharacterPackage(
+  pkg: CharacterPackage,
+  registry = new CharacterPackageRegistry()
+): { package: CharacterPackage; validation: ValidationResult; runtime: CharacterRuntimeDescriptor } {
+  const validation = registry.register(pkg);
+  const activePackage = validation.valid ? registry.activate(pkg.id) : registry.activate(defaultAnnPackage.id);
+  return {
+    package: activePackage,
+    validation,
+    runtime: createRuntimeDescriptor(activePackage)
+  };
+}
+
+export function exportCharacterPackage(pkg: CharacterPackage): string {
+  return JSON.stringify(pkg, null, 2);
+}
+
+export function importCharacterPackage(serialized: string): CharacterPackage {
+  return JSON.parse(serialized) as CharacterPackage;
 }
 
 export function dominantEmotion(emotion: EmotionState): EmotionName {
@@ -199,6 +376,113 @@ export function advanceCharacter(state: CharacterRuntimeState, context: IntentCo
     intent: nextIntent,
     coreState: transitionState(state.coreState, nextIntent, nextEmotion),
     updatedAt: nowIso()
+  };
+}
+
+export interface CharacterExpressionContext {
+  energy?: number;
+  focusMode?: boolean;
+  availableAnimations?: string[];
+}
+
+export function emotionForDecision(decision: Pick<CompanionDecision, 'action' | 'priority'>, context: CharacterExpressionContext = {}): AnnMood {
+  if ((context.energy ?? 70) < 25) return 'tired';
+  if (decision.action === 'perform_action') return 'focused';
+  if (decision.action === 'speak' && decision.priority === 'high') return 'curious';
+  if (decision.action === 'queue_for_later') return 'thinking';
+  if (decision.action === 'remember_only') return 'focused';
+  if (decision.action === 'ignore' || decision.action === 'stay_silent') return 'neutral';
+  return 'happy';
+}
+
+export function behaviourForDecision(decision: Pick<CompanionDecision, 'action'>): BehaviourState {
+  if (decision.action === 'speak') return 'present_discovery';
+  if (decision.action === 'perform_action') return 'perform_task';
+  if (decision.action === 'queue_for_later') return 'wait';
+  if (decision.action === 'remember_only') return 'reflect';
+  if (decision.action === 'ignore' || decision.action === 'stay_silent') return 'idle';
+  return 'observe';
+}
+
+export function resolveCharacterState(
+  decision: Pick<CompanionDecision, 'action' | 'priority'>,
+  context: CharacterExpressionContext = {}
+): CharacterState {
+  const mood = emotionForDecision(decision, context);
+  const behaviour = behaviourForDecision(decision);
+  return {
+    mood,
+    intent:
+      behaviour === 'present_discovery'
+        ? 'present_discovery'
+        : behaviour === 'perform_task'
+          ? 'perform_task'
+          : behaviour === 'reflect'
+            ? 'reflect'
+            : behaviour === 'wait'
+              ? 'wait_response'
+              : 'idle',
+    energy: Math.max(0, Math.min(100, context.energy ?? 70)),
+    currentAnimation: animationKeyForBehaviour(behaviour, mood)
+  };
+}
+
+export function nextAnimationState(current: AnimationKey, requested?: AnimationKey): AnimationKey {
+  if (requested && requested !== current) return requested;
+  const transitions: Record<AnimationKey, AnimationKey> = {
+    idle: 'curious',
+    curious: 'thinking',
+    thinking: 'discovery_present',
+    discovery_present: 'return',
+    task_start: 'typing',
+    typing: 'task_success',
+    task_success: 'return',
+    task_failed: 'return',
+    return: 'idle'
+  };
+  return transitions[current] ?? 'idle';
+}
+
+export function animationKeyForBehaviour(behaviour: BehaviourState, mood: AnnMood): AnimationKey {
+  if (behaviour === 'present_discovery') return 'discovery_present';
+  if (behaviour === 'perform_task') return 'task_start';
+  if (behaviour === 'reflect' || mood === 'thinking') return 'thinking';
+  if (behaviour === 'return_home') return 'return';
+  if (mood === 'curious') return 'curious';
+  return 'idle';
+}
+
+export function planAnimationRequest(input: {
+  characterId?: string;
+  behaviour: BehaviourState;
+  mood: AnnMood;
+  reason: string;
+}): AnimationRequest {
+  return {
+    id: createId('animation'),
+    characterId: input.characterId ?? DEFAULT_CHARACTER_ID,
+    animationKey: animationKeyForBehaviour(input.behaviour, input.mood),
+    interruptSafe: input.behaviour !== 'perform_task',
+    reason: input.reason,
+    createdAt: nowIso()
+  };
+}
+
+export function planPerformanceScript(actionId: string, outcome: 'success' | 'failure' = 'success'): PerformanceScript {
+  return {
+    id: createId('performance'),
+    actionId,
+    steps: [
+      { animationKey: 'task_start', label: 'start task performance', durationMs: 450 },
+      { animationKey: 'typing', label: 'show focused work', durationMs: 700 },
+      {
+        animationKey: outcome === 'success' ? 'task_success' : 'task_failed',
+        label: outcome === 'success' ? 'confirm result' : 'show recoverable failure',
+        durationMs: 600
+      },
+      { animationKey: 'return', label: 'return home', durationMs: 450 }
+    ],
+    createdAt: nowIso()
   };
 }
 

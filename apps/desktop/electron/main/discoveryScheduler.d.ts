@@ -12,6 +12,9 @@ export interface DiscoverySchedulerDeps {
     getDiscoveryScore: () => number;
     countSharedToday: () => number;
     shareOrchestrator: DiscoveryShareQueue;
+    runAutonomousCycle?: () => Promise<void>;
+    countAutonomousCyclesToday?: () => number;
+    canRunAutonomousCycle?: () => boolean;
 }
 export declare class DiscoveryScheduler {
     private readonly deps;

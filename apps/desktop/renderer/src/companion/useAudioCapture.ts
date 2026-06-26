@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef } from 'react';
 export interface AudioCaptureResult {
   blob: Blob;
   mimeType: string;
+  durationMs: number;
 }
 
 export interface UseAudioCaptureOptions {
@@ -26,6 +27,8 @@ export function useAudioCapture(options: UseAudioCaptureOptions = {}) {
   const stopResolverRef = useRef<((result: AudioCaptureResult | undefined) => void) | undefined>(undefined);
   const recordingRef = useRef(false);
   const mimeTypeRef = useRef('audio/webm');
+  const recordingStartedAtRef = useRef<number | undefined>(undefined);
+  const dataRequestIntervalRef = useRef<number | undefined>(undefined);
 
   const silenceThreshold = options.silenceThreshold ?? DEFAULT_SILENCE_THRESHOLD;
   const silenceDurationMs = options.silenceDurationMs ?? DEFAULT_SILENCE_DURATION_MS;
@@ -35,7 +38,12 @@ export function useAudioCapture(options: UseAudioCaptureOptions = {}) {
       cancelAnimationFrame(silenceFrameRef.current);
       silenceFrameRef.current = undefined;
     }
+    if (dataRequestIntervalRef.current !== undefined) {
+      window.clearInterval(dataRequestIntervalRef.current);
+      dataRequestIntervalRef.current = undefined;
+    }
     silenceStartedAtRef.current = undefined;
+    recordingStartedAtRef.current = undefined;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = undefined;
     void audioContextRef.current?.close();
@@ -88,17 +96,20 @@ export function useAudioCapture(options: UseAudioCaptureOptions = {}) {
       recorderRef.current = recorder;
       mimeTypeRef.current = mimeType;
       recordingRef.current = true;
+      recordingStartedAtRef.current = performance.now();
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunksRef.current.push(event.data);
       };
 
       recorder.onstop = () => {
+        const durationMs =
+          recordingStartedAtRef.current === undefined ? 0 : Math.max(0, performance.now() - recordingStartedAtRef.current);
         const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current });
         chunksRef.current = [];
         recorderRef.current = undefined;
         releaseMedia();
-        stopResolverRef.current?.({ blob, mimeType: mimeTypeRef.current });
+        stopResolverRef.current?.({ blob, mimeType: mimeTypeRef.current, durationMs });
         stopResolverRef.current = undefined;
       };
 
@@ -111,7 +122,16 @@ export function useAudioCapture(options: UseAudioCaptureOptions = {}) {
       analyserRef.current = analyser;
       silenceStartedAtRef.current = undefined;
 
-      recorder.start();
+      recorder.start(250);
+      dataRequestIntervalRef.current = window.setInterval(() => {
+        if (recorder.state === 'recording') {
+          try {
+            recorder.requestData();
+          } catch {
+            // Some MediaRecorder implementations may reject extra flushes; the next dataavailable still covers us.
+          }
+        }
+      }, 1000);
       silenceFrameRef.current = requestAnimationFrame(monitorSilence);
       return true;
     } catch {
@@ -131,6 +151,11 @@ export function useAudioCapture(options: UseAudioCaptureOptions = {}) {
         releaseMedia();
         resolve(undefined);
         return;
+      }
+      try {
+        recorder.requestData();
+      } catch {
+        // Final dataavailable is also emitted by stop().
       }
       recorder.stop();
     });

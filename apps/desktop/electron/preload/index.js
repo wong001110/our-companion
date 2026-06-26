@@ -31,6 +31,18 @@ const api = {
             return () => ipcRenderer.removeListener(channel, handler);
         }
     },
+    autonomy: {
+        startExploration: (input) => invoke('autonomy:startExploration', input),
+        getCurrentCycle: () => invoke('autonomy:getCurrentCycle'),
+        getCycleHistory: (input) => invoke('autonomy:getCycleHistory', input),
+        submitFeedback: (input) => invoke('autonomy:submitFeedback', input),
+        onExplorationEvent: (listener) => {
+            const channel = 'autonomy:explorationEvent';
+            const handler = (_event, payload) => listener(payload);
+            ipcRenderer.on(channel, handler);
+            return () => ipcRenderer.removeListener(channel, handler);
+        }
+    },
     memory: {
         createNode: (input) => invoke('memory:createNode', input),
         updateNode: (input) => invoke('memory:updateNode', input),
@@ -53,19 +65,37 @@ const api = {
         preview: (input) => invoke('tool:preview', input),
         execute: (input) => invoke('tool:execute', input)
     },
+    action: {
+        plan: (text) => invoke('action:plan', text),
+        executePlan: (plan) => invoke('action:executePlan', plan),
+        getPermissions: () => invoke('action:getPermissions'),
+        updatePermissions: (state) => invoke('action:updatePermissions', state),
+        onPerformance: (listener) => {
+            const channel = 'action:performanceStarted';
+            const handler = (_event, script) => listener(script);
+            ipcRenderer.on(channel, handler);
+            return () => ipcRenderer.removeListener(channel, handler);
+        }
+    },
     ai: {
         getSettings: () => invoke('ai:getSettings'),
         updateSettings: (input) => invoke('ai:updateSettings', input),
         chat: (input) => invoke('ai:chat', input),
         generateDiscoveryReason: (input) => invoke('ai:generateDiscoveryReason', input),
-        summarizeMemory: (input) => invoke('ai:summarizeMemory', input)
+        summarizeMemory: (input) => invoke('ai:summarizeMemory', input),
+        getDebugLog: () => invoke('ai:getDebugLog')
     },
     speech: {
         getStatus: () => invoke('speech:getStatus'),
+        getSettings: () => invoke('speech:getSettings'),
+        updateSettings: (input) => invoke('speech:updateSettings', input),
         transcribe: (input) => invoke('speech:transcribe', input)
     },
     companion: {
         turn: (input) => invoke('companion:turn', input),
+        getHistory: (input) => invoke('companion:getHistory', input),
+        appendMessage: (input) => invoke('companion:appendMessage', input),
+        clearHistory: (input) => invoke('companion:clearHistory', input),
         reportSessionPhase: (phase) => invoke('companion:reportSessionPhase', phase),
         reportDragging: (input) => invoke('companion:reportDragging', input),
         onToggleListen: (listener) => {
@@ -74,6 +104,9 @@ const api = {
             ipcRenderer.on(channel, handler);
             return () => ipcRenderer.removeListener(channel, handler);
         }
+    },
+    debug: {
+        resetData: (input) => invoke('debug:resetData', input)
     },
     window: {
         openPanel: () => invoke('window:openPanel'),

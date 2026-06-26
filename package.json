@@ -6,7 +6,8 @@
   "type": "module",
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "packages/platform/*"
   ],
   "scripts": {
     "dev": "npm run dev -w @our-companion/desktop",
@@ -16,7 +17,7 @@
     "test": "vitest run",
     "lint": "tsc -b --pretty false",
     "assets:ann:sync": "powershell -ExecutionPolicy Bypass -File scripts/sync-ann-sheets.ps1",
-    "whisper:setup": "powershell -ExecutionPolicy Bypass -File scripts/setup-whisper.ps1"
+    "whisper:setup": "node scripts/setup-whisper.mjs"
   },
   "dependencies": {
     "electron": "^37.0.0",

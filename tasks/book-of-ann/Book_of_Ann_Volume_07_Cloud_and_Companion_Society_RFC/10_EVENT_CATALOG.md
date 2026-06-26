@@ -1,0 +1,10 @@
+# Events
+
+CompanionVisitRequested
+VisitAccepted
+KnowledgeShared
+KnowledgeRejected
+RelationshipUpdated
+SyncStarted
+SyncCompleted
+ConflictDetected

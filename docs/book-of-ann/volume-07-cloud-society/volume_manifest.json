@@ -1,0 +1,26 @@
+{
+  "name": "Book of Ann Volume 07 Cloud & Companion Society RFC",
+  "depends_on": "Volume 06",
+  "next": "Volume 08 Developer SDK",
+  "documents": [
+    "00_READ_ME_FIRST.md",
+    "01_VISION.md",
+    "02_IDENTITY_MODEL.md",
+    "03_RELATIONSHIP_GRAPH.md",
+    "04_TRUST_MODEL.md",
+    "05_PRIVACY_MODEL.md",
+    "06_KNOWLEDGE_EXCHANGE_PROTOCOL.md",
+    "07_COMPANION_VISIT_PROTOCOL.md",
+    "08_SYNC_STRATEGY.md",
+    "09_CONFLICT_RESOLUTION.md",
+    "10_EVENT_CATALOG.md",
+    "11_API_CONTRACTS.md",
+    "12_SECURITY.md",
+    "13_EDGE_CASES.md",
+    "14_MIGRATION_GUIDE.md",
+    "15_IMPLEMENTATION_TASKS.md",
+    "16_ACCEPTANCE_CRITERIA.md",
+    "17_ADR.md",
+    "18_NEXT_VOLUME.md"
+  ]
+}

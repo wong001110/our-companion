@@ -1,6 +1,7 @@
 export interface AudioCaptureResult {
     blob: Blob;
     mimeType: string;
+    durationMs: number;
 }
 export interface UseAudioCaptureOptions {
     silenceThreshold?: number;

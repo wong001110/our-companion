@@ -67,10 +67,24 @@ export function useCompanionSession({
     busyRef.current = false;
   }, [applyPreview, setSessionPhase]);
 
+  const logVoiceEvent = useCallback(
+    (content: string, status: 'error' | 'empty_transcript', metadata?: Record<string, unknown>) => {
+      void window.ourCompanion.companion.appendMessage({
+        role: 'system',
+        content,
+        source: 'voice',
+        status,
+        metadata
+      });
+    },
+    []
+  );
+
   const runTurn = useCallback(
     async (message: string, source: 'voice' | 'companion_text') => {
       const trimmed = message.trim();
       if (!trimmed) {
+        logVoiceEvent("Empty transcript after Whisper — said 'I didn't catch that'.", 'empty_transcript');
         onInstantSpeech("I didn't catch that. Try again?");
         finishToIdle();
         return;
@@ -90,7 +104,7 @@ export function useCompanionSession({
         finishToIdle();
       }
     },
-    [applyPreview, finishToIdle, onInstantSpeech, onTypewriterSpeech, setSessionPhase]
+    [applyPreview, finishToIdle, logVoiceEvent, onInstantSpeech, onTypewriterSpeech, setSessionPhase]
   );
 
   const processRecording = useCallback(
@@ -104,11 +118,12 @@ export function useCompanionSession({
         await runTurn(text, 'voice');
       } catch (error) {
         const message = error instanceof Error ? error.message : 'I could not transcribe that audio.';
+        logVoiceEvent(message, 'error', { step: 'transcribe', audioBytes: blob.size, mimeType });
         onInstantSpeech(message);
         finishToIdle();
       }
     },
-    [applyPreview, finishToIdle, onInstantSpeech, runTurn, setSessionPhase]
+    [applyPreview, finishToIdle, logVoiceEvent, onInstantSpeech, runTurn, setSessionPhase]
   );
 
   const stopListeningRef = useRef<() => Promise<void>>(async () => undefined);
@@ -120,6 +135,7 @@ export function useCompanionSession({
       }
     },
     onError: (message) => {
+      logVoiceEvent(message, 'error', { step: 'audio_capture' });
       onInstantSpeech(message);
       finishToIdle();
     }
@@ -142,12 +158,23 @@ export function useCompanionSession({
     if (phaseRef.current !== 'listening') return;
     const result = await audio.stopRecording();
     if (!result || result.blob.size === 0) {
+      logVoiceEvent("Empty recording — no audio captured.", 'empty_transcript');
       onInstantSpeech("I didn't hear anything.");
       finishToIdle();
       return;
     }
+    if (result.durationMs < 500) {
+      logVoiceEvent('Recording was too short to transcribe.', 'empty_transcript', {
+        audioBytes: result.blob.size,
+        durationMs: Math.round(result.durationMs),
+        mimeType: result.mimeType
+      });
+      onInstantSpeech('That recording was too short. Try holding for a moment longer?');
+      finishToIdle();
+      return;
+    }
     await processRecording(result.blob, result.mimeType);
-  }, [audio, finishToIdle, onInstantSpeech, processRecording]);
+  }, [audio, finishToIdle, logVoiceEvent, onInstantSpeech, processRecording]);
 
   stopListeningRef.current = stopListening;
 
@@ -173,6 +200,7 @@ export function useCompanionSession({
   return {
     phase,
     toggleListening,
+    runTurn,
     onTypewriterComplete,
     isSessionActive: phase !== 'idle'
   };

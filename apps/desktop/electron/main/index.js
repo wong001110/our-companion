@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { app, BrowserWindow, globalShortcut, ipcMain, nativeImage, screen } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, nativeImage, screen, session } from 'electron';
 import { AppServices } from './services';
 import { DiscoveryScheduler } from './discoveryScheduler';
 import { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
@@ -72,6 +72,10 @@ function createPanelWindow() {
             sandbox: false
         }
     });
+    window.on('close', (event) => {
+        event.preventDefault();
+        window.hide();
+    });
     window.loadURL(rendererUrl('panel'));
     panelWindow = window;
     return window;
@@ -140,6 +144,10 @@ function registerIpc() {
         'discovery:markInterested': services.discovery.markInterested,
         'discovery:markNotInterested': services.discovery.markNotInterested,
         'discovery:addToJourney': services.discovery.addToJourney,
+        'autonomy:startExploration': services.autonomy.startExploration,
+        'autonomy:getCurrentCycle': services.autonomy.getCurrentCycle,
+        'autonomy:getCycleHistory': services.autonomy.getCycleHistory,
+        'autonomy:submitFeedback': services.autonomy.submitFeedback,
         'memory:createNode': services.memory.createNode,
         'memory:updateNode': services.memory.updateNode,
         'memory:deleteNode': services.memory.deleteNode,
@@ -154,24 +162,37 @@ function registerIpc() {
         'diary:generateDaily': services.diary.generateDaily,
         'tool:preview': services.tool.preview,
         'tool:execute': services.tool.execute,
+        'action:plan': services.action.plan,
+        'action:executePlan': services.action.executePlan,
+        'action:getPermissions': services.action.getPermissions,
+        'action:updatePermissions': services.action.updatePermissions,
         'ai:getSettings': services.ai.getSettings,
         'ai:updateSettings': services.ai.updateSettings,
         'ai:chat': services.ai.chat,
         'ai:generateDiscoveryReason': services.ai.generateDiscoveryReason,
         'ai:summarizeMemory': services.ai.summarizeMemory,
+        'ai:getDebugLog': services.ai.getDebugLog,
         'speech:getStatus': services.speech.getStatus,
+        'speech:getSettings': services.speech.getSettings,
+        'speech:updateSettings': services.speech.updateSettings,
         'speech:transcribe': services.speech.transcribe,
         'companion:turn': services.companion.turn,
+        'companion:getHistory': services.companion.getHistory,
+        'companion:appendMessage': services.companion.appendMessage,
+        'companion:clearHistory': services.companion.clearHistory,
         'companion:reportSessionPhase': services.companion.reportSessionPhase,
-        'companion:reportDragging': services.companion.reportDragging
+        'companion:reportDragging': services.companion.reportDragging,
+        'debug:resetData': services.debug.resetData
     };
     for (const [channel, handler] of Object.entries(routes)) {
         ipcMain.handle(channel, async (_event, input) => handler(input));
     }
     ipcMain.handle('window:openPanel', () => {
-        const window = panelWindow ?? createPanelWindow();
-        window.show();
-        window.focus();
+        if (!panelWindow || panelWindow.isDestroyed()) {
+            panelWindow = createPanelWindow();
+        }
+        panelWindow.show();
+        panelWindow.focus();
         return true;
     });
     ipcMain.handle('window:getBounds', (event) => getSenderWindow(event).getBounds());
@@ -228,6 +249,20 @@ function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
 }
 function startDiscoveryAutomation() {
+    services.attachAutonomyBroadcasters({
+        explorationEvent: (event) => {
+            companionWindow?.webContents.send('autonomy:explorationEvent', event);
+            panelWindow?.webContents.send('autonomy:explorationEvent', event);
+        },
+        characterState: (state) => {
+            companionWindow?.webContents.send('character:stateChanged', state);
+            panelWindow?.webContents.send('character:stateChanged', state);
+        },
+        discoveryAnnounce: (payload) => {
+            companionWindow?.webContents.send('discovery:announce', payload);
+            panelWindow?.webContents.send('discovery:announce', payload);
+        }
+    });
     discoveryShareOrchestrator = new DiscoveryShareOrchestrator({
         getState: () => services.db.getCharacterState(),
         saveState: (state) => services.db.saveCharacterState(state),
@@ -243,9 +278,16 @@ function startDiscoveryAutomation() {
         listUnannouncedShared: (limit) => services.db.listUnannouncedShared(limit),
         getDiscoveryScore: () => services.getEffectiveDiscoveryScore(),
         countSharedToday: () => services.db.countSharedToday(),
-        shareOrchestrator: discoveryShareOrchestrator
+        shareOrchestrator: discoveryShareOrchestrator,
+        runAutonomousCycle: () => services.autonomy.startExploration({ trigger: 'scheduled' }).then(() => undefined),
+        countAutonomousCyclesToday: () => services.countAutonomousCyclesToday(),
+        canRunAutonomousCycle: () => services.canAnnounceDiscovery()
     });
     discoveryScheduler.start();
+    services.onPerformanceListeners.push((script) => {
+        companionWindow?.webContents.send('action:performanceStarted', script);
+        panelWindow?.webContents.send('action:performanceStarted', script);
+    });
 }
 function stopDiscoveryAutomation() {
     discoveryScheduler?.stop();
@@ -257,6 +299,9 @@ app.whenReady().then(() => {
     try {
         services = new AppServices();
         registerIpc();
+        session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+            callback(permission === 'media');
+        });
         registerCompanionHotkey();
         createCompanionWindow();
         createPanelWindow();

@@ -1,0 +1,26 @@
+{
+  "name": "Book of Ann Volume 06 Companion Creator RFC",
+  "depends_on": "Volume 05",
+  "next": "Volume 07 Cloud & Companion Society",
+  "documents": [
+    "00_READ_ME_FIRST.md",
+    "01_CREATOR_ARCHITECTURE.md",
+    "02_CHARACTER_PACKAGE_SPEC.md",
+    "03_PERSONALITY_EDITOR.md",
+    "04_ASSET_MANIFEST.md",
+    "05_ANIMATION_MAPPING.md",
+    "06_VALIDATION_RULES.md",
+    "07_RUNTIME_LOADING.md",
+    "08_IMPORT_EXPORT.md",
+    "09_VERSIONING.md",
+    "10_MARKETPLACE_PLACEHOLDER.md",
+    "11_VOICE_AND_TTS_RESERVED.md",
+    "12_JSON_SCHEMA.md",
+    "13_API_CONTRACTS.md",
+    "14_MIGRATION_GUIDE.md",
+    "15_IMPLEMENTATION_TASKS.md",
+    "16_ACCEPTANCE_CRITERIA.md",
+    "17_ADR.md",
+    "18_NEXT_VOLUME.md"
+  ]
+}

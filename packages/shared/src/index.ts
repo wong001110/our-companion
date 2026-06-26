@@ -1,3 +1,8 @@
+export * from './models';
+export * from './interfaces';
+
+import type { ActionPermissionState, ActionPlan, ActionRunResult, PerformanceScript } from './models';
+
 export type CoreState =
   | 'idle'
   | 'walking'
@@ -117,7 +122,17 @@ export interface MemoryGraph {
 }
 
 export type DiscoverySource = 'github' | 'reddit' | 'hackernews' | 'youtube';
-export type DiscoveryStatus = 'candidate' | 'shared' | 'saved' | 'rejected' | 'ignored';
+export type DiscoveryStatus =
+  | 'new'
+  | 'candidate'
+  | 'queued'
+  | 'shared'
+  | 'viewed'
+  | 'saved'
+  | 'rejected'
+  | 'ignored'
+  | 'journey'
+  | 'archived';
 
 export interface NormalizedDiscovery {
   source: DiscoverySource;
@@ -141,12 +156,311 @@ export interface DiscoveryScores {
 
 export interface Discovery extends NormalizedDiscovery, DiscoveryScores {
   id: string;
+  signalId?: string;
+  origin?: import('./models').DiscoveryOrigin;
   status: DiscoveryStatus;
+  canonicalUrl?: string;
+  fingerprint?: string;
+  growthValue?: number;
+  confidenceScore?: number;
   whyThisMatters?: string;
   recommendedAction?: 'view' | 'save' | 'ignore' | 'add_to_journey';
   shortMessage?: string;
   sharedAt?: string;
   createdAt: string;
+  lastSeenAt?: string;
+}
+
+export type PatternType =
+  | 'repeated_topic'
+  | 'cross_source_trend'
+  | 'journey_alignment'
+  | 'user_momentum'
+  | 'fatigue_signal'
+  | 'revival_signal'
+  | 'repeated_theme'
+  | 'interest_cluster'
+  | 'abandoned_direction'
+  | 'returning_topic'
+  | 'contradiction'
+  | 'interest_shift'
+  | 'exploration_loop'
+  | 'aesthetic_preference'
+  | 'technical_preference';
+
+export interface PatternEvidence {
+  sourceType: 'memory' | 'journey_event' | 'conversation' | 'discovery_feedback' | 'saved_discovery' | 'dismissed_discovery';
+  sourceId?: string;
+  summary: string;
+  weight: number;
+}
+
+export interface Pattern {
+  id: string;
+  userId: string;
+  type: PatternType;
+  title: string;
+  summary: string;
+  description?: string;
+  relatedConceptIds?: string[];
+  relatedDiscoveryIds?: string[];
+  confidence: number;
+  strength: number;
+  freshness: number;
+  evidence: PatternEvidence[];
+  detectedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type InterestNodeType =
+  | 'topic'
+  | 'project'
+  | 'technology'
+  | 'aesthetic'
+  | 'problem'
+  | 'behavior'
+  | 'theme'
+  | 'question'
+  | 'opposing_view';
+
+export interface InterestNode {
+  id: string;
+  userId: string;
+  label: string;
+  description?: string;
+  type: InterestNodeType;
+  weight: number;
+  confidence: number;
+  freshness: number;
+  source: 'memory' | 'conversation' | 'journey' | 'discovery' | 'manual' | 'pattern' | 'diary';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InterestEdge {
+  id: string;
+  userId: string;
+  fromNodeId: string;
+  toNodeId: string;
+  relation:
+    | 'similar_to'
+    | 'part_of'
+    | 'adjacent_to'
+    | 'opposes'
+    | 'supports'
+    | 'inspired_by'
+    | 'used_for'
+    | 'evolved_into'
+    | 'frequently_appears_with';
+  weight: number;
+  confidence: number;
+  createdAt: string;
+}
+
+export interface InterestGraph {
+  userId: string;
+  nodes: InterestNode[];
+  edges: InterestEdge[];
+  recommendedExpansionPaths?: string[][];
+  updatedAt: string;
+}
+
+export type CuriositySource =
+  | 'memory_trigger'
+  | 'pattern_trigger'
+  | 'journey_trigger'
+  | 'novelty_trigger'
+  | 'contradiction_trigger'
+  | 'relationship_trigger'
+  | 'character_trigger';
+
+export type ExplorationType = 'similar' | 'adjacent' | 'opposite' | 'deepening' | 'challenge' | 'practical';
+
+export interface CuriosityTarget {
+  id: string;
+  userId: string;
+  companionId: string;
+  topic: string;
+  description: string;
+  source: CuriositySource;
+  explorationType: ExplorationType;
+  priority: number;
+  confidence: number;
+  reason: string;
+  expectedValue: string;
+  relatedMemoryIds?: string[];
+  relatedPatternIds?: string[];
+  relatedInterestNodeIds?: string[];
+  createdAt: string;
+}
+
+export type DiscoveryAgentType = 'scout' | 'research' | 'builder' | 'trend' | 'contrarian' | 'memory_scout';
+
+export interface ExplorationPlan {
+  id: string;
+  curiosityTargetId: string;
+  objective:
+    | 'find_new_examples'
+    | 'find_practical_references'
+    | 'find_related_research'
+    | 'find_trends'
+    | 'challenge_assumption'
+    | 'connect_to_memory';
+  agents: DiscoveryAgentType[];
+  searchQueries: string[];
+  constraints?: string[];
+  maxCandidatesPerAgent: number;
+  createdAt: string;
+}
+
+export interface DiscoveryCandidate {
+  id: string;
+  userId: string;
+  companionId: string;
+  title: string;
+  summary: string;
+  sourceType:
+    | 'github'
+    | 'article'
+    | 'blog'
+    | 'paper'
+    | 'video'
+    | 'website'
+    | 'product'
+    | 'community_discussion'
+    | 'internal_memory'
+    | 'generated_idea';
+  sourceUrl?: string;
+  sourceName?: string;
+  agentType: DiscoveryAgentType;
+  relatedCuriosityTargetId: string;
+  relevanceScore: number;
+  noveltyScore: number;
+  evidenceScore: number;
+  usefulnessScore: number;
+  fingerprint?: string;
+  rawEvidence?: string;
+  collectedAt: string;
+}
+
+export type CompanionInsightType =
+  | 'observation'
+  | 'pattern'
+  | 'hypothesis'
+  | 'question'
+  | 'opportunity'
+  | 'warning'
+  | 'contradiction'
+  | 'practical_next_step';
+
+export interface CompanionInsight {
+  id: string;
+  userId: string;
+  companionId: string;
+  title: string;
+  type: CompanionInsightType;
+  summary: string;
+  insight: string;
+  whyItMatters: string;
+  whyAnnFoundIt: string;
+  confidence: number;
+  novelty: number;
+  emotionalRelevance: number;
+  practicalRelevance: number;
+  supportingCandidateIds: string[];
+  relatedMemoryIds?: string[];
+  relatedPatternIds?: string[];
+  suggestedQuestion?: string;
+  suggestedAction?: string;
+  narration?: string;
+  createdAt: string;
+}
+
+export type ExplorationState =
+  | 'idle'
+  | 'curious'
+  | 'planning'
+  | 'exploring'
+  | 'collecting'
+  | 'synthesizing'
+  | 'returning'
+  | 'sharing'
+  | 'reflecting';
+
+export type ExplorationTrigger =
+  | 'scheduled'
+  | 'manual'
+  | 'memory_updated'
+  | 'pattern_detected'
+  | 'user_idle'
+  | 'relationship_moment'
+  | 'companion_curiosity';
+
+export interface ExplorationCycle {
+  id: string;
+  userId: string;
+  companionId: string;
+  trigger: ExplorationTrigger;
+  state: ExplorationState;
+  curiosityTargetIds: string[];
+  selectedCuriosityTargetId?: string;
+  explorationPlanId?: string;
+  discoveryCandidateIds: string[];
+  insightIds: string[];
+  selectedInsightId?: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export interface ExplorationLoopEvent {
+  id: string;
+  userId: string;
+  companionId: string;
+  cycleId: string;
+  state: ExplorationState;
+  message?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export type DiscoveryFeedbackValue = 'saved' | 'not_interested' | 'later' | 'talk_about_this' | 'opened_evidence';
+
+export interface DiscoveryFeedback {
+  id: string;
+  userId: string;
+  companionId: string;
+  cycleId: string;
+  insightId?: string;
+  discoveryCandidateId?: string;
+  value: DiscoveryFeedbackValue;
+  note?: string;
+  createdAt: string;
+}
+
+export interface StartExplorationInput {
+  userId?: string;
+  companionId?: string;
+  trigger?: ExplorationTrigger;
+}
+
+export interface SubmitDiscoveryFeedbackInput {
+  cycleId: string;
+  insightId?: string;
+  discoveryCandidateId?: string;
+  value: DiscoveryFeedbackValue;
+  note?: string;
+}
+
+export interface ExplorationCycleResult {
+  cycle: ExplorationCycle;
+  curiosityTargets: CuriosityTarget[];
+  selectedCuriosityTarget?: CuriosityTarget;
+  explorationPlan?: ExplorationPlan;
+  discoveryCandidates: DiscoveryCandidate[];
+  insights: CompanionInsight[];
+  selectedInsight?: CompanionInsight;
+  diaryEntryId?: string;
 }
 
 export interface Journey {
@@ -154,6 +468,9 @@ export interface Journey {
   title: string;
   description?: string;
   status: 'active' | 'completed' | 'paused';
+  conceptIds?: string[];
+  discoveryIds?: string[];
+  insightIds?: string[];
   startedAt: string;
   completedAt?: string;
   createdAt: string;
@@ -256,6 +573,7 @@ export type CompanionSessionPhase = 'idle' | 'listening' | 'thinking' | 'talking
 export interface TranscribeAudioInput {
   audio: ArrayBuffer;
   mimeType?: string;
+  language?: string;
 }
 
 export interface CompanionTurnInput {
@@ -264,10 +582,69 @@ export interface CompanionTurnInput {
   characterId?: string;
 }
 
+export const COMPANION_CHAT_RETENTION_DAYS = 7;
+export const COMPANION_CHAT_CONTEXT_LIMIT = 12;
+
+export type CompanionMessageRole = 'user' | 'assistant' | 'system';
+export type CompanionMessageSource = 'voice' | 'panel' | 'companion_text';
+export type CompanionMessageStatus = 'ok' | 'error' | 'empty_transcript';
+
+export interface CompanionMessage {
+  id: string;
+  characterId: string;
+  role: CompanionMessageRole;
+  content: string;
+  source: CompanionMessageSource;
+  status: CompanionMessageStatus;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface CompanionHistoryInput {
+  characterId?: string;
+  limit?: number;
+  source?: CompanionMessageSource | 'all';
+  status?: CompanionMessageStatus | 'all';
+  query?: string;
+}
+
+export interface CompanionAppendMessageInput {
+  characterId?: string;
+  role: CompanionMessageRole;
+  content: string;
+  source: CompanionMessageSource;
+  status?: CompanionMessageStatus;
+  metadata?: Record<string, unknown>;
+}
+
 export interface SpeechStatus {
   ready: boolean;
   model: string;
   error?: string;
+}
+
+export interface SpeechSettings {
+  useGpu: boolean;
+}
+
+export interface UpdateSpeechSettingsInput {
+  useGpu?: boolean;
+}
+
+export type CompanionReplyLanguage = 'en' | 'zh-CN';
+export type UiLang = 'en' | 'zh-CN';
+
+export interface AiDebugEntry {
+  id: string;
+  channel: 'chat' | 'turn' | 'discovery_reason';
+  source: string;
+  status: 'success' | 'error';
+  requestMessages: Array<{ role: string; content: string }>;
+  requestBody?: unknown;
+  rawResponse?: unknown;
+  content: string;
+  error?: string;
+  createdAt: string;
 }
 
 export interface AiSettings {
@@ -275,6 +652,8 @@ export interface AiSettings {
   model: string;
   endpoint: string;
   apiKeyConfigured: boolean;
+  replyLanguage: CompanionReplyLanguage;
+  uiLang: UiLang;
 }
 
 export interface UpdateAiSettingsInput {
@@ -282,6 +661,8 @@ export interface UpdateAiSettingsInput {
   endpoint?: string;
   apiKey?: string;
   clearApiKey?: boolean;
+  replyLanguage?: CompanionReplyLanguage;
+  uiLang?: UiLang;
 }
 
 export interface WindowBounds {
@@ -312,6 +693,25 @@ export interface UpdateCharacterBehaviorSettingsInput {
   resetMovement?: boolean;
 }
 
+export type DebugDataResetTarget =
+  | 'discoveries'
+  | 'memory'
+  | 'journeys'
+  | 'diary'
+  | 'chat'
+  | 'autonomy'
+  | 'all_debug_data';
+
+export interface DebugDataResetInput {
+  targets: DebugDataResetTarget[];
+}
+
+export interface DebugDataResetResult {
+  targets: DebugDataResetTarget[];
+  clearedTables: string[];
+  completedAt: string;
+}
+
 export interface DiscoveryReason {
   why_this_matters: string;
   recommended_action: 'view' | 'save' | 'ignore' | 'add_to_journey';
@@ -323,6 +723,8 @@ export interface DiscoveryAnnouncePayload {
   discoveryId: string;
   title: string;
   message: string;
+  cycleId?: string;
+  insightId?: string;
 }
 
 export interface MemorySummary {
@@ -358,6 +760,13 @@ export interface OurCompanionApi {
     addToJourney(input: AddDiscoveryToJourneyInput): Promise<{ journey: Journey; milestone: JourneyMilestone; memory: MemoryNode }>;
     onAnnounce(listener: (payload: DiscoveryAnnouncePayload) => void): () => void;
   };
+  autonomy: {
+    startExploration(input?: StartExplorationInput): Promise<ExplorationCycleResult>;
+    getCurrentCycle(): Promise<ExplorationCycle | undefined>;
+    getCycleHistory(input?: { limit?: number }): Promise<ExplorationCycle[]>;
+    submitFeedback(input: SubmitDiscoveryFeedbackInput): Promise<DiscoveryFeedback>;
+    onExplorationEvent(listener: (event: ExplorationLoopEvent) => void): () => void;
+  };
   memory: {
     createNode(input: CreateMemoryNodeInput): Promise<MemoryNode>;
     updateNode(input: UpdateMemoryNodeInput): Promise<MemoryNode>;
@@ -380,22 +789,38 @@ export interface OurCompanionApi {
     preview(input: ToolExecuteInput): Promise<ToolPreview>;
     execute(input: ToolExecuteInput): Promise<ToolExecutionResult>;
   };
+  action: {
+    plan(text: string): Promise<ActionPlan | undefined>;
+    executePlan(plan: ActionPlan): Promise<ActionRunResult>;
+    getPermissions(): Promise<ActionPermissionState>;
+    updatePermissions(state: ActionPermissionState): Promise<ActionPermissionState>;
+    onPerformance(listener: (script: PerformanceScript) => void): () => void;
+  };
   ai: {
     getSettings(): Promise<AiSettings>;
     updateSettings(input: UpdateAiSettingsInput): Promise<AiSettings>;
     chat(input: ChatInput): Promise<{ message: string }>;
     generateDiscoveryReason(input: { discovery: NormalizedDiscovery }): Promise<DiscoveryReason>;
     summarizeMemory(input: { content: string }): Promise<MemorySummary>;
+    getDebugLog(): Promise<AiDebugEntry[]>;
   };
   speech: {
-    transcribe(input: TranscribeAudioInput): Promise<{ text: string }>;
+    transcribe(input: TranscribeAudioInput): Promise<{ text: string; language?: string }>;
     getStatus(): Promise<SpeechStatus>;
+    getSettings(): Promise<SpeechSettings>;
+    updateSettings(input: UpdateSpeechSettingsInput): Promise<SpeechSettings>;
   };
   companion: {
     turn(input: CompanionTurnInput): Promise<{ message: string }>;
     onToggleListen(listener: () => void): () => void;
     reportSessionPhase(phase: CompanionSessionPhase): Promise<void>;
     reportDragging(input: { dragging: boolean }): Promise<void>;
+    getHistory(input?: CompanionHistoryInput): Promise<CompanionMessage[]>;
+    appendMessage(input: CompanionAppendMessageInput): Promise<CompanionMessage>;
+    clearHistory(input?: { characterId?: string }): Promise<void>;
+  };
+  debug: {
+    resetData(input: DebugDataResetInput): Promise<DebugDataResetResult>;
   };
   window: {
     openPanel(): Promise<boolean>;

@@ -1,4 +1,4 @@
-import type { CharacterProfile, Discovery, DiscoveryScores, DiscoverySource, NormalizedDiscovery } from '@our-companion/shared';
+import type { CaptureSignalInput, CharacterProfile, CuriosityTarget, Discovery, DiscoveryCandidate, DiscoveryOrigin, DiscoveryScores, DiscoverySource, DuplicateResult, ExplorationPlan, NormalizedSignal, NormalizedDiscovery, Signal, SignalEngine } from '@our-companion/shared';
 export interface DiscoveryFetchInput {
     query?: string;
     limit?: number;
@@ -15,9 +15,43 @@ export interface RankingContext {
     activeCharacter: Pick<CharacterProfile, 'expertise'>;
     seenUrls?: Set<string>;
 }
+export interface RunDiscoveryAgentsInput {
+    userId: string;
+    companionId: string;
+    curiosityTarget: CuriosityTarget;
+    explorationPlan: ExplorationPlan;
+    connectors?: DiscoveryConnector[];
+    memoryCandidates?: Array<{
+        title: string;
+        summary?: string;
+        url?: string;
+        tags?: string[];
+    }>;
+}
+export declare function normalizeDiscoveryUrl(url?: string): string | undefined;
+export declare function fingerprintDiscovery(input: {
+    title: string;
+    canonicalUrl?: string;
+    entities?: string[];
+    topics?: string[];
+    sourceType?: string;
+}): string;
+export declare function qualityScoreForSignal(signal: Pick<Signal, 'title' | 'summary' | 'url' | 'rawContent'>): number;
+export declare function captureSignal(input: CaptureSignalInput): Signal;
+export declare function normalizeSignal(signal: Signal): NormalizedSignal;
+export declare function createSignalEngine(): SignalEngine;
+export declare function signalFromNormalizedDiscovery(discovery: NormalizedDiscovery): Signal;
+export declare function passesDiscoveryQuality(signal: NormalizedSignal, minimumScore?: number): boolean;
+export declare function checkDuplicateDiscovery(candidate: Pick<Discovery, 'id' | 'canonicalUrl' | 'fingerprint' | 'title'>, existing: Array<Pick<Discovery, 'id' | 'canonicalUrl' | 'fingerprint' | 'title'>>): DuplicateResult;
+export declare function discoveryOriginForSignal(signal: Signal): DiscoveryOrigin;
 export declare function scoreDiscovery(item: NormalizedDiscovery, context: RankingContext): DiscoveryScores;
 export declare function deduplicateDiscoveries(items: NormalizedDiscovery[]): NormalizedDiscovery[];
 export declare function toDiscovery(item: NormalizedDiscovery, scores: DiscoveryScores): Discovery;
+export declare function discoveryFromSignal(signal: NormalizedSignal, scores: DiscoveryScores): Discovery | undefined;
 export declare function applyDailyCap(discoveries: Discovery[], alreadySharedToday: number, cap?: number): Discovery[];
 export declare function createFallbackConnector(source: DiscoverySource): DiscoveryConnector;
 export declare function runDiscoveryPipeline(connectors: DiscoveryConnector[], context: RankingContext, alreadySharedToday: number): Promise<Discovery[]>;
+export declare function planExploration(curiosityTarget: CuriosityTarget): ExplorationPlan;
+export declare function scoreCandidate(candidate: Pick<DiscoveryCandidate, 'relevanceScore' | 'noveltyScore' | 'evidenceScore' | 'usefulnessScore'>): number;
+export declare function deduplicateCandidates(candidates: DiscoveryCandidate[]): DiscoveryCandidate[];
+export declare function runDiscoveryAgents(input: RunDiscoveryAgentsInput): Promise<DiscoveryCandidate[]>;

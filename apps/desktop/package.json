@@ -8,18 +8,37 @@
     "dev": "concurrently -k \"vite --config vite.renderer.config.ts --host 127.0.0.1 --port 5173 --strictPort\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "vite build --config vite.renderer.config.ts && vite build --config vite.main.config.ts && vite build --config vite.preload.config.ts",
     "start": "electron .",
+    "postinstall": "node ../../scripts/patch-whisper-addon.mjs && electron-rebuild -f -w @kutalia/whisper-node-addon",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
+  "build": {
+    "mac": {
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Ann needs the microphone to hear your voice."
+      }
+    }
+  },
   "dependencies": {
+    "@our-companion/action-engine": "0.1.0",
     "@our-companion/ai-engine": "0.1.0",
     "@our-companion/character-engine": "0.1.0",
+    "@our-companion/curiosity-engine": "0.1.0",
     "@our-companion/database": "0.1.0",
+    "@our-companion/decision-engine": "0.1.0",
     "@our-companion/diary-engine": "0.1.0",
     "@our-companion/discovery-engine": "0.1.0",
+    "@our-companion/event-bus": "0.1.0",
+    "@our-companion/insight-engine": "0.1.0",
     "@our-companion/journey-engine": "0.1.0",
     "@our-companion/memory-engine": "0.1.0",
+    "@our-companion/pattern-engine": "0.1.0",
     "@our-companion/shared": "0.1.0",
-    "@our-companion/tool-engine": "0.1.0",
-    "@our-companion/speech-engine": "0.1.0"
+    "@our-companion/speech-engine": "0.1.0",
+    "@our-companion/tool-engine": "0.1.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
+    "electron": "^37.10.3"
   }
 }

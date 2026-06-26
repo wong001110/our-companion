@@ -1,0 +1,25 @@
+{
+  "name": "Book of Ann Volume 03",
+  "depends_on": "Volume 02",
+  "next": "Volume 04",
+  "documents": [
+    "00_READ_ME_FIRST.md",
+    "01_CHARACTER_OVERVIEW.md",
+    "02_PERSONALITY_SYSTEM.md",
+    "03_EMOTION_SYSTEM.md",
+    "04_BEHAVIOUR_SYSTEM.md",
+    "05_ANIMATION_STATE_MACHINE.md",
+    "06_ANIMATION_POLICY.md",
+    "07_SPEECH_SYSTEM.md",
+    "08_DISCOVERY_PRESENTATION.md",
+    "09_NOTIFICATION_POLICY.md",
+    "10_DESKTOP_BEHAVIOUR.md",
+    "11_ACTION_PERFORMANCE.md",
+    "12_EVENT_MAPPING.md",
+    "13_DATA_MODELS.md",
+    "14_IMPLEMENTATION_TASKS.md",
+    "15_ARGENT.md",
+    "16_TEST_CASES.md",
+    "17_NEXT_VOLUME.md"
+  ]
+}

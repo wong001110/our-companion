@@ -2,6 +2,7 @@ import type { BrowserWindow } from 'electron';
 import { advanceCharacter, applyEmotionEvent } from '@our-companion/character-engine';
 import type { CharacterRuntimeState, Discovery, DiscoveryReason, NormalizedDiscovery } from '@our-companion/shared';
 import { nowIso } from '@our-companion/shared';
+import { createEvent, globalEventBus, type EventBus } from '@our-companion/event-bus';
 
 export interface DiscoveryAnnouncePayload {
   discoveryId: string;
@@ -17,6 +18,7 @@ export interface DiscoveryShareOrchestratorDeps {
   canAnnounce: () => boolean;
   shouldInterruptShare: () => boolean;
   getCompanionWindow: () => BrowserWindow | undefined;
+  eventBus?: EventBus;
 }
 
 const STEP_DELAY_MS = 1200;
@@ -48,10 +50,20 @@ export class DiscoveryShareOrchestrator {
 
   private broadcastState(state: CharacterRuntimeState): void {
     this.deps.getCompanionWindow()?.webContents.send('character:stateChanged', state);
+    this.emitEvent('AnnStateChanged', {
+      characterId: state.characterId,
+      coreState: state.coreState,
+      intent: state.intent
+    });
   }
 
   private broadcastAnnounce(payload: DiscoveryAnnouncePayload): void {
     this.deps.getCompanionWindow()?.webContents.send('discovery:announce', payload);
+    this.emitEvent('AnnMessageQueued', { ...payload });
+  }
+
+  private emitEvent(type: string, payload: Record<string, unknown>): void {
+    (this.deps.eventBus ?? globalEventBus).emit(createEvent({ type, source: 'discovery-share-orchestrator', payload }));
   }
 
   private async processQueue(): Promise<void> {

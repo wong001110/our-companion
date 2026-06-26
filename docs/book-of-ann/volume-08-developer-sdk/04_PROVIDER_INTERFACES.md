@@ -1,0 +1,7 @@
+# Provider Interfaces
+
+ILlmProvider
+IEmbeddingProvider
+ISourceProvider
+ICommandExecutor
+IPluginLifecycle

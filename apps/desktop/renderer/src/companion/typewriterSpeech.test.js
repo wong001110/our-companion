@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { getMsPerWord, splitWords } from './typewriterSpeech';
+import { getMsPerCharacter, splitCharacters } from './typewriterSpeech';
 describe('typewriterSpeech helpers', () => {
-    it('splits words for reveal pacing', () => {
-        expect(splitWords('Hello there Ann')).toEqual(['Hello', 'there', 'Ann']);
-        expect(splitWords('   ')).toEqual([]);
+    it('splits characters for letter-by-letter reveal', () => {
+        expect(splitCharacters('Back')).toEqual(['B', 'a', 'c', 'k']);
+        expect(splitCharacters('Hi Ann')).toEqual(['H', 'i', ' ', 'A', 'n', 'n']);
     });
-    it('enforces a minimum per-word delay', () => {
-        expect(getMsPerWord('one two three four')).toBeGreaterThanOrEqual(35);
+    it('enforces a minimum per-character delay', () => {
+        expect(getMsPerCharacter('one two three four')).toBeGreaterThanOrEqual(24);
     });
 });

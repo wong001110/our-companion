@@ -68,6 +68,30 @@ export function previewTool(input) {
         userFacingSummary: summaries[input.toolName]
     };
 }
+/**
+ * Creates a CommandExecutor wrapping previewTool / executeTool behind the
+ * shared interface so the action orchestrator can call it generically.
+ */
+export function createToolExecutor(adapters) {
+    return {
+        async preview(toolName, args) {
+            const input = { toolName: toolName, args };
+            return previewTool(input);
+        },
+        async execute(toolName, args) {
+            const input = { toolName: toolName, args };
+            return executeTool(input, adapters);
+        },
+    };
+}
+/**
+ * Executes a single ActionStep (from action-engine) using the given adapters.
+ * Maps the generic step shape to ToolExecuteInput.
+ */
+export async function executeActionStep(toolName, args, adapters) {
+    const input = { toolName: toolName, args };
+    return executeTool(input, adapters);
+}
 export async function executeTool(input, adapters) {
     const preview = previewTool(input);
     if (!preview.allowed)

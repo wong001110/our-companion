@@ -22,3 +22,31 @@ export function generateDailyDiary(context) {
         createdAt: nowIso()
     };
 }
+export function generateGrowthReflection(input) {
+    const activeKnowledge = input.knowledge.filter((item) => item.status === 'active');
+    const changedUnderstanding = activeKnowledge.slice(0, 5).map((item) => item.title);
+    const milestoneSummary = input.milestones.length > 0
+        ? `The journey gained ${input.milestones.length} meaningful milestone${input.milestones.length === 1 ? '' : 's'}.`
+        : 'The journey did not need a milestone today.';
+    return {
+        id: createId('reflection'),
+        title: input.period === 'weekly' ? 'Weekly growth reflection' : 'Daily growth reflection',
+        summary: `${activeKnowledge.length} active knowledge item${activeKnowledge.length === 1 ? '' : 's'} shaped Ann's understanding. ${milestoneSummary}`,
+        changedUnderstanding,
+        whyItMattered: changedUnderstanding.length > 0
+            ? 'These changes matter because Ann can connect future discoveries to persistent understanding instead of raw activity.'
+            : 'Quiet periods matter too; Ann preserved attention instead of inventing progress.',
+        relatedKnowledgeIds: activeKnowledge.map((item) => item.id),
+        createdAt: nowIso()
+    };
+}
+export function diaryFromReflection(reflection, characterId = DEFAULT_CHARACTER_ID) {
+    return {
+        id: createId('diary'),
+        characterId,
+        type: 'daily',
+        title: reflection.title,
+        content: [reflection.summary, ...reflection.changedUnderstanding.map((item) => `- ${item}`), reflection.whyItMattered].join('\n'),
+        createdAt: nowIso()
+    };
+}

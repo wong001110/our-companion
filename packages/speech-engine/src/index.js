@@ -1,10 +1,12 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createId, nowIso } from '@our-companion/shared';
 import { prepareWavFromRecording } from './audioConvert.js';
 import { DEFAULT_MODEL_FILE, getWhisperPaths, getWhisperStatus } from './paths.js';
 import { transcribeAudioFile } from './whisperRunner.js';
 export { DEFAULT_MODEL_FILE, getWhisperPaths, getWhisperStatus, prepareWavFromRecording, transcribeAudioFile };
+export { ELECTRON_APP_NAME, getDefaultUserDataRoot } from './userDataPath.js';
 function extensionForMime(mimeType) {
     if (!mimeType)
         return '.webm';
@@ -30,8 +32,9 @@ export async function transcribeRecording(input) {
         await writeFile(inputPath, bytes);
         await prepareWavFromRecording(inputPath, wavPath);
         return await transcribeAudioFile(wavPath, {
-            binaryPath: status.binaryPath,
-            modelPath: status.modelPath
+            modelPath: status.modelPath,
+            language: input.language,
+            useGpu: input.useGpu
         });
     }
     finally {
@@ -41,4 +44,47 @@ export async function transcribeRecording(input) {
 export async function readTranscriptFromOutputFile(outputPath) {
     const content = await readFile(outputPath, 'utf8');
     return content.trim();
+}
+function truncateSentence(value, maxLength = 120) {
+    const trimmed = value.trim().replace(/\s+/g, ' ');
+    if (trimmed.length <= maxLength)
+        return trimmed;
+    return `${trimmed.slice(0, maxLength - 1).trim()}...`;
+}
+export function formatSpeechPayload(input) {
+    const summary = input.discovery?.summary ?? input.discovery?.title ?? input.decision.reason;
+    const prefix = input.characterState.mood === 'curious'
+        ? 'I found a thread worth tugging: '
+        : input.characterState.mood === 'happy'
+            ? 'This looks promising: '
+            : input.characterState.mood === 'focused'
+                ? 'A useful signal: '
+                : '';
+    return {
+        id: createId('speech'),
+        text: truncateSentence(`${prefix}${summary}`),
+        mood: input.characterState.mood,
+        actionLabel: input.decision.action === 'speak' ? 'view' : undefined,
+        createdAt: nowIso()
+    };
+}
+export function createDiscoveryPresentationCard(discovery) {
+    return {
+        id: discovery.id,
+        title: discovery.title,
+        summary: discovery.summary ?? discovery.title,
+        source: discovery.source,
+        actions: ['view', 'save', 'ignore', 'add_to_journey']
+    };
+}
+export function createNotificationPayload(input) {
+    const shouldNotify = input.decision.action === 'speak' && !input.focusMode;
+    return {
+        id: createId('notification'),
+        title: input.title,
+        body: truncateSentence(input.body, 160),
+        shouldNotify,
+        reason: shouldNotify ? 'Decision selected speak and focus mode is off.' : 'Notification suppressed by decision or focus mode.',
+        createdAt: nowIso()
+    };
 }

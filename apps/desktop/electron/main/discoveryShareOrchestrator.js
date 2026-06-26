@@ -1,5 +1,6 @@
 import { advanceCharacter, applyEmotionEvent } from '@our-companion/character-engine';
 import { nowIso } from '@our-companion/shared';
+import { createEvent, globalEventBus } from '@our-companion/event-bus';
 const STEP_DELAY_MS = 1200;
 function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -26,9 +27,18 @@ export class DiscoveryShareOrchestrator {
     }
     broadcastState(state) {
         this.deps.getCompanionWindow()?.webContents.send('character:stateChanged', state);
+        this.emitEvent('AnnStateChanged', {
+            characterId: state.characterId,
+            coreState: state.coreState,
+            intent: state.intent
+        });
     }
     broadcastAnnounce(payload) {
         this.deps.getCompanionWindow()?.webContents.send('discovery:announce', payload);
+        this.emitEvent('AnnMessageQueued', { ...payload });
+    }
+    emitEvent(type, payload) {
+        (this.deps.eventBus ?? globalEventBus).emit(createEvent({ type, source: 'discovery-share-orchestrator', payload }));
     }
     async processQueue() {
         if (this.processing || this.stopped)

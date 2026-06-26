@@ -38,6 +38,11 @@ export class DiscoveryScheduler {
             return;
         try {
             if (this.deps.countSharedToday() < DAILY_SHARE_CAP) {
+                if (this.deps.runAutonomousCycle &&
+                    (this.deps.countAutonomousCyclesToday?.() ?? 1) < 1 &&
+                    (this.deps.canRunAutonomousCycle?.() ?? true)) {
+                    await this.deps.runAutonomousCycle();
+                }
                 const result = await this.deps.refresh();
                 const toAnnounce = result.newlyInserted.filter((discovery) => discovery.status === 'shared');
                 if (toAnnounce.length > 0) {

@@ -1,17 +1,26 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  ActionPermissionState,
+  ActionPlan,
   AddDiscoveryToJourneyInput,
   AddJourneyMilestoneInput,
   CharacterRuntimeState,
   ChatInput,
+  ExplorationLoopEvent,
+  CompanionAppendMessageInput,
+  CompanionHistoryInput,
   CompanionSessionPhase,
   CreateJourneyInput,
   CreateMemoryEdgeInput,
   CreateMemoryNodeInput,
+  DebugDataResetInput,
   DiscoveryAnnouncePayload,
   DiscoveryFeedInput,
   DiscoverySource,
   OurCompanionApi,
+  PerformanceScript,
+  StartExplorationInput,
+  SubmitDiscoveryFeedbackInput,
   ToolExecuteInput,
   UpdateMemoryNodeInput
 } from '@our-companion/shared';
@@ -49,6 +58,18 @@ const api: OurCompanionApi = {
       return () => ipcRenderer.removeListener(channel, handler);
     }
   },
+  autonomy: {
+    startExploration: (input?: StartExplorationInput) => invoke('autonomy:startExploration', input),
+    getCurrentCycle: () => invoke('autonomy:getCurrentCycle'),
+    getCycleHistory: (input?: { limit?: number }) => invoke('autonomy:getCycleHistory', input),
+    submitFeedback: (input: SubmitDiscoveryFeedbackInput) => invoke('autonomy:submitFeedback', input),
+    onExplorationEvent: (listener: (event: ExplorationLoopEvent) => void) => {
+      const channel = 'autonomy:explorationEvent';
+      const handler = (_event: Electron.IpcRendererEvent, payload: ExplorationLoopEvent) => listener(payload);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    }
+  },
   memory: {
     createNode: (input: CreateMemoryNodeInput) => invoke('memory:createNode', input),
     updateNode: (input: UpdateMemoryNodeInput) => invoke('memory:updateNode', input),
@@ -71,19 +92,37 @@ const api: OurCompanionApi = {
     preview: (input: ToolExecuteInput) => invoke('tool:preview', input),
     execute: (input: ToolExecuteInput) => invoke('tool:execute', input)
   },
+  action: {
+    plan: (text: string) => invoke('action:plan', text),
+    executePlan: (plan: ActionPlan) => invoke('action:executePlan', plan),
+    getPermissions: () => invoke('action:getPermissions'),
+    updatePermissions: (state: ActionPermissionState) => invoke('action:updatePermissions', state),
+    onPerformance: (listener: (script: PerformanceScript) => void) => {
+      const channel = 'action:performanceStarted';
+      const handler = (_event: Electron.IpcRendererEvent, script: PerformanceScript) => listener(script);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    }
+  },
   ai: {
     getSettings: () => invoke('ai:getSettings'),
     updateSettings: (input) => invoke('ai:updateSettings', input),
     chat: (input: ChatInput) => invoke('ai:chat', input),
     generateDiscoveryReason: (input) => invoke('ai:generateDiscoveryReason', input),
-    summarizeMemory: (input) => invoke('ai:summarizeMemory', input)
+    summarizeMemory: (input) => invoke('ai:summarizeMemory', input),
+    getDebugLog: () => invoke('ai:getDebugLog')
   },
   speech: {
     getStatus: () => invoke('speech:getStatus'),
+    getSettings: () => invoke('speech:getSettings'),
+    updateSettings: (input) => invoke('speech:updateSettings', input),
     transcribe: (input) => invoke('speech:transcribe', input)
   },
   companion: {
     turn: (input) => invoke('companion:turn', input),
+    getHistory: (input?: CompanionHistoryInput) => invoke('companion:getHistory', input),
+    appendMessage: (input: CompanionAppendMessageInput) => invoke('companion:appendMessage', input),
+    clearHistory: (input?: { characterId?: string }) => invoke('companion:clearHistory', input),
     reportSessionPhase: (phase: CompanionSessionPhase) => invoke('companion:reportSessionPhase', phase),
     reportDragging: (input: { dragging: boolean }) => invoke('companion:reportDragging', input),
     onToggleListen: (listener: () => void) => {
@@ -92,6 +131,9 @@ const api: OurCompanionApi = {
       ipcRenderer.on(channel, handler);
       return () => ipcRenderer.removeListener(channel, handler);
     }
+  },
+  debug: {
+    resetData: (input: DebugDataResetInput) => invoke('debug:resetData', input)
   },
   window: {
     openPanel: () => invoke('window:openPanel'),

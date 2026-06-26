@@ -1,4 +1,4 @@
-import type { DiaryEntry, Discovery, JourneyMilestone, MemoryNode } from '@our-companion/shared';
+import type { DiaryEntry, Discovery, JourneyMilestone, Knowledge, MemoryNode, Reflection } from '@our-companion/shared';
 import { createId, DEFAULT_CHARACTER_ID, nowIso } from '@our-companion/shared';
 
 export interface DiaryContext {
@@ -30,6 +30,43 @@ export function generateDailyDiary(context: DiaryContext): DiaryEntry {
     type: 'daily',
     title: 'Quiet progress',
     content: lines.join('\n'),
+    createdAt: nowIso()
+  };
+}
+
+export function generateGrowthReflection(input: {
+  knowledge: Knowledge[];
+  milestones: JourneyMilestone[];
+  period?: 'daily' | 'weekly';
+}): Reflection {
+  const activeKnowledge = input.knowledge.filter((item) => item.status === 'active');
+  const changedUnderstanding = activeKnowledge.slice(0, 5).map((item) => item.title);
+  const milestoneSummary =
+    input.milestones.length > 0
+      ? `The journey gained ${input.milestones.length} meaningful milestone${input.milestones.length === 1 ? '' : 's'}.`
+      : 'The journey did not need a milestone today.';
+
+  return {
+    id: createId('reflection'),
+    title: input.period === 'weekly' ? 'Weekly growth reflection' : 'Daily growth reflection',
+    summary: `${activeKnowledge.length} active knowledge item${activeKnowledge.length === 1 ? '' : 's'} shaped Ann's understanding. ${milestoneSummary}`,
+    changedUnderstanding,
+    whyItMattered:
+      changedUnderstanding.length > 0
+        ? 'These changes matter because Ann can connect future discoveries to persistent understanding instead of raw activity.'
+        : 'Quiet periods matter too; Ann preserved attention instead of inventing progress.',
+    relatedKnowledgeIds: activeKnowledge.map((item) => item.id),
+    createdAt: nowIso()
+  };
+}
+
+export function diaryFromReflection(reflection: Reflection, characterId = DEFAULT_CHARACTER_ID): DiaryEntry {
+  return {
+    id: createId('diary'),
+    characterId,
+    type: 'daily',
+    title: reflection.title,
+    content: [reflection.summary, ...reflection.changedUnderstanding.map((item) => `- ${item}`), reflection.whyItMattered].join('\n'),
     createdAt: nowIso()
   };
 }

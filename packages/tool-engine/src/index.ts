@@ -85,6 +85,39 @@ export interface ToolAdapters {
   browserNavigation(action: string, url?: string): Promise<unknown>;
 }
 
+/**
+ * Creates a CommandExecutor wrapping previewTool / executeTool behind the
+ * shared interface so the action orchestrator can call it generically.
+ */
+export function createToolExecutor(adapters: ToolAdapters): {
+  preview(toolName: string, args: Record<string, unknown>): Promise<ToolPreview>;
+  execute(toolName: string, args: Record<string, unknown>): Promise<{ status: string; errorMessage?: string; blockedReason?: string }>;
+} {
+  return {
+    async preview(toolName, args) {
+      const input: ToolExecuteInput = { toolName: toolName as ToolName, args };
+      return previewTool(input);
+    },
+    async execute(toolName, args) {
+      const input: ToolExecuteInput = { toolName: toolName as ToolName, args };
+      return executeTool(input, adapters);
+    },
+  };
+}
+
+/**
+ * Executes a single ActionStep (from action-engine) using the given adapters.
+ * Maps the generic step shape to ToolExecuteInput.
+ */
+export async function executeActionStep(
+  toolName: string,
+  args: Record<string, unknown>,
+  adapters: ToolAdapters,
+): Promise<{ status: string; errorMessage?: string; blockedReason?: string }> {
+  const input: ToolExecuteInput = { toolName: toolName as ToolName, args };
+  return executeTool(input, adapters);
+}
+
 export async function executeTool(input: ToolExecuteInput, adapters: ToolAdapters): Promise<ToolExecutionResult> {
   const preview = previewTool(input);
   if (!preview.allowed) return { ...preview, status: 'blocked' };

@@ -11,6 +11,14 @@ export function createJourney(input) {
         updatedAt: timestamp
     };
 }
+export function createJourneyFromConcepts(input) {
+    return {
+        ...createJourney({ title: input.title, description: input.description }),
+        conceptIds: input.concepts.map((concept) => concept.id),
+        discoveryIds: input.discoveryIds ?? [],
+        insightIds: input.insightIds ?? []
+    };
+}
 export function createJourneyMilestone(input) {
     const timestamp = nowIso();
     return {
@@ -22,4 +30,12 @@ export function createJourneyMilestone(input) {
         occurredAt: timestamp,
         createdAt: timestamp
     };
+}
+export function createMilestoneFromInsight(input) {
+    return createJourneyMilestone({
+        journeyId: input.journeyId,
+        title: `Insight: ${input.insight.title}`,
+        summary: input.insight.explanation,
+        type: 'reflection'
+    });
 }

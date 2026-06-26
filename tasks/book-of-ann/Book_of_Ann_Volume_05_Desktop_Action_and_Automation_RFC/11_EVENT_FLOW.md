@@ -1,0 +1,10 @@
+Events
+
+ActionRequested
+ActionPlanned
+PermissionGranted
+CommandStarted
+CommandCompleted
+PerformanceStarted
+PerformanceCompleted
+ActionFailed

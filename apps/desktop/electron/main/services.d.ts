@@ -1,16 +1,22 @@
 import { DatabaseService } from '@our-companion/database';
-import type { AddDiscoveryToJourneyInput, AddJourneyMilestoneInput, AiSettings, CharacterBehaviorSettings, ChatInput, CompanionSessionPhase, CompanionTurnInput, CreateJourneyInput, CreateMemoryEdgeInput, CreateMemoryNodeInput, Discovery, DiscoveryFeedInput, DiscoverySource, NormalizedDiscovery, ToolExecuteInput, TranscribeAudioInput, UpdateAiSettingsInput, UpdateCharacterBehaviorSettingsInput, UpdateMemoryNodeInput } from '@our-companion/shared';
+import type { ActionPermissionState, ActionPlan, AddDiscoveryToJourneyInput, AddJourneyMilestoneInput, AiDebugEntry, AiSettings, CharacterBehaviorSettings, CharacterRuntimeState, ChatInput, CompanionAppendMessageInput, CompanionHistoryInput, CompanionMessage, CompanionSessionPhase, CompanionTurnInput, CreateJourneyInput, CreateMemoryEdgeInput, CreateMemoryNodeInput, DebugDataResetInput, Discovery, DiscoveryAnnouncePayload, DiscoveryFeedInput, DiscoveryFeedback, DiscoverySource, ExplorationCycle, ExplorationCycleResult, ExplorationLoopEvent, NormalizedDiscovery, PerformanceScript, SpeechSettings, StartExplorationInput, SubmitDiscoveryFeedbackInput, ToolExecuteInput, TranscribeAudioInput, UpdateAiSettingsInput, UpdateCharacterBehaviorSettingsInput, UpdateSpeechSettingsInput, UpdateMemoryNodeInput } from '@our-companion/shared';
+import { type EventBus } from '@our-companion/event-bus';
 import type { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 import type { DiscoveryRefreshResult } from './discoveryScheduler';
 export declare class AppServices {
+    private readonly eventBus;
     readonly db: DatabaseService;
     readonly databaseMode: 'persistent' | 'memory';
     companionSessionPhase: CompanionSessionPhase;
     companionDragging: boolean;
     private shareOrchestrator?;
-    constructor(dbPath?: string);
+    private explorationBroadcaster?;
+    private characterBroadcaster?;
+    private discoveryAnnounceBroadcaster?;
+    private debugLog;
+    constructor(dbPath?: string, eventBus?: EventBus);
     character: {
-        getState: (characterId?: string) => Promise<import("@our-companion/shared").CharacterRuntimeState>;
+        getState: (characterId?: string) => Promise<CharacterRuntimeState>;
         getActive: () => Promise<import("@our-companion/shared").CharacterProfile[]>;
         getBehaviorSettings: () => Promise<CharacterBehaviorSettings>;
         updateBehaviorSettings: (input: UpdateCharacterBehaviorSettingsInput) => Promise<CharacterBehaviorSettings>;
@@ -19,11 +25,11 @@ export declare class AppServices {
             characterId?: string;
             x: number;
             y: number;
-        }) => Promise<import("@our-companion/shared").CharacterRuntimeState>;
+        }) => Promise<CharacterRuntimeState>;
         triggerBehavior: (input: {
             characterId?: string;
             event: string;
-        }) => Promise<import("@our-companion/shared").CharacterRuntimeState>;
+        }) => Promise<CharacterRuntimeState>;
     };
     discovery: {
         getFeed: (input?: DiscoveryFeedInput) => Promise<Discovery[]>;
@@ -37,6 +43,14 @@ export declare class AppServices {
             milestone: import("@our-companion/shared").JourneyMilestone;
             memory: import("@our-companion/shared").MemoryNode;
         }>;
+    };
+    autonomy: {
+        startExploration: (input?: StartExplorationInput) => Promise<ExplorationCycleResult>;
+        getCurrentCycle: () => Promise<ExplorationCycle | undefined>;
+        getCycleHistory: (input?: {
+            limit?: number;
+        }) => Promise<ExplorationCycle[]>;
+        submitFeedback: (input: SubmitDiscoveryFeedbackInput) => Promise<DiscoveryFeedback>;
     };
     memory: {
         createNode: (input: CreateMemoryNodeInput) => Promise<import("@our-companion/shared").MemoryNode>;
@@ -68,10 +82,19 @@ export declare class AppServices {
             characterId?: string;
         }) => Promise<import("@our-companion/shared").DiaryEntry>;
     };
+    onPerformanceListeners: Array<(script: PerformanceScript) => void>;
     tool: {
         preview: (input: ToolExecuteInput) => Promise<import("@our-companion/shared").ToolPreview>;
         execute: (input: ToolExecuteInput) => Promise<import("@our-companion/shared").ToolExecutionResult>;
     };
+    action: {
+        plan: (text: string) => Promise<ActionPlan | undefined>;
+        executePlan: (plan: ActionPlan) => Promise<import("@our-companion/shared").ActionRunResult>;
+        getPermissions: () => Promise<ActionPermissionState>;
+        updatePermissions: (state: ActionPermissionState) => Promise<ActionPermissionState>;
+    };
+    private pushDebugEntry;
+    private buildChatMessages;
     ai: {
         getSettings: () => Promise<AiSettings>;
         updateSettings: (input: UpdateAiSettingsInput) => Promise<AiSettings>;
@@ -80,12 +103,7 @@ export declare class AppServices {
         }>;
         generateDiscoveryReason: (input: {
             discovery: NormalizedDiscovery;
-        }) => Promise<{
-            why_this_matters: string;
-            recommended_action: "view";
-            short_message: string;
-            tags: string[];
-        }>;
+        }) => Promise<import("@our-companion/shared").DiscoveryReason>;
         summarizeMemory: (input: {
             content: string;
         }) => Promise<{
@@ -94,6 +112,7 @@ export declare class AppServices {
             summary: string;
             importance_score: number;
         }>;
+        getDebugLog: () => Promise<AiDebugEntry[]>;
     };
     speech: {
         getStatus: () => Promise<{
@@ -101,28 +120,56 @@ export declare class AppServices {
             model: string;
             error: string | undefined;
         }>;
+        getSettings: () => Promise<SpeechSettings>;
+        updateSettings: (input: UpdateSpeechSettingsInput) => Promise<SpeechSettings>;
         transcribe: (input: TranscribeAudioInput) => Promise<{
             text: string;
+            language: string | undefined;
         }>;
     };
     companion: {
         turn: (input: CompanionTurnInput) => Promise<{
             message: string;
         }>;
+        getHistory: (input?: CompanionHistoryInput) => Promise<CompanionMessage[]>;
+        appendMessage: (input: CompanionAppendMessageInput) => Promise<CompanionMessage>;
+        clearHistory: (input?: {
+            characterId?: string;
+        }) => Promise<void>;
         reportSessionPhase: (phase: CompanionSessionPhase) => Promise<void>;
         reportDragging: (input: {
             dragging: boolean;
         }) => Promise<void>;
     };
+    debug: {
+        resetData: (input: DebugDataResetInput) => Promise<import("@our-companion/shared").DebugDataResetResult>;
+    };
     attachShareOrchestrator(orchestrator: DiscoveryShareOrchestrator): void;
+    attachAutonomyBroadcasters(callbacks: {
+        explorationEvent: (event: ExplorationLoopEvent) => void;
+        characterState: (state: CharacterRuntimeState) => void;
+        discoveryAnnounce: (payload: DiscoveryAnnouncePayload) => void;
+    }): void;
+    private setAutonomyCharacterState;
+    private recordExplorationEvent;
+    private saveCycleState;
+    private messageForExplorationState;
+    private runAutonomousExploration;
+    private submitDiscoveryFeedback;
     runDiscoveryRefresh(sources?: DiscoverySource[]): Promise<DiscoveryRefreshResult>;
     getEffectiveDiscoveryScore(): number;
     canAnnounceDiscovery(): boolean;
     shouldInterruptShare(): boolean;
+    countAutonomousCyclesToday(): number;
     private queueDiscoveryAnnouncements;
+    emitFoundationEvent(type: string, source: string, payload?: Record<string, unknown>, correlationId?: string): void;
+    private emitDecisionEventsForDiscovery;
     private getStoredAiSettings;
     private getAiSettings;
     private updateAiSettings;
+    private getStoredSpeechSettings;
+    private getSpeechSettings;
+    private updateSpeechSettings;
     private createDeepSeekClient;
     private getCharacterBehaviorSettings;
     private updateCharacterBehaviorSettings;
