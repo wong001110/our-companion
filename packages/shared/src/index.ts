@@ -1,7 +1,7 @@
 export * from './models';
 export * from './interfaces';
 
-import type { ActionPermissionState, ActionPlan, ActionRunResult, PerformanceScript } from './models';
+import type { ActionPermissionState, ActionPlan, ActionRunResult, BaseEvent, PerformanceScript } from './models';
 
 export type CoreState =
   | 'idle'
@@ -712,6 +712,33 @@ export interface DebugDataResetResult {
   completedAt: string;
 }
 
+export interface FoundationEventLogInput {
+  limit?: number;
+  source?: string;
+  type?: string;
+}
+
+export interface EngineSnapshotInput {
+  userId?: string;
+  cycleId?: string;
+}
+
+export interface EngineSnapshot {
+  capturedAt: string;
+  characterState?: CharacterRuntimeState;
+  currentCycle?: ExplorationCycle;
+  recentCycles: ExplorationCycle[];
+  patterns: Pattern[];
+  interestGraph: InterestGraph;
+  curiosityTargets: CuriosityTarget[];
+  explorationPlan?: ExplorationPlan;
+  discoveryCandidates: DiscoveryCandidate[];
+  insights: CompanionInsight[];
+  explorationEvents: ExplorationLoopEvent[];
+  recentDiscoveries: Discovery[];
+  actionPermissions: ActionPermissionState;
+}
+
 export interface DiscoveryReason {
   why_this_matters: string;
   recommended_action: 'view' | 'save' | 'ignore' | 'add_to_journey';
@@ -821,6 +848,9 @@ export interface OurCompanionApi {
   };
   debug: {
     resetData(input: DebugDataResetInput): Promise<DebugDataResetResult>;
+    getFoundationLog(input?: FoundationEventLogInput): Promise<BaseEvent[]>;
+    getEngineSnapshot(input?: EngineSnapshotInput): Promise<EngineSnapshot>;
+    onFoundationEvent(listener: (event: BaseEvent) => void): () => void;
   };
   window: {
     openPanel(): Promise<boolean>;

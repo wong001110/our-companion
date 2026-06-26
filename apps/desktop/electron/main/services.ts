@@ -60,10 +60,12 @@ import type {
   DiscoveryFeedInput,
   DiscoveryFeedback,
   DiscoverySource,
+  EngineSnapshotInput,
   ExplorationCycle,
   ExplorationCycleResult,
   ExplorationLoopEvent,
   ExplorationState,
+  FoundationEventLogInput,
   NormalizedDiscovery,
   PerformanceScript,
   SpeechSettings,
@@ -77,7 +79,7 @@ import type {
   UpdateSpeechSettingsInput,
   UpdateMemoryNodeInput
 } from '@our-companion/shared';
-import { COMPANION_CHAT_CONTEXT_LIMIT, DEFAULT_CHARACTER_ID, createId, nowIso } from '@our-companion/shared';
+import { COMPANION_CHAT_CONTEXT_LIMIT, DEFAULT_CHARACTER_ID, createId, nowIso, type BaseEvent } from '@our-companion/shared';
 import { detectPatterns } from '@our-companion/pattern-engine';
 import { executeActionStep, executeTool, previewTool } from '@our-companion/tool-engine';
 import { createElectronToolAdapters } from './platform/electronCommandAdapter';
@@ -85,8 +87,10 @@ import { getWhisperStatus, transcribeRecording } from '@our-companion/speech-eng
 import { createEvent, globalEventBus, type EventBus } from '@our-companion/event-bus';
 import type { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 import type { DiscoveryRefreshResult } from './discoveryScheduler';
+import { buildEngineSnapshot } from './engineSnapshot';
 
 const DEBUG_LOG_MAX = 100;
+const FOUNDATION_EVENT_LOG_MAX = 200;
 
 export class AppServices {
   readonly db: DatabaseService;
@@ -97,7 +101,9 @@ export class AppServices {
   private explorationBroadcaster?: (event: ExplorationLoopEvent) => void;
   private characterBroadcaster?: (state: CharacterRuntimeState) => void;
   private discoveryAnnounceBroadcaster?: (payload: DiscoveryAnnouncePayload) => void;
+  private foundationEventBroadcaster?: (event: BaseEvent) => void;
   private debugLog: AiDebugEntry[] = [];
+  private foundationEventLog: BaseEvent[] = [];
 
   constructor(
     dbPath = path.join(app.getPath('userData'), 'our-companion.db'),
@@ -618,7 +624,9 @@ export class AppServices {
   };
 
   debug = {
-    resetData: async (input: DebugDataResetInput) => this.db.resetDebugData(input)
+    resetData: async (input: DebugDataResetInput) => this.db.resetDebugData(input),
+    getFoundationLog: async (input: FoundationEventLogInput = {}) => this.getFoundationLog(input),
+    getEngineSnapshot: async (input: EngineSnapshotInput = {}) => buildEngineSnapshot(this.db, input)
   };
 
   attachShareOrchestrator(orchestrator: DiscoveryShareOrchestrator): void {
@@ -629,10 +637,12 @@ export class AppServices {
     explorationEvent: (event: ExplorationLoopEvent) => void;
     characterState: (state: CharacterRuntimeState) => void;
     discoveryAnnounce: (payload: DiscoveryAnnouncePayload) => void;
+    foundationEvent?: (event: BaseEvent) => void;
   }): void {
     this.explorationBroadcaster = callbacks.explorationEvent;
     this.characterBroadcaster = callbacks.characterState;
     this.discoveryAnnounceBroadcaster = callbacks.discoveryAnnounce;
+    this.foundationEventBroadcaster = callbacks.foundationEvent;
   }
 
   private setAutonomyCharacterState(coreState: CharacterRuntimeState['coreState'], intent: CharacterRuntimeState['intent']): CharacterRuntimeState {
@@ -1024,7 +1034,21 @@ export class AppServices {
     payload?: Record<string, unknown>,
     correlationId?: string
   ): void {
-    this.eventBus.emit(createEvent({ type, source, payload, correlationId }));
+    const event = createEvent({ type, source, payload, correlationId });
+    this.eventBus.emit(event);
+    this.foundationEventLog.unshift(event);
+    if (this.foundationEventLog.length > FOUNDATION_EVENT_LOG_MAX) {
+      this.foundationEventLog.length = FOUNDATION_EVENT_LOG_MAX;
+    }
+    this.foundationEventBroadcaster?.(event);
+  }
+
+  private getFoundationLog(input: FoundationEventLogInput = {}): BaseEvent[] {
+    const limit = input.limit ?? 100;
+    return this.foundationEventLog
+      .filter((event) => (input.source ? event.source === input.source : true))
+      .filter((event) => (input.type ? event.type === input.type : true))
+      .slice(0, limit);
   }
 
   private emitDecisionEventsForDiscovery(discovery: Discovery, correlationId: string): void {

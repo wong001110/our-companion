@@ -51,6 +51,11 @@ export declare class DatabaseService {
     getCurrentExplorationCycle(): ExplorationCycle | undefined;
     listExplorationCycles(limit?: number): ExplorationCycle[];
     insertExplorationEvent(event: ExplorationLoopEvent): ExplorationLoopEvent;
+    listCuriosityTargets(userId?: string, limit?: number): CuriosityTarget[];
+    listDiscoveryCandidates(userId?: string, limit?: number): DiscoveryCandidate[];
+    listCompanionInsights(userId?: string, limit?: number): CompanionInsight[];
+    listExplorationEvents(cycleId?: string, limit?: number): ExplorationLoopEvent[];
+    listExplorationEventsForCycle(cycleId: string): ExplorationLoopEvent[];
     insertDiscoveryFeedback(feedback: DiscoveryFeedback): DiscoveryFeedback;
     listDiscoveryFeedback(limit?: number): DiscoveryFeedback[];
     insertJourney(journey: Journey): Journey;

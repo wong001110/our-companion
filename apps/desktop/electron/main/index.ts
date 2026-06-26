@@ -195,7 +195,9 @@ function registerIpc(): void {
     'companion:clearHistory': services.companion.clearHistory,
     'companion:reportSessionPhase': services.companion.reportSessionPhase,
     'companion:reportDragging': services.companion.reportDragging,
-    'debug:resetData': services.debug.resetData
+    'debug:resetData': services.debug.resetData,
+    'debug:getFoundationLog': services.debug.getFoundationLog,
+    'debug:getEngineSnapshot': services.debug.getEngineSnapshot
   } as const;
 
   for (const [channel, handler] of Object.entries(routes)) {
@@ -282,6 +284,10 @@ function startDiscoveryAutomation(): void {
     discoveryAnnounce: (payload) => {
       companionWindow?.webContents.send('discovery:announce', payload);
       panelWindow?.webContents.send('discovery:announce', payload);
+    },
+    foundationEvent: (event) => {
+      companionWindow?.webContents.send('debug:foundationEvent', event);
+      panelWindow?.webContents.send('debug:foundationEvent', event);
     }
   });
 

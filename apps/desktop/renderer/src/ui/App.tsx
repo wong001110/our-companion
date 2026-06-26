@@ -38,6 +38,7 @@ import { getIdleRotationDelay, isIdleState, selectWeightedIdleAnimation } from '
 import { useAudioCapture } from '../companion/useAudioCapture';
 import { TypewriterSpeechBubble } from '../companion/TypewriterSpeechBubble';
 import { useCompanionSession } from '../companion/useCompanionSession';
+import { EngineObservatory } from '../features/developer/EngineObservatory';
 import { CompanionCanvas, type AnimationName, type CompanionDragPoint } from './CompanionCanvas';
 
 type Tab = 'home' | 'discovery' | 'journey' | 'memory' | 'chat' | 'ask' | 'settings';
@@ -1928,6 +1929,7 @@ function DeveloperPreview({
         <p>Previewing: {devAnimation === 'live' ? 'engine state' : readable(devAnimation)}</p>
       </div>
       <BehaviorPanel settings={settings} onRefresh={onRefresh} />
+      <EngineObservatory />
       <DebugAudioTestPanel />
       <DebugAiLog />
       <DebugDataResetPanel onRefresh={onRefresh} />

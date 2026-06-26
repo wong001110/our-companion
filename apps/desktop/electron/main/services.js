@@ -19,7 +19,9 @@ import { executeActionStep, executeTool, previewTool } from '@our-companion/tool
 import { createElectronToolAdapters } from './platform/electronCommandAdapter';
 import { getWhisperStatus, transcribeRecording } from '@our-companion/speech-engine';
 import { createEvent, globalEventBus } from '@our-companion/event-bus';
+import { buildEngineSnapshot } from './engineSnapshot';
 const DEBUG_LOG_MAX = 100;
+const FOUNDATION_EVENT_LOG_MAX = 200;
 export class AppServices {
     eventBus;
     db;
@@ -30,7 +32,9 @@ export class AppServices {
     explorationBroadcaster;
     characterBroadcaster;
     discoveryAnnounceBroadcaster;
+    foundationEventBroadcaster;
     debugLog = [];
+    foundationEventLog = [];
     constructor(dbPath = path.join(app.getPath('userData'), 'our-companion.db'), eventBus = globalEventBus) {
         this.eventBus = eventBus;
         const userDataDir = app.getPath('userData');
@@ -522,7 +526,9 @@ export class AppServices {
         }
     };
     debug = {
-        resetData: async (input) => this.db.resetDebugData(input)
+        resetData: async (input) => this.db.resetDebugData(input),
+        getFoundationLog: async (input = {}) => this.getFoundationLog(input),
+        getEngineSnapshot: async (input = {}) => buildEngineSnapshot(this.db, input)
     };
     attachShareOrchestrator(orchestrator) {
         this.shareOrchestrator = orchestrator;
@@ -531,6 +537,7 @@ export class AppServices {
         this.explorationBroadcaster = callbacks.explorationEvent;
         this.characterBroadcaster = callbacks.characterState;
         this.discoveryAnnounceBroadcaster = callbacks.discoveryAnnounce;
+        this.foundationEventBroadcaster = callbacks.foundationEvent;
     }
     setAutonomyCharacterState(coreState, intent) {
         const state = this.db.getCharacterState(DEFAULT_CHARACTER_ID);
@@ -877,7 +884,20 @@ export class AppServices {
         }
     }
     emitFoundationEvent(type, source, payload, correlationId) {
-        this.eventBus.emit(createEvent({ type, source, payload, correlationId }));
+        const event = createEvent({ type, source, payload, correlationId });
+        this.eventBus.emit(event);
+        this.foundationEventLog.unshift(event);
+        if (this.foundationEventLog.length > FOUNDATION_EVENT_LOG_MAX) {
+            this.foundationEventLog.length = FOUNDATION_EVENT_LOG_MAX;
+        }
+        this.foundationEventBroadcaster?.(event);
+    }
+    getFoundationLog(input = {}) {
+        const limit = input.limit ?? 100;
+        return this.foundationEventLog
+            .filter((event) => (input.source ? event.source === input.source : true))
+            .filter((event) => (input.type ? event.type === input.type : true))
+            .slice(0, limit);
     }
     emitDecisionEventsForDiscovery(discovery, correlationId) {
         const recentActions = this.db

@@ -106,7 +106,15 @@ const api = {
         }
     },
     debug: {
-        resetData: (input) => invoke('debug:resetData', input)
+        resetData: (input) => invoke('debug:resetData', input),
+        getFoundationLog: (input) => invoke('debug:getFoundationLog', input),
+        getEngineSnapshot: (input) => invoke('debug:getEngineSnapshot', input),
+        onFoundationEvent: (listener) => {
+            const channel = 'debug:foundationEvent';
+            const handler = (_event, payload) => listener(payload);
+            ipcRenderer.on(channel, handler);
+            return () => ipcRenderer.removeListener(channel, handler);
+        }
     },
     window: {
         openPanel: () => invoke('window:openPanel'),

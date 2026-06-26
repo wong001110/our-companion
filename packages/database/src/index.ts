@@ -623,6 +623,41 @@ export class DatabaseService {
     return event;
   }
 
+  listCuriosityTargets(userId = 'default', limit = 20): CuriosityTarget[] {
+    return (this.db
+      .prepare('SELECT * FROM curiosity_targets WHERE user_id = ? ORDER BY priority DESC LIMIT ?')
+      .all(userId, limit) as Array<Record<string, unknown>>).map(mapCuriosityTarget);
+  }
+
+  listDiscoveryCandidates(userId = 'default', limit = 20): DiscoveryCandidate[] {
+    return (this.db
+      .prepare('SELECT * FROM discovery_candidates WHERE user_id = ? ORDER BY collected_at DESC LIMIT ?')
+      .all(userId, limit) as Array<Record<string, unknown>>).map(mapDiscoveryCandidate);
+  }
+
+  listCompanionInsights(userId = 'default', limit = 20): CompanionInsight[] {
+    return (this.db
+      .prepare('SELECT * FROM companion_insights WHERE user_id = ? ORDER BY created_at DESC LIMIT ?')
+      .all(userId, limit) as Array<Record<string, unknown>>).map(mapCompanionInsight);
+  }
+
+  listExplorationEvents(cycleId?: string, limit = 50): ExplorationLoopEvent[] {
+    if (cycleId) {
+      return (this.db
+        .prepare('SELECT * FROM exploration_loop_events WHERE cycle_id = ? ORDER BY created_at DESC LIMIT ?')
+        .all(cycleId, limit) as Array<Record<string, unknown>>).map(mapExplorationLoopEvent);
+    }
+    return (this.db
+      .prepare('SELECT * FROM exploration_loop_events ORDER BY created_at DESC LIMIT ?')
+      .all(limit) as Array<Record<string, unknown>>).map(mapExplorationLoopEvent);
+  }
+
+  listExplorationEventsForCycle(cycleId: string): ExplorationLoopEvent[] {
+    return (this.db
+      .prepare('SELECT * FROM exploration_loop_events WHERE cycle_id = ? ORDER BY created_at ASC')
+      .all(cycleId) as Array<Record<string, unknown>>).map(mapExplorationLoopEvent);
+  }
+
   insertDiscoveryFeedback(feedback: DiscoveryFeedback): DiscoveryFeedback {
     this.db
       .prepare(
@@ -1102,6 +1137,19 @@ function mapExplorationCycle(row: Record<string, unknown>): ExplorationCycle {
     selectedInsightId: row.selected_insight_id ? String(row.selected_insight_id) : undefined,
     startedAt: String(row.started_at),
     completedAt: row.completed_at ? String(row.completed_at) : undefined
+  };
+}
+
+function mapExplorationLoopEvent(row: Record<string, unknown>): ExplorationLoopEvent {
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    companionId: String(row.companion_id),
+    cycleId: String(row.cycle_id),
+    state: row.state as ExplorationLoopEvent['state'],
+    message: row.message ? String(row.message) : undefined,
+    metadata: row.metadata_json ? (JSON.parse(String(row.metadata_json)) as Record<string, unknown>) : undefined,
+    createdAt: String(row.created_at)
   };
 }
 

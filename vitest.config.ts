@@ -9,6 +9,7 @@ export default defineConfig({
     include: ['packages/**/*.test.ts', 'apps/**/*.test.ts']
   },
   resolve: {
+    extensions: ['.ts', '.tsx', '.mts', '.mjs', '.js', '.jsx', '.json'],
     alias: {
       '@our-companion/shared': path.resolve(root, 'packages/shared/src/index.ts'),
       '@our-companion/character-engine': path.resolve(root, 'packages/character-engine/src/index.ts'),

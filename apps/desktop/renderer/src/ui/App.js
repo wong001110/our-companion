@@ -7,6 +7,7 @@ import { getIdleRotationDelay, isIdleState, selectWeightedIdleAnimation } from '
 import { useAudioCapture } from '../companion/useAudioCapture';
 import { TypewriterSpeechBubble } from '../companion/TypewriterSpeechBubble';
 import { useCompanionSession } from '../companion/useCompanionSession';
+import { EngineObservatory } from '../features/developer/EngineObservatory';
 import { CompanionCanvas } from './CompanionCanvas';
 const LangContext = createContext('en');
 function useLang() { return useContext(LangContext); }
@@ -981,7 +982,7 @@ function formatDuration(durationMs) {
     return `${(durationMs / 1000).toFixed(1)}s`;
 }
 function DeveloperPreview({ state, devAnimation, animationOverride, onAnimationChange, settings, onRefresh }) {
-    return (_jsxs("div", { className: "developer-tools", children: [_jsx("div", { className: "developer-preview-canvas", children: _jsx(CompanionCanvas, { state: state, compact: true, animationOverride: animationOverride }) }), _jsxs("div", { className: "dev-animation-panel", children: [_jsx("p", { className: "eyebrow", children: "Developer use" }), _jsx("h2", { children: "Animation review" }), _jsx("div", { className: "segmented-control", "aria-label": "Preview Ann animation", children: devAnimations.map((animation) => (_jsx("button", { className: devAnimation === animation ? 'active' : '', onClick: () => onAnimationChange(animation), children: animation === 'live' ? 'Live' : readable(animation) }, animation))) }), _jsxs("p", { children: ["Previewing: ", devAnimation === 'live' ? 'engine state' : readable(devAnimation)] })] }), _jsx(BehaviorPanel, { settings: settings, onRefresh: onRefresh }), _jsx(DebugAudioTestPanel, {}), _jsx(DebugAiLog, {}), _jsx(DebugDataResetPanel, { onRefresh: onRefresh })] }));
+    return (_jsxs("div", { className: "developer-tools", children: [_jsx("div", { className: "developer-preview-canvas", children: _jsx(CompanionCanvas, { state: state, compact: true, animationOverride: animationOverride }) }), _jsxs("div", { className: "dev-animation-panel", children: [_jsx("p", { className: "eyebrow", children: "Developer use" }), _jsx("h2", { children: "Animation review" }), _jsx("div", { className: "segmented-control", "aria-label": "Preview Ann animation", children: devAnimations.map((animation) => (_jsx("button", { className: devAnimation === animation ? 'active' : '', onClick: () => onAnimationChange(animation), children: animation === 'live' ? 'Live' : readable(animation) }, animation))) }), _jsxs("p", { children: ["Previewing: ", devAnimation === 'live' ? 'engine state' : readable(devAnimation)] })] }), _jsx(BehaviorPanel, { settings: settings, onRefresh: onRefresh }), _jsx(EngineObservatory, {}), _jsx(DebugAudioTestPanel, {}), _jsx(DebugAiLog, {}), _jsx(DebugDataResetPanel, { onRefresh: onRefresh })] }));
 }
 function tabLabel(tab, lang) {
     const map = {

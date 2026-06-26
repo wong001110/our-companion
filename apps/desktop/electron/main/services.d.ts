@@ -1,5 +1,6 @@
 import { DatabaseService } from '@our-companion/database';
-import type { ActionPermissionState, ActionPlan, AddDiscoveryToJourneyInput, AddJourneyMilestoneInput, AiDebugEntry, AiSettings, CharacterBehaviorSettings, CharacterRuntimeState, ChatInput, CompanionAppendMessageInput, CompanionHistoryInput, CompanionMessage, CompanionSessionPhase, CompanionTurnInput, CreateJourneyInput, CreateMemoryEdgeInput, CreateMemoryNodeInput, DebugDataResetInput, Discovery, DiscoveryAnnouncePayload, DiscoveryFeedInput, DiscoveryFeedback, DiscoverySource, ExplorationCycle, ExplorationCycleResult, ExplorationLoopEvent, NormalizedDiscovery, PerformanceScript, SpeechSettings, StartExplorationInput, SubmitDiscoveryFeedbackInput, ToolExecuteInput, TranscribeAudioInput, UpdateAiSettingsInput, UpdateCharacterBehaviorSettingsInput, UpdateSpeechSettingsInput, UpdateMemoryNodeInput } from '@our-companion/shared';
+import type { ActionPermissionState, ActionPlan, AddDiscoveryToJourneyInput, AddJourneyMilestoneInput, AiDebugEntry, AiSettings, CharacterBehaviorSettings, CharacterRuntimeState, ChatInput, CompanionAppendMessageInput, CompanionHistoryInput, CompanionMessage, CompanionSessionPhase, CompanionTurnInput, CreateJourneyInput, CreateMemoryEdgeInput, CreateMemoryNodeInput, DebugDataResetInput, Discovery, DiscoveryAnnouncePayload, DiscoveryFeedInput, DiscoveryFeedback, DiscoverySource, EngineSnapshotInput, ExplorationCycle, ExplorationCycleResult, ExplorationLoopEvent, FoundationEventLogInput, NormalizedDiscovery, PerformanceScript, SpeechSettings, StartExplorationInput, SubmitDiscoveryFeedbackInput, ToolExecuteInput, TranscribeAudioInput, UpdateAiSettingsInput, UpdateCharacterBehaviorSettingsInput, UpdateSpeechSettingsInput, UpdateMemoryNodeInput } from '@our-companion/shared';
+import { type BaseEvent } from '@our-companion/shared';
 import { type EventBus } from '@our-companion/event-bus';
 import type { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 import type { DiscoveryRefreshResult } from './discoveryScheduler';
@@ -13,7 +14,9 @@ export declare class AppServices {
     private explorationBroadcaster?;
     private characterBroadcaster?;
     private discoveryAnnounceBroadcaster?;
+    private foundationEventBroadcaster?;
     private debugLog;
+    private foundationEventLog;
     constructor(dbPath?: string, eventBus?: EventBus);
     character: {
         getState: (characterId?: string) => Promise<CharacterRuntimeState>;
@@ -143,12 +146,15 @@ export declare class AppServices {
     };
     debug: {
         resetData: (input: DebugDataResetInput) => Promise<import("@our-companion/shared").DebugDataResetResult>;
+        getFoundationLog: (input?: FoundationEventLogInput) => Promise<BaseEvent[]>;
+        getEngineSnapshot: (input?: EngineSnapshotInput) => Promise<import("@our-companion/shared").EngineSnapshot>;
     };
     attachShareOrchestrator(orchestrator: DiscoveryShareOrchestrator): void;
     attachAutonomyBroadcasters(callbacks: {
         explorationEvent: (event: ExplorationLoopEvent) => void;
         characterState: (state: CharacterRuntimeState) => void;
         discoveryAnnounce: (payload: DiscoveryAnnouncePayload) => void;
+        foundationEvent?: (event: BaseEvent) => void;
     }): void;
     private setAutonomyCharacterState;
     private recordExplorationEvent;
@@ -163,6 +169,7 @@ export declare class AppServices {
     countAutonomousCyclesToday(): number;
     private queueDiscoveryAnnouncements;
     emitFoundationEvent(type: string, source: string, payload?: Record<string, unknown>, correlationId?: string): void;
+    private getFoundationLog;
     private emitDecisionEventsForDiscovery;
     private getStoredAiSettings;
     private getAiSettings;

@@ -329,6 +329,36 @@ export class DatabaseService {
             .run(event.id, event.userId, event.companionId, event.cycleId, event.state, event.message ?? null, event.metadata ? JSON.stringify(event.metadata) : null, event.createdAt);
         return event;
     }
+    listCuriosityTargets(userId = 'default', limit = 20) {
+        return this.db
+            .prepare('SELECT * FROM curiosity_targets WHERE user_id = ? ORDER BY priority DESC LIMIT ?')
+            .all(userId, limit).map(mapCuriosityTarget);
+    }
+    listDiscoveryCandidates(userId = 'default', limit = 20) {
+        return this.db
+            .prepare('SELECT * FROM discovery_candidates WHERE user_id = ? ORDER BY collected_at DESC LIMIT ?')
+            .all(userId, limit).map(mapDiscoveryCandidate);
+    }
+    listCompanionInsights(userId = 'default', limit = 20) {
+        return this.db
+            .prepare('SELECT * FROM companion_insights WHERE user_id = ? ORDER BY created_at DESC LIMIT ?')
+            .all(userId, limit).map(mapCompanionInsight);
+    }
+    listExplorationEvents(cycleId, limit = 50) {
+        if (cycleId) {
+            return this.db
+                .prepare('SELECT * FROM exploration_loop_events WHERE cycle_id = ? ORDER BY created_at DESC LIMIT ?')
+                .all(cycleId, limit).map(mapExplorationLoopEvent);
+        }
+        return this.db
+            .prepare('SELECT * FROM exploration_loop_events ORDER BY created_at DESC LIMIT ?')
+            .all(limit).map(mapExplorationLoopEvent);
+    }
+    listExplorationEventsForCycle(cycleId) {
+        return this.db
+            .prepare('SELECT * FROM exploration_loop_events WHERE cycle_id = ? ORDER BY created_at ASC')
+            .all(cycleId).map(mapExplorationLoopEvent);
+    }
     insertDiscoveryFeedback(feedback) {
         this.db
             .prepare(`INSERT INTO discovery_feedback
@@ -714,6 +744,18 @@ function mapExplorationCycle(row) {
         selectedInsightId: row.selected_insight_id ? String(row.selected_insight_id) : undefined,
         startedAt: String(row.started_at),
         completedAt: row.completed_at ? String(row.completed_at) : undefined
+    };
+}
+function mapExplorationLoopEvent(row) {
+    return {
+        id: String(row.id),
+        userId: String(row.user_id),
+        companionId: String(row.companion_id),
+        cycleId: String(row.cycle_id),
+        state: row.state,
+        message: row.message ? String(row.message) : undefined,
+        metadata: row.metadata_json ? JSON.parse(String(row.metadata_json)) : undefined,
+        createdAt: String(row.created_at)
     };
 }
 function mapDiscoveryFeedback(row) {

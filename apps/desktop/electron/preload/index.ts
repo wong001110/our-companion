@@ -4,6 +4,7 @@ import type {
   ActionPlan,
   AddDiscoveryToJourneyInput,
   AddJourneyMilestoneInput,
+  BaseEvent,
   CharacterRuntimeState,
   ChatInput,
   ExplorationLoopEvent,
@@ -17,6 +18,8 @@ import type {
   DiscoveryAnnouncePayload,
   DiscoveryFeedInput,
   DiscoverySource,
+  EngineSnapshotInput,
+  FoundationEventLogInput,
   OurCompanionApi,
   PerformanceScript,
   StartExplorationInput,
@@ -133,7 +136,15 @@ const api: OurCompanionApi = {
     }
   },
   debug: {
-    resetData: (input: DebugDataResetInput) => invoke('debug:resetData', input)
+    resetData: (input: DebugDataResetInput) => invoke('debug:resetData', input),
+    getFoundationLog: (input?: FoundationEventLogInput) => invoke('debug:getFoundationLog', input),
+    getEngineSnapshot: (input?: EngineSnapshotInput) => invoke('debug:getEngineSnapshot', input),
+    onFoundationEvent: (listener: (event: BaseEvent) => void) => {
+      const channel = 'debug:foundationEvent';
+      const handler = (_event: Electron.IpcRendererEvent, payload: BaseEvent) => listener(payload);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    }
   },
   window: {
     openPanel: () => invoke('window:openPanel'),
