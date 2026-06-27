@@ -4,7 +4,7 @@
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
-    "@our-companion/shared": "0.1.0",
+    "@our-companion/shared": "workspace:*",
     "@kutalia/whisper-node-addon": "^1.1.0",
     "ffmpeg-static": "^5.2.0"
   }

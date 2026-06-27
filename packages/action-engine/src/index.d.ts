@@ -45,3 +45,6 @@ export declare function runActionPlan(plan: ActionPlan, deps: ActionOrchestrator
  * Delegates to character-engine's planPerformanceScript — never executes commands.
  */
 export declare function directPerformance(actionId: string, outcome: 'success' | 'failure'): PerformanceScript;
+export { createActionPlan, approvePlan, cancelPlan } from './action-planner';
+export { assessRiskLevel, checkPermissions, requiresConfirmation } from './permission-checker';
+export { executeActionPlan } from './action-executor';

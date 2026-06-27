@@ -29,7 +29,6 @@ import type {
 } from '@our-companion/shared';
 import type { ActionPermissionState } from '@our-companion/shared';
 import { COMPANION_CHAT_RETENTION_DAYS, DEFAULT_CHARACTER_ID, createId, nowIso } from '@our-companion/shared';
-import { createInitialCharacterState } from '@our-companion/character-engine';
 import { sqliteSchema } from './schema';
 
 const DISCOVERY_ANNOUNCED_KEY = 'discovery.announcedIds';
@@ -79,7 +78,7 @@ export class DatabaseService {
         JSON.stringify({ movement: 25, discovery: 35, curiosity: 80, focus: 85, shyness: 70, reflection: 95 })
       );
 
-    const state = createInitialCharacterState(DEFAULT_CHARACTER_ID);
+    const state = createInitialCharacterStateLocal(DEFAULT_CHARACTER_ID);
     this.saveCharacterState(state);
   }
 
@@ -87,7 +86,7 @@ export class DatabaseService {
     const row = this.db
       .prepare('SELECT * FROM character_state WHERE character_id = ?')
       .get(characterId) as Record<string, unknown> | undefined;
-    if (!row) return createInitialCharacterState(characterId);
+    if (!row) return createInitialCharacterStateLocal(characterId);
     return {
       characterId: String(row.character_id),
       coreState: row.core_state as CharacterRuntimeState['coreState'],
@@ -1214,5 +1213,21 @@ function mapCompanionMessage(row: Record<string, unknown>): CompanionMessage {
     status: row.status as CompanionMessage['status'],
     metadata: row.metadata_json ? (JSON.parse(String(row.metadata_json)) as Record<string, unknown>) : undefined,
     createdAt: String(row.created_at)
+  };
+}
+
+function createInitialCharacterStateLocal(characterId: string) {
+  return {
+    characterId,
+    coreState: 'idle' as const,
+    intent: 'waiting' as const,
+    emotion: {
+      neutral: 70, curious: 35, happy: 20, excited: 0,
+      shy: 45, confused: 0, focused: 50, tired: 10,
+      proud: 0, concerned: 0
+    },
+    position: { x: 120, y: 320 },
+    lastActivityAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   };
 }

@@ -486,4 +486,40 @@ export function planPerformanceScript(actionId: string, outcome: 'success' | 'fa
   };
 }
 
-export { getDiscoveryFetchDelay, getDiscoveryFetchDelayRange, DISCOVERY_STARTUP_DELAY_MS } from './discoveryTiming';
+export { getDiscoveryFetchDelay, getDiscoveryFetchDelayRange, DISCOVERY_STARTUP_DELAY_MS } from '@our-companion/discovery-engine';
+
+// ============================================================================
+// Character Runtime V2 — Runtime and presence
+// ============================================================================
+
+export {
+  createRuntimeContext,
+  canTransition,
+  transitionRuntimeState,
+  submitBehaviour,
+  startBehaviour,
+  completeBehaviour,
+  interruptBehaviour,
+  neutralEmotionState,
+  CharacterRuntime,
+} from './runtime/character-runtime';
+
+export type {
+  CharacterRuntimeDeps,
+  CharacterDiscoveryReadyInput,
+  CharacterFeedbackInput,
+  CharacterUserCommandInput,
+  CharacterSettleInput,
+} from './runtime/character-runtime';
+
+export {
+  createAttentionState,
+  determinePresenceMode,
+  shouldAllowInterruption,
+  updateAttentionState,
+} from './presence/presence-system';
+
+export {
+  PerformanceEngine,
+  defaultPerformanceScripts,
+} from './performance/performance-engine';

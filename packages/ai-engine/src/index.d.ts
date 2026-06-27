@@ -9,17 +9,23 @@ export declare const discoveryReasonSchema: z.ZodObject<{
     why_this_matters: z.ZodString;
     recommended_action: z.ZodEnum<["view", "save", "ignore", "add_to_journey"]>;
     short_message: z.ZodString;
+    card_title: z.ZodOptional<z.ZodString>;
+    card_body: z.ZodOptional<z.ZodString>;
     tags: z.ZodArray<z.ZodString, "many">;
 }, "strip", z.ZodTypeAny, {
     why_this_matters: string;
     recommended_action: "view" | "save" | "ignore" | "add_to_journey";
     short_message: string;
     tags: string[];
+    card_title?: string | undefined;
+    card_body?: string | undefined;
 }, {
     why_this_matters: string;
     recommended_action: "view" | "save" | "ignore" | "add_to_journey";
     short_message: string;
     tags: string[];
+    card_title?: string | undefined;
+    card_body?: string | undefined;
 }>;
 export declare const memorySummarySchema: z.ZodObject<{
     type: z.ZodEnum<["topic", "discovery", "resource", "question", "decision", "outcome"]>;

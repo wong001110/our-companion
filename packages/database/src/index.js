@@ -1,6 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
 import { COMPANION_CHAT_RETENTION_DAYS, DEFAULT_CHARACTER_ID, createId, nowIso } from '@our-companion/shared';
-import { createInitialCharacterState } from '@our-companion/character-engine';
 import { sqliteSchema } from './schema';
 const DISCOVERY_ANNOUNCED_KEY = 'discovery.announcedIds';
 const MAX_ANNOUNCED_DISCOVERY_IDS = 500;
@@ -27,7 +26,7 @@ export class DatabaseService {
          (character_id, core_personality_json, expertise_json, speaking_style_json, behavior_rules_json)
          VALUES (?, ?, ?, ?, ?)`)
             .run(DEFAULT_CHARACTER_ID, JSON.stringify(['introverted', 'curious', 'warm', 'observant']), JSON.stringify(['web', 'frontend', 'ux']), JSON.stringify({ tone: 'warm', length: 'short', avoid: ['romantic', 'clingy', 'preachy'] }), JSON.stringify({ movement: 25, discovery: 35, curiosity: 80, focus: 85, shyness: 70, reflection: 95 }));
-        const state = createInitialCharacterState(DEFAULT_CHARACTER_ID);
+        const state = createInitialCharacterStateLocal(DEFAULT_CHARACTER_ID);
         this.saveCharacterState(state);
     }
     getCharacterState(characterId = DEFAULT_CHARACTER_ID) {
@@ -35,7 +34,7 @@ export class DatabaseService {
             .prepare('SELECT * FROM character_state WHERE character_id = ?')
             .get(characterId);
         if (!row)
-            return createInitialCharacterState(characterId);
+            return createInitialCharacterStateLocal(characterId);
         return {
             characterId: String(row.character_id),
             coreState: row.core_state,
@@ -815,5 +814,20 @@ function mapCompanionMessage(row) {
         status: row.status,
         metadata: row.metadata_json ? JSON.parse(String(row.metadata_json)) : undefined,
         createdAt: String(row.created_at)
+    };
+}
+function createInitialCharacterStateLocal(characterId) {
+    return {
+        characterId,
+        coreState: 'idle',
+        intent: 'waiting',
+        emotion: {
+            neutral: 70, curious: 35, happy: 20, excited: 0,
+            shy: 45, confused: 0, focused: 50, tired: 10,
+            proud: 0, concerned: 0
+        },
+        position: { x: 120, y: 320 },
+        lastActivityAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
     };
 }

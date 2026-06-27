@@ -216,3 +216,9 @@ export async function runActionPlan(plan, deps, correlationId) {
 export function directPerformance(actionId, outcome) {
     return planPerformanceScript(actionId, outcome);
 }
+// ============================================================================
+// Action Engine V2 — Enhanced action planning
+// ============================================================================
+export { createActionPlan, approvePlan, cancelPlan } from './action-planner';
+export { assessRiskLevel, checkPermissions, requiresConfirmation } from './permission-checker';
+export { executeActionPlan } from './action-executor';

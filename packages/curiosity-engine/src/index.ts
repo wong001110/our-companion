@@ -305,3 +305,23 @@ export function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): 
     .sort((left, right) => right.priority - left.priority)
     .slice(0, 7);
 }
+
+// ============================================================================
+// Curiosity Engine V2 — Enhanced curiosity management
+// ============================================================================
+
+export { CuriosityEngine } from './curiosity-engine';
+export { scoreCandidatePriority, rankCandidates } from './curiosity-scoring';
+export { generateFromMemories, generateFromPatterns, generateFromInsights, generateDefaultCandidate } from './candidate-generator';
+export {
+  addToQueue,
+  removeFromQueue,
+  getTopCandidates,
+  deduplicateQueue,
+  expireStaleCandidates,
+} from './queue-manager';
+export {
+  MIN_CANDIDATE_PRIORITY,
+  MAX_CANDIDATES_IN_QUEUE,
+  CANDIDATE_EXPIRY_DAYS,
+} from './types';

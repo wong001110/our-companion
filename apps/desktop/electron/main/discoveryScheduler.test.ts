@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Discovery } from '@our-companion/shared';
-import { DISCOVERY_STARTUP_DELAY_MS } from '@our-companion/character-engine';
+import { DISCOVERY_STARTUP_DELAY_MS } from '@our-companion/discovery-engine';
 import { DiscoveryScheduler } from './discoveryScheduler';
 
 describe('DiscoveryScheduler', () => {

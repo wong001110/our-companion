@@ -23,6 +23,7 @@
     "@our-companion/action-engine": "0.1.0",
     "@our-companion/ai-engine": "0.1.0",
     "@our-companion/character-engine": "0.1.0",
+    "@our-companion/companion-life": "0.1.0",
     "@our-companion/curiosity-engine": "0.1.0",
     "@our-companion/database": "0.1.0",
     "@our-companion/decision-engine": "0.1.0",
@@ -35,7 +36,8 @@
     "@our-companion/pattern-engine": "0.1.0",
     "@our-companion/shared": "0.1.0",
     "@our-companion/speech-engine": "0.1.0",
-    "@our-companion/tool-engine": "0.1.0"
+    "@our-companion/tool-engine": "0.1.0",
+    "@our-companion/validation-kit": "0.1.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",

@@ -1,6 +1,7 @@
 export * from './models';
 export * from './interfaces';
-import type { ActionPermissionState, ActionPlan, ActionRunResult, BaseEvent, PerformanceScript } from './models';
+export * from './domain-events';
+import type { ActionPermissionState, ActionPlan, ActionRunResult, ActionStep, BaseEvent, PerformanceScript } from './models';
 export type CoreState = 'idle' | 'walking' | 'sleeping' | 'observing' | 'thinking' | 'discovering' | 'talking' | 'listening' | 'executing' | 'returning' | 'organizing_backpack';
 export type EmotionName = 'neutral' | 'curious' | 'happy' | 'excited' | 'shy' | 'confused' | 'focused' | 'tired' | 'proud' | 'concerned';
 export type Intent = 'wandering' | 'waiting' | 'sharing_discovery' | 'asking_permission' | 'helping_task' | 'reviewing_memory' | 'reflecting_journey' | 'organizing_backpack';
@@ -71,6 +72,79 @@ export interface MemoryGraph {
     nodes: MemoryNode[];
     edges: MemoryEdge[];
 }
+export type MemoryTier = 'short_term' | 'long_term' | 'episodic' | 'semantic';
+export interface MemoryRecord {
+    id: string;
+    tier: MemoryTier;
+    type: MemoryNodeType;
+    content: string;
+    summary?: string;
+    source: string;
+    tags: string[];
+    entities: string[];
+    importance: number;
+    confidence: number;
+    reinforcementCount: number;
+    lastAccessedAt: string;
+    createdAt: string;
+    updatedAt: string;
+    decayScore: number;
+}
+export interface AddMemoryInput {
+    content: string;
+    summary?: string;
+    tier: MemoryTier;
+    type: MemoryNodeType;
+    source: string;
+    tags?: string[];
+    entities?: string[];
+    importance?: number;
+    confidence?: number;
+}
+export interface MemoryQuery {
+    text?: string;
+    tags?: string[];
+    entities?: string[];
+    types?: MemoryNodeType[];
+    tiers?: MemoryTier[];
+    limit?: number;
+    minImportance?: number;
+}
+export interface MemoryRetrievalResult {
+    memory: MemoryRecord;
+    relevanceScore: number;
+    reason: string;
+}
+export interface ConsolidateMemoryInput {
+    sourceTier: 'short_term';
+    targetTier?: 'long_term';
+    minImportance?: number;
+}
+export interface ConsolidationResult {
+    consolidated: number;
+    merged: number;
+    discarded: number;
+}
+export interface MemoryDecayOptions {
+    decayRate?: number;
+    minImportance?: number;
+    maxAge?: number;
+}
+export interface MemoryDecayResult {
+    decayed: number;
+    archived: number;
+}
+export interface MemoryGraphQuery {
+    query?: string;
+    tier?: MemoryTier;
+    limit?: number;
+}
+export interface MemoryEvent {
+    type: 'memory.created' | 'memory.reinforced' | 'memory.decayed' | 'memory.consolidated' | 'memory.retrieved' | 'memory.graph.updated';
+    memoryId: string;
+    timestamp: string;
+    metadata?: Record<string, unknown>;
+}
 export type DiscoverySource = 'github' | 'reddit' | 'hackernews' | 'youtube';
 export type DiscoveryStatus = 'new' | 'candidate' | 'queued' | 'shared' | 'viewed' | 'saved' | 'rejected' | 'ignored' | 'journey' | 'archived';
 export interface NormalizedDiscovery {
@@ -107,6 +181,58 @@ export interface Discovery extends NormalizedDiscovery, DiscoveryScores {
     createdAt: string;
     lastSeenAt?: string;
 }
+export type DiscoveryJobStatus = 'pending' | 'planning' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+export interface DiscoveryJob {
+    id: string;
+    sourceCuriosityId: string;
+    status: DiscoveryJobStatus;
+    priority: number;
+    strategy: string;
+    startedAt?: string;
+    finishedAt?: string;
+    retryCount: number;
+    maxRetries: number;
+    evidence: DiscoveryEvidence[];
+    summary?: string;
+    confidence: number;
+    relatedTopics: string[];
+    createdAt: string;
+    updatedAt: string;
+}
+export interface DiscoveryEvidence {
+    id: string;
+    title: string;
+    source: string;
+    snippet: string;
+    relevance: number;
+    confidence: number;
+    timestamp: string;
+}
+export interface DiscoveryResult {
+    id: string;
+    jobId: string;
+    summary: string;
+    detailedFindings: string;
+    evidence: DiscoveryEvidence[];
+    confidence: number;
+    novelty: number;
+    suggestedMemoryUpdates: string[];
+    suggestedInsights: string[];
+    suggestedFollowUps: string[];
+    createdAt: string;
+}
+export interface DiscoveryQueueQuery {
+    statuses?: DiscoveryJobStatus[];
+    minPriority?: number;
+    limit?: number;
+}
+export interface ExplorationPlanV2 {
+    objective: string;
+    searchTargets: string[];
+    stoppingConditions: string[];
+    maxCost: number;
+    expectedOutputs: string[];
+}
 export type PatternType = 'repeated_topic' | 'cross_source_trend' | 'journey_alignment' | 'user_momentum' | 'fatigue_signal' | 'revival_signal' | 'repeated_theme' | 'interest_cluster' | 'abandoned_direction' | 'returning_topic' | 'contradiction' | 'interest_shift' | 'exploration_loop' | 'aesthetic_preference' | 'technical_preference';
 export interface PatternEvidence {
     sourceType: 'memory' | 'journey_event' | 'conversation' | 'discovery_feedback' | 'saved_discovery' | 'dismissed_discovery';
@@ -130,6 +256,42 @@ export interface Pattern {
     detectedAt?: string;
     createdAt: string;
     updatedAt: string;
+}
+export type PatternCategory = 'interest' | 'behaviour' | 'conversation' | 'project' | 'learning' | 'temporal' | 'relationship';
+export interface PatternV2 {
+    id: string;
+    userId: string;
+    category: PatternCategory;
+    type: PatternType;
+    title: string;
+    summary: string;
+    confidence: number;
+    strength: number;
+    supportingMemoryIds: string[];
+    firstDetectedAt: string;
+    lastUpdatedAt: string;
+    reinforcementCount: number;
+    evidence: PatternEvidence[];
+}
+export interface PatternQuery {
+    categories?: PatternCategory[];
+    types?: PatternType[];
+    minConfidence?: number;
+    limit?: number;
+}
+export interface PatternDetectionInput {
+    userId: string;
+    memories: MemoryRecord[];
+    discoveries?: Discovery[];
+    feedback?: DiscoveryFeedback[];
+}
+export interface PatternDetectionResult {
+    patterns: PatternV2[];
+    metadata: {
+        memoriesAnalyzed: number;
+        patternsDetected: number;
+        avgConfidence: number;
+    };
 }
 export type InterestNodeType = 'topic' | 'project' | 'technology' | 'aesthetic' | 'problem' | 'behavior' | 'theme' | 'question' | 'opposing_view';
 export interface InterestNode {
@@ -180,6 +342,31 @@ export interface CuriosityTarget {
     relatedPatternIds?: string[];
     relatedInterestNodeIds?: string[];
     createdAt: string;
+}
+export type CuriosityCandidateStatus = 'pending' | 'queued' | 'exploring' | 'completed' | 'dismissed' | 'expired';
+export interface CuriosityCandidate {
+    id: string;
+    userId: string;
+    source: CuriositySource;
+    title: string;
+    description: string;
+    category: string;
+    relatedMemoryIds: string[];
+    relatedInsightIds: string[];
+    novelty: number;
+    relevance: number;
+    confidence: number;
+    priority: number;
+    freshness: number;
+    status: CuriosityCandidateStatus;
+    createdAt: string;
+    updatedAt: string;
+    expiresAt?: string;
+}
+export interface CuriosityQueueQuery {
+    statuses?: CuriosityCandidateStatus[];
+    minPriority?: number;
+    limit?: number;
 }
 export type DiscoveryAgentType = 'scout' | 'research' | 'builder' | 'trend' | 'contrarian' | 'memory_scout';
 export interface ExplorationPlan {
@@ -233,6 +420,44 @@ export interface CompanionInsight {
     suggestedAction?: string;
     narration?: string;
     createdAt: string;
+}
+export type InsightCategory = 'interest' | 'learning' | 'productivity' | 'project' | 'behaviour' | 'relationship' | 'discovery' | 'risk';
+export interface InsightV2 {
+    id: string;
+    userId: string;
+    category: InsightCategory;
+    title: string;
+    summary: string;
+    explanation: string;
+    supportingPatternIds: string[];
+    supportingMemoryIds: string[];
+    confidence: number;
+    importance: number;
+    novelty: number;
+    evidenceCount: number;
+    status: 'active' | 'archived';
+    createdAt: string;
+    updatedAt: string;
+}
+export interface InsightQuery {
+    categories?: InsightCategory[];
+    minConfidence?: number;
+    minImportance?: number;
+    status?: 'active' | 'archived';
+    limit?: number;
+}
+export interface InsightGenerationInput {
+    userId: string;
+    patterns: PatternV2[];
+    memories: MemoryRecord[];
+}
+export interface InsightGenerationResult {
+    insights: InsightV2[];
+    metadata: {
+        patternsAnalyzed: number;
+        insightsGenerated: number;
+        duplicatesPrevented: number;
+    };
 }
 export type ExplorationState = 'idle' | 'curious' | 'planning' | 'exploring' | 'collecting' | 'synthesizing' | 'returning' | 'sharing' | 'reflecting';
 export type ExplorationTrigger = 'scheduled' | 'manual' | 'memory_updated' | 'pattern_detected' | 'user_idle' | 'relationship_moment' | 'companion_curiosity';
@@ -530,6 +755,8 @@ export interface DiscoveryReason {
     why_this_matters: string;
     recommended_action: 'view' | 'save' | 'ignore' | 'add_to_journey';
     short_message: string;
+    card_title?: string;
+    card_body?: string;
     tags: string[];
 }
 export interface DiscoveryAnnouncePayload {
@@ -538,6 +765,11 @@ export interface DiscoveryAnnouncePayload {
     message: string;
     cycleId?: string;
     insightId?: string;
+    cardBody?: string;
+    whyThisMatters?: string;
+    recommendedAction?: 'view' | 'save' | 'ignore' | 'add_to_journey';
+    tags?: string[];
+    source?: string;
 }
 export interface MemorySummary {
     type: MemoryNodeType;
@@ -688,3 +920,241 @@ export interface OurCompanionApi {
 export declare const DEFAULT_CHARACTER_ID = "ann";
 export declare function nowIso(): string;
 export declare function createId(prefix: string): string;
+export type CharacterRuntimeStateV2 = 'booting' | 'idle' | 'observing' | 'thinking' | 'listening' | 'speaking' | 'exploring' | 'sharing' | 'performing' | 'waiting' | 'sleeping' | 'error';
+export interface CharacterRuntimeContext {
+    characterId: string;
+    state: CharacterRuntimeStateV2;
+    currentBehaviour?: BehaviourExecution;
+    queuedBehaviours: BehaviourRequest[];
+    currentEmotion?: EmotionState;
+    currentPerformance?: PerformanceExecution;
+    attentionState?: AttentionState;
+    lastInteractionAt?: string;
+    lastInterruptAt?: string;
+    cooldowns: RuntimeCooldown[];
+    errors: RuntimeError[];
+}
+export interface BehaviourExecution {
+    id: string;
+    request: BehaviourRequest;
+    startedAt: string;
+    completedAt?: string;
+    status: 'running' | 'completed' | 'cancelled' | 'failed';
+}
+export interface BehaviourRequest {
+    id: string;
+    source: 'brain' | 'discovery' | 'speech' | 'action' | 'journey' | 'system';
+    type: BehaviourType;
+    priority: number;
+    interruptible: boolean;
+    payload?: unknown;
+    requestedEmotion?: string;
+    requestedPerformance?: string;
+    timeoutMs?: number;
+    createdAt: string;
+}
+export type BehaviourType = 'idle' | 'think' | 'listen' | 'speak' | 'share_discovery' | 'ask_question' | 'react' | 'perform_action' | 'celebrate' | 'sleep' | 'error_recovery';
+export interface PerformanceExecution {
+    id: string;
+    scriptId: string;
+    startedAt: string;
+    completedAt?: string;
+    status: 'playing' | 'paused' | 'completed' | 'cancelled';
+    currentCueIndex: number;
+}
+export interface RuntimeCooldown {
+    type: string;
+    expiresAt: string;
+}
+export interface RuntimeError {
+    code: string;
+    message: string;
+    timestamp: string;
+    recoverable: boolean;
+}
+export type PresenceMode = 'available' | 'quiet' | 'observing' | 'curious' | 'focused' | 'exploring' | 'ready_to_share' | 'sleeping' | 'do_not_disturb';
+export interface AttentionState {
+    userActive: boolean;
+    appFocused: boolean;
+    recentInteraction: boolean;
+    doNotDisturb: boolean;
+    estimatedInterruptCost: number;
+    lastUserInputAt?: string;
+}
+export interface PerformanceScriptV2 {
+    id: string;
+    name: string;
+    behaviourType: string;
+    emotion?: string;
+    animationSequence: PerformanceCue[];
+    expressionSequence?: PerformanceCue[];
+    speechTiming?: PerformanceCue[];
+    durationMs?: number;
+    interruptible: boolean;
+    cooldownMs?: number;
+    tags?: string[];
+}
+export interface PerformanceCue {
+    id: string;
+    type: 'animation' | 'expression' | 'emotion' | 'speech' | 'wait' | 'event';
+    startMs: number;
+    durationMs?: number;
+    payload?: unknown;
+}
+export type InterruptReason = 'user_input' | 'high_priority_behaviour' | 'system_event' | 'error';
+export interface InterruptResult {
+    interrupted: boolean;
+    previousBehaviour?: string;
+    reason: string;
+}
+export interface BehaviourSubmissionResult {
+    id: string;
+    accepted: boolean;
+    reason?: string;
+    queuePosition?: number;
+}
+export interface InitializeRuntimeInput {
+    characterId: string;
+    initialEmotion?: EmotionState;
+}
+export interface ActionIntent {
+    id: string;
+    source: 'brain' | 'user' | 'system';
+    type: string;
+    description: string;
+    payload?: unknown;
+    riskLevel: 'low' | 'medium' | 'high';
+    requiresConfirmation: boolean;
+    createdAt: string;
+}
+export interface ActionPlanV2 {
+    id: string;
+    intentId: string;
+    steps: ActionStep[];
+    requiredPermissions: string[];
+    riskLevel: 'low' | 'medium' | 'high';
+    confirmationRequired: boolean;
+    status: ActionPlanStatus;
+}
+export type ActionPlanStatus = 'draft' | 'pending_confirmation' | 'approved' | 'running' | 'completed' | 'failed' | 'cancelled';
+export interface ActionResult {
+    id: string;
+    planId: string;
+    status: 'success' | 'failure' | 'partial' | 'cancelled';
+    outputs: Record<string, unknown>;
+    errors?: string[];
+    completedAt: string;
+}
+export interface SpeechInput {
+    audio: ArrayBuffer;
+    mimeType?: string;
+    language?: string;
+}
+export interface TranscriptResult {
+    text: string;
+    language?: string;
+    confidence?: number;
+}
+export interface SpeechOutputRequest {
+    text: string;
+    emotion?: string;
+    priority?: number;
+}
+export interface SpeechAudioResult {
+    audio?: ArrayBuffer;
+    durationMs?: number;
+}
+export interface SpeechSession {
+    id: string;
+    status: 'idle' | 'listening' | 'transcribing' | 'speaking';
+    startedAt: string;
+    lastActivityAt: string;
+}
+export interface CompanionJourney {
+    id: string;
+    title: string;
+    description?: string;
+    status: 'active' | 'paused' | 'completed' | 'abandoned';
+    origin: 'user' | 'discovery' | 'brain' | 'system';
+    milestones: JourneyMilestoneV2[];
+    relatedMemories: string[];
+    relatedInsights: string[];
+    createdAt: string;
+    updatedAt: string;
+}
+export interface JourneyMilestoneV2 {
+    id: string;
+    title: string;
+    description?: string;
+    status: 'pending' | 'active' | 'completed' | 'skipped';
+    completedAt?: string;
+}
+export type DiscoveryExperienceStatus = 'candidate' | 'queued' | 'exploring' | 'returned' | 'pooled' | 'ready_to_share' | 'shared' | 'discussing' | 'saved' | 'dismissed' | 'follow_up_requested' | 'converted_to_journey' | 'archived' | 'expired';
+export interface DiscoveryPoolItem {
+    id: string;
+    sourceDiscoveryId: string;
+    sourceCuriosityId?: string;
+    title: string;
+    summary: string;
+    detail?: string;
+    evidence: DiscoveryEvidence[];
+    tags: string[];
+    relatedTopics: string[];
+    relatedMemories: string[];
+    relatedInsights: string[];
+    noveltyScore: number;
+    relevanceScore: number;
+    confidenceScore: number;
+    sharePriority: number;
+    status: DiscoveryExperienceStatus;
+    createdAt: string;
+    returnedAt: string;
+    lastUpdatedAt: string;
+    expiresAt?: string;
+    userReaction?: DiscoveryUserReaction;
+}
+export type DiscoveryPoolCategory = 'for_you' | 'project_related' | 'follow_up' | 'surprising' | 'learning' | 'tool' | 'reference' | 'low_priority' | 'expired';
+export interface DiscoveryShareCandidate {
+    id: string;
+    poolItemId: string;
+    reason: string;
+    priority: number;
+    urgency: number;
+    expectedUserValue: number;
+    interruptionCost: number;
+    confidence: number;
+    suggestedTone: 'soft' | 'excited' | 'curious' | 'brief' | 'quiet';
+    suggestedTiming: 'now' | 'soon' | 'later' | 'only_when_asked';
+}
+export type DiscoveryInterruptionLevel = 'none' | 'badge_only' | 'soft_prompt' | 'panel_peek' | 'direct_share';
+export interface DiscoveryCardViewModel {
+    id: string;
+    title: string;
+    shortSummary: string;
+    whyItMatters: string;
+    sourceLabel?: string;
+    confidenceLabel?: string;
+    tags: string[];
+    actions: DiscoveryCardAction[];
+    visualMood?: 'calm' | 'curious' | 'excited' | 'serious' | 'reflective';
+}
+export interface DiscoveryCardAction {
+    type: DiscoveryCardActionType;
+    label: string;
+    enabled: boolean;
+}
+export type DiscoveryCardActionType = 'discuss' | 'save' | 'dismiss' | 'explore_more' | 'open_source' | 'convert_to_journey' | 'remind_later' | 'not_interested';
+export interface DiscoveryUserReaction {
+    itemId: string;
+    action: 'viewed' | 'discussed' | 'saved' | 'dismissed' | 'not_interested' | 'explore_more' | 'converted_to_journey' | 'opened_source';
+    sentiment?: 'positive' | 'neutral' | 'negative';
+    note?: string;
+    timestamp: string;
+}
+export type OutsidePanelMode = 'closed' | 'peek' | 'compact' | 'expanded' | 'discussion' | 'history';
+export interface DiscoveryPoolQuery {
+    categories?: DiscoveryPoolCategory[];
+    statuses?: DiscoveryExperienceStatus[];
+    minPriority?: number;
+    limit?: number;
+}

@@ -1,4 +1,4 @@
-import { DISCOVERY_STARTUP_DELAY_MS, getDiscoveryFetchDelay } from '@our-companion/character-engine';
+import { DISCOVERY_STARTUP_DELAY_MS, getDiscoveryFetchDelay } from '@our-companion/discovery-engine';
 import type { Discovery } from '@our-companion/shared';
 
 export interface DiscoveryRefreshResult {

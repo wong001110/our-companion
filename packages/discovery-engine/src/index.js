@@ -271,41 +271,35 @@ function fallbackItems(source) {
         source,
         publishedAt: nowIso()
     };
-    const bySource = {
-        github: {
-            ...common,
-            id: 'github-pixijs-desktop-pet',
-            title: 'Building expressive desktop companions with PixiJS',
-            summary: 'A small renderer pattern for animated companion characters.',
-            url: 'https://github.com/pixijs/pixijs',
-            tags: ['frontend', 'pixijs', 'web', 'ux']
-        },
-        hackernews: {
-            ...common,
-            id: 'hn-local-first-memory',
-            title: 'Local-first app patterns for personal memory tools',
-            summary: 'Discussion about SQLite-backed personal software.',
-            url: 'https://news.ycombinator.com/',
-            tags: ['sqlite', 'local-first', 'memory']
-        },
-        reddit: {
-            ...common,
-            id: 'reddit-cozy-dev-room',
-            title: 'Cozy developer room inspiration boards',
-            summary: 'Workspace ideas with warm lighting and note-taking systems.',
-            url: 'https://www.reddit.com/r/battlestations/',
-            tags: ['ux', 'workspace', 'cozy']
-        },
-        youtube: {
-            ...common,
-            id: 'youtube-pixijs-tutorial',
-            title: 'PixiJS animation basics for character sprites',
-            summary: 'A tutorial-style resource for sprite animation loops.',
-            url: 'https://www.youtube.com/results?search_query=PixiJS+sprite+animation',
-            tags: ['pixijs', 'frontend', 'animation']
-        }
+    const pools = {
+        github: [
+            { ...common, id: 'github-pixijs-desktop-pet', title: 'Building expressive desktop companions with PixiJS', summary: 'A small renderer pattern for animated companion characters.', url: 'https://github.com/pixijs/pixijs', tags: ['frontend', 'pixijs', 'web', 'ux'] },
+            { ...common, id: 'github-tldraw', title: 'tldraw — a canvas for thinking', summary: 'Infinite canvas toolkit for collaborative whiteboarding.', url: 'https://github.com/tldraw/tldraw', tags: ['canvas', 'collaboration', 'tool'] },
+            { ...common, id: 'github-excalidraw', title: 'Excalidraw — virtual whiteboard', summary: 'Hand-drawn style sketching tool for diagrams.', url: 'https://github.com/excalidraw/excalidraw', tags: ['sketch', 'diagram', 'canvas'] },
+            { ...common, id: 'github-affine', title: 'Affine — knowledge management', summary: 'Local-first knowledge base with docs and whiteboard.', url: 'https://github.com/toeverything/AFFiNE', tags: ['knowledge', 'local-first', 'docs'] }
+        ],
+        hackernews: [
+            { ...common, id: 'hn-local-first-memory', title: 'Local-first app patterns for personal memory tools', summary: 'Discussion about SQLite-backed personal software.', url: 'https://news.ycombinator.com/', tags: ['sqlite', 'local-first', 'memory'] },
+            { ...common, id: 'hn-ai-companion', title: 'AI companion design patterns in 2025', summary: 'How desktop AI assistants are evolving beyond chatbots.', url: 'https://news.ycombinator.com/', tags: ['ai', 'companion', 'ux'] },
+            { ...common, id: 'hn-personal-knowledge', title: 'Building a personal knowledge graph', summary: 'Tools and techniques for organizing thoughts digitally.', url: 'https://news.ycombinator.com/', tags: ['knowledge', 'graph', 'personal'] },
+            { ...common, id: 'hn-emotional-ui', title: 'Emotion-driven interfaces', summary: 'Research on UI that adapts to user mood and context.', url: 'https://news.ycombinator.com/', tags: ['emotion', 'ui', 'adaptive'] }
+        ],
+        reddit: [
+            { ...common, id: 'reddit-cozy-dev-room', title: 'Cozy developer room inspiration boards', summary: 'Workspace ideas with warm lighting and note-taking systems.', url: 'https://www.reddit.com/r/battlestations/', tags: ['ux', 'workspace', 'cozy'] },
+            { ...common, id: 'reddit-desktop-pet', title: 'Desktop pet communities and projects', summary: 'Folklore about virtual companions on your screen.', url: 'https://www.reddit.com/r/desktoppets/', tags: ['pet', 'desktop', 'companion'] },
+            { ...common, id: 'reddit-journaling', title: 'Digital journaling with personality', summary: 'Apps that make note-taking feel personal and alive.', url: 'https://www.reddit.com/r/Journaling/', tags: ['journal', 'personal', 'writing'] },
+            { ...common, id: 'reddit-notebook-aesthetic', title: 'Notebook aesthetic and paper UI', summary: 'Design inspiration from physical notebooks and scrapbooks.', url: 'https://www.reddit.com/r/Notebooks/', tags: ['notebook', 'aesthetic', 'paper'] }
+        ],
+        youtube: [
+            { ...common, id: 'youtube-pixijs-tutorial', title: 'PixiJS animation basics for character sprites', summary: 'A tutorial-style resource for sprite animation loops.', url: 'https://www.youtube.com/results?search_query=PixiJS+sprite+animation', tags: ['pixijs', 'frontend', 'animation'] },
+            { ...common, id: 'youtube-character-design', title: 'Character design for indie games', summary: 'Creating expressive animated characters on a budget.', url: 'https://www.youtube.com/results?search_query=character+design+indie', tags: ['character', 'design', 'animation'] },
+            { ...common, id: 'youtube-cozy-setup', title: 'Cozy desk setup for productivity', summary: 'Warm workspace ideas with ambient lighting.', url: 'https://www.youtube.com/results?search_query=cozy+desk+setup', tags: ['workspace', 'cozy', 'ambient'] },
+            { ...common, id: 'youtube-memory-palace', title: 'Building a memory palace digitally', summary: 'Techniques for organizing knowledge spatially.', url: 'https://www.youtube.com/results?search_query=memory+palace+digital', tags: ['memory', 'knowledge', 'spatial'] }
+        ]
     };
-    return [bySource[source]];
+    const pool = pools[source];
+    const index = Math.floor(Math.random() * pool.length);
+    return [pool[index]];
 }
 export function createFallbackConnector(source) {
     return {
@@ -473,3 +467,18 @@ export async function runDiscoveryAgents(input) {
         : [];
     return deduplicateCandidates([...external.flat(), ...memoryCandidates]).sort((left, right) => scoreCandidate(right) - scoreCandidate(left));
 }
+// ============================================================================
+// Discovery Engine V2 — Enhanced discovery management
+// ============================================================================
+export { DiscoveryEngine } from './discovery-engine';
+export { createExplorationPlan } from './discovery-planner';
+export { createEvidence, aggregateEvidence } from './discovery-evidence';
+export { generateDiscoveryResult } from './discovery-result';
+export { addToQueue, removeFromQueue, getNextJob, retryJob, cancelJob, } from './discovery-queue';
+export { MAX_RETRIES, JOB_EXPIRY_HOURS, MAX_QUEUE_SIZE, DEFAULT_MAX_COST, } from './types';
+// ============================================================================
+// Discovery Engine V2 — Pool and Share Timing
+// ============================================================================
+export { createPoolItem, addToPool, removeFromPool, updatePoolItemStatus, getShareCandidates, filterPool, expireStaleItems, } from './pool/discovery-pool';
+export { evaluateShareCandidate, determineInterruptionLevel, shouldShareNow, } from './share/share-timing';
+export { DISCOVERY_STARTUP_DELAY_MS, getDiscoveryFetchDelay, getDiscoveryFetchDelayRange } from './timing';

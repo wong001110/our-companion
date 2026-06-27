@@ -19,6 +19,7 @@
     { "path": "packages/ai-engine" },
     { "path": "packages/database" },
     { "path": "packages/speech-engine" },
+    { "path": "packages/experience-engine" },
     { "path": "apps/desktop" }
   ]
 }

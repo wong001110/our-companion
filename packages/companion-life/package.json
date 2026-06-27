@@ -1,0 +1,19 @@
+{
+  "name": "@our-companion/companion-life",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@our-companion/shared": "workspace:*",
+    "@our-companion/event-bus": "workspace:*",
+    "@our-companion/character-engine": "workspace:*",
+    "@our-companion/decision-engine": "workspace:*",
+    "@our-companion/discovery-engine": "workspace:*",
+    "@our-companion/insight-engine": "workspace:*",
+    "@our-companion/memory-engine": "workspace:*",
+    "@our-companion/pattern-engine": "workspace:*",
+    "@our-companion/curiosity-engine": "workspace:*",
+    "@our-companion/journey-engine": "workspace:*",
+    "@our-companion/diary-engine": "workspace:*"
+  }
+}

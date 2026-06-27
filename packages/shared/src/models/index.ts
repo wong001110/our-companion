@@ -349,6 +349,112 @@ export interface DecisionInput {
   companionContext: CompanionContext;
 }
 
+// ============================================================================
+// COMPANION BRAIN V2 — Enhanced decision types
+// ============================================================================
+
+export type CompanionDecisionCandidateType =
+  | 'stay_quiet'
+  | 'respond'
+  | 'ask_question'
+  | 'share_discovery'
+  | 'start_discovery'
+  | 'continue_journey'
+  | 'suggest_action'
+  | 'update_memory'
+  | 'perform_character_reaction';
+
+export interface CompanionDecisionCandidate {
+  id: string;
+  type: CompanionDecisionCandidateType;
+  score: number;
+  reason: string;
+  requiredInputs: string[];
+  risks: string[];
+  expectedUserValue: number;
+  interruptionCost: number;
+  confidence: number;
+}
+
+export interface CompanionDecisionResult {
+  id: string;
+  selectedCandidate: CompanionDecisionCandidate;
+  rejectedCandidates: CompanionDecisionCandidate[];
+  reasoningSummary: string;
+  confidence: number;
+  shouldInterruptUser: boolean;
+  recommendedNextEngine?: string;
+  recommendedAction?: string;
+  createdAt: string;
+}
+
+export interface UserContextSnapshot {
+  mode: 'idle' | 'focused' | 'chatting' | 'working' | 'away';
+  localTime: string;
+  recentActions: string[];
+  fatigueScore: number;
+  lastInteractionAt?: string;
+}
+
+export interface ConversationContextSnapshot {
+  recentMessages: string[];
+  activeTopic?: string;
+  messageCount: number;
+  lastMessageAt?: string;
+}
+
+export interface MemoryContextSnapshot {
+  relevantMemories: string[];
+  memoryCount: number;
+  topMemoryImportance: number;
+}
+
+export interface PatternContextSnapshot {
+  activePatterns: string[];
+  patternCount: number;
+  topPatternConfidence: number;
+}
+
+export interface InsightContextSnapshot {
+  recentInsights: string[];
+  insightCount: number;
+  topInsightImportance: number;
+}
+
+export interface CuriosityContextSnapshot {
+  curiosityTargets: string[];
+  targetCount: number;
+  topCuriosityScore: number;
+}
+
+export interface CharacterContextSnapshot {
+  mood: string;
+  energy: number;
+  lastActivityAt?: string;
+}
+
+export interface CompanionDecisionContext {
+  user: UserContextSnapshot;
+  conversation: ConversationContextSnapshot;
+  memory: MemoryContextSnapshot;
+  pattern: PatternContextSnapshot;
+  insight: InsightContextSnapshot;
+  curiosity: CuriosityContextSnapshot;
+  character: CharacterContextSnapshot;
+  timestamp: string;
+}
+
+export interface CompanionDecisionInput {
+  userContext?: UserContextSnapshot;
+  conversationContext?: ConversationContextSnapshot;
+  memoryContext?: MemoryContextSnapshot;
+  patternContext?: PatternContextSnapshot;
+  insightContext?: InsightContextSnapshot;
+  curiosityContext?: CuriosityContextSnapshot;
+  characterContext?: CharacterContextSnapshot;
+  timestamp?: string;
+}
+
 export interface DiscoveryUnderstanding {
   summary: string;
   concepts: string[];

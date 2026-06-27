@@ -5,7 +5,8 @@
   },
   "references": [
     { "path": "../shared" },
-    { "path": "../character-engine" }
+    { "path": "../character-engine" },
+    { "path": "../discovery-engine" }
   ],
   "include": ["src/**/*.ts"]
 }

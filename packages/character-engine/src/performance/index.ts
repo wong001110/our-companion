@@ -1,0 +1,1 @@
+export { planPerformanceScript } from '../index';

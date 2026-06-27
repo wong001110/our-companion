@@ -33,3 +33,11 @@ export declare function retrieveKnowledge(input: {
     limit?: number;
 }): Knowledge[];
 export declare function buildInterestGraph(input: BuildInterestGraphInput): InterestGraph;
+export { MemoryEngine } from './memory-engine';
+export { createShortTermMemory, addToBuffer, getRecentContext, isBufferFull, classifyImportance } from './short-term-memory';
+export { promoteToLongTerm, isEligibleForLongTerm } from './long-term-memory';
+export { scoreMemory, explainRelevance, retrieveMemories } from './memory-retrieval';
+export { consolidateMemories } from './memory-consolidation';
+export { calculateDecayScore, applyDecay, reinforceMemory } from './memory-decay';
+export { buildMemoryGraph, createMemoryEdgeFromRecords } from './memory-graph';
+export { STM_MAX_SIZE, DEFAULT_DECAY_RATE, HIGH_IMPORTANCE_THRESHOLD, HIGH_CONFIDENCE_THRESHOLD, MIN_IMPORTANCE_FOR_LTM, SIMILARITY_THRESHOLD_FOR_MERGE, } from './types';

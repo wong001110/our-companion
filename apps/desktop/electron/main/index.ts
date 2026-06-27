@@ -4,6 +4,7 @@ import type { IpcMainInvokeEvent } from 'electron';
 import { AppServices } from './services';
 import { DiscoveryScheduler } from './discoveryScheduler';
 import { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
+import { ElectronIpcBroadcaster } from './adapters/electronIpcBroadcaster';
 
 let companionWindow: BrowserWindow | undefined;
 let panelWindow: BrowserWindow | undefined;
@@ -272,6 +273,13 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function startDiscoveryAutomation(): void {
+  const broadcaster = new ElectronIpcBroadcaster({
+    eventBus: services.eventBus,
+    getCompanionWindow: () => companionWindow,
+    getPanelWindow: () => panelWindow
+  });
+  broadcaster.start();
+
   services.attachAutonomyBroadcasters({
     explorationEvent: (event) => {
       companionWindow?.webContents.send('autonomy:explorationEvent', event);
@@ -298,7 +306,7 @@ function startDiscoveryAutomation(): void {
     markAnnounced: (id) => services.db.markDiscoveryAnnounced(id),
     canAnnounce: () => services.canAnnounceDiscovery(),
     shouldInterruptShare: () => services.shouldInterruptShare(),
-    getCompanionWindow: () => companionWindow
+    eventBus: services.eventBus
   });
   services.attachShareOrchestrator(discoveryShareOrchestrator);
 

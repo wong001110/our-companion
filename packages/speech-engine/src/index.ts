@@ -119,3 +119,11 @@ export function createNotificationPayload(input: {
     createdAt: nowIso()
   };
 }
+
+// ============================================================================
+// Speech Engine V2 — Provider interfaces and session management
+// ============================================================================
+
+export type { SpeechToTextProvider, TextToSpeechProvider } from './providers';
+export { MockSpeechToTextProvider, MockTextToSpeechProvider } from './providers';
+export { ListenManager } from './listen-manager';

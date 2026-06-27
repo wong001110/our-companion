@@ -3,6 +3,6 @@
   "compilerOptions": {
     "composite": true
   },
-  "references": [{ "path": "../shared" }],
+  "references": [{ "path": "../shared" }, { "path": "../discovery-engine" }],
   "include": ["src/**/*.ts"]
 }

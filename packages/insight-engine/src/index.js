@@ -111,3 +111,17 @@ export function generateCognitiveInsight(input) {
         status: 'candidate'
     };
 }
+// ============================================================================
+// Insight Engine V2 — Enhanced insight generation
+// ============================================================================
+export { InsightEngine } from './insight-engine';
+export { calculateInsightConfidence, calculateInsightImportance, calculateInsightNovelty } from './scoring';
+export { generateInterestInsights } from './generators/interest-insight';
+export { generateLearningInsights } from './generators/learning-insight';
+export { generateProductivityInsights } from './generators/productivity-insight';
+export { generateProjectInsights } from './generators/project-insight';
+export { generateBehaviourInsights } from './generators/behaviour-insight';
+export { generateRelationshipInsights } from './generators/relationship-insight';
+export { generateDiscoveryInsights } from './generators/discovery-insight';
+export { generateRiskInsights } from './generators/risk-insight';
+export { MIN_PATTERNS_FOR_INSIGHT, MAX_INSIGHTS_PER_GENERATION, CONFIDENCE_WEIGHTS, } from './types';

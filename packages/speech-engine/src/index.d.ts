@@ -26,3 +26,6 @@ export declare function createNotificationPayload(input: {
     body: string;
     focusMode?: boolean;
 }): NotificationPayload;
+export type { SpeechToTextProvider, TextToSpeechProvider } from './providers';
+export { MockSpeechToTextProvider, MockTextToSpeechProvider } from './providers';
+export { ListenManager } from './listen-manager';

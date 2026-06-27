@@ -57,4 +57,8 @@ export declare function planAnimationRequest(input: {
     reason: string;
 }): AnimationRequest;
 export declare function planPerformanceScript(actionId: string, outcome?: 'success' | 'failure'): PerformanceScript;
-export { getDiscoveryFetchDelay, getDiscoveryFetchDelayRange, DISCOVERY_STARTUP_DELAY_MS } from './discoveryTiming';
+export { getDiscoveryFetchDelay, getDiscoveryFetchDelayRange, DISCOVERY_STARTUP_DELAY_MS } from '@our-companion/discovery-engine';
+export { createRuntimeContext, canTransition, transitionRuntimeState, submitBehaviour, startBehaviour, completeBehaviour, interruptBehaviour, neutralEmotionState, CharacterRuntime, } from './runtime/character-runtime';
+export type { CharacterRuntimeDeps, CharacterDiscoveryReadyInput, CharacterFeedbackInput, CharacterUserCommandInput, CharacterSettleInput, } from './runtime/character-runtime';
+export { createAttentionState, determinePresenceMode, shouldAllowInterruption, updateAttentionState, } from './presence/presence-system';
+export { PerformanceEngine, defaultPerformanceScripts, } from './performance/performance-engine';

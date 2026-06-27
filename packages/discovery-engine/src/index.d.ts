@@ -55,3 +55,12 @@ export declare function planExploration(curiosityTarget: CuriosityTarget): Explo
 export declare function scoreCandidate(candidate: Pick<DiscoveryCandidate, 'relevanceScore' | 'noveltyScore' | 'evidenceScore' | 'usefulnessScore'>): number;
 export declare function deduplicateCandidates(candidates: DiscoveryCandidate[]): DiscoveryCandidate[];
 export declare function runDiscoveryAgents(input: RunDiscoveryAgentsInput): Promise<DiscoveryCandidate[]>;
+export { DiscoveryEngine } from './discovery-engine';
+export { createExplorationPlan } from './discovery-planner';
+export { createEvidence, aggregateEvidence } from './discovery-evidence';
+export { generateDiscoveryResult } from './discovery-result';
+export { addToQueue, removeFromQueue, getNextJob, retryJob, cancelJob, } from './discovery-queue';
+export { MAX_RETRIES, JOB_EXPIRY_HOURS, MAX_QUEUE_SIZE, DEFAULT_MAX_COST, } from './types';
+export { createPoolItem, addToPool, removeFromPool, updatePoolItemStatus, getShareCandidates, filterPool, expireStaleItems, } from './pool/discovery-pool';
+export { evaluateShareCandidate, determineInterruptionLevel, shouldShareNow, } from './share/share-timing';
+export { DISCOVERY_STARTUP_DELAY_MS, getDiscoveryFetchDelay, getDiscoveryFetchDelayRange } from './timing';

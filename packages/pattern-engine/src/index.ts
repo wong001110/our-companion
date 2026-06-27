@@ -245,3 +245,22 @@ export function detectCognitivePatterns(input: DetectCognitivePatternsInput): Pa
 
   return patterns.sort((left, right) => right.strength - left.strength);
 }
+
+// ============================================================================
+// Pattern Engine V2 — Enhanced pattern detection
+// ============================================================================
+
+export { PatternEngine } from './pattern-engine';
+export { calculatePatternConfidence } from './confidence';
+export { detectInterestPatterns } from './detectors/interest-detector';
+export { detectBehaviourPatterns } from './detectors/behaviour-detector';
+export { detectConversationPatterns } from './detectors/conversation-detector';
+export { detectProjectPatterns } from './detectors/project-detector';
+export { detectLearningPatterns } from './detectors/learning-detector';
+export { detectTemporalPatterns } from './detectors/temporal-detector';
+export { detectRelationshipPatterns } from './detectors/relationship-detector';
+export {
+  MIN_SUPPORTING_MEMORIES,
+  MAX_PATTERNS_PER_DETECTION,
+  CONFIDENCE_WEIGHTS,
+} from './types';

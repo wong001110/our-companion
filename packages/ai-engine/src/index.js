@@ -27,6 +27,8 @@ export const discoveryReasonSchema = z.object({
     why_this_matters: z.string(),
     recommended_action: z.enum(['view', 'save', 'ignore', 'add_to_journey']),
     short_message: z.string(),
+    card_title: z.string().optional(),
+    card_body: z.string().optional(),
     tags: z.array(z.string())
 });
 export const memorySummarySchema = z.object({

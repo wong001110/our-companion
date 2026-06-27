@@ -11,8 +11,16 @@ import {
   planExploration,
   runDiscoveryAgents,
   scoreDiscovery,
-  captureSignal
+  captureSignal,
+  createPoolItem,
+  addToPool,
+  getShareCandidates,
+  evaluateShareCandidate,
+  determineInterruptionLevel,
+  shouldShareNow,
+  DiscoveryEngine,
 } from './index';
+import type { DiscoveryResult, AttentionState } from '@our-companion/shared';
 
 describe('discovery engine', () => {
   it('scores with user interest, history, character expertise, novelty, and usefulness', () => {
@@ -143,5 +151,157 @@ describe('discovery engine', () => {
     expect(plan.agents).toContain('builder');
     expect(candidates.length).toBeGreaterThan(0);
     expect(candidates[0]?.relatedCuriosityTargetId).toBe(target.id);
+  });
+});
+
+describe('discovery pool', () => {
+  const mockResult: DiscoveryResult = {
+    id: 'result_1',
+    jobId: 'job_1',
+    summary: 'Found PixiJS tutorials',
+    detailedFindings: 'Multiple tutorials found',
+    evidence: [],
+    confidence: 0.8,
+    novelty: 0.7,
+    suggestedMemoryUpdates: ['mem_1'],
+    suggestedInsights: ['insight_1'],
+    suggestedFollowUps: [],
+    createdAt: new Date().toISOString(),
+  };
+
+  it('creates pool item from result', () => {
+    const item = createPoolItem(mockResult);
+    expect(item.sourceDiscoveryId).toBe('job_1');
+    expect(item.status).toBe('pooled');
+    expect(item.noveltyScore).toBe(0.7);
+  });
+
+  it('adds item to pool', () => {
+    const item = createPoolItem(mockResult);
+    const pool = addToPool([], item);
+    expect(pool).toHaveLength(1);
+  });
+
+  it('prevents duplicate pool items', () => {
+    const item = createPoolItem(mockResult);
+    let pool = addToPool([], item);
+    pool = addToPool(pool, item);
+    expect(pool).toHaveLength(1);
+  });
+
+  it('gets share candidates', () => {
+    const item = createPoolItem(mockResult);
+    const pool = addToPool([], item);
+    const candidates = getShareCandidates(pool);
+    expect(candidates).toHaveLength(1);
+  });
+});
+
+describe('share timing', () => {
+  const mockAttention: AttentionState = {
+    userActive: true,
+    appFocused: true,
+    recentInteraction: true,
+    doNotDisturb: false,
+    estimatedInterruptCost: 0.2,
+  };
+
+  it('evaluates share candidate', () => {
+    const item = {
+      id: 'item_1',
+      sourceDiscoveryId: 'disc_1',
+      title: 'PixiJS Tutorial',
+      summary: 'Found PixiJS tutorial',
+      evidence: [],
+      tags: [],
+      relatedTopics: [],
+      relatedMemories: [],
+      relatedInsights: [],
+      noveltyScore: 0.8,
+      relevanceScore: 0.7,
+      confidenceScore: 0.75,
+      sharePriority: 0.7,
+      status: 'pooled' as const,
+      createdAt: new Date().toISOString(),
+      returnedAt: new Date().toISOString(),
+      lastUpdatedAt: new Date().toISOString(),
+    };
+
+    const candidate = evaluateShareCandidate(item, mockAttention, 0);
+    expect(candidate.poolItemId).toBe('item_1');
+    expect(candidate.suggestedTone).toBe('excited');
+  });
+
+  it('determines interruption level', () => {
+    const candidate = {
+      id: 'candidate_1',
+      poolItemId: 'item_1',
+      reason: 'High novelty',
+      priority: 0.8,
+      urgency: 0.7,
+      expectedUserValue: 0.8,
+      interruptionCost: 0.3,
+      confidence: 0.75,
+      suggestedTone: 'excited' as const,
+      suggestedTiming: 'now' as const,
+    };
+
+    const level = determineInterruptionLevel(candidate, mockAttention);
+    expect(level).toBe('soft_prompt');
+  });
+
+  it('blocks share when do not disturb', () => {
+    const dndAttention: AttentionState = {
+      ...mockAttention,
+      doNotDisturb: true,
+    };
+
+    const candidate = {
+      id: 'candidate_1',
+      poolItemId: 'item_1',
+      reason: 'High novelty',
+      priority: 0.8,
+      urgency: 0.7,
+      expectedUserValue: 0.8,
+      interruptionCost: 0.3,
+      confidence: 0.75,
+      suggestedTone: 'excited' as const,
+      suggestedTiming: 'now' as const,
+    };
+
+    expect(shouldShareNow(candidate, dndAttention)).toBe(false);
+  });
+});
+
+describe('discovery engine v2', () => {
+  it('creates and completes discovery job', () => {
+    const engine = new DiscoveryEngine();
+    const job = engine.createDiscoveryJob('curiosity_1', 0.8, ['PixiJS']);
+
+    expect(job.status).toBe('pending');
+    expect(job.sourceCuriosityId).toBe('curiosity_1');
+
+    const completed = engine.completeDiscovery(job.id);
+    expect(completed).toBeTruthy();
+    expect(completed?.summary).toBeTruthy();
+  });
+
+  it('cancels discovery job', () => {
+    const engine = new DiscoveryEngine();
+    const job = engine.createDiscoveryJob('curiosity_1', 0.8);
+
+    engine.cancelDiscovery(job.id);
+    const queue = engine.getDiscoveryQueue();
+    expect(queue.find((j) => j.id === job.id)?.status).toBe('cancelled');
+  });
+
+  it('retries failed job', () => {
+    const engine = new DiscoveryEngine();
+    const job = engine.createDiscoveryJob('curiosity_1', 0.8);
+
+    engine.cancelDiscovery(job.id);
+    const retried = engine.retryDiscovery(job.id);
+    expect(retried?.status).toBe('pending');
+    expect(retried?.retryCount).toBe(1);
   });
 });

@@ -88,3 +88,5 @@ export function createNotificationPayload(input) {
         createdAt: nowIso()
     };
 }
+export { MockSpeechToTextProvider, MockTextToSpeechProvider } from './providers';
+export { ListenManager } from './listen-manager';

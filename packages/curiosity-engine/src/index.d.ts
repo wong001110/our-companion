@@ -40,3 +40,8 @@ export declare function calculateCuriosityMomentum(input: CuriosityMomentumInput
 export declare function assessCuriosity(input: AssessCuriosityInput): CuriosityAssessment;
 export declare function scoreCuriosityInvestment(input: Omit<CuriosityInvestment, 'id' | 'score' | 'updatedAt'>): CuriosityInvestment;
 export declare function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): CuriosityTarget[];
+export { CuriosityEngine } from './curiosity-engine';
+export { scoreCandidatePriority, rankCandidates } from './curiosity-scoring';
+export { generateFromMemories, generateFromPatterns, generateFromInsights, generateDefaultCandidate } from './candidate-generator';
+export { addToQueue, removeFromQueue, getTopCandidates, deduplicateQueue, expireStaleCandidates, } from './queue-manager';
+export { MIN_CANDIDATE_PRIORITY, MAX_CANDIDATES_IN_QUEUE, CANDIDATE_EXPIRY_DAYS, } from './types';

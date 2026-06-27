@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { animationFor, applyEmotionEvent, CharacterPackageRegistry, createInitialCharacterState, createRuntimeDescriptor, decayEmotion, defaultAnnPackage, exportCharacterPackage, importCharacterPackage, loadCharacterPackage, nextAnimationState, planAnimationRequest, planPerformanceScript, resolveCharacterState, selectIntent, transitionState, validateCharacterPackage } from './index';
+import { animationFor, applyEmotionEvent, CharacterPackageRegistry, createInitialCharacterState, createRuntimeDescriptor, decayEmotion, defaultAnnPackage, exportCharacterPackage, importCharacterPackage, loadCharacterPackage, nextAnimationState, planAnimationRequest, planPerformanceScript, resolveCharacterState, selectIntent, transitionState, validateCharacterPackage, createRuntimeContext, canTransition, transitionRuntimeState, submitBehaviour, startBehaviour, completeBehaviour, createAttentionState, determinePresenceMode, shouldAllowInterruption, PerformanceEngine, defaultPerformanceScripts, } from './index';
 describe('character engine', () => {
     it('decays and clamps emotions', () => {
         const decayed = decayEmotion({
@@ -90,5 +90,137 @@ describe('character engine', () => {
         expect(imported.id).toBe('mira');
         expect(loaded.validation.valid).toBe(true);
         expect(loaded.runtime.personalityPreset.traits).toContain('playful');
+    });
+});
+describe('character runtime v2', () => {
+    it('creates runtime context', () => {
+        const context = createRuntimeContext({ characterId: 'ann' });
+        expect(context.characterId).toBe('ann');
+        expect(context.state).toBe('idle');
+        expect(context.queuedBehaviours).toHaveLength(0);
+    });
+    it('validates state transitions', () => {
+        expect(canTransition('idle', 'thinking')).toBe(true);
+        expect(canTransition('idle', 'error')).toBe(true);
+        expect(canTransition('sleeping', 'thinking')).toBe(false);
+    });
+    it('transitions state safely', () => {
+        expect(transitionRuntimeState('idle', 'thinking')).toBe('thinking');
+        expect(transitionRuntimeState('sleeping', 'thinking')).toBe('sleeping');
+    });
+    it('submits behaviour to queue', () => {
+        const context = createRuntimeContext({ characterId: 'ann' });
+        const request = {
+            id: 'behaviour_1',
+            source: 'brain',
+            type: 'think',
+            priority: 0.8,
+            interruptible: true,
+            createdAt: new Date().toISOString(),
+        };
+        const result = submitBehaviour(context, request);
+        expect(result.accepted).toBe(true);
+    });
+    it('rejects duplicate behaviour types', () => {
+        const context = {
+            ...createRuntimeContext({ characterId: 'ann' }),
+            queuedBehaviours: [{
+                    id: 'behaviour_1',
+                    source: 'brain',
+                    type: 'think',
+                    priority: 0.8,
+                    interruptible: true,
+                    createdAt: new Date().toISOString(),
+                }],
+        };
+        const request = {
+            id: 'behaviour_2',
+            source: 'brain',
+            type: 'think',
+            priority: 0.7,
+            interruptible: true,
+            createdAt: new Date().toISOString(),
+        };
+        const result = submitBehaviour(context, request);
+        expect(result.accepted).toBe(false);
+    });
+    it('starts behaviour and updates state', () => {
+        const context = createRuntimeContext({ characterId: 'ann' });
+        const request = {
+            id: 'behaviour_1',
+            source: 'brain',
+            type: 'think',
+            priority: 0.8,
+            interruptible: true,
+            createdAt: new Date().toISOString(),
+        };
+        const { context: updated } = startBehaviour(context, request);
+        expect(updated.state).toBe('thinking');
+        expect(updated.currentBehaviour).toBeTruthy();
+    });
+    it('completes behaviour and returns to idle', () => {
+        const context = createRuntimeContext({ characterId: 'ann' });
+        const request = {
+            id: 'behaviour_1',
+            source: 'brain',
+            type: 'think',
+            priority: 0.8,
+            interruptible: true,
+            createdAt: new Date().toISOString(),
+        };
+        const { context: started } = startBehaviour(context, request);
+        const completed = completeBehaviour(started);
+        expect(completed.state).toBe('idle');
+        expect(completed.currentBehaviour?.status).toBe('completed');
+    });
+});
+describe('presence system', () => {
+    it('creates attention state', () => {
+        const attention = createAttentionState();
+        expect(attention.userActive).toBe(true);
+        expect(attention.doNotDisturb).toBe(false);
+    });
+    it('determines presence mode from context', () => {
+        const context = createRuntimeContext({ characterId: 'ann' });
+        const attention = createAttentionState();
+        const mode = determinePresenceMode(context, attention);
+        expect(mode).toBe('available');
+    });
+    it('blocks interruption when do not disturb', () => {
+        const attention = createAttentionState();
+        attention.doNotDisturb = true;
+        expect(shouldAllowInterruption(attention, 0.3)).toBe(false);
+    });
+    it('allows low-cost interruption when idle', () => {
+        const attention = createAttentionState();
+        attention.userActive = false;
+        expect(shouldAllowInterruption(attention, 0.2)).toBe(true);
+    });
+});
+describe('performance engine', () => {
+    it('loads and plays script', () => {
+        const engine = new PerformanceEngine();
+        const script = defaultPerformanceScripts[0];
+        engine.loadScript(script);
+        const execution = engine.playScript(script.id);
+        expect(execution).toBeTruthy();
+        expect(execution?.status).toBe('playing');
+    });
+    it('completes execution', () => {
+        const engine = new PerformanceEngine();
+        const script = defaultPerformanceScripts[0];
+        engine.loadScript(script);
+        const execution = engine.playScript(script.id);
+        engine.completeExecution(execution.id);
+        const active = engine.getActiveExecution();
+        expect(active).toBeUndefined();
+    });
+    it('cancels execution', () => {
+        const engine = new PerformanceEngine();
+        const script = defaultPerformanceScripts[0];
+        engine.loadScript(script);
+        const execution = engine.playScript(script.id);
+        engine.cancelExecution(execution.id);
+        expect(execution.status).toBe('playing');
     });
 });
