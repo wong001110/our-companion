@@ -391,6 +391,9 @@ export function EngineObservatory() {
                 <li>
                   <strong>Has pending</strong> {snapshot.discoveryScheduling.hasPending ? 'yes' : 'no'}
                 </li>
+                <li>
+                  <strong>Queue length</strong> {snapshot.discoveryScheduling.queueLength}
+                </li>
                 {snapshot.discoveryScheduling.pendingDiscoveryId && (
                   <li>
                     <strong>Pending ID</strong> {snapshot.discoveryScheduling.pendingDiscoveryId}
@@ -402,12 +405,17 @@ export function EngineObservatory() {
                 <li>
                   <strong>Announced</strong> {snapshot.discoveryScheduling.announcedCount}
                 </li>
+                {snapshot.discoveryScheduling.lastAnnouncedId && (
+                  <li>
+                    <strong>Last announced</strong> {snapshot.discoveryScheduling.lastAnnouncedId}
+                  </li>
+                )}
                 {queueStats && (
                   <>
-                    <li><strong>Queue: queued</strong> {queueStats.queued}</li>
-                    <li><strong>Queue: presenting</strong> {queueStats.presenting}</li>
-                    <li><strong>Queue: dismissed</strong> {queueStats.dismissed}</li>
-                    <li><strong>Queue: saved</strong> {queueStats.saved}</li>
+                    <li><strong>Pool: queued</strong> {queueStats.queued}</li>
+                    <li><strong>Pool: presenting</strong> {queueStats.presenting}</li>
+                    <li><strong>Pool: dismissed</strong> {queueStats.dismissed}</li>
+                    <li><strong>Pool: saved</strong> {queueStats.saved}</li>
                   </>
                 )}
                 {snapshot.discoveryScheduling.lastTickAt && (

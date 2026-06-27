@@ -23,8 +23,10 @@ export function buildEngineSnapshot(
     isBusy: orchestrator?.isBusy() ?? false,
     hasPending: orchestrator?.hasPending() ?? false,
     pendingDiscoveryId: orchestrator?.getPendingDiscoveryId(),
+    queueLength: orchestrator?.getQueueLength() ?? 0,
     lastTickAt: orchestrator?.getLastTickAt(),
     lastSkipReason: orchestrator?.getLastSkipReason(),
+    lastAnnouncedId: orchestrator?.getLastAnnouncedId(),
     unannouncedCount,
     announcedCount: announcedIds.size
   };

@@ -1017,8 +1017,10 @@ export interface DiscoverySchedulingDebug {
   isBusy: boolean;
   hasPending: boolean;
   pendingDiscoveryId?: string;
+  queueLength: number;
   lastTickAt?: string;
   lastSkipReason?: string;
+  lastAnnouncedId?: string;
   unannouncedCount: number;
   announcedCount: number;
 }

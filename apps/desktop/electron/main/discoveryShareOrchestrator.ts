@@ -14,6 +14,18 @@ export interface DiscoveryAnnouncePayload {
   sourceUrl?: string;
 }
 
+export type DiscoveryShareStatus = 'queued' | 'presenting' | 'interrupted' | 'announced';
+
+export interface QueuedDiscovery {
+  discovery: Discovery;
+  status: DiscoveryShareStatus;
+  retryCount: number;
+  enqueuedAt: string;
+  presentedAt?: string;
+  interruptedAt?: string;
+  announcedAt?: string;
+}
+
 export interface DiscoveryShareOrchestratorDeps {
   getState: () => CharacterRuntimeState;
   saveState: (state: CharacterRuntimeState) => CharacterRuntimeState;
@@ -26,18 +38,20 @@ export interface DiscoveryShareOrchestratorDeps {
 
 const STEP_DELAY_MS = 1200;
 const CARD_RENDER_DELAY_MS = 300;
+const CAN_ANNOUNCE_WAIT_MS = 2000;
+const MAX_CAN_ANNOUNCE_RETRIES = 5;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export class DiscoveryShareOrchestrator {
-  private queue: Discovery[] = [];
-  private currentDiscovery: Discovery | undefined;
+  private queue: QueuedDiscovery[] = [];
   private busy = false;
   private stopped = false;
   private lastTickAt: string | undefined;
   private lastSkipReason: string | undefined;
+  private lastAnnouncedId: string | undefined;
 
   constructor(private readonly deps: DiscoveryShareOrchestratorDeps) {}
 
@@ -50,11 +64,16 @@ export class DiscoveryShareOrchestrator {
   }
 
   getPendingDiscoveryId(): string | undefined {
-    return this.currentDiscovery?.id ?? this.queue[0]?.id;
+    const current = this.queue.find((q) => q.status === 'presenting');
+    return current?.discovery.id ?? this.queue[0]?.discovery.id;
   }
 
   getQueueLength(): number {
-    return this.queue.length + (this.currentDiscovery ? 1 : 0);
+    return this.queue.length;
+  }
+
+  getQueue(): QueuedDiscovery[] {
+    return [...this.queue];
   }
 
   getLastTickAt(): string | undefined {
@@ -65,12 +84,22 @@ export class DiscoveryShareOrchestrator {
     return this.lastSkipReason;
   }
 
+  getLastAnnouncedId(): string | undefined {
+    return this.lastAnnouncedId;
+  }
+
   enqueue(discovery: Discovery): boolean {
     if (this.stopped) { this.lastSkipReason = 'stopped'; return false; }
-    const isActive = this.queue.some((d) => d.id === discovery.id) ||
-      this.currentDiscovery?.id === discovery.id;
+    const isActive = this.queue.some((q) => q.discovery.id === discovery.id && q.status !== 'interrupted') ||
+      this.currentDiscovery?.id === discovery.id ||
+      this.lastAnnouncedId === discovery.id;
     if (isActive) { this.lastSkipReason = 'duplicate'; return false; }
-    this.queue.push(discovery);
+    this.queue.push({
+      discovery,
+      status: 'queued',
+      retryCount: 0,
+      enqueuedAt: new Date().toISOString()
+    });
     this.lastTickAt = new Date().toISOString();
     this.lastSkipReason = undefined;
     void this.processQueue();
@@ -83,6 +112,10 @@ export class DiscoveryShareOrchestrator {
     this.busy = false;
   }
 
+  clearQueue(): void {
+    this.queue = [];
+  }
+
   private emitEvent(type: string, payload: Record<string, unknown>): void {
     (this.deps.eventBus ?? globalEventBus).emit(createEvent({ type, source: 'discovery-share-orchestrator', payload }));
   }
@@ -92,41 +125,68 @@ export class DiscoveryShareOrchestrator {
 
     while (!this.stopped && this.queue.length > 0) {
       if (!this.deps.canAnnounce()) {
-        this.lastSkipReason = 'cannot_announce';
-        await delay(STEP_DELAY_MS);
-        continue;
+        let retries = 0;
+        while (!this.deps.canAnnounce() && retries < MAX_CAN_ANNOUNCE_RETRIES && !this.stopped) {
+          this.lastSkipReason = 'cannot_announce';
+          await delay(CAN_ANNOUNCE_WAIT_MS);
+          retries++;
+        }
+        if (!this.deps.canAnnounce()) {
+          this.lastSkipReason = 'cannot_announce_timeout';
+          break;
+        }
       }
 
-      const discovery = this.queue.shift()!;
-      this.currentDiscovery = discovery;
+      const entry = this.queue.shift()!;
+      entry.status = 'presenting';
+      entry.presentedAt = new Date().toISOString();
       this.busy = true;
       try {
-        await this.announceDiscovery(discovery);
+        await this.announceDiscovery(entry);
       } finally {
         this.busy = false;
-        this.currentDiscovery = undefined;
       }
     }
   }
 
-  private async announceDiscovery(discovery: Discovery): Promise<void> {
+  private async announceDiscovery(entry: QueuedDiscovery): Promise<void> {
     while (!this.deps.canAnnounce() && !this.stopped) {
       await delay(STEP_DELAY_MS);
     }
-    if (!this.deps.canAnnounce()) return;
+    if (!this.deps.canAnnounce()) {
+      entry.status = 'interrupted';
+      entry.interruptedAt = new Date().toISOString();
+      entry.retryCount++;
+      if (entry.retryCount < 3) {
+        this.queue.unshift(entry);
+      }
+      return;
+    }
 
     this.emitEvent(DOMAIN_EVENT_TYPES.DiscoveryReadyToShare, {
-      discoveryId: discovery.id,
+      discoveryId: entry.discovery.id,
       source: 'discovery-share-orchestrator'
     });
 
     const { advanceCharacter, applyEmotionEvent } = await import('@our-companion/character-engine');
-    const context = { availableDiscoveries: [discovery as NormalizedDiscovery], userActive: false };
+    const context = { availableDiscoveries: [entry.discovery as NormalizedDiscovery], userActive: false };
     let state = this.deps.getState();
 
     for (let step = 0; step < 4; step += 1) {
-      if (this.stopped) return;
-      if (step > 0 && this.deps.shouldInterruptShare()) return;
+      if (this.stopped) {
+        entry.status = 'interrupted';
+        entry.interruptedAt = new Date().toISOString();
+        return;
+      }
+      if (step > 0 && this.deps.shouldInterruptShare()) {
+        entry.status = 'interrupted';
+        entry.interruptedAt = new Date().toISOString();
+        entry.retryCount++;
+        if (entry.retryCount < 3) {
+          this.queue.unshift(entry);
+        }
+        return;
+      }
 
       state = advanceCharacter(state, context);
       if (step === 0) {
@@ -144,17 +204,17 @@ export class DiscoveryShareOrchestrator {
       });
 
       if (step === 0) {
-        const reason = await this.deps.generateReason(discovery);
+        const reason = await this.deps.generateReason(entry.discovery);
         this.emitEvent(DOMAIN_EVENT_TYPES.AnnMessageQueued, {
-          discoveryId: discovery.id,
-          title: reason.card_title ?? discovery.title,
+          discoveryId: entry.discovery.id,
+          title: reason.card_title ?? entry.discovery.title,
           message: reason.short_message,
           cardBody: reason.card_body ?? reason.why_this_matters,
           whyThisMatters: reason.why_this_matters,
           recommendedAction: reason.recommended_action,
-          tags: reason.tags ?? discovery.tags ?? [],
-          source: discovery.source,
-          sourceUrl: discovery.url
+          tags: reason.tags ?? entry.discovery.tags ?? [],
+          source: entry.discovery.source,
+          sourceUrl: entry.discovery.url
         });
         await delay(CARD_RENDER_DELAY_MS);
       }
@@ -176,6 +236,9 @@ export class DiscoveryShareOrchestrator {
       coreState: saved.coreState,
       intent: saved.intent
     });
-    this.deps.markAnnounced(discovery.id);
+    entry.status = 'announced';
+    entry.announcedAt = new Date().toISOString();
+    this.lastAnnouncedId = entry.discovery.id;
+    this.deps.markAnnounced(entry.discovery.id);
   }
 }
