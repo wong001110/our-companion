@@ -53,6 +53,10 @@ describe('buildEngineSnapshot', () => {
     expect(snapshot.explorationEvents).toHaveLength(1);
     expect(snapshot.characterState?.characterId).toBe('ann');
     expect(snapshot.actionPermissions.browser).toBeDefined();
+    expect(snapshot.discoveryScheduling.isBusy).toBe(false);
+    expect(snapshot.discoveryScheduling.hasPending).toBe(false);
+    expect(snapshot.discoveryScheduling.unannouncedCount).toBe(0);
+    expect(snapshot.discoveryScheduling.announcedCount).toBe(0);
 
     db.close();
   });

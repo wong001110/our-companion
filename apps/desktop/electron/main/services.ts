@@ -233,6 +233,35 @@ export class AppServices {
         discoveryId: discovery.id
       }, correlationId);
       return { journey, milestone, memory };
+    },
+    generateNow: async () => {
+      const result = await this.runDiscoveryRefresh();
+      return result.discoveries;
+    },
+    shareNext: async () => {
+      if (!this.shareOrchestrator) return false;
+      const oldest = this.db.getOldestUnannouncedShared();
+      if (!oldest) return false;
+      return this.shareOrchestrator.enqueue(oldest);
+    },
+    resetStatuses: async () => {
+      const discoveries = this.db.listDiscoveries({ limit: 200 });
+      for (const d of discoveries) {
+        if (d.status === 'shared' || d.status === 'queued') {
+          this.db.updateDiscoveryStatus(d.id, 'new');
+        }
+      }
+      return { reset: true };
+    },
+    markAllUnannounced: async () => {
+      const announced = this.db.getAnnouncedDiscoveryIds();
+      const shared = this.db.listDiscoveries({ status: 'shared', limit: 200 });
+      const unannounced = shared.filter((d) => !announced.includes(d.id));
+      return { count: unannounced.length };
+    },
+    clearPool: async () => {
+      this.db.resetDebugData({ targets: ['discoveries'] });
+      return { cleared: true };
     }
   };
 
@@ -648,7 +677,7 @@ export class AppServices {
   debug = {
     resetData: async (input: DebugDataResetInput) => this.db.resetDebugData(input),
     getFoundationLog: async (input: FoundationEventLogInput = {}) => this.getFoundationLog(input),
-    getEngineSnapshot: async (input: EngineSnapshotInput = {}) => buildEngineSnapshot(this.db, input)
+    getEngineSnapshot: async (input: EngineSnapshotInput = {}) => buildEngineSnapshot(this.db, input, undefined, this.shareOrchestrator)
   };
 
   attachShareOrchestrator(orchestrator: DiscoveryShareOrchestrator): void {

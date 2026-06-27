@@ -74,6 +74,7 @@ export function EngineObservatory() {
     interest: false,
     curiosity: true,
     discovery: true,
+    discoveryScheduling: true,
     insight: true,
     decision: false,
     action: false,
@@ -370,6 +371,51 @@ export function EngineObservatory() {
             </>
           ) : (
             <p className="engine-empty">No discovery candidates or feed items.</p>
+          )}
+        </SnapshotPanel>
+
+        <SnapshotPanel title="Discovery Scheduling" open={expandedPanels.discoveryScheduling ?? false} onToggle={() => togglePanel('discoveryScheduling')}>
+          {snapshot?.discoveryScheduling ? (
+            <>
+              <ul className="engine-snapshot-list">
+                <li>
+                  <strong>Busy</strong> {snapshot.discoveryScheduling.isBusy ? 'yes' : 'no'}
+                </li>
+                <li>
+                  <strong>Has pending</strong> {snapshot.discoveryScheduling.hasPending ? 'yes' : 'no'}
+                </li>
+                {snapshot.discoveryScheduling.pendingDiscoveryId && (
+                  <li>
+                    <strong>Pending ID</strong> {snapshot.discoveryScheduling.pendingDiscoveryId}
+                  </li>
+                )}
+                <li>
+                  <strong>Unannounced</strong> {snapshot.discoveryScheduling.unannouncedCount}
+                </li>
+                <li>
+                  <strong>Announced</strong> {snapshot.discoveryScheduling.announcedCount}
+                </li>
+                {snapshot.discoveryScheduling.lastTickAt && (
+                  <li>
+                    <strong>Last tick</strong> {new Date(snapshot.discoveryScheduling.lastTickAt).toLocaleTimeString()}
+                  </li>
+                )}
+                {snapshot.discoveryScheduling.lastSkipReason && (
+                  <li>
+                    <strong>Last skip</strong> {snapshot.discoveryScheduling.lastSkipReason}
+                  </li>
+                )}
+              </ul>
+              <div className="engine-meta" style={{ marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                <button onClick={() => void window.ourCompanion.discovery.generateNow().then(() => void refreshAll())}>Generate now</button>
+                <button onClick={() => void window.ourCompanion.discovery.shareNext().then(() => void refreshAll())}>Share next</button>
+                <button onClick={() => void window.ourCompanion.discovery.resetStatuses().then(() => void refreshAll())}>Reset statuses</button>
+                <button onClick={() => void window.ourCompanion.discovery.markAllUnannounced().then((r) => { alert(`${r.count} unannounced`); void refreshAll(); })}>Count unannounced</button>
+                <button onClick={() => void window.ourCompanion.discovery.clearPool().then(() => void refreshAll())}>Clear pool</button>
+              </div>
+            </>
+          ) : (
+            <p className="engine-empty">No scheduling data.</p>
           )}
         </SnapshotPanel>
 

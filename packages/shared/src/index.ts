@@ -1013,6 +1013,16 @@ export interface EngineSnapshotInput {
   cycleId?: string;
 }
 
+export interface DiscoverySchedulingDebug {
+  isBusy: boolean;
+  hasPending: boolean;
+  pendingDiscoveryId?: string;
+  lastTickAt?: string;
+  lastSkipReason?: string;
+  unannouncedCount: number;
+  announcedCount: number;
+}
+
 export interface EngineSnapshot {
   capturedAt: string;
   characterState?: CharacterRuntimeState;
@@ -1027,6 +1037,7 @@ export interface EngineSnapshot {
   explorationEvents: ExplorationLoopEvent[];
   recentDiscoveries: Discovery[];
   actionPermissions: ActionPermissionState;
+  discoveryScheduling: DiscoverySchedulingDebug;
 }
 
 export interface DiscoveryReason {
@@ -1083,6 +1094,11 @@ export interface OurCompanionApi {
     markNotInterested(discoveryId: string): Promise<Discovery>;
     addToJourney(input: AddDiscoveryToJourneyInput): Promise<{ journey: Journey; milestone: JourneyMilestone; memory: MemoryNode }>;
     onAnnounce(listener: (payload: DiscoveryAnnouncePayload) => void): () => void;
+    generateNow(): Promise<Discovery[]>;
+    shareNext(): Promise<boolean>;
+    resetStatuses(): Promise<{ reset: boolean }>;
+    markAllUnannounced(): Promise<{ count: number }>;
+    clearPool(): Promise<{ cleared: boolean }>;
   };
   autonomy: {
     startExploration(input?: StartExplorationInput): Promise<ExplorationCycleResult>;

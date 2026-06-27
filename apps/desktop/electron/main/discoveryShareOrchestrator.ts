@@ -34,6 +34,8 @@ export class DiscoveryShareOrchestrator {
   private pendingDiscovery: Discovery | undefined;
   private busy = false;
   private stopped = false;
+  private lastTickAt: string | undefined;
+  private lastSkipReason: string | undefined;
 
   constructor(private readonly deps: DiscoveryShareOrchestratorDeps) {}
 
@@ -45,10 +47,24 @@ export class DiscoveryShareOrchestrator {
     return this.pendingDiscovery !== undefined;
   }
 
+  getPendingDiscoveryId(): string | undefined {
+    return this.pendingDiscovery?.id;
+  }
+
+  getLastTickAt(): string | undefined {
+    return this.lastTickAt;
+  }
+
+  getLastSkipReason(): string | undefined {
+    return this.lastSkipReason;
+  }
+
   enqueue(discovery: Discovery): boolean {
-    if (this.stopped) return false;
-    if (this.busy) return false;
-    if (this.pendingDiscovery !== undefined) return false;
+    if (this.stopped) { this.lastSkipReason = 'stopped'; return false; }
+    if (this.busy) { this.lastSkipReason = 'busy'; return false; }
+    if (this.pendingDiscovery !== undefined) { this.lastSkipReason = 'already_pending'; return false; }
+    this.lastTickAt = new Date().toISOString();
+    this.lastSkipReason = undefined;
     this.pendingDiscovery = discovery;
     void this.processPending();
     return true;

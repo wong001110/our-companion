@@ -59,7 +59,12 @@ const api: OurCompanionApi = {
       const handler = (_event: Electron.IpcRendererEvent, payload: DiscoveryAnnouncePayload) => listener(payload);
       ipcRenderer.on(channel, handler);
       return () => ipcRenderer.removeListener(channel, handler);
-    }
+    },
+    generateNow: () => invoke('discovery:generateNow'),
+    shareNext: () => invoke('discovery:shareNext'),
+    resetStatuses: () => invoke('discovery:resetStatuses'),
+    markAllUnannounced: () => invoke('discovery:markAllUnannounced'),
+    clearPool: () => invoke('discovery:clearPool')
   },
   autonomy: {
     startExploration: (input?: StartExplorationInput) => invoke('autonomy:startExploration', input),
