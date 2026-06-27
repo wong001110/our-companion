@@ -27,14 +27,9 @@ export function DiscoveryPopoutCard({
   onIgnore,
   onClose
 }: DiscoveryPopoutCardProps) {
-  const [visible, setVisible] = useState(false);
+  const [visible, setVisible] = useState(true);
   const [exiting, setExiting] = useState(false);
   const timerRef = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    const enterTimer = window.setTimeout(() => setVisible(true), 50);
-    return () => window.clearTimeout(enterTimer);
-  }, []);
 
   useEffect(() => {
     if (!visible) return;

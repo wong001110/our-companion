@@ -20,7 +20,12 @@ export default defineConfig({
       '@our-companion/tool-engine': path.resolve(root, 'packages/tool-engine/src/index.ts'),
       '@our-companion/action-engine': path.resolve(root, 'packages/action-engine/src/index.ts'),
       '@our-companion/ai-engine': path.resolve(root, 'packages/ai-engine/src/index.ts'),
-      '@our-companion/database': path.resolve(root, 'packages/database/src/index.ts')
+      '@our-companion/database': path.resolve(root, 'packages/database/src/index.ts'),
+      '@our-companion/event-bus': path.resolve(root, 'packages/platform/event-bus/src/index.ts'),
+      '@our-companion/curiosity-engine': path.resolve(root, 'packages/curiosity-engine/src/index.ts'),
+      '@our-companion/insight-engine': path.resolve(root, 'packages/insight-engine/src/index.ts'),
+      '@our-companion/decision-engine': path.resolve(root, 'packages/decision-engine/src/index.ts'),
+      '@our-companion/pattern-engine': path.resolve(root, 'packages/pattern-engine/src/index.ts')
     }
   }
 });

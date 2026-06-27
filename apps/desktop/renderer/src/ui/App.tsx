@@ -212,8 +212,12 @@ function CompanionShell() {
       applyState(next);
     });
     const unsubscribeAnnounce = window.ourCompanion.discovery.onAnnounce((payload) => {
-      showTypewriterSpeech(payload.message);
-      setDiscoveryPopup(payload);
+      if (payload.phase !== 'speech') {
+        setDiscoveryPopup(payload);
+      }
+      if (payload.phase !== 'card' && payload.message) {
+        showTypewriterSpeech(payload.message);
+      }
     });
     const unsubscribePerformance = window.ourCompanion.action.onPerformance((script: PerformanceScript) => {
       let delay = 0;
@@ -700,7 +704,10 @@ function HomeView({
         {exploration?.selectedInsight && (
           <PaperCard title="Ann returned" tape className="wide-card insight-return-card">
             <p className="focus-title">{exploration.selectedInsight.title}</p>
-            <p>{exploration.selectedInsight.narration ?? exploration.selectedInsight.summary}</p>
+            <p>{exploration.selectedInsight.summary}</p>
+            {exploration.discoveryCandidates.length > 1 && (
+              <p className="engine-meta">{exploration.discoveryCandidates.length - 1} more discoveries queued</p>
+            )}
             <div className="tag-row">
               <span>{exploration.selectedCuriosityTarget?.explorationType ?? 'insight'}</span>
               <span>{exploration.cycle.state}</span>
@@ -810,10 +817,13 @@ function DiscoveryView({
       {exploration?.selectedInsight && (
         <section className="insight-archive-panel">
           <div>
-            <p className="eyebrow">Returned insight</p>
+            <p className="eyebrow">Returned discovery</p>
             <h2>{exploration.selectedInsight.title}</h2>
-            <p>{exploration.selectedInsight.narration ?? exploration.selectedInsight.summary}</p>
+            <p>{exploration.selectedInsight.summary}</p>
             <p>{exploration.selectedInsight.suggestedQuestion}</p>
+            {exploration.discoveryCandidates.length > 1 && (
+              <p className="engine-meta">{exploration.discoveryCandidates.length - 1} more discoveries in queue</p>
+            )}
           </div>
           <div className="action-row">
             <button onClick={() => void onSubmitFeedback('opened_evidence')}>Explore evidence</button>
@@ -821,23 +831,28 @@ function DiscoveryView({
             <button onClick={() => void onSubmitFeedback('not_interested')}>Not interested</button>
             <button onClick={() => void onSubmitFeedback('talk_about_this')}>Talk about this</button>
           </div>
-          <div className="discovery-grid evidence-grid">
-            {exploration.discoveryCandidates.slice(0, 4).map((candidate) => (
-              <article className="discovery-card paper-photo-card" key={candidate.id}>
-                <div className="card-topline">
-                  <span>{candidate.sourceType}</span>
-                  <strong>{candidate.agentType}</strong>
-                </div>
-                <h3>{candidate.title}</h3>
-                <p>{candidate.summary}</p>
-                {candidate.sourceUrl && (
-                  <button onClick={() => window.ourCompanion.tool.execute({ toolName: 'open_url', args: { url: candidate.sourceUrl } })}>
-                    {t(lang, 'discovery_view')}
-                  </button>
-                )}
-              </article>
-            ))}
-          </div>
+          {exploration.discoveryCandidates[0] && (
+            <article className="discovery-card paper-photo-card">
+              <div className="card-topline">
+                <span>{exploration.discoveryCandidates[0].sourceType}</span>
+                <strong>{exploration.discoveryCandidates[0].agentType}</strong>
+              </div>
+              <h3>{exploration.discoveryCandidates[0].title}</h3>
+              <p>{exploration.discoveryCandidates[0].summary}</p>
+              {exploration.discoveryCandidates[0].sourceUrl && (
+                <button
+                  onClick={() =>
+                    window.ourCompanion.tool.execute({
+                      toolName: 'open_url',
+                      args: { url: exploration.discoveryCandidates[0].sourceUrl }
+                    })
+                  }
+                >
+                  {t(lang, 'discovery_view')}
+                </button>
+              )}
+            </article>
+          )}
         </section>
       )}
       <div className="discovery-grid">
