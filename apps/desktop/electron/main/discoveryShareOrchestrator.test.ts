@@ -25,6 +25,7 @@ function sampleDiscovery(id: string): Discovery {
 describe('DiscoveryShareOrchestrator', () => {
   it('advances through thinking, discovering, talking, and idle', async () => {
     vi.useFakeTimers();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
 
     const states: string[] = [];
     let current = createInitialCharacterState();
@@ -40,12 +41,13 @@ describe('DiscoveryShareOrchestrator', () => {
         why_this_matters: 'Useful',
         recommended_action: 'view',
         short_message: 'I found something worth a peek.',
+        card_title: 'Worth a peek',
+        card_body: 'Something useful for your work.',
         tags: ['frontend']
       }),
       markAnnounced: vi.fn(),
       canAnnounce: () => true,
-      shouldInterruptShare: () => false,
-      getCompanionWindow: () => undefined
+      shouldInterruptShare: () => false
     });
 
     const announcePromise = Promise.resolve().then(() => {

@@ -15,6 +15,7 @@ import type {
   DebugDataResetTarget,
   DiaryEntry,
   Discovery,
+  DiscoveryAnnouncePayload,
   ExplorationCycleResult,
   ExplorationLoopEvent,
   Journey,
@@ -37,6 +38,7 @@ import { getSpeechDuration, getWalkDelay, getWalkDelayRange, selectSpeechLine } 
 import { getIdleRotationDelay, isIdleState, selectWeightedIdleAnimation } from '../character/ann/idleBehavior';
 import { useAudioCapture } from '../companion/useAudioCapture';
 import { TypewriterSpeechBubble } from '../companion/TypewriterSpeechBubble';
+import { DiscoveryPopoutCard } from '../companion/DiscoveryPopoutCard';
 import { useCompanionSession } from '../companion/useCompanionSession';
 import { EngineObservatory } from '../features/developer/EngineObservatory';
 import { CompanionCanvas, type AnimationName, type CompanionDragPoint } from './CompanionCanvas';
@@ -78,8 +80,11 @@ function CompanionShell() {
   const [idleAnimation, setIdleAnimation] = useState<AnimationName>('idle_laptop');
   const [speech, setSpeech] = useState<string>();
   const [typewriterMessage, setTypewriterMessage] = useState<string>();
+  const [discoveryPopup, setDiscoveryPopup] = useState<DiscoveryAnnouncePayload | null>(null);
+  const [lang, setLang] = useState<Lang>('en');
   const behaviorRef = useRef<CharacterBehaviorSettings | undefined>(undefined);
   const stateRef = useRef<CharacterRuntimeState | undefined>(undefined);
+  const langRef = useRef<Lang>('en');
   const mousePassthroughRef = useRef<boolean | undefined>(undefined);
   const speechTimeoutRef = useRef<number | undefined>(undefined);
   const isDraggingRef = useRef(false);
@@ -185,11 +190,30 @@ function CompanionShell() {
   }, []);
 
   useEffect(() => {
+    function applyLang(value: string) {
+      const next = (value === 'zh-CN' ? 'zh-CN' : 'en') as Lang;
+      setLang(next);
+      langRef.current = next;
+    }
+    const stored = localStorage.getItem('ann_uiLang');
+    if (stored) applyLang(stored);
+    void window.ourCompanion.ai.getSettings().then((settings) => {
+      if (settings.uiLang) applyLang(settings.uiLang);
+    }).catch(() => undefined);
+    function onStorage(e: StorageEvent) {
+      if (e.key === 'ann_uiLang' && e.newValue) applyLang(e.newValue);
+    }
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  useEffect(() => {
     const unsubscribeState = window.ourCompanion.character.onStateChange((next) => {
       applyState(next);
     });
     const unsubscribeAnnounce = window.ourCompanion.discovery.onAnnounce((payload) => {
       showTypewriterSpeech(payload.message);
+      setDiscoveryPopup(payload);
     });
     const unsubscribePerformance = window.ourCompanion.action.onPerformance((script: PerformanceScript) => {
       let delay = 0;
@@ -314,7 +338,7 @@ function CompanionShell() {
 
         const direction = targetX < bounds.x ? 'left' : 'right';
         setFacing(direction);
-        showSpeech(selectSpeechLine('walk_start'));
+        showSpeech(selectSpeechLine('walk_start', Math.random, langRef.current));
         previewState('walking', 'wandering');
 
         const startX = bounds.x;
@@ -354,7 +378,7 @@ function CompanionShell() {
       } finally {
         if (!isDraggingRef.current) {
           previewState('idle', 'waiting');
-          if (!cancelled) showSpeech(selectSpeechLine('walk_end'));
+          if (!cancelled) showSpeech(selectSpeechLine('walk_end', Math.random, langRef.current));
         }
       }
     }
@@ -404,7 +428,7 @@ function CompanionShell() {
       if (cancelled) return;
       ambientTimeout = window.setTimeout(() => {
         if (isIdleState(stateRef.current) && !isAmbientPaused()) {
-          showInstantSpeech(selectSpeechLine('ambient'));
+          showInstantSpeech(selectSpeechLine('ambient', Math.random, langRef.current));
         }
         scheduleAmbientSpeech();
       }, randomBetween(30000, 65000));
@@ -457,6 +481,16 @@ function CompanionShell() {
         <TypewriterSpeechBubble message={typewriterMessage} onComplete={handleTypewriterComplete} />
       )}
       {!typewriterMessage && speech && <div className="speech-bubble">{speech}</div>}
+      {discoveryPopup && (
+        <DiscoveryPopoutCard
+          title={discoveryPopup.title}
+          cardBody={discoveryPopup.cardBody ?? discoveryPopup.whyThisMatters ?? ''}
+          tags={discoveryPopup.tags}
+          source={discoveryPopup.source}
+          recommendedAction={discoveryPopup.recommendedAction}
+          onClose={() => setDiscoveryPopup(null)}
+        />
+      )}
       {phase === 'idle' && textOpen && (
         <form className="companion-text-input" onSubmit={(e) => { void handleTextSubmit(e); }}>
           <input
@@ -1262,6 +1296,7 @@ function SettingsView({
       setModel(next.model);
       setEndpoint(next.endpoint);
       setApiKey('');
+      localStorage.setItem('ann_uiLang', uiLang);
       onLangChange(uiLang as Lang);
       setStatus(next.apiKeyConfigured ? 'Saved. API key is configured.' : 'Saved. No API key configured.');
     } catch (error) {

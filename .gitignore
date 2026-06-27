@@ -9,3 +9,12 @@ coverage/
 .env
 .env.local
 npm-debug.log*
+*.tsbuildinfo
+
+# Generated TypeScript outputs (source-only TS repo)
+packages/**/src/**/*.js
+packages/**/src/**/*.d.ts
+apps/**/electron/**/*.js
+apps/**/electron/**/*.d.ts
+apps/**/renderer/src/**/*.js
+apps/**/renderer/src/**/*.d.ts

@@ -33,6 +33,22 @@ describe('ai engine', () => {
     expect(parsed.recommended_action).toBe('view');
   });
 
+  it('validates discovery reason with card fields', () => {
+    const parsed = validateDiscoveryReason(
+      '{"why_this_matters":"Useful","recommended_action":"save","short_message":"Worth keeping.","card_title":"Local-first patterns","card_body":"SQLite tools for personal memory.","tags":["sqlite"]}'
+    );
+    expect(parsed.card_title).toBe('Local-first patterns');
+    expect(parsed.card_body).toBe('SQLite tools for personal memory.');
+  });
+
+  it('handles discovery reason without card fields', () => {
+    const parsed = validateDiscoveryReason(
+      '{"why_this_matters":"Useful","recommended_action":"view","short_message":"Look","tags":["ux"]}'
+    );
+    expect(parsed.card_title).toBeUndefined();
+    expect(parsed.card_body).toBeUndefined();
+  });
+
   it('validates memory summary JSON', () => {
     const parsed = validateMemorySummary('{"type":"topic","title":"PixiJS","summary":"Notes","importance_score":50}');
     expect(parsed.type).toBe('topic');

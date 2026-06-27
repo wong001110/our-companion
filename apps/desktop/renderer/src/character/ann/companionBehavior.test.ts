@@ -21,6 +21,9 @@ describe('Ann companion behavior', () => {
   it('selects short local speech lines', () => {
     expect(selectSpeechLine('walk_start', () => 0)).toBe('Stretching my legs for a bit.');
     expect(selectSpeechLine('walk_end', () => 0.99)).toBe('That was a nice little walk.');
-    expect(getSpeechDuration('Back to my spot.')).toBeGreaterThanOrEqual(3000);
+    const shortDuration = getSpeechDuration('Back to my spot.');
+    const longDuration = getSpeechDuration('This is a much longer message that should take more time to display character by character.');
+    expect(shortDuration).toBeLessThan(longDuration);
+    expect(shortDuration).toBeGreaterThan(500);
   });
 });

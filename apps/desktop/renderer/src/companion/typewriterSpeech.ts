@@ -7,8 +7,6 @@ export function splitCharacters(message: string): string[] {
   return Array.from(message);
 }
 
-export function getMsPerCharacter(message: string, minMsPerCharacter = MIN_MS_PER_CHARACTER): number {
-  const characters = splitCharacters(message);
-  if (characters.length === 0) return minMsPerCharacter;
-  return Math.max(minMsPerCharacter, getSpeechDuration(message) / characters.length);
+export function getMsPerCharacter(_message: string, minMsPerCharacter = MIN_MS_PER_CHARACTER): number {
+  return minMsPerCharacter;
 }

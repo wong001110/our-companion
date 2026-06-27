@@ -1,13 +1,16 @@
-import type { BrowserWindow } from 'electron';
-import { advanceCharacter, applyEmotionEvent } from '@our-companion/character-engine';
-import type { CharacterRuntimeState, Discovery, DiscoveryReason, NormalizedDiscovery } from '@our-companion/shared';
-import { nowIso } from '@our-companion/shared';
+import type { CharacterRuntimeState, Discovery, DiscoveryReason, EmotionState, NormalizedDiscovery } from '@our-companion/shared';
+import { DOMAIN_EVENT_TYPES } from '@our-companion/shared';
 import { createEvent, globalEventBus, type EventBus } from '@our-companion/event-bus';
 
 export interface DiscoveryAnnouncePayload {
   discoveryId: string;
   title: string;
   message: string;
+  cardBody?: string;
+  whyThisMatters?: string;
+  recommendedAction?: 'view' | 'save' | 'ignore' | 'add_to_journey';
+  tags?: string[];
+  source?: string;
 }
 
 export interface DiscoveryShareOrchestratorDeps {
@@ -17,7 +20,6 @@ export interface DiscoveryShareOrchestratorDeps {
   markAnnounced: (id: string) => void;
   canAnnounce: () => boolean;
   shouldInterruptShare: () => boolean;
-  getCompanionWindow: () => BrowserWindow | undefined;
   eventBus?: EventBus;
 }
 
@@ -46,20 +48,6 @@ export class DiscoveryShareOrchestrator {
   stop(): void {
     this.stopped = true;
     this.queue.length = 0;
-  }
-
-  private broadcastState(state: CharacterRuntimeState): void {
-    this.deps.getCompanionWindow()?.webContents.send('character:stateChanged', state);
-    this.emitEvent('AnnStateChanged', {
-      characterId: state.characterId,
-      coreState: state.coreState,
-      intent: state.intent
-    });
-  }
-
-  private broadcastAnnounce(payload: DiscoveryAnnouncePayload): void {
-    this.deps.getCompanionWindow()?.webContents.send('discovery:announce', payload);
-    this.emitEvent('AnnMessageQueued', { ...payload });
   }
 
   private emitEvent(type: string, payload: Record<string, unknown>): void {
@@ -99,6 +87,12 @@ export class DiscoveryShareOrchestrator {
       return;
     }
 
+    this.emitEvent(DOMAIN_EVENT_TYPES.DiscoveryReadyToShare, {
+      discoveryId: discovery.id,
+      source: 'discovery-share-orchestrator'
+    });
+
+    const { advanceCharacter, applyEmotionEvent } = await import('@our-companion/character-engine');
     const context = { availableDiscoveries: [discovery as NormalizedDiscovery], userActive: false };
     let state = this.deps.getState();
 
@@ -121,14 +115,23 @@ export class DiscoveryShareOrchestrator {
       }
 
       state = this.deps.saveState(state);
-      this.broadcastState(state);
+      this.emitEvent(DOMAIN_EVENT_TYPES.CharacterStateChanged, {
+        characterId: state.characterId,
+        coreState: state.coreState,
+        intent: state.intent
+      });
 
       if (state.coreState === 'talking') {
         const reason = await this.deps.generateReason(discovery);
-        this.broadcastAnnounce({
+        this.emitEvent(DOMAIN_EVENT_TYPES.AnnMessageQueued, {
           discoveryId: discovery.id,
-          title: discovery.title,
-          message: reason.short_message
+          title: reason.card_title ?? discovery.title,
+          message: reason.short_message,
+          cardBody: reason.card_body ?? reason.why_this_matters,
+          whyThisMatters: reason.why_this_matters,
+          recommendedAction: reason.recommended_action,
+          tags: reason.tags ?? discovery.tags ?? [],
+          source: discovery.source
         });
       }
 
@@ -141,10 +144,14 @@ export class DiscoveryShareOrchestrator {
       ...state,
       intent: 'waiting',
       coreState: 'idle',
-      updatedAt: nowIso()
+      updatedAt: new Date().toISOString()
     };
     const saved = this.deps.saveState(settled);
-    this.broadcastState(saved);
+    this.emitEvent(DOMAIN_EVENT_TYPES.CharacterStateChanged, {
+      characterId: saved.characterId,
+      coreState: saved.coreState,
+      intent: saved.intent
+    });
     this.deps.markAnnounced(discovery.id);
   }
 }

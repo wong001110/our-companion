@@ -1,17 +1,14 @@
+import { t, type Lang, type TranslationKey } from '../../i18n';
+
 export type SpeechEvent = 'ambient' | 'walk_start' | 'walk_end' | 'discovery' | 'task' | 'ask';
 
-const speechLines: Record<SpeechEvent, string[]> = {
-  ambient: [
-    'I am keeping an eye on the little details.',
-    'Quiet focus mode sounds nice right now.',
-    'I found a cozy corner to think in.',
-    'Tiny notes, tidy thoughts.'
-  ],
-  walk_start: ['Stretching my legs for a bit.', 'Small patrol around the desk.', 'I will wander softly.'],
-  walk_end: ['Back to my spot.', 'Settled again.', 'That was a nice little walk.'],
-  discovery: ['I found something you might like.', 'This looks worth a peek.'],
-  task: ['I am on it.', 'Let me focus on that.'],
-  ask: ['I have a thought.', 'Let me answer that simply.']
+const speechKeys: Record<SpeechEvent, TranslationKey[]> = {
+  ambient: ['speech_ambient_1', 'speech_ambient_2', 'speech_ambient_3', 'speech_ambient_4'],
+  walk_start: ['speech_walk_start_1', 'speech_walk_start_2', 'speech_walk_start_3'],
+  walk_end: ['speech_walk_end_1', 'speech_walk_end_2', 'speech_walk_end_3'],
+  discovery: ['speech_discovery_1', 'speech_discovery_2'],
+  task: ['speech_task_1', 'speech_task_2'],
+  ask: ['speech_ask_1', 'speech_ask_2']
 };
 
 export function getWalkDelayRange(movementScore: number): { minMs: number; maxMs: number } {
@@ -29,14 +26,16 @@ export function getWalkDelay(movementScore: number, random = Math.random): numbe
   return range.minMs + clamp01(random()) * (range.maxMs - range.minMs);
 }
 
-export function selectSpeechLine(event: SpeechEvent, random = Math.random): string {
-  const lines = speechLines[event];
-  const index = Math.min(lines.length - 1, Math.floor(clamp01(random()) * lines.length));
-  return lines[index];
+export function selectSpeechLine(event: SpeechEvent, random = Math.random, lang: Lang = 'en'): string {
+  const keys = speechKeys[event];
+  const index = Math.min(keys.length - 1, Math.floor(clamp01(random()) * keys.length));
+  return t(lang, keys[index]);
 }
 
 export function getSpeechDuration(message: string): number {
-  return Math.min(6000, Math.max(3000, 1800 + message.length * 60));
+  const characters = Array.from(message);
+  if (characters.length === 0) return 1000;
+  return Math.round(characters.length * 45);
 }
 
 function interpolate(from: number, to: number, progress: number): number {

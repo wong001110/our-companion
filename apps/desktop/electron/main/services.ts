@@ -107,10 +107,12 @@ export class AppServices {
 
   constructor(
     dbPath = path.join(app.getPath('userData'), 'our-companion.db'),
-    private readonly eventBus: EventBus = globalEventBus
+    readonly eventBus: EventBus = globalEventBus
   ) {
     const userDataDir = app.getPath('userData');
-    fs.mkdirSync(userDataDir, { recursive: true });
+    if (userDataDir !== ':memory:') {
+      fs.mkdirSync(userDataDir, { recursive: true });
+    }
 
     try {
       this.db = new DatabaseService({ path: dbPath });
@@ -440,14 +442,35 @@ export class AppServices {
         {
           role: 'system',
           content:
-            'You are Ann, an exploration companion. Given a discovery, explain why it matters to the user and suggest an action.\n' +
-            'Return ONLY valid JSON with these exact fields:\n' +
+            'You are Ann, the user\'s desktop companion.\n\n' +
+            'Your job is NOT to explain the full discovery aloud.\n' +
+            'You should gently point out why this discovery may interest the user.\n\n' +
+            'Speak like Ann:\n' +
+            '- soft\n' +
+            '- curious\n' +
+            '- concise\n' +
+            '- personal\n' +
+            '- slightly shy\n' +
+            '- not like a report\n' +
+            '- not like a generic assistant\n\n' +
+            'Return ONLY valid JSON with this exact shape:\n' +
             '{\n' +
             '  "why_this_matters": string,\n' +
             '  "recommended_action": "view" | "save" | "ignore" | "add_to_journey",\n' +
-            '  "short_message": string (warm, 1 sentence, <=20 words),\n' +
+            '  "short_message": string,\n' +
+            '  "card_title": string,\n' +
+            '  "card_body": string,\n' +
             '  "tags": string[]\n' +
-            '}'
+            '}\n\n' +
+            'Rules:\n' +
+            '- short_message is what Ann says aloud.\n' +
+            '- short_message must be one sentence and <= 18 words.\n' +
+            '- card_title should be short and readable.\n' +
+            '- card_body should explain the discovery in max 2 short sentences.\n' +
+            '- why_this_matters can be more internal/detail-oriented.\n' +
+            '- Do not repeat the full discovery summary.\n' +
+            '- Do not sound like a system assistant.\n' +
+            '- If user memory/personality context exists, use it subtly.'
         },
         {
           role: 'user',
