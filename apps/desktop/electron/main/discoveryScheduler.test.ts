@@ -30,14 +30,15 @@ describe('DiscoveryScheduler', () => {
     vi.useRealTimers();
   });
 
-  it('skips refresh when the daily cap is reached', async () => {
+  it('skips refresh at cap and enqueues exactly one backlog item', async () => {
     vi.useFakeTimers();
     const refresh = vi.fn(async () => ({ discoveries: [], newlyInserted: [] }));
+    const listUnannouncedShared = vi.fn(() => [sampleDiscovery('b1'), sampleDiscovery('b2'), sampleDiscovery('b3')]);
     const shareOrchestrator = { enqueue: vi.fn() };
 
     const scheduler = new DiscoveryScheduler({
       refresh,
-      listUnannouncedShared: () => [sampleDiscovery('disc_backlog')],
+      listUnannouncedShared,
       getDiscoveryScore: () => 35,
       countSharedToday: () => 10,
       shareOrchestrator
@@ -47,9 +48,11 @@ describe('DiscoveryScheduler', () => {
     await vi.advanceTimersByTimeAsync(DISCOVERY_STARTUP_DELAY_MS);
 
     expect(refresh).not.toHaveBeenCalled();
-    expect(shareOrchestrator.enqueue).toHaveBeenCalledWith(
-      expect.arrayContaining([expect.objectContaining({ id: 'disc_backlog' })])
-    );
+    expect(listUnannouncedShared).toHaveBeenCalledWith(1);
+    expect(shareOrchestrator.enqueue).toHaveBeenCalledTimes(1);
+    const enqueued = shareOrchestrator.enqueue.mock.calls[0][0];
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0].id).toBe('b1');
 
     scheduler.stop();
     vi.useRealTimers();
