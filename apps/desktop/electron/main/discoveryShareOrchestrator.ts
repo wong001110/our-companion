@@ -45,12 +45,13 @@ export class DiscoveryShareOrchestrator {
     return this.pendingDiscovery !== undefined;
   }
 
-  queue(discovery: Discovery): void {
-    if (this.stopped) return;
-    if (this.busy) return;
-    if (this.pendingDiscovery?.id === discovery.id) return;
+  enqueue(discovery: Discovery): boolean {
+    if (this.stopped) return false;
+    if (this.busy) return false;
+    if (this.pendingDiscovery !== undefined) return false;
     this.pendingDiscovery = discovery;
     void this.processPending();
+    return true;
   }
 
   stop(): void {

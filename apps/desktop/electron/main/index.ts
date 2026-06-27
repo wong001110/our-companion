@@ -312,10 +312,10 @@ function startDiscoveryAutomation(): void {
 
   discoveryScheduler = new DiscoveryScheduler({
     refresh: () => services.runDiscoveryRefresh(),
-    listUnannouncedShared: (limit) => services.db.listUnannouncedShared(limit),
     getDiscoveryScore: () => services.getEffectiveDiscoveryScore(),
     countSharedToday: () => services.db.countSharedToday(),
-    selector: discoveryShareOrchestrator,
+    getOldestUnannouncedShared: () => Promise.resolve(services.db.getOldestUnannouncedShared()),
+    announcer: discoveryShareOrchestrator,
     runAutonomousCycle: () => services.autonomy.startExploration({ trigger: 'scheduled' }).then(() => undefined),
     countAutonomousCyclesToday: () => services.countAutonomousCyclesToday(),
     canRunAutonomousCycle: () => services.canAnnounceDiscovery()

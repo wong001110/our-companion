@@ -6,18 +6,18 @@ export interface DiscoveryRefreshResult {
   newlyInserted: Discovery[];
 }
 
-export interface DiscoverySelector {
+export interface DiscoveryAnnouncer {
   isBusy(): boolean;
   hasPending(): boolean;
-  queue(discovery: Discovery): void;
+  enqueue(discovery: Discovery): boolean;
 }
 
 export interface DiscoverySchedulerDeps {
   refresh: () => Promise<DiscoveryRefreshResult>;
-  listUnannouncedShared: (limit?: number) => Discovery[];
   getDiscoveryScore: () => number;
   countSharedToday: () => number;
-  selector: DiscoverySelector;
+  getOldestUnannouncedShared: () => Promise<Discovery | null>;
+  announcer: DiscoveryAnnouncer;
   runAutonomousCycle?: () => Promise<void>;
   countAutonomousCyclesToday?: () => number;
   canRunAutonomousCycle?: () => boolean;
@@ -64,7 +64,7 @@ export class DiscoveryScheduler {
     if (this.stopped) return;
 
     try {
-      if (this.deps.selector.isBusy() || this.deps.selector.hasPending()) {
+      if (this.deps.announcer.isBusy() || this.deps.announcer.hasPending()) {
         return;
       }
 
@@ -78,16 +78,16 @@ export class DiscoveryScheduler {
         }
 
         const result = await this.deps.refresh();
-        const newlyShared = result.newlyInserted.filter((discovery) => discovery.status === 'shared');
-        if (newlyShared.length > 0) {
-          this.deps.selector.queue(newlyShared[0]);
+        const newestShared = result.newlyInserted.find((d) => d.status === 'shared');
+        if (newestShared) {
+          this.deps.announcer.enqueue(newestShared);
           return;
         }
       }
 
-      const backlog = this.deps.listUnannouncedShared(1);
-      if (backlog.length > 0) {
-        this.deps.selector.queue(backlog[0]);
+      const oldest = await this.deps.getOldestUnannouncedShared();
+      if (oldest) {
+        this.deps.announcer.enqueue(oldest);
       }
     } catch (error) {
       console.warn('[our-companion] Discovery scheduler tick failed.', error);

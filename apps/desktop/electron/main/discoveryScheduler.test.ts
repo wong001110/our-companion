@@ -8,7 +8,7 @@ vi.mock('@our-companion/discovery-engine', async (importOriginal) => {
   return { ...actual, getDiscoveryFetchDelay: () => 100 };
 });
 
-function sampleDiscovery(id: string, overrides?: Partial<Discovery>): Discovery {
+function sampleDiscovery(id: string): Discovery {
   return {
     id,
     source: 'github',
@@ -23,16 +23,15 @@ function sampleDiscovery(id: string, overrides?: Partial<Discovery>): Discovery 
     finalScore: 75,
     status: 'shared',
     createdAt: new Date().toISOString(),
-    sharedAt: new Date().toISOString(),
-    ...overrides
+    sharedAt: new Date().toISOString()
   };
 }
 
-function createSelector() {
+function createAnnouncer() {
   return {
     isBusy: vi.fn(() => false),
     hasPending: vi.fn(() => false),
-    queue: vi.fn()
+    enqueue: vi.fn(() => true)
   };
 }
 
@@ -41,24 +40,24 @@ describe('DiscoveryScheduler', () => {
     vi.useFakeTimers();
     const ten = Array.from({ length: 10 }, (_, i) => sampleDiscovery(`gen_${i}`));
     const refresh = vi.fn(async () => ({ discoveries: ten, newlyInserted: ten }));
-    const selector = createSelector();
-    const listUnannouncedShared = vi.fn(() => []);
+    const announcer = createAnnouncer();
+    const getOldestUnannouncedShared = vi.fn(async () => null);
 
     const scheduler = new DiscoveryScheduler({
       refresh,
-      listUnannouncedShared,
       getDiscoveryScore: () => 35,
       countSharedToday: () => 0,
-      selector
+      getOldestUnannouncedShared,
+      announcer
     });
 
     scheduler.start();
     await vi.advanceTimersByTimeAsync(DISCOVERY_STARTUP_DELAY_MS);
     scheduler.stop();
 
-    expect(selector.queue).toHaveBeenCalledTimes(1);
-    const queued = selector.queue.mock.calls[0][0] as Discovery;
-    expect(queued.id).toBe('gen_0');
+    expect(announcer.enqueue).toHaveBeenCalledTimes(1);
+    const enqueued = (announcer.enqueue.mock.calls as unknown[][])[0]![0] as Discovery;
+    expect(enqueued.id).toBe('gen_0');
 
     vi.useRealTimers();
   });
@@ -66,26 +65,26 @@ describe('DiscoveryScheduler', () => {
   it('queues exactly one when 20 backlog discoveries exist', async () => {
     vi.useFakeTimers();
     const refresh = vi.fn(async () => ({ discoveries: [], newlyInserted: [] }));
-    const twenty = Array.from({ length: 20 }, (_, i) => sampleDiscovery(`backlog_${i}`));
-    const listUnannouncedShared = vi.fn(() => twenty);
-    const selector = createSelector();
+    const oldest = sampleDiscovery('oldest_backlog');
+    const getOldestUnannouncedShared = vi.fn(async () => oldest);
+    const announcer = createAnnouncer();
 
     const scheduler = new DiscoveryScheduler({
       refresh,
-      listUnannouncedShared,
       getDiscoveryScore: () => 35,
       countSharedToday: () => 0,
-      selector
+      getOldestUnannouncedShared,
+      announcer
     });
 
     scheduler.start();
     await vi.advanceTimersByTimeAsync(DISCOVERY_STARTUP_DELAY_MS);
     scheduler.stop();
 
-    expect(listUnannouncedShared).toHaveBeenCalledWith(1);
-    expect(selector.queue).toHaveBeenCalledTimes(1);
-    const queued = selector.queue.mock.calls[0][0] as Discovery;
-    expect(queued.id).toBe('backlog_0');
+    expect(getOldestUnannouncedShared).toHaveBeenCalledTimes(1);
+    expect(announcer.enqueue).toHaveBeenCalledTimes(1);
+    const enqueued = (announcer.enqueue.mock.calls as unknown[][])[0]![0] as Discovery;
+    expect(enqueued.id).toBe('oldest_backlog');
 
     vi.useRealTimers();
   });
@@ -94,22 +93,23 @@ describe('DiscoveryScheduler', () => {
     vi.useFakeTimers();
     const fresh = [sampleDiscovery('fresh1')];
     const refresh = vi.fn(async () => ({ discoveries: fresh, newlyInserted: fresh }));
-    const selector = createSelector();
-    selector.isBusy.mockReturnValue(true);
+    const announcer = createAnnouncer();
+    announcer.isBusy.mockReturnValue(true);
+    const getOldestUnannouncedShared = vi.fn(async () => null);
 
     const scheduler = new DiscoveryScheduler({
       refresh,
-      listUnannouncedShared: () => [],
       getDiscoveryScore: () => 35,
       countSharedToday: () => 0,
-      selector
+      getOldestUnannouncedShared,
+      announcer
     });
 
     scheduler.start();
     await vi.advanceTimersByTimeAsync(DISCOVERY_STARTUP_DELAY_MS);
     scheduler.stop();
 
-    expect(selector.queue).not.toHaveBeenCalled();
+    expect(announcer.enqueue).not.toHaveBeenCalled();
 
     vi.useRealTimers();
   });
@@ -118,22 +118,23 @@ describe('DiscoveryScheduler', () => {
     vi.useFakeTimers();
     const fresh = [sampleDiscovery('fresh1')];
     const refresh = vi.fn(async () => ({ discoveries: fresh, newlyInserted: fresh }));
-    const selector = createSelector();
-    selector.hasPending.mockReturnValue(true);
+    const announcer = createAnnouncer();
+    announcer.hasPending.mockReturnValue(true);
+    const getOldestUnannouncedShared = vi.fn(async () => null);
 
     const scheduler = new DiscoveryScheduler({
       refresh,
-      listUnannouncedShared: () => [],
       getDiscoveryScore: () => 35,
       countSharedToday: () => 0,
-      selector
+      getOldestUnannouncedShared,
+      announcer
     });
 
     scheduler.start();
     await vi.advanceTimersByTimeAsync(DISCOVERY_STARTUP_DELAY_MS);
     scheduler.stop();
 
-    expect(selector.queue).not.toHaveBeenCalled();
+    expect(announcer.enqueue).not.toHaveBeenCalled();
 
     vi.useRealTimers();
   });
@@ -142,24 +143,24 @@ describe('DiscoveryScheduler', () => {
     vi.useFakeTimers();
     const fresh = [sampleDiscovery('fresh1')];
     const refresh = vi.fn(async () => ({ discoveries: fresh, newlyInserted: fresh }));
-    const selector = createSelector();
+    const announcer = createAnnouncer();
 
     let busy = true;
-    selector.isBusy.mockImplementation(() => busy);
+    announcer.isBusy.mockImplementation(() => busy);
 
     const scheduler = new DiscoveryScheduler({
       refresh,
-      listUnannouncedShared: () => [],
       getDiscoveryScore: () => 35,
       countSharedToday: () => 0,
-      selector
+      getOldestUnannouncedShared: async () => null,
+      announcer
     });
 
     scheduler.start();
 
     // First tick — Ann is busy, nothing queued
     await vi.advanceTimersByTimeAsync(DISCOVERY_STARTUP_DELAY_MS);
-    expect(selector.queue).not.toHaveBeenCalled();
+    expect(announcer.enqueue).not.toHaveBeenCalled();
 
     // Ann finishes speaking
     busy = false;
@@ -168,42 +169,40 @@ describe('DiscoveryScheduler', () => {
     await vi.advanceTimersByTimeAsync(100);
     scheduler.stop();
 
-    expect(selector.queue).toHaveBeenCalledTimes(1);
+    expect(announcer.enqueue).toHaveBeenCalledTimes(1);
 
     vi.useRealTimers();
   });
 
-  it('ignores duplicate discovery id', async () => {
+  it('enqueue returns false for duplicate id', async () => {
     vi.useFakeTimers();
+    const announcer = createAnnouncer();
+    announcer.enqueue.mockImplementationOnce(() => true).mockImplementationOnce(() => false);
+
     const fresh = [sampleDiscovery('dup1')];
     const refresh = vi.fn(async () => ({ discoveries: fresh, newlyInserted: fresh }));
-    const selector = createSelector();
 
     const scheduler = new DiscoveryScheduler({
       refresh,
-      listUnannouncedShared: () => [],
       getDiscoveryScore: () => 35,
       countSharedToday: () => 0,
-      selector
+      getOldestUnannouncedShared: async () => null,
+      announcer
     });
 
     scheduler.start();
     await vi.advanceTimersByTimeAsync(DISCOVERY_STARTUP_DELAY_MS);
 
-    // First queue call
-    expect(selector.queue).toHaveBeenCalledTimes(1);
-    const firstQueued = selector.queue.mock.calls[0][0] as Discovery;
-    expect(firstQueued.id).toBe('dup1');
+    // First enqueue accepted
+    expect(announcer.enqueue).toHaveBeenCalledTimes(1);
 
-    // Reset for next tick
-    selector.hasPending.mockReturnValue(false);
-    selector.queue.mockClear();
-
-    // Next tick fires after mocked 100ms delay
+    // Simulate: announcer now has pending, so next tick skips
+    announcer.hasPending.mockReturnValue(true);
     await vi.advanceTimersByTimeAsync(100);
     scheduler.stop();
 
-    expect(selector.queue).toHaveBeenCalledTimes(1);
+    // Only one enqueue call — second tick was skipped
+    expect(announcer.enqueue).toHaveBeenCalledTimes(1);
 
     vi.useRealTimers();
   });

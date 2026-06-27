@@ -51,7 +51,7 @@ describe('DiscoveryShareOrchestrator', () => {
     });
 
     const announcePromise = Promise.resolve().then(() => {
-      orchestrator.queue(sampleDiscovery('disc_test'));
+      orchestrator.enqueue(sampleDiscovery('disc_test'));
     });
 
     await vi.runAllTimersAsync();
@@ -69,7 +69,7 @@ describe('DiscoveryShareOrchestrator', () => {
     vi.useRealTimers();
   });
 
-  it('reports busy while announcing', async () => {
+  it('returns true when accepted, false when busy', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
 
     let current = createInitialCharacterState();
@@ -88,20 +88,17 @@ describe('DiscoveryShareOrchestrator', () => {
       shouldInterruptShare: () => false
     });
 
-    expect(orchestrator.isBusy()).toBe(false);
-    expect(orchestrator.hasPending()).toBe(false);
-
-    orchestrator.queue(sampleDiscovery('disc1'));
+    expect(orchestrator.enqueue(sampleDiscovery('disc1'))).toBe(true);
     expect(orchestrator.isBusy()).toBe(true);
-    expect(orchestrator.hasPending()).toBe(false);
+
+    const rejected = orchestrator.enqueue(sampleDiscovery('disc2'));
+    expect(rejected).toBe(false);
 
     await vi.runAllTimersAsync();
-
-    expect(orchestrator.isBusy()).toBe(false);
     vi.useRealTimers();
   });
 
-  it('rejects queue while busy', async () => {
+  it('returns false for duplicate id', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
 
     let current = createInitialCharacterState();
@@ -121,43 +118,44 @@ describe('DiscoveryShareOrchestrator', () => {
       shouldInterruptShare: () => false
     });
 
-    orchestrator.queue(sampleDiscovery('disc1'));
-    orchestrator.queue(sampleDiscovery('disc2'));
-
-    await vi.runAllTimersAsync();
-
-    expect(markAnnounced).toHaveBeenCalledTimes(1);
-    expect(markAnnounced).toHaveBeenCalledWith('disc1');
-    vi.useRealTimers();
-  });
-
-  it('ignores duplicate id', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-
-    let current = createInitialCharacterState();
-    const markAnnounced = vi.fn();
-
-    const orchestrator = new DiscoveryShareOrchestrator({
-      getState: () => current,
-      saveState: (state) => { current = state; return state; },
-      generateReason: async () => ({
-        why_this_matters: 'Useful',
-        recommended_action: 'view',
-        short_message: 'Found something.',
-        tags: ['frontend']
-      }),
-      markAnnounced,
-      canAnnounce: () => true,
-      shouldInterruptShare: () => false
-    });
-
-    orchestrator.queue(sampleDiscovery('dup'));
-    orchestrator.queue(sampleDiscovery('dup'));
+    expect(orchestrator.enqueue(sampleDiscovery('dup'))).toBe(true);
+    expect(orchestrator.enqueue(sampleDiscovery('dup'))).toBe(false);
 
     await vi.runAllTimersAsync();
 
     expect(markAnnounced).toHaveBeenCalledTimes(1);
     expect(markAnnounced).toHaveBeenCalledWith('dup');
+    vi.useRealTimers();
+  });
+
+  it('returns false when already has a pending discovery', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    let current = createInitialCharacterState();
+
+    const orchestrator = new DiscoveryShareOrchestrator({
+      getState: () => current,
+      saveState: (state) => { current = state; return state; },
+      generateReason: async () => ({
+        why_this_matters: 'Useful',
+        recommended_action: 'view',
+        short_message: 'Found something.',
+        tags: ['frontend']
+      }),
+      markAnnounced: vi.fn(),
+      canAnnounce: () => true,
+      shouldInterruptShare: () => false
+    });
+
+    expect(orchestrator.hasPending()).toBe(false);
+    expect(orchestrator.enqueue(sampleDiscovery('a'))).toBe(true);
+    expect(orchestrator.hasPending()).toBe(false);
+    expect(orchestrator.isBusy()).toBe(true);
+
+    const rejected = orchestrator.enqueue(sampleDiscovery('b'));
+    expect(rejected).toBe(false);
+
+    await vi.runAllTimersAsync();
     vi.useRealTimers();
   });
 });

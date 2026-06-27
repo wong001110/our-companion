@@ -337,6 +337,18 @@ export class DatabaseService {
       .slice(0, limit);
   }
 
+  getOldestUnannouncedShared(): Discovery | null {
+    const announced = new Set(this.getAnnouncedDiscoveryIds());
+    const rows = this.db
+      .prepare("SELECT * FROM discoveries WHERE status = 'shared' ORDER BY created_at ASC LIMIT 50")
+      .all() as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      const discovery = mapDiscovery(row);
+      if (!announced.has(discovery.id)) return discovery;
+    }
+    return null;
+  }
+
   insertPattern(pattern: Pattern): Pattern {
     this.db
       .prepare(
