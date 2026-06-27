@@ -45,6 +45,8 @@ export declare function passesDiscoveryQuality(signal: NormalizedSignal, minimum
 export declare function checkDuplicateDiscovery(candidate: Pick<Discovery, 'id' | 'canonicalUrl' | 'fingerprint' | 'title'>, existing: Array<Pick<Discovery, 'id' | 'canonicalUrl' | 'fingerprint' | 'title'>>): DuplicateResult;
 export declare function discoveryOriginForSignal(signal: Signal): DiscoveryOrigin;
 export declare function scoreDiscovery(item: NormalizedDiscovery, context: RankingContext): DiscoveryScores;
+export declare function normalizeDiscoveryTitle(title: string): string;
+export declare function discoveryDedupeKey(title: string, source: string): string;
 export declare function deduplicateDiscoveries(items: NormalizedDiscovery[]): NormalizedDiscovery[];
 export declare function toDiscovery(item: NormalizedDiscovery, scores: DiscoveryScores): Discovery;
 export declare function discoveryFromSignal(signal: NormalizedSignal, scores: DiscoveryScores): Discovery | undefined;

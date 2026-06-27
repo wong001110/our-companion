@@ -1952,8 +1952,38 @@ textarea {
 }
 
 .engine-pipeline h3,
-.engine-observatory h2 {
+.engine-observatory h2,
+.debug-section-title {
   margin: 0 0 8px;
+  color: #8959be;
+}
+
+.debug-ai-log-title,
+.debug-reset-header .debug-ai-log-title {
+  color: #8959be;
+}
+
+.engine-snapshot-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border: 0;
+  background: rgba(137, 89, 190, 0.68);
+  color: #fff;
+  cursor: pointer;
+  text-align: left;
+}
+
+.engine-snapshot-header strong,
+.engine-snapshot-header span {
+  color: #fff;
+}
+
+.engine-snapshot-panel[aria-expanded='true'] .engine-snapshot-header,
+.engine-snapshot-header[aria-expanded='true'] {
+  background: #8959be;
 }
 
 .engine-pipeline-steps {
@@ -2019,18 +2049,6 @@ textarea {
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.55);
   overflow: hidden;
-}
-
-.engine-snapshot-header {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 12px;
-  border: 0;
-  background: #8959be;
-  cursor: pointer;
-  text-align: left;
 }
 
 .engine-snapshot-body {

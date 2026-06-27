@@ -20,6 +20,7 @@ import { assessAttention, decideCompanionAction } from '@our-companion/decision-
 import { generateDailyDiary } from '@our-companion/diary-engine';
 import {
   createFallbackConnector,
+  discoveryDedupeKey,
   planExploration,
   runDiscoveryAgents,
   runDiscoveryPipeline
@@ -649,7 +650,8 @@ export class AppServices {
   debug = {
     resetData: async (input: DebugDataResetInput) => this.db.resetDebugData(input),
     getFoundationLog: async (input: FoundationEventLogInput = {}) => this.getFoundationLog(input),
-    getEngineSnapshot: async (input: EngineSnapshotInput = {}) => buildEngineSnapshot(this.db, input)
+    getEngineSnapshot: async (input: EngineSnapshotInput = {}) =>
+      buildEngineSnapshot(this.db, input, DEFAULT_CHARACTER_ID, this.shareOrchestrator?.getQueueDebugState())
   };
 
   attachShareOrchestrator(orchestrator: DiscoveryShareOrchestrator): void {
@@ -820,12 +822,26 @@ export class AppServices {
         tags: [memory.type]
       }))
     });
+    const existingCandidateKeys = new Set(
+      this.db
+        .listDiscoveryCandidates(userId, 200)
+        .map((candidate) => {
+          const source = candidate.sourceName ?? candidate.sourceType;
+          return candidate.sourceUrl?.toLowerCase() ?? discoveryDedupeKey(candidate.title, source);
+        })
+    );
+    const insertedCandidates = [];
     for (const candidate of discoveryCandidates) {
+      const source = candidate.sourceName ?? candidate.sourceType;
+      const key = candidate.sourceUrl?.toLowerCase() ?? discoveryDedupeKey(candidate.title, source);
+      if (existingCandidateKeys.has(key)) continue;
       this.db.insertDiscoveryCandidate(candidate);
+      existingCandidateKeys.add(key);
+      insertedCandidates.push(candidate);
     }
 
     cycle = this.saveCycleState(cycle, 'collecting', {
-      discoveryCandidateIds: discoveryCandidates.map((candidate) => candidate.id)
+      discoveryCandidateIds: insertedCandidates.map((candidate) => candidate.id)
     });
     cycle = this.saveCycleState(cycle, 'synthesizing');
 
@@ -851,20 +867,8 @@ export class AppServices {
     this.setAutonomyCharacterState('returning', 'sharing_discovery');
 
     cycle = this.saveCycleState(cycle, 'sharing');
-    this.setAutonomyCharacterState('talking', 'sharing_discovery');
-    if (selectedInsight) {
-      this.discoveryAnnounceBroadcaster?.({
-        discoveryId: selectedInsight.id,
-        title: selectedInsight.title,
-        message: selectedInsight.narration ?? selectedInsight.summary,
-        cycleId: cycle.id,
-        insightId: selectedInsight.id
-      });
-      this.emitFoundationEvent('AnnMessageQueued', 'speech', {
-        discoveryId: selectedInsight.id,
-        cycleId: cycle.id,
-        message: selectedInsight.narration ?? selectedInsight.summary
-      });
+    if (insertedCandidates.length > 0) {
+      this.shareOrchestrator?.enqueueCandidates(insertedCandidates, cycle.id);
     }
 
     return {
@@ -872,7 +876,7 @@ export class AppServices {
       curiosityTargets,
       selectedCuriosityTarget,
       explorationPlan,
-      discoveryCandidates,
+      discoveryCandidates: insertedCandidates,
       insights,
       selectedInsight
     };
@@ -974,7 +978,9 @@ export class AppServices {
 
   async runDiscoveryRefresh(sources?: DiscoverySource[]): Promise<DiscoveryRefreshResult> {
     const existingKeys = new Set(
-      this.db.listDiscoveries({ limit: 500 }).map((item) => item.url ?? `${item.source}:${item.title}`)
+      this.db.listDiscoveries({ limit: 500 }).map((item) =>
+        item.url ?? discoveryDedupeKey(item.title, item.source)
+      )
     );
     const activeCharacter = this.db.getActiveCharacters()[0];
     const connectors = (sources ?? ['github', 'hackernews', 'reddit', 'youtube']).map(createFallbackConnector);
@@ -991,7 +997,7 @@ export class AppServices {
 
     const newlyInserted: Discovery[] = [];
     for (const discovery of discoveries) {
-      const key = discovery.url ?? `${discovery.source}:${discovery.title}`;
+      const key = discovery.url ?? discoveryDedupeKey(discovery.title, discovery.source);
       const isNew = !existingKeys.has(key);
       this.db.insertDiscovery(discovery);
       if (isNew) {

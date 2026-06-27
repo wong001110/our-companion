@@ -171,7 +171,7 @@ export function EngineObservatory() {
       </div>
 
       <section className="engine-pipeline">
-        <h3>Exploration pipeline</h3>
+        <h3 className="debug-section-title">Exploration pipeline</h3>
         <div className="engine-pipeline-steps" aria-label="Exploration pipeline states">
           {PIPELINE_STEPS.map((step) => (
             <span
@@ -334,6 +334,32 @@ export function EngineObservatory() {
         </SnapshotPanel>
 
         <SnapshotPanel title="Discovery" open={expandedPanels.discovery} onToggle={() => togglePanel('discovery')}>
+          {snapshot?.discoveryShareQueue && (
+            <>
+              <p className="engine-meta">
+                Queue: {snapshot.discoveryShareQueue.queueLength} waiting
+                {snapshot.discoveryShareQueue.processing ? ' · surfacing now' : ''}
+              </p>
+              {snapshot.discoveryShareQueue.lastCardAt && (
+                <p className="engine-meta">Last card: {new Date(snapshot.discoveryShareQueue.lastCardAt).toLocaleTimeString()}</p>
+              )}
+              {snapshot.discoveryShareQueue.lastSpeechAt && (
+                <p className="engine-meta">Last speech: {new Date(snapshot.discoveryShareQueue.lastSpeechAt).toLocaleTimeString()}</p>
+              )}
+              {snapshot.discoveryShareQueue.items.length > 0 && (
+                <ul className="engine-snapshot-list">
+                  {snapshot.discoveryShareQueue.items.map((item) => (
+                    <li key={item.id}>
+                      <strong>{item.title}</strong>
+                      <span>
+                        {item.kind} · {item.status} · {item.dedupeKey}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
           {snapshot?.discoveryCandidates.length || snapshot?.recentDiscoveries.length ? (
             <>
               {snapshot.discoveryCandidates.length > 0 && (
@@ -345,7 +371,7 @@ export function EngineObservatory() {
                         <strong>{candidate.title}</strong>
                         <span>
                           {candidate.agentType} · rel {candidate.relevanceScore.toFixed(2)} · nov{' '}
-                          {candidate.noveltyScore.toFixed(2)}
+                          {candidate.noveltyScore.toFixed(2)} · {candidate.collectedAt}
                         </span>
                       </li>
                     ))}

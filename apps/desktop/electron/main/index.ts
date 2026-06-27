@@ -306,7 +306,8 @@ function startDiscoveryAutomation(): void {
     markAnnounced: (id) => services.db.markDiscoveryAnnounced(id),
     canAnnounce: () => services.canAnnounceDiscovery(),
     shouldInterruptShare: () => services.shouldInterruptShare(),
-    eventBus: services.eventBus
+    eventBus: services.eventBus,
+    logFoundationEvent: (type, payload) => services.emitFoundationEvent(type, 'discovery', payload)
   });
   services.attachShareOrchestrator(discoveryShareOrchestrator);
 

@@ -1027,6 +1027,7 @@ export interface EngineSnapshot {
   explorationEvents: ExplorationLoopEvent[];
   recentDiscoveries: Discovery[];
   actionPermissions: ActionPermissionState;
+  discoveryShareQueue?: DiscoveryShareQueueDebugState;
 }
 
 export interface DiscoveryReason {
@@ -1042,6 +1043,7 @@ export interface DiscoveryAnnouncePayload {
   discoveryId: string;
   title: string;
   message: string;
+  phase?: 'card' | 'speech';
   cycleId?: string;
   insightId?: string;
   cardBody?: string;
@@ -1049,6 +1051,22 @@ export interface DiscoveryAnnouncePayload {
   recommendedAction?: 'view' | 'save' | 'ignore' | 'add_to_journey';
   tags?: string[];
   source?: string;
+}
+
+export interface DiscoveryShareQueueDebugState {
+  queueLength: number;
+  processing: boolean;
+  currentItemId?: string;
+  lastCardAt?: string;
+  lastSpeechAt?: string;
+  items: Array<{
+    id: string;
+    title: string;
+    kind: 'discovery' | 'candidate';
+    cycleId?: string;
+    dedupeKey: string;
+    status: 'queued' | 'surfacing' | 'announced';
+  }>;
 }
 
 export interface MemorySummary {

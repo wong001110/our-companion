@@ -1,11 +1,12 @@
 import type { DatabaseService } from '@our-companion/database';
-import type { EngineSnapshot, EngineSnapshotInput } from '@our-companion/shared';
+import type { DiscoveryShareQueueDebugState, EngineSnapshot, EngineSnapshotInput } from '@our-companion/shared';
 import { DEFAULT_CHARACTER_ID, nowIso } from '@our-companion/shared';
 
 export function buildEngineSnapshot(
   db: DatabaseService,
   input: EngineSnapshotInput = {},
-  characterId = DEFAULT_CHARACTER_ID
+  characterId = DEFAULT_CHARACTER_ID,
+  discoveryShareQueue?: DiscoveryShareQueueDebugState
 ): EngineSnapshot {
   const userId = input.userId ?? 'default';
   const focusCycle =
@@ -28,6 +29,7 @@ export function buildEngineSnapshot(
     insights: db.listCompanionInsights(userId, 20),
     explorationEvents: focusCycle ? db.listExplorationEventsForCycle(focusCycle.id) : [],
     recentDiscoveries: db.listDiscoveries({ limit: 10 }),
-    actionPermissions: db.getActionPermissions()
+    actionPermissions: db.getActionPermissions(),
+    discoveryShareQueue
   };
 }
