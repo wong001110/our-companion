@@ -91,7 +91,6 @@ export class DiscoveryShareOrchestrator {
   enqueue(discovery: Discovery): boolean {
     if (this.stopped) { this.lastSkipReason = 'stopped'; return false; }
     const isActive = this.queue.some((q) => q.discovery.id === discovery.id && q.status !== 'interrupted') ||
-      this.currentDiscovery?.id === discovery.id ||
       this.lastAnnouncedId === discovery.id;
     if (isActive) { this.lastSkipReason = 'duplicate'; return false; }
     this.queue.push({
