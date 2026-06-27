@@ -32,7 +32,8 @@ function delay(ms: number): Promise<void> {
 }
 
 export class DiscoveryShareOrchestrator {
-  private pendingDiscovery: Discovery | undefined;
+  private queue: Discovery[] = [];
+  private currentDiscovery: Discovery | undefined;
   private busy = false;
   private stopped = false;
   private lastTickAt: string | undefined;
@@ -45,11 +46,15 @@ export class DiscoveryShareOrchestrator {
   }
 
   hasPending(): boolean {
-    return this.pendingDiscovery !== undefined;
+    return this.queue.length > 0;
   }
 
   getPendingDiscoveryId(): string | undefined {
-    return this.pendingDiscovery?.id;
+    return this.currentDiscovery?.id ?? this.queue[0]?.id;
+  }
+
+  getQueueLength(): number {
+    return this.queue.length + (this.currentDiscovery ? 1 : 0);
   }
 
   getLastTickAt(): string | undefined {
@@ -62,18 +67,19 @@ export class DiscoveryShareOrchestrator {
 
   enqueue(discovery: Discovery): boolean {
     if (this.stopped) { this.lastSkipReason = 'stopped'; return false; }
-    if (this.busy) { this.lastSkipReason = 'busy'; return false; }
-    if (this.pendingDiscovery !== undefined) { this.lastSkipReason = 'already_pending'; return false; }
+    const isActive = this.queue.some((d) => d.id === discovery.id) ||
+      this.currentDiscovery?.id === discovery.id;
+    if (isActive) { this.lastSkipReason = 'duplicate'; return false; }
+    this.queue.push(discovery);
     this.lastTickAt = new Date().toISOString();
     this.lastSkipReason = undefined;
-    this.pendingDiscovery = discovery;
-    void this.processPending();
+    void this.processQueue();
     return true;
   }
 
   stop(): void {
     this.stopped = true;
-    this.pendingDiscovery = undefined;
+    this.queue = [];
     this.busy = false;
   }
 
@@ -81,18 +87,25 @@ export class DiscoveryShareOrchestrator {
     (this.deps.eventBus ?? globalEventBus).emit(createEvent({ type, source: 'discovery-share-orchestrator', payload }));
   }
 
-  private async processPending(): Promise<void> {
+  private async processQueue(): Promise<void> {
     if (this.busy || this.stopped) return;
-    const discovery = this.pendingDiscovery;
-    if (!discovery) return;
 
-    this.busy = true;
-    this.pendingDiscovery = undefined;
+    while (!this.stopped && this.queue.length > 0) {
+      if (!this.deps.canAnnounce()) {
+        this.lastSkipReason = 'cannot_announce';
+        await delay(STEP_DELAY_MS);
+        continue;
+      }
 
-    try {
-      await this.announceDiscovery(discovery);
-    } finally {
-      this.busy = false;
+      const discovery = this.queue.shift()!;
+      this.currentDiscovery = discovery;
+      this.busy = true;
+      try {
+        await this.announceDiscovery(discovery);
+      } finally {
+        this.busy = false;
+        this.currentDiscovery = undefined;
+      }
     }
   }
 
@@ -130,7 +143,7 @@ export class DiscoveryShareOrchestrator {
         intent: state.intent
       });
 
-      if (state.coreState === 'talking') {
+      if (step === 0) {
         const reason = await this.deps.generateReason(discovery);
         this.emitEvent(DOMAIN_EVENT_TYPES.AnnMessageQueued, {
           discoveryId: discovery.id,

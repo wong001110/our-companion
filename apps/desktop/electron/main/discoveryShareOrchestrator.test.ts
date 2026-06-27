@@ -69,10 +69,11 @@ describe('DiscoveryShareOrchestrator', () => {
     vi.useRealTimers();
   });
 
-  it('returns true when accepted, false when busy', async () => {
+  it('accepts enqueue while busy (FIFO queue)', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
 
     let current = createInitialCharacterState();
+    const markAnnounced = vi.fn();
 
     const orchestrator = new DiscoveryShareOrchestrator({
       getState: () => current,
@@ -83,22 +84,24 @@ describe('DiscoveryShareOrchestrator', () => {
         short_message: 'Found something.',
         tags: ['frontend']
       }),
-      markAnnounced: vi.fn(),
+      markAnnounced,
       canAnnounce: () => true,
       shouldInterruptShare: () => false
     });
 
-    expect(orchestrator.enqueue(sampleDiscovery('disc1'))).toBe(true);
-    expect(orchestrator.isBusy()).toBe(true);
-
-    const rejected = orchestrator.enqueue(sampleDiscovery('disc2'));
-    expect(rejected).toBe(false);
+    expect(orchestrator.enqueue(sampleDiscovery('d1'))).toBe(true);
+    expect(orchestrator.enqueue(sampleDiscovery('d2'))).toBe(true);
+    expect(orchestrator.enqueue(sampleDiscovery('d3'))).toBe(true);
+    expect(orchestrator.getQueueLength()).toBe(3);
 
     await vi.runAllTimersAsync();
+
+    expect(markAnnounced).toHaveBeenCalledTimes(3);
+    expect(markAnnounced.mock.calls.map((c: unknown[]) => c[0])).toEqual(['d1', 'd2', 'd3']);
     vi.useRealTimers();
   });
 
-  it('returns false for duplicate id', async () => {
+  it('rejects duplicate id', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
 
     let current = createInitialCharacterState();
@@ -128,7 +131,7 @@ describe('DiscoveryShareOrchestrator', () => {
     vi.useRealTimers();
   });
 
-  it('returns false when already has a pending discovery', async () => {
+  it('reports queue length and pending id', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
 
     let current = createInitialCharacterState();
@@ -148,12 +151,14 @@ describe('DiscoveryShareOrchestrator', () => {
     });
 
     expect(orchestrator.hasPending()).toBe(false);
-    expect(orchestrator.enqueue(sampleDiscovery('a'))).toBe(true);
-    expect(orchestrator.hasPending()).toBe(false);
-    expect(orchestrator.isBusy()).toBe(true);
+    expect(orchestrator.getQueueLength()).toBe(0);
 
-    const rejected = orchestrator.enqueue(sampleDiscovery('b'));
-    expect(rejected).toBe(false);
+    orchestrator.enqueue(sampleDiscovery('a'));
+    orchestrator.enqueue(sampleDiscovery('b'));
+
+    expect(orchestrator.hasPending()).toBe(true);
+    expect(orchestrator.getQueueLength()).toBe(2);
+    expect(orchestrator.getPendingDiscoveryId()).toBe('a');
 
     await vi.runAllTimersAsync();
     vi.useRealTimers();

@@ -48,7 +48,7 @@ function createCompanionWindow(): BrowserWindow {
       preload: preloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
   });
 
@@ -78,7 +78,7 @@ function createPanelWindow(): BrowserWindow {
       preload: preloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
   });
 
