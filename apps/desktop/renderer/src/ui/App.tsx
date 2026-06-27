@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ActionPermissionState,
   ActionPlan,
@@ -10,7 +10,6 @@ import type {
   CharacterRuntimeState,
   CompanionMessage,
   CompanionMessageSource,
-  CompanionMessageStatus,
   CompanionReplyLanguage,
   DebugDataResetTarget,
   DiaryEntry,
@@ -36,37 +35,21 @@ import { COMPANION_CHAT_RETENTION_DAYS } from '@our-companion/shared';
 import { t, type Lang } from '../i18n';
 import { getSpeechDuration, getWalkDelay, getWalkDelayRange, selectSpeechLine } from '../character/ann/companionBehavior';
 import { getIdleRotationDelay, isIdleState, selectWeightedIdleAnimation } from '../character/ann/idleBehavior';
-import { useAudioCapture } from '../companion/useAudioCapture';
 import { TypewriterSpeechBubble } from '../companion/TypewriterSpeechBubble';
 import { DiscoveryPopoutCard } from '../companion/DiscoveryPopoutCard';
 import { useCompanionSession } from '../companion/useCompanionSession';
-import { EngineObservatory } from '../features/developer/EngineObservatory';
 import { CompanionCanvas, type AnimationName, type CompanionDragPoint } from './CompanionCanvas';
-
-type Tab = 'home' | 'discovery' | 'journey' | 'memory' | 'chat' | 'ask' | 'settings';
-type DevAnimation = 'live' | AnimationName;
-
-const LangContext = createContext<Lang>('en');
-function useLang(): Lang { return useContext(LangContext); }
-
-const devAnimations: DevAnimation[] = [
-  'live',
-  'idle_laptop',
-  'idle_coffee',
-  'idle_notes',
-  'idle_tired',
-  'walk',
-  'return',
-  'think',
-  'focus_typing',
-  'discovery',
-  'discovery_shy',
-  'talk',
-  'talk_happy',
-  'task_start',
-  'task_success',
-  'task_failed'
-];
+import { LangContext, useLang, NotebookPage, PaperCard, StickyNote, MiniAnnSticker, ProgressBar, NotebookChatBubble } from './NotebookPrimitives';
+import { EngineObservatory } from '../features/developer/EngineObservatory';
+import { useAudioCapture } from '../companion/useAudioCapture';
+import {
+  type Tab, type DevAnimation, devAnimations, formatJson, formatDuration,
+  formatDiscoveryTime, formatRelativeDate, formatShortDate, formatAskResult,
+  readable, capitalize, randomBetween, clamp, easeInOut,
+  annStatusMessage, annMoodLabel, tabLabel, debugPreview,
+  createDevAnimationState, parseLocalCommand
+} from './utils';
+import { DebugJsonBlock, DebugTextBlock } from './DebugComponents';
 
 export function App() {
   const mode = new URLSearchParams(window.location.search).get('mode');
@@ -154,14 +137,12 @@ function CompanionShell() {
     [textInput, phase, runTurn, closeTextInput]
   );
 
-  // Close text input and restore passthrough when Ann stops being idle
   useEffect(() => {
     if (phase !== 'idle' && textOpen) {
       closeTextInput();
     }
   }, [phase, textOpen, closeTextInput]);
 
-  // Re-enable passthrough when text input is closed (only if not hovering Ann)
   useEffect(() => {
     if (!textOpen) {
       void setMousePassthrough(true);
@@ -644,18 +625,10 @@ function PanelShell() {
   );
 }
 
+// ─── View Components ────────────────────────────────────────────────────────
+
 function HomeView({
-  state,
-  character,
-  discoveries,
-  journeys,
-  diary,
-  exploration,
-  explorationEvents,
-  exploring,
-  onStartExploration,
-  onSubmitFeedback,
-  onRefresh
+  state, character, discoveries, journeys, diary, exploration, explorationEvents, exploring, onStartExploration, onSubmitFeedback, onRefresh
 }: {
   state?: CharacterRuntimeState;
   character?: CharacterProfile;
@@ -674,11 +647,7 @@ function HomeView({
   const diaryHighlight = diary[0]?.content ?? t(lang, 'home_diary_default');
 
   return (
-    <NotebookPage
-      eyebrow={t(lang, 'home_eyebrow')}
-      title={t(lang, 'home_title')}
-      note={`${character?.name ?? 'Ann'} is keeping a soft page open for the things we are building together.`}
-    >
+    <NotebookPage eyebrow={t(lang, 'home_eyebrow')} title={t(lang, 'home_title')} note={`${character?.name ?? 'Ann'} is keeping a soft page open for the things we are building together.`}>
       <div className="home-notebook-grid">
         <PaperCard className="ann-status-card" title={t(lang, 'home_ann_status_card')} tape>
           <div className="ann-status-content">
@@ -757,14 +726,7 @@ function HomeView({
   );
 }
 
-function DiscoveryView({
-  discoveries,
-  exploration,
-  exploring,
-  onStartExploration,
-  onSubmitFeedback,
-  onRefresh
-}: {
+function DiscoveryView({ discoveries, exploration, exploring, onStartExploration, onSubmitFeedback, onRefresh }: {
   discoveries: Discovery[];
   exploration?: ExplorationCycleResult;
   exploring: boolean;
@@ -876,15 +838,7 @@ function DiscoveryView({
   );
 }
 
-function JourneyView({
-  journeys,
-  timeline,
-  onRefresh
-}: {
-  journeys: Journey[];
-  timeline: JourneyMilestone[];
-  onRefresh: () => Promise<void>;
-}) {
+function JourneyView({ journeys, timeline, onRefresh }: { journeys: Journey[]; timeline: JourneyMilestone[]; onRefresh: () => Promise<void> }) {
   const lang = useLang();
 
   async function createNewJourney() {
@@ -964,12 +918,7 @@ function MemoryView({ graph, onRefresh }: { graph: MemoryGraph; onRefresh: () =>
                 {node.isPinned && <span>{t(lang, 'memory_favorite')}</span>}
               </div>
               <div className="action-row">
-                <button
-                  onClick={() => {
-                    setEditing(node);
-                    setDraft(node.content ?? node.summary ?? node.title);
-                  }}
-                >
+                <button onClick={() => { setEditing(node); setDraft(node.content ?? node.summary ?? node.title); }}>
                   {t(lang, 'memory_edit')}
                 </button>
                 <button onClick={() => window.ourCompanion.memory.updateNode({ id: node.id, isMarkedWrong: true }).then(onRefresh)}>
@@ -998,7 +947,6 @@ function AskView({ onRefresh }: { onRefresh: () => Promise<void> }) {
   const [permissionsNeeded, setPermissionsNeeded] = useState<PermissionScope[]>([]);
   const [alwaysAllow, setAlwaysAllow] = useState(false);
 
-  // Still support legacy direct tool commands for discovery buttons
   const parsedTool = useMemo(() => parseLocalCommand(input), [input]);
 
   async function submit() {
@@ -1095,13 +1043,9 @@ function ChatView() {
     setMessages(all);
   }
 
-  useEffect(() => {
-    void loadHistory();
-  }, []);
+  useEffect(() => { void loadHistory(); }, []);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   const filtered = useMemo(() => {
     let list = messages;
@@ -1174,27 +1118,15 @@ function ChatView() {
         <div className="chat-toolbar">
           <div className="chat-filter-chips">
             {filters.map(({ key, label }) => (
-              <button
-                key={key}
-                className={`chip${filter === key ? ' active' : ''}`}
-                onClick={() => setFilter(key)}
-              >
+              <button key={key} className={`chip${filter === key ? ' active' : ''}`} onClick={() => setFilter(key)}>
                 {label}
               </button>
             ))}
           </div>
-          <input
-            className="chat-search"
-            placeholder={t(lang, 'chat_search_placeholder')}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <input className="chat-search" placeholder={t(lang, 'chat_search_placeholder')} value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-
         <div className="chat-messages">
-          {filtered.length === 0 && (
-            <p className="chat-empty">{t(lang, 'chat_empty')}</p>
-          )}
+          {filtered.length === 0 && <p className="chat-empty">{t(lang, 'chat_empty')}</p>}
           {filtered.map((msg) => {
             const badge = sourceBadge(msg);
             return (
@@ -1204,23 +1136,16 @@ function ChatView() {
                 time={formatTime(msg.createdAt)}
                 meta={badge ? <span className={`source-badge ${msg.status !== 'ok' ? 'error' : msg.source}`}>{badge}</span> : undefined}
               >
-                {msg.source === 'voice' && msg.role === 'user' && (
-                  <span className="voice-transcription-label">{t(lang, 'voice_transcribed')}</span>
-                )}
+                {msg.source === 'voice' && msg.role === 'user' && <span className="voice-transcription-label">{t(lang, 'voice_transcribed')}</span>}
                 {msg.content}
               </NotebookChatBubble>
             );
           })}
           <div ref={bottomRef} />
         </div>
-
         <div className="chat-composer">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={t(lang, 'chat_composer_placeholder')}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendMessage(); } }}
-          />
+          <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder={t(lang, 'chat_composer_placeholder')}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendMessage(); } }} />
           <div className="action-row">
             <button onClick={() => void sendMessage()} disabled={sending || !input.trim()}>
               {sending ? t(lang, 'chat_sending') : t(lang, 'chat_send')}
@@ -1242,12 +1167,7 @@ function ChatView() {
   );
 }
 
-function SettingsView({
-  state,
-  behaviorSettings,
-  onRefresh,
-  onLangChange
-}: {
+function SettingsView({ state, behaviorSettings, onRefresh, onLangChange }: {
   state?: CharacterRuntimeState;
   behaviorSettings?: CharacterBehaviorSettings;
   onRefresh: () => Promise<void>;
@@ -1277,21 +1197,12 @@ function SettingsView({
     setStatus(next.apiKeyConfigured ? 'API key saved.' : 'No API key saved.');
   }
 
-  useEffect(() => {
-    void loadSettings();
-  }, []);
+  useEffect(() => { void loadSettings(); }, []);
 
   async function saveSettings(input: UpdateAiSettingsInput = {}) {
     setSaving(true);
     try {
-      const next = await window.ourCompanion.ai.updateSettings({
-        model,
-        endpoint,
-        apiKey: apiKey.trim() || undefined,
-        replyLanguage: replyLang,
-        uiLang,
-        ...input
-      });
+      const next = await window.ourCompanion.ai.updateSettings({ model, endpoint, apiKey: apiKey.trim() || undefined, replyLanguage: replyLang, uiLang, ...input });
       setSettings(next);
       setModel(next.model);
       setEndpoint(next.endpoint);
@@ -1309,57 +1220,21 @@ function SettingsView({
   return (
     <NotebookPage eyebrow={t(lang, 'settings_eyebrow')} title={t(lang, 'settings_title')} note={t(lang, 'settings_note')}>
       <div className="settings-layout">
-        <PaperCard title={t(lang, 'settings_ann_behavior_title')} tape>
-          <p>{t(lang, 'settings_ann_behavior_desc')}</p>
-        </PaperCard>
-        <PaperCard title={t(lang, 'settings_appearance_title')} tape>
-          <p>{t(lang, 'settings_appearance_desc')}</p>
-        </PaperCard>
-        <PaperCard title={t(lang, 'settings_privacy_title')} tape>
-          <p>{t(lang, 'settings_privacy_desc')}</p>
-        </PaperCard>
+        <PaperCard title={t(lang, 'settings_ann_behavior_title')} tape><p>{t(lang, 'settings_ann_behavior_desc')}</p></PaperCard>
+        <PaperCard title={t(lang, 'settings_appearance_title')} tape><p>{t(lang, 'settings_appearance_desc')}</p></PaperCard>
+        <PaperCard title={t(lang, 'settings_privacy_title')} tape><p>{t(lang, 'settings_privacy_desc')}</p></PaperCard>
         <VoiceSettingsCard />
         <ActionPermissionsCard />
         <PaperCard title={t(lang, 'settings_ai_title')} tape className="settings-panel">
           <h2>{t(lang, 'settings_ai_provider')}</h2>
-          <label>
-            <span>{t(lang, 'settings_ai_model_label')}</span>
-            <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="deepseek-v4-flash" />
-          </label>
-          <label>
-            <span>{t(lang, 'settings_ai_endpoint_label')}</span>
-            <input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="https://api.deepseek.com" />
-          </label>
-          <label>
-            <span>{t(lang, 'settings_ai_apikey_label')}</span>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              placeholder={settings?.apiKeyConfigured ? t(lang, 'settings_ai_apikey_placeholder_configured') : t(lang, 'settings_ai_apikey_placeholder_empty')}
-            />
-          </label>
-          <label>
-            <span>{t(lang, 'settings_reply_lang_label')}</span>
-            <select value={replyLang} onChange={(e) => setReplyLang(e.target.value as CompanionReplyLanguage)}>
-              <option value="en">{t(lang, 'lang_en')}</option>
-              <option value="zh-CN">{t(lang, 'lang_zh_cn')}</option>
-            </select>
-          </label>
-          <label>
-            <span>{t(lang, 'settings_ui_lang_label')}</span>
-            <select value={uiLang} onChange={(e) => setUiLang(e.target.value as UiLang)}>
-              <option value="en">{t(lang, 'lang_en')}</option>
-              <option value="zh-CN">{t(lang, 'lang_zh_cn')}</option>
-            </select>
-          </label>
+          <label><span>{t(lang, 'settings_ai_model_label')}</span><input value={model} onChange={(event) => setModel(event.target.value)} placeholder="deepseek-v4-flash" /></label>
+          <label><span>{t(lang, 'settings_ai_endpoint_label')}</span><input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="https://api.deepseek.com" /></label>
+          <label><span>{t(lang, 'settings_ai_apikey_label')}</span><input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={settings?.apiKeyConfigured ? t(lang, 'settings_ai_apikey_placeholder_configured') : t(lang, 'settings_ai_apikey_placeholder_empty')} /></label>
+          <label><span>{t(lang, 'settings_reply_lang_label')}</span><select value={replyLang} onChange={(e) => setReplyLang(e.target.value as CompanionReplyLanguage)}><option value="en">{t(lang, 'lang_en')}</option><option value="zh-CN">{t(lang, 'lang_zh_cn')}</option></select></label>
+          <label><span>{t(lang, 'settings_ui_lang_label')}</span><select value={uiLang} onChange={(e) => setUiLang(e.target.value as UiLang)}><option value="en">{t(lang, 'lang_en')}</option><option value="zh-CN">{t(lang, 'lang_zh_cn')}</option></select></label>
           <div className="action-row">
-            <button onClick={() => void saveSettings()} disabled={saving}>
-              {saving ? t(lang, 'settings_saving') : t(lang, 'settings_save')}
-            </button>
-            <button onClick={() => void saveSettings({ clearApiKey: true })} disabled={saving}>
-              {t(lang, 'settings_clear_apikey')}
-            </button>
+            <button onClick={() => void saveSettings()} disabled={saving}>{saving ? t(lang, 'settings_saving') : t(lang, 'settings_save')}</button>
+            <button onClick={() => void saveSettings({ clearApiKey: true })} disabled={saving}>{t(lang, 'settings_clear_apikey')}</button>
           </div>
           <p>{status}</p>
         </PaperCard>
@@ -1367,21 +1242,14 @@ function SettingsView({
           <button onClick={() => setDeveloperOpen((open) => !open)}>
             {developerOpen ? t(lang, 'settings_developer_hide') : t(lang, 'settings_developer_show')}
           </button>
-          {developerOpen && (
-            <DeveloperPreview
-              state={previewState}
-              devAnimation={devAnimation}
-              animationOverride={animationOverride}
-              onAnimationChange={setDevAnimation}
-              settings={behaviorSettings}
-              onRefresh={onRefresh}
-            />
-          )}
+          {developerOpen && <DeveloperPreview state={previewState} devAnimation={devAnimation} animationOverride={animationOverride} onAnimationChange={setDevAnimation} settings={behaviorSettings} onRefresh={onRefresh} />}
         </PaperCard>
       </div>
     </NotebookPage>
   );
 }
+
+// ─── Debug / Developer Components ───────────────────────────────────────────
 
 function VoiceSettingsCard() {
   const lang = useLang();
@@ -1394,18 +1262,11 @@ function VoiceSettingsCard() {
   async function refreshStatus() {
     setLoading(true);
     try {
-      const [nextStatus, nextSettings] = await Promise.all([
-        window.ourCompanion.speech.getStatus(),
-        window.ourCompanion.speech.getSettings()
-      ]);
+      const [nextStatus, nextSettings] = await Promise.all([window.ourCompanion.speech.getStatus(), window.ourCompanion.speech.getSettings()]);
       setSpeechStatus(nextStatus);
       setSpeechSettings(nextSettings);
     } catch (error) {
-      setSpeechStatus({
-        ready: false,
-        model: 'ggml-small.bin',
-        error: error instanceof Error ? error.message : 'Unable to read Whisper status.'
-      });
+      setSpeechStatus({ ready: false, model: 'ggml-small.bin', error: error instanceof Error ? error.message : 'Unable to read Whisper status.' });
     } finally {
       setLoading(false);
     }
@@ -1425,46 +1286,24 @@ function VoiceSettingsCard() {
     }
   }
 
-  useEffect(() => {
-    void refreshStatus();
-  }, []);
+  useEffect(() => { void refreshStatus(); }, []);
 
   return (
     <PaperCard title={t(lang, 'voice_title')} tape className="settings-panel">
-      <p>Talk to Ann on the desktop companion with double-click or Ctrl+Shift+Space. Replies appear word-by-word in her speech bubble.</p>
-      <p>
-        <strong>Hotkey:</strong> Ctrl+Shift+Space
-      </p>
-      <p>
-        <strong>Whisper model:</strong> {speechStatus?.model ?? 'ggml-small.bin'}
-      </p>
-      <p>
-        <strong>Status:</strong>{' '}
-        {loading
-          ? t(lang, 'voice_download_checking')
-          : speechStatus?.ready
-            ? t(lang, 'voice_status_ready')
-            : speechStatus?.error}
-      </p>
+      <p>Talk to Ann on the desktop companion with double-click or Ctrl+Shift+Space.</p>
+      <p><strong>Hotkey:</strong> Ctrl+Shift+Space</p>
+      <p><strong>Whisper model:</strong> {speechStatus?.model ?? 'ggml-small.bin'}</p>
+      <p><strong>Status:</strong> {loading ? t(lang, 'voice_download_checking') : speechStatus?.ready ? t(lang, 'voice_status_ready') : speechStatus?.error}</p>
       <label className="checkbox-row">
-        <input
-          type="checkbox"
-          checked={speechSettings.useGpu}
-          disabled={saving}
-          onChange={(event) => void saveSpeechSettings({ useGpu: event.target.checked })}
-        />
+        <input type="checkbox" checked={speechSettings.useGpu} disabled={saving} onChange={(event) => void saveSpeechSettings({ useGpu: event.target.checked })} />
         <span>{t(lang, 'voice_use_gpu_label')}</span>
       </label>
       <p>{t(lang, 'voice_use_gpu_hint')}</p>
       <div className="action-row">
-        <button onClick={() => void refreshStatus()} disabled={loading}>
-          {loading ? t(lang, 'voice_download_checking') : t(lang, 'voice_refresh')}
-        </button>
+        <button onClick={() => void refreshStatus()} disabled={loading}>{loading ? t(lang, 'voice_download_checking') : t(lang, 'voice_refresh')}</button>
       </div>
       {settingsMessage && <p>{settingsMessage}</p>}
-      {!loading && !speechStatus?.ready && (
-        <p>{t(lang, 'voice_download_hint')}</p>
-      )}
+      {!loading && !speechStatus?.ready && <p>{t(lang, 'voice_download_hint')}</p>}
     </PaperCard>
   );
 }
@@ -1475,9 +1314,7 @@ function ActionPermissionsCard() {
   const [permissions, setPermissions] = useState<ActionPermissionState | undefined>();
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    void window.ourCompanion.action.getPermissions().then(setPermissions);
-  }, []);
+  useEffect(() => { void window.ourCompanion.action.getPermissions().then(setPermissions); }, []);
 
   async function update(scope: PermissionScope, value: 'granted' | 'ask' | 'denied') {
     if (!permissions) return;
@@ -1499,11 +1336,7 @@ function ActionPermissionsCard() {
       {ALL_PERMISSION_SCOPES.map((scope) => (
         <label key={scope} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
           <span style={{ flex: 1, textTransform: 'capitalize' }}>{scope}</span>
-          <select
-            value={permissions[scope]}
-            disabled={saving}
-            onChange={(e) => void update(scope, e.target.value as 'granted' | 'ask' | 'denied')}
-          >
+          <select value={permissions[scope]} disabled={saving} onChange={(e) => void update(scope, e.target.value as 'granted' | 'ask' | 'denied')}>
             <option value="ask">Ask each time</option>
             <option value="granted">Always allow</option>
             <option value="denied">Always deny</option>
@@ -1518,9 +1351,7 @@ function BehaviorPanel({ settings, onRefresh }: { settings?: CharacterBehaviorSe
   const [draftMovement, setDraftMovement] = useState(settings?.effectiveMovement ?? 25);
   const range = getWalkDelayRange(settings?.effectiveMovement ?? draftMovement);
 
-  useEffect(() => {
-    if (settings) setDraftMovement(settings.effectiveMovement);
-  }, [settings?.effectiveMovement]);
+  useEffect(() => { if (settings) setDraftMovement(settings.effectiveMovement); }, [settings?.effectiveMovement]);
 
   async function saveMovement(value: number) {
     setDraftMovement(value);
@@ -1539,22 +1370,9 @@ function BehaviorPanel({ settings, onRefresh }: { settings?: CharacterBehaviorSe
       <h2>Movement</h2>
       <label>
         <span>Movement score: {settings?.effectiveMovement ?? draftMovement}</span>
-        <input
-          type="range"
-          min="0"
-          max="100"
-          value={draftMovement}
-          onChange={(event) => setDraftMovement(Number(event.target.value))}
-          onMouseUp={() => saveMovement(draftMovement)}
-          onKeyUp={(event) => {
-            if (event.key === 'Enter') saveMovement(draftMovement);
-          }}
-        />
+        <input type="range" min="0" max="100" value={draftMovement} onChange={(event) => setDraftMovement(Number(event.target.value))} onMouseUp={() => saveMovement(draftMovement)} onKeyUp={(event) => { if (event.key === 'Enter') saveMovement(draftMovement); }} />
       </label>
-      <p>
-        {settings?.source === 'override' ? 'Using your override.' : 'Using Ann personality default.'} Current walk rest is about{' '}
-        {Math.round(range.minMs / 1000)}-{Math.round(range.maxMs / 1000)} seconds.
-      </p>
+      <p>{settings?.source === 'override' ? 'Using your override.' : 'Using Ann personality default.'} Current walk rest is about {Math.round(range.minMs / 1000)}-{Math.round(range.maxMs / 1000)} seconds.</p>
       <div className="action-row">
         <button onClick={() => saveMovement(draftMovement)}>Save movement</button>
         <button onClick={resetMovement}>Reset to Ann</button>
@@ -1563,97 +1381,36 @@ function BehaviorPanel({ settings, onRefresh }: { settings?: CharacterBehaviorSe
   );
 }
 
-function NotebookPage({ eyebrow, title, note, children }: { eyebrow: string; title: string; note?: string; children: ReactNode }) {
+function DeveloperPreview({ state, devAnimation, animationOverride, onAnimationChange, settings, onRefresh }: {
+  state?: CharacterRuntimeState;
+  devAnimation: DevAnimation;
+  animationOverride?: AnimationName;
+  onAnimationChange: (animation: DevAnimation) => void;
+  settings?: CharacterBehaviorSettings;
+  onRefresh: () => Promise<void>;
+}) {
   return (
-    <div className="notebook-page">
-      <header className="notebook-header">
-        <div>
-          <p className="eyebrow">{eyebrow}</p>
-          <h1>{title}</h1>
-          {note && <p>{note}</p>}
+    <div className="developer-tools">
+      <div className="developer-preview-canvas">
+        <CompanionCanvas state={state} compact animationOverride={animationOverride} />
+      </div>
+      <div className="dev-animation-panel">
+        <p className="eyebrow">Developer use</p>
+        <h2>Animation review</h2>
+        <div className="segmented-control" aria-label="Preview Ann animation">
+          {devAnimations.map((animation) => (
+            <button key={animation} className={devAnimation === animation ? 'active' : ''} onClick={() => onAnimationChange(animation)}>
+              {animation === 'live' ? 'Live' : readable(animation)}
+            </button>
+          ))}
         </div>
-        <span className="notebook-date">{formatShortDate(new Date().toISOString())}</span>
-      </header>
-      {children}
-    </div>
-  );
-}
-
-function NotebookSectionTitle({ children }: { children: ReactNode }) {
-  return <h2 className="notebook-section-title">{children}</h2>;
-}
-
-function PaperCard({
-  title,
-  tape,
-  compact,
-  className = '',
-  children
-}: {
-  title?: string;
-  tape?: boolean;
-  compact?: boolean;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className={`paper-card ${compact ? 'paper-card-compact' : ''} ${className}`}>
-      {title && (tape ? <NotebookSectionTitle>{title}</NotebookSectionTitle> : <h2>{title}</h2>)}
-      {children}
-    </section>
-  );
-}
-
-function StickyNote({ title, compact, className = '', children }: { title?: string; compact?: boolean; className?: string; children: ReactNode }) {
-  return (
-    <section className={`sticky-note ${compact ? 'sticky-note-compact' : ''} ${className}`}>
-      {title && <h3>{title}</h3>}
-      {children}
-    </section>
-  );
-}
-
-function NotebookChatBubble({
-  speaker,
-  time,
-  meta,
-  children
-}: {
-  speaker: 'ann' | 'user' | 'system';
-  time: string;
-  meta?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <div className={`notebook-chat-bubble ${speaker}`}>
-      <p>{children}</p>
-      <span className="bubble-footer">
-        {meta && <span className="bubble-meta">{meta}</span>}
-        {time}
-      </span>
-    </div>
-  );
-}
-
-function MiniAnnSticker() {
-  return (
-    <div className="mini-ann-sticker" aria-hidden="true">
-      <span className="mini-ann-hair" />
-      <span className="mini-ann-face" />
-      <span className="mini-ann-eye left" />
-      <span className="mini-ann-eye right" />
-      <span className="mini-ann-body" />
-    </div>
-  );
-}
-
-function ProgressBar({ value, label }: { value: number; label: string }) {
-  return (
-    <div className="progress-row">
-      <span className="progress-track">
-        <span style={{ width: `${clamp(value, 0, 100)}%` }} />
-      </span>
-      <strong>{label}</strong>
+        <p>Previewing: {devAnimation === 'live' ? 'engine state' : readable(devAnimation)}</p>
+      </div>
+      <BehaviorPanel settings={settings} onRefresh={onRefresh} />
+      <EngineObservatory />
+      <DebugAudioTestPanel />
+      <DebugAiLog />
+      <DebugDataResetPanel onRefresh={onRefresh} />
     </div>
   );
 }
@@ -1665,12 +1422,7 @@ function DebugAiLog() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      const entries = await window.ourCompanion.ai.getDebugLog();
-      setLog(entries);
-    } finally {
-      setLoading(false);
-    }
+    try { setLog(await window.ourCompanion.ai.getDebugLog()); } finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -1680,9 +1432,7 @@ function DebugAiLog() {
       <div className="debug-ai-log-header">
         <span className="debug-ai-log-title">AI Request / Response Log</span>
         <span className="debug-ai-log-count">{log.length} calls</span>
-        <button className="debug-ai-log-refresh" onClick={load} disabled={loading}>
-          {loading ? 'Loading…' : 'Refresh'}
-        </button>
+        <button className="debug-ai-log-refresh" onClick={load} disabled={loading}>{loading ? 'Loading…' : 'Refresh'}</button>
       </div>
       {log.length === 0 ? (
         <p className="debug-ai-log-empty">No AI calls recorded yet.</p>
@@ -1690,11 +1440,7 @@ function DebugAiLog() {
         <div className="debug-ai-log-list">
           {log.map((entry) => (
             <div key={entry.id} className="debug-ai-log-entry">
-              <button
-                className="debug-ai-log-summary"
-                onClick={() => setExpanded(expanded === entry.id ? null : entry.id)}
-                aria-expanded={expanded === entry.id}
-              >
+              <button className="debug-ai-log-summary" onClick={() => setExpanded(expanded === entry.id ? null : entry.id)} aria-expanded={expanded === entry.id}>
                 <span className={`debug-channel-badge debug-channel-${entry.channel}`}>{entry.channel}</span>
                 <span className={`debug-status-badge debug-status-${entry.status}`}>{entry.status}</span>
                 <span className="debug-source-badge">{entry.source}</span>
@@ -1757,29 +1503,14 @@ function DebugDataResetPanel({ onRefresh }: { onRefresh: () => Promise<void> }) 
       <div className="debug-reset-grid">
         {debugResetOptions.map((option) => (
           <div key={option.target} className="debug-reset-item">
-            <div>
-              <strong>{option.label}</strong>
-              <span>{option.detail}</span>
-            </div>
+            <div><strong>{option.label}</strong><span>{option.detail}</span></div>
             {pendingTarget === option.target ? (
               <div className="debug-reset-confirm">
-                <button
-                  className={option.target === 'all_debug_data' ? 'debug-reset-danger' : ''}
-                  onClick={() => void resetTarget(option.target)}
-                  disabled={resetting}
-                >
-                  Confirm
-                </button>
+                <button className={option.target === 'all_debug_data' ? 'debug-reset-danger' : ''} onClick={() => void resetTarget(option.target)} disabled={resetting}>Confirm</button>
                 <button onClick={() => setPendingTarget(null)} disabled={resetting}>Cancel</button>
               </div>
             ) : (
-              <button
-                className={option.target === 'all_debug_data' ? 'debug-reset-danger' : ''}
-                onClick={() => setPendingTarget(option.target)}
-                disabled={resetting}
-              >
-                Clear
-              </button>
+              <button className={option.target === 'all_debug_data' ? 'debug-reset-danger' : ''} onClick={() => setPendingTarget(option.target)} disabled={resetting}>Clear</button>
             )}
           </div>
         ))}
@@ -1792,23 +1523,8 @@ function DebugAudioTestPanel() {
   const [recording, setRecording] = useState(false);
   const [testing, setTesting] = useState(false);
   const [status, setStatus] = useState('Ready.');
-  const [result, setResult] = useState<{
-    text?: string;
-    language?: string;
-    size?: number;
-    durationMs?: number;
-    mimeType?: string;
-    error?: string;
-  }>({});
-  const audio = useAudioCapture({
-    silenceDurationMs: 120000,
-    onError: (message) => {
-      setStatus(message);
-      setResult({ error: message });
-      setRecording(false);
-      setTesting(false);
-    }
-  });
+  const [result, setResult] = useState<{ text?: string; language?: string; size?: number; durationMs?: number; mimeType?: string; error?: string }>({});
+  const audio = useAudioCapture({ silenceDurationMs: 120000, onError: (message) => { setStatus(message); setResult({ error: message }); setRecording(false); setTesting(false); } });
 
   async function startTest() {
     setResult({});
@@ -1824,35 +1540,12 @@ function DebugAudioTestPanel() {
     try {
       const captured = await audio.stopRecording();
       setRecording(false);
-      if (!captured || captured.blob.size === 0) {
-        setResult({ error: 'No audio was captured.' });
-        setStatus('No audio was captured.');
-        return;
-      }
-      if (captured.durationMs < 500) {
-        setResult({
-          error: 'Recording was too short to transcribe.',
-          size: captured.blob.size,
-          durationMs: captured.durationMs,
-          mimeType: captured.mimeType
-        });
-        setStatus('Recording too short.');
-        return;
-      }
-
+      if (!captured || captured.blob.size === 0) { setResult({ error: 'No audio was captured.' }); setStatus('No audio was captured.'); return; }
+      if (captured.durationMs < 500) { setResult({ error: 'Recording was too short to transcribe.', size: captured.blob.size, durationMs: captured.durationMs, mimeType: captured.mimeType }); setStatus('Recording too short.'); return; }
       setStatus('Transcribing test audio...');
       const buffer = await captured.blob.arrayBuffer();
-      const transcribed = await window.ourCompanion.speech.transcribe({
-        audio: buffer,
-        mimeType: captured.mimeType
-      });
-      setResult({
-        text: transcribed.text,
-        language: transcribed.language,
-        size: captured.blob.size,
-        durationMs: captured.durationMs,
-        mimeType: captured.mimeType
-      });
+      const transcribed = await window.ourCompanion.speech.transcribe({ audio: buffer, mimeType: captured.mimeType });
+      setResult({ text: transcribed.text, language: transcribed.language, size: captured.blob.size, durationMs: captured.durationMs, mimeType: captured.mimeType });
       setStatus('Transcription complete.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to transcribe test audio.';
@@ -1871,18 +1564,11 @@ function DebugAudioTestPanel() {
       </div>
       <div className="debug-audio-actions">
         <button onClick={() => void startTest()} disabled={recording || testing}>Start recording</button>
-        <button onClick={() => void stopAndTranscribe()} disabled={!recording || testing}>
-          {testing ? 'Testing...' : 'Stop & transcribe'}
-        </button>
+        <button onClick={() => void stopAndTranscribe()} disabled={!recording || testing}>{testing ? 'Testing...' : 'Stop & transcribe'}</button>
       </div>
       {(result.text || result.error || result.size) && (
         <div className="debug-audio-result">
-          {result.size !== undefined && (
-            <span>
-              {result.mimeType ?? 'audio'} · {Math.round(result.size / 1024)} KB · {formatDuration(result.durationMs)} · language{' '}
-              {result.language ?? 'auto'}
-            </span>
-          )}
+          {result.size !== undefined && <span>{result.mimeType ?? 'audio'} · {Math.round(result.size / 1024)} KB · {formatDuration(result.durationMs)} · language {result.language ?? 'auto'}</span>}
           {result.text && <pre>{result.text}</pre>}
           {result.error && <pre className="debug-audio-error">{result.error}</pre>}
         </div>
@@ -1891,222 +1577,4 @@ function DebugAudioTestPanel() {
   );
 }
 
-function DebugJsonBlock({ title, value }: { title: string; value: unknown }) {
-  return (
-    <div className="debug-ai-log-block">
-      <span>{title}</span>
-      <pre className="debug-ai-log-raw">{formatJson(value)}</pre>
-    </div>
-  );
-}
 
-function DebugTextBlock({ title, value, tone }: { title: string; value: string; tone?: 'error' }) {
-  return (
-    <div className={`debug-ai-log-block ${tone === 'error' ? 'debug-ai-log-block-error' : ''}`}>
-      <span>{title}</span>
-      <pre className="debug-ai-log-raw">{value}</pre>
-    </div>
-  );
-}
-
-function debugPreview(entry: AiDebugEntry): string {
-  const text = entry.error || entry.content || `${entry.requestMessages.length} prompt messages`;
-  return text.length > 72 ? `${text.slice(0, 72)}…` : text;
-}
-
-function formatJson(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function formatDuration(durationMs?: number): string {
-  if (durationMs === undefined) return '0.0s';
-  return `${(durationMs / 1000).toFixed(1)}s`;
-}
-
-function DeveloperPreview({
-  state,
-  devAnimation,
-  animationOverride,
-  onAnimationChange,
-  settings,
-  onRefresh
-}: {
-  state?: CharacterRuntimeState;
-  devAnimation: DevAnimation;
-  animationOverride?: AnimationName;
-  onAnimationChange: (animation: DevAnimation) => void;
-  settings?: CharacterBehaviorSettings;
-  onRefresh: () => Promise<void>;
-}) {
-  return (
-    <div className="developer-tools">
-      <div className="developer-preview-canvas">
-        <CompanionCanvas state={state} compact animationOverride={animationOverride} />
-      </div>
-      <div className="dev-animation-panel">
-        <p className="eyebrow">Developer use</p>
-        <h2>Animation review</h2>
-        <div className="segmented-control" aria-label="Preview Ann animation">
-          {devAnimations.map((animation) => (
-            <button
-              key={animation}
-              className={devAnimation === animation ? 'active' : ''}
-              onClick={() => onAnimationChange(animation)}
-            >
-              {animation === 'live' ? 'Live' : readable(animation)}
-            </button>
-          ))}
-        </div>
-        <p>Previewing: {devAnimation === 'live' ? 'engine state' : readable(devAnimation)}</p>
-      </div>
-      <BehaviorPanel settings={settings} onRefresh={onRefresh} />
-      <EngineObservatory />
-      <DebugAudioTestPanel />
-      <DebugAiLog />
-      <DebugDataResetPanel onRefresh={onRefresh} />
-    </div>
-  );
-}
-
-function tabLabel(tab: Tab, lang: Lang): string {
-  const map: Record<Tab, string> = {
-    home: t(lang, 'tab_home'),
-    discovery: t(lang, 'tab_discovery'),
-    journey: t(lang, 'tab_journey'),
-    memory: t(lang, 'tab_memory'),
-    chat: t(lang, 'tab_chat'),
-    ask: t(lang, 'tab_ask'),
-    settings: t(lang, 'tab_settings')
-  };
-  return map[tab];
-}
-
-function annStatusMessage(state?: CharacterRuntimeState): string {
-  if (!state) return 'Ann is settling in and opening a fresh page.';
-  if (state.intent === 'sharing_discovery' || state.coreState === 'discovering') return 'Ann found something curious and tucked it into the notebook.';
-  if (state.intent === 'reviewing_memory') return 'Ann is reading your notes and thinking about what matters.';
-  if (state.intent === 'reflecting_journey') return 'Ann is connecting the dots across your current journey.';
-  if (state.intent === 'helping_task') return 'Ann is focused beside you and helping with the next step.';
-  if (state.intent === 'wandering') return 'Ann is stretching her legs, then coming back to the page.';
-  return 'Ann is quietly here, keeping an eye on new ideas.';
-}
-
-function annMoodLabel(state?: CharacterRuntimeState): string {
-  const emotion = state?.emotion;
-  if (!emotion) return 'Curious & Excited';
-  const entries = Object.entries(emotion).sort((a, b) => b[1] - a[1]);
-  const [first, second] = entries;
-  return `${capitalize(first?.[0] ?? 'curious')} & ${capitalize(second?.[0] ?? 'excited')}`;
-}
-
-function formatDiscoveryTime(discovery: Discovery): string {
-  return formatRelativeDate(discovery.publishedAt ?? discovery.sharedAt ?? discovery.createdAt);
-}
-
-function formatRelativeDate(value?: string): string {
-  if (!value) return 'Just now';
-  const time = new Date(value).getTime();
-  if (Number.isNaN(time)) return 'Just now';
-  const diffMs = Date.now() - time;
-  const minutes = Math.max(0, Math.round(diffMs / 60000));
-  if (minutes < 60) return minutes <= 1 ? 'Just now' : `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
-
-function formatShortDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function formatAskResult(result: ToolExecutionResult | ToolPreview | { message: string } | ActionRunResult): string {
-  if ('message' in result) return result.message;
-  if ('planId' in result) {
-    if (result.status === 'completed') return `Done — completed ${result.performedSteps} step(s).`;
-    if (result.status === 'blocked') return `I can't do that: ${result.reason}`;
-    if (result.status === 'failed') return `Something went wrong: ${result.errorMessage}`;
-    if (result.status === 'await_permission') return `Permission needed for: ${result.requiredScopes.join(', ')}`;
-  }
-  if ('errorMessage' in result && result.errorMessage) return result.errorMessage;
-  if ('userFacingSummary' in result) return result.userFacingSummary;
-  return 'Done.';
-}
-
-function readable(value: string): string {
-  return value.replaceAll('_', ' ');
-}
-
-function capitalize(value: string): string {
-  return value.slice(0, 1).toUpperCase() + value.slice(1);
-}
-
-function randomBetween(min: number, max: number): number {
-  return min + Math.random() * (max - min);
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function easeInOut(progress: number): number {
-  return progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-}
-
-function createDevAnimationState(animation: AnimationName): CharacterRuntimeState {
-  const stateByAnimation: Record<AnimationName, Pick<CharacterRuntimeState, 'coreState' | 'intent'>> = {
-    idle_laptop: { coreState: 'idle', intent: 'waiting' },
-    idle_coffee: { coreState: 'idle', intent: 'waiting' },
-    idle_notes: { coreState: 'organizing_backpack', intent: 'organizing_backpack' },
-    idle_tired: { coreState: 'idle', intent: 'waiting' },
-    walk: { coreState: 'walking', intent: 'wandering' },
-    return: { coreState: 'returning', intent: 'wandering' },
-    think: { coreState: 'thinking', intent: 'reviewing_memory' },
-    focus_typing: { coreState: 'executing', intent: 'helping_task' },
-    discovery: { coreState: 'discovering', intent: 'sharing_discovery' },
-    discovery_shy: { coreState: 'discovering', intent: 'sharing_discovery' },
-    talk: { coreState: 'talking', intent: 'sharing_discovery' },
-    talk_happy: { coreState: 'talking', intent: 'sharing_discovery' },
-    task_start: { coreState: 'executing', intent: 'helping_task' },
-    task_success: { coreState: 'executing', intent: 'helping_task' },
-    task_failed: { coreState: 'executing', intent: 'helping_task' }
-  };
-
-  return {
-    characterId: 'ann-dev-preview',
-    ...stateByAnimation[animation],
-    emotion: {
-      neutral: 0.4,
-      curious: animation === 'discovery' ? 0.8 : 0.3,
-      happy: 0.35,
-      excited: animation === 'walk' || animation === 'discovery' ? 0.65 : 0.2,
-      shy: 0,
-      confused: 0,
-      focused: animation === 'think' ? 0.85 : 0.3,
-      tired: 0,
-      proud: 0,
-      concerned: 0
-    },
-    updatedAt: new Date().toISOString()
-  };
-}
-
-function parseLocalCommand(input: string) {
-  const trimmed = input.trim();
-  const lower = trimmed.toLowerCase();
-  if (lower.startsWith('open url ')) {
-    return { toolName: 'open_url' as const, args: { url: trimmed.slice('open url '.length).trim() } };
-  }
-  if (lower.startsWith('open app ')) {
-    return { toolName: 'open_app' as const, args: { appName: trimmed.slice('open app '.length).trim() } };
-  }
-  if (lower.startsWith('search web for ')) {
-    return { toolName: 'search_web' as const, args: { query: trimmed.slice('search web for '.length).trim(), target: 'google' } };
-  }
-  return undefined;
-}
