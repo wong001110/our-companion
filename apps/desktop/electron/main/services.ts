@@ -497,7 +497,9 @@ export class AppServices {
             '}\n\n' +
             'Rules:\n' +
             '- short_message is what Ann says aloud.\n' +
-            '- short_message must be one sentence and <= 18 words.\n' +
+            '- short_message MUST be 80-140 characters, personality-first, conversational.\n' +
+            '- Never narrate the full discovery content.\n' +
+            '- Examples: "I found something that reminded me of what we have been discussing." or "This looks surprisingly relevant to your recent interests."\n' +
             '- card_title should be short and readable.\n' +
             '- card_body should explain the discovery in max 2 short sentences.\n' +
             '- why_this_matters can be more internal/detail-oriented.\n' +

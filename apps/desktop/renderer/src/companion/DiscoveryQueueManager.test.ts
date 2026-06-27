@@ -1,56 +1,89 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DiscoveryQueueManager } from './DiscoveryQueueManager';
-import type { DiscoveryAnnouncePayload } from '@our-companion/shared';
+import type { PresentationCandidate } from './PresentationCandidate';
 
-function payload(id: string): DiscoveryAnnouncePayload {
+function candidate(id: string): PresentationCandidate {
   return {
-    discoveryId: id,
+    id,
     title: `Discovery ${id}`,
-    message: `I found ${id}`,
-    cardBody: `Body for ${id}`,
-    tags: ['test'],
-    source: 'github'
+    oneLineHook: `Hook for ${id}`,
+    whyYouMightCare: `Why ${id} matters`,
+    shareMessage: `I found ${id}`,
+    sourceName: 'github',
+    tags: ['test']
   };
 }
 
 describe('DiscoveryQueueManager', () => {
   it('enqueues a candidate and returns true', () => {
     const manager = new DiscoveryQueueManager();
-    expect(manager.enqueue(payload('d1'))).toBe(true);
+    expect(manager.enqueue(candidate('d1'))).toBe(true);
     expect(manager.getStats().queued).toBe(1);
   });
 
   it('rejects duplicate id when already queued or presenting', () => {
     const manager = new DiscoveryQueueManager();
-    manager.enqueue(payload('d1'));
-    expect(manager.enqueue(payload('d1'))).toBe(false);
+    manager.enqueue(candidate('d1'));
+    expect(manager.enqueue(candidate('d1'))).toBe(false);
     expect(manager.getStats().queued).toBe(1);
+  });
+
+  it('allows same id after dismiss', () => {
+    const manager = new DiscoveryQueueManager();
+    manager.enqueue(candidate('d1'));
+    manager.presentNext();
+    manager.dismissCurrent();
+    expect(manager.enqueue(candidate('d1'))).toBe(true);
+  });
+
+  it('rejects duplicate URL', () => {
+    const manager = new DiscoveryQueueManager();
+    const c1 = { ...candidate('d1'), sourceUrl: 'https://example.com/article' };
+    const c2 = { ...candidate('d2'), sourceUrl: 'https://example.com/article' };
+    manager.enqueue(c1);
+    expect(manager.enqueue(c2)).toBe(false);
+  });
+
+  it('rejects duplicate title (normalized)', () => {
+    const manager = new DiscoveryQueueManager();
+    const c1 = { ...candidate('d1'), title: ' PixiJS Desktop Pet Guide ' };
+    const c2 = { ...candidate('d2'), title: 'pixijs desktop pet guide!' };
+    manager.enqueue(c1);
+    expect(manager.enqueue(c2)).toBe(false);
+  });
+
+  it('allows different URLs and titles', () => {
+    const manager = new DiscoveryQueueManager();
+    const c1 = { ...candidate('d1'), sourceUrl: 'https://a.com', title: 'Alpha' };
+    const c2 = { ...candidate('d2'), sourceUrl: 'https://b.com', title: 'Beta' };
+    manager.enqueue(c1);
+    expect(manager.enqueue(c2)).toBe(true);
   });
 
   it('presents next queued candidate', () => {
     const manager = new DiscoveryQueueManager();
-    manager.enqueue(payload('d1'));
-    manager.enqueue(payload('d2'));
+    manager.enqueue(candidate('d1'));
+    manager.enqueue(candidate('d2'));
 
     const presented = manager.presentNext();
-    expect(presented?.id).toBe('d1');
-    expect(manager.getCurrent()?.id).toBe('d1');
+    expect(presented?.candidate.id).toBe('d1');
+    expect(manager.getCurrent()?.candidate.id).toBe('d1');
     expect(manager.getStats().queued).toBe(1);
     expect(manager.getStats().presenting).toBe(1);
   });
 
   it('does not change current when presentNext called while presenting', () => {
     const manager = new DiscoveryQueueManager();
-    manager.enqueue(payload('d1'));
+    manager.enqueue(candidate('d1'));
     manager.presentNext();
 
     const same = manager.presentNext();
-    expect(same?.id).toBe('d1');
+    expect(same?.candidate.id).toBe('d1');
   });
 
   it('dismissCurrent marks current as dismissed', () => {
     const manager = new DiscoveryQueueManager();
-    manager.enqueue(payload('d1'));
+    manager.enqueue(candidate('d1'));
     manager.presentNext();
 
     manager.dismissCurrent();
@@ -60,7 +93,7 @@ describe('DiscoveryQueueManager', () => {
 
   it('saveCurrent marks current as saved', () => {
     const manager = new DiscoveryQueueManager();
-    manager.enqueue(payload('d1'));
+    manager.enqueue(candidate('d1'));
     manager.presentNext();
 
     manager.saveCurrent();
@@ -70,19 +103,19 @@ describe('DiscoveryQueueManager', () => {
 
   it('advanceAfterPresentation dismisses current and presents next', () => {
     const manager = new DiscoveryQueueManager();
-    manager.enqueue(payload('d1'));
-    manager.enqueue(payload('d2'));
+    manager.enqueue(candidate('d1'));
+    manager.enqueue(candidate('d2'));
     manager.presentNext();
 
     const next = manager.advanceAfterPresentation();
-    expect(next?.id).toBe('d2');
+    expect(next?.candidate.id).toBe('d2');
     expect(manager.getStats().dismissed).toBe(1);
     expect(manager.getStats().presenting).toBe(1);
   });
 
   it('returns undefined from advanceAfterPresentation when queue empty', () => {
     const manager = new DiscoveryQueueManager();
-    manager.enqueue(payload('d1'));
+    manager.enqueue(candidate('d1'));
     manager.presentNext();
 
     const next = manager.advanceAfterPresentation();
@@ -91,8 +124,8 @@ describe('DiscoveryQueueManager', () => {
 
   it('reset clears all candidates', () => {
     const manager = new DiscoveryQueueManager();
-    manager.enqueue(payload('d1'));
-    manager.enqueue(payload('d2'));
+    manager.enqueue(candidate('d1'));
+    manager.enqueue(candidate('d2'));
     manager.presentNext();
 
     manager.reset();
@@ -104,7 +137,7 @@ describe('DiscoveryQueueManager', () => {
     const listener = vi.fn();
     manager.subscribe(listener);
 
-    manager.enqueue(payload('d1'));
+    manager.enqueue(candidate('d1'));
     expect(listener).toHaveBeenCalledTimes(1);
 
     manager.presentNext();
@@ -116,11 +149,11 @@ describe('DiscoveryQueueManager', () => {
     const listener = vi.fn();
     const unsub = manager.subscribe(listener);
 
-    manager.enqueue(payload('d1'));
+    manager.enqueue(candidate('d1'));
     expect(listener).toHaveBeenCalledTimes(1);
 
     unsub();
-    manager.enqueue(payload('d2'));
+    manager.enqueue(candidate('d2'));
     expect(listener).toHaveBeenCalledTimes(1);
   });
 });

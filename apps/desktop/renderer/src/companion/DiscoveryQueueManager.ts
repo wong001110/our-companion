@@ -1,35 +1,27 @@
-import type { DiscoveryAnnouncePayload } from '@our-companion/shared';
-
-export type CandidateStatus = 'queued' | 'presenting' | 'dismissed' | 'saved';
-
-export interface DiscoveryCandidate {
-  id: string;
-  payload: DiscoveryAnnouncePayload;
-  status: CandidateStatus;
-  enqueuedAt: string;
-  presentedAt?: string;
-}
+import type { PresentationCandidate, QueuedCandidate, CandidateStatus } from './PresentationCandidate';
+import { normalizeUrl, normalizeTitle } from './PresentationCandidate';
 
 export type CandidateListener = () => void;
 
 export class DiscoveryQueueManager {
-  private candidates: DiscoveryCandidate[] = [];
+  private candidates: QueuedCandidate[] = [];
   private listeners: CandidateListener[] = [];
 
-  enqueue(payload: DiscoveryAnnouncePayload): boolean {
-    const existing = this.candidates.find(
+  enqueue(candidate: PresentationCandidate): boolean {
+    const active = this.candidates.filter(
       (c) => c.status === 'queued' || c.status === 'presenting'
     );
-    if (existing && existing.id === payload.discoveryId) return false;
 
-    const alreadyQueued = this.candidates.some(
-      (c) => c.id === payload.discoveryId && (c.status === 'queued' || c.status === 'presenting')
-    );
-    if (alreadyQueued) return false;
+    if (active.some((c) => c.candidate.id === candidate.id)) return false;
+
+    const candidateUrl = normalizeUrl(candidate.sourceUrl);
+    if (candidateUrl && active.some((c) => normalizeUrl(c.candidate.sourceUrl) === candidateUrl)) return false;
+
+    const candidateTitle = normalizeTitle(candidate.title);
+    if (candidateTitle && active.some((c) => normalizeTitle(c.candidate.title) === candidateTitle)) return false;
 
     this.candidates.push({
-      id: payload.discoveryId,
-      payload,
+      candidate,
       status: 'queued',
       enqueuedAt: new Date().toISOString()
     });
@@ -37,15 +29,15 @@ export class DiscoveryQueueManager {
     return true;
   }
 
-  getCurrent(): DiscoveryCandidate | undefined {
+  getCurrent(): QueuedCandidate | undefined {
     return this.candidates.find((c) => c.status === 'presenting');
   }
 
-  getNext(): DiscoveryCandidate | undefined {
+  getNext(): QueuedCandidate | undefined {
     return this.candidates.find((c) => c.status === 'queued');
   }
 
-  presentNext(): DiscoveryCandidate | undefined {
+  presentNext(): QueuedCandidate | undefined {
     const current = this.getCurrent();
     if (current) return current;
 
@@ -74,7 +66,7 @@ export class DiscoveryQueueManager {
     }
   }
 
-  advanceAfterPresentation(): DiscoveryCandidate | undefined {
+  advanceAfterPresentation(): QueuedCandidate | undefined {
     const current = this.getCurrent();
     if (current) {
       current.status = 'dismissed';
@@ -87,11 +79,11 @@ export class DiscoveryQueueManager {
     this.notify();
   }
 
-  getAll(): DiscoveryCandidate[] {
+  getAll(): QueuedCandidate[] {
     return [...this.candidates];
   }
 
-  getCandidatesByStatus(status: CandidateStatus): DiscoveryCandidate[] {
+  getCandidatesByStatus(status: CandidateStatus): QueuedCandidate[] {
     return this.candidates.filter((c) => c.status === status);
   }
 

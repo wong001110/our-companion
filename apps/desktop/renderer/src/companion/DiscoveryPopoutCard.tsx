@@ -1,12 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import type { PresentationCandidate } from './PresentationCandidate';
+import { titleFallback, bodyFallback } from './PresentationCandidate';
 
 export interface DiscoveryPopoutCardProps {
-  title: string;
-  cardBody: string;
-  tags?: string[];
-  source?: string;
-  sourceUrl?: string;
-  recommendedAction?: 'view' | 'save' | 'ignore' | 'add_to_journey';
+  candidate: PresentationCandidate;
   onView?: () => void;
   onSave?: () => void;
   onAddToJourney?: () => void;
@@ -17,12 +14,7 @@ export interface DiscoveryPopoutCardProps {
 const AUTO_DISMISS_MS = 12000;
 
 export function DiscoveryPopoutCard({
-  title,
-  cardBody,
-  tags,
-  source,
-  sourceUrl,
-  recommendedAction,
+  candidate,
   onView,
   onSave,
   onAddToJourney,
@@ -60,13 +52,10 @@ export function DiscoveryPopoutCard({
     handleClose();
   }
 
-  const moodClass = recommendedAction === 'save' ? 'card-mood-excited'
-    : recommendedAction === 'add_to_journey' ? 'card-mood-curious'
-    : recommendedAction === 'ignore' ? 'card-mood-calm'
-    : 'card-mood-calm';
+  const displayTitle = titleFallback(candidate);
+  const displayBody = bodyFallback(candidate);
 
-  const displayTitle = title || `Discovery from ${source ?? 'unknown'}`;
-  const displayBody = cardBody || 'Ann found something worth looking at.';
+  const moodClass = 'card-mood-calm';
 
   return (
     <div
@@ -75,19 +64,20 @@ export function DiscoveryPopoutCard({
       aria-label={`Discovery: ${displayTitle}`}
     >
       <div className="card-header">
-        <span className="card-source-badge">{source ?? 'discovery'}</span>
+        <span className="card-source-badge">{candidate.sourceName ?? 'discovery'}</span>
         <button className="card-close-btn" onClick={handleClose} aria-label="Close">✕</button>
       </div>
       <h3 className="card-title">{displayTitle}</h3>
+      <p className="card-hook">{candidate.oneLineHook}</p>
       <p className="card-body">{displayBody}</p>
-      {sourceUrl && (
-        <a className="card-source-link" href={sourceUrl} target="_blank" rel="noopener noreferrer">
+      {candidate.sourceUrl && (
+        <a className="card-source-link" href={candidate.sourceUrl} target="_blank" rel="noopener noreferrer">
           View source
         </a>
       )}
-      {tags && tags.length > 0 && (
+      {candidate.tags && candidate.tags.length > 0 && (
         <div className="card-tags">
-          {tags.slice(0, 5).map((tag) => (
+          {candidate.tags.slice(0, 5).map((tag) => (
             <span key={tag} className="card-tag">{tag}</span>
           ))}
         </div>

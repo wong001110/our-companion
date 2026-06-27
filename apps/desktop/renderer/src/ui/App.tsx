@@ -39,6 +39,7 @@ import { TypewriterSpeechBubble } from '../companion/TypewriterSpeechBubble';
 import { DiscoveryPopoutCard } from '../companion/DiscoveryPopoutCard';
 import { useCompanionSession } from '../companion/useCompanionSession';
 import { DiscoveryQueueManager } from '../companion/DiscoveryQueueManager';
+import type { PresentationCandidate } from '../companion/PresentationCandidate';
 import { CompanionCanvas, type AnimationName, type CompanionDragPoint } from './CompanionCanvas';
 import { LangContext, useLang, NotebookPage, PaperCard, StickyNote, MiniAnnSticker, ProgressBar, NotebookChatBubble } from './NotebookPrimitives';
 import { EngineObservatory } from '../features/developer/EngineObservatory';
@@ -64,7 +65,7 @@ function CompanionShell() {
   const [idleAnimation, setIdleAnimation] = useState<AnimationName>('idle_laptop');
   const [speech, setSpeech] = useState<string>();
   const [typewriterMessage, setTypewriterMessage] = useState<string>();
-  const [discoveryPopup, setDiscoveryPopup] = useState<DiscoveryAnnouncePayload | null>(null);
+  const [discoveryPopup, setDiscoveryPopup] = useState<PresentationCandidate | null>(null);
   const queueManagerRef = useRef(new DiscoveryQueueManager());
 
   useEffect(() => {
@@ -200,11 +201,21 @@ function CompanionShell() {
       applyState(next);
     });
     const unsubscribeAnnounce = window.ourCompanion.discovery.onAnnounce((payload) => {
-      queueManagerRef.current.enqueue(payload);
+      const pc: PresentationCandidate = {
+        id: payload.discoveryId,
+        title: payload.title,
+        oneLineHook: payload.cardBody ?? payload.whyThisMatters ?? payload.title,
+        whyYouMightCare: payload.whyThisMatters ?? payload.cardBody ?? '',
+        shareMessage: payload.message,
+        sourceName: payload.source,
+        sourceUrl: payload.sourceUrl,
+        tags: payload.tags
+      };
+      queueManagerRef.current.enqueue(pc);
       const current = queueManagerRef.current.presentNext();
       if (current) {
-        showTypewriterSpeech(current.payload.message);
-        setDiscoveryPopup(current.payload);
+        showTypewriterSpeech(current.candidate.shareMessage);
+        setDiscoveryPopup(current.candidate);
       }
     });
     const unsubscribePerformance = window.ourCompanion.action.onPerformance((script: PerformanceScript) => {
@@ -475,19 +486,14 @@ function CompanionShell() {
       {!typewriterMessage && speech && <div className="speech-bubble">{speech}</div>}
       {discoveryPopup && (
         <DiscoveryPopoutCard
-          title={discoveryPopup.title}
-          cardBody={discoveryPopup.cardBody ?? discoveryPopup.whyThisMatters ?? ''}
-          tags={discoveryPopup.tags}
-          source={discoveryPopup.source}
-          sourceUrl={discoveryPopup.sourceUrl}
-          recommendedAction={discoveryPopup.recommendedAction}
+          candidate={discoveryPopup}
           onClose={() => {
             queueManagerRef.current.dismissCurrent();
             setDiscoveryPopup(null);
             const next = queueManagerRef.current.presentNext();
             if (next) {
-              showTypewriterSpeech(next.payload.message);
-              setDiscoveryPopup(next.payload);
+              showTypewriterSpeech(next.candidate.shareMessage);
+              setDiscoveryPopup(next.candidate);
             }
           }}
         />

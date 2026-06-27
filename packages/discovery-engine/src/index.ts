@@ -356,25 +356,33 @@ function fallbackItems(source: DiscoverySource): RawDiscoveryItem[] {
       { ...common, id: 'github-pixijs-desktop-pet', title: 'Building expressive desktop companions with PixiJS', summary: 'A small renderer pattern for animated companion characters.', url: 'https://github.com/pixijs/pixijs', tags: ['frontend', 'pixijs', 'web', 'ux'] },
       { ...common, id: 'github-tldraw', title: 'tldraw — a canvas for thinking', summary: 'Infinite canvas toolkit for collaborative whiteboarding.', url: 'https://github.com/tldraw/tldraw', tags: ['canvas', 'collaboration', 'tool'] },
       { ...common, id: 'github-excalidraw', title: 'Excalidraw — virtual whiteboard', summary: 'Hand-drawn style sketching tool for diagrams.', url: 'https://github.com/excalidraw/excalidraw', tags: ['sketch', 'diagram', 'canvas'] },
-      { ...common, id: 'github-affine', title: 'Affine — knowledge management', summary: 'Local-first knowledge base with docs and whiteboard.', url: 'https://github.com/toeverything/AFFiNE', tags: ['knowledge', 'local-first', 'docs'] }
+      { ...common, id: 'github-affine', title: 'Affine — knowledge management', summary: 'Local-first knowledge base with docs and whiteboard.', url: 'https://github.com/toeverything/AFFiNE', tags: ['knowledge', 'local-first', 'docs'] },
+      { ...common, id: 'github-livekit', title: 'LiveKit — real-time audio/video', summary: 'Open-source WebRTC stack for voice and video.', url: 'https://github.com/livekit/livekit', tags: ['webrtc', 'voice', 'real-time'] },
+      { ...common, id: 'github-remotion', title: 'Remotion — programmatic video', summary: 'Create videos with React components.', url: 'https://github.com/remotion-dev/remotion', tags: ['video', 'react', 'animation'] }
     ],
     hackernews: [
       { ...common, id: 'hn-local-first-memory', title: 'Local-first app patterns for personal memory tools', summary: 'Discussion about SQLite-backed personal software.', url: 'https://news.ycombinator.com/', tags: ['sqlite', 'local-first', 'memory'] },
       { ...common, id: 'hn-ai-companion', title: 'AI companion design patterns in 2025', summary: 'How desktop AI assistants are evolving beyond chatbots.', url: 'https://news.ycombinator.com/', tags: ['ai', 'companion', 'ux'] },
       { ...common, id: 'hn-personal-knowledge', title: 'Building a personal knowledge graph', summary: 'Tools and techniques for organizing thoughts digitally.', url: 'https://news.ycombinator.com/', tags: ['knowledge', 'graph', 'personal'] },
-      { ...common, id: 'hn-emotional-ui', title: 'Emotion-driven interfaces', summary: 'Research on UI that adapts to user mood and context.', url: 'https://news.ycombinator.com/', tags: ['emotion', 'ui', 'adaptive'] }
+      { ...common, id: 'hn-emotional-ui', title: 'Emotion-driven interfaces', summary: 'Research on UI that adapts to user mood and context.', url: 'https://news.ycombinator.com/', tags: ['emotion', 'ui', 'adaptive'] },
+      { ...common, id: 'hn-ambient-software', title: 'Ambient software design philosophy', summary: 'Software that stays present without demanding attention.', url: 'https://news.ycombinator.com/', tags: ['ambient', 'design', 'presence'] },
+      { ...common, id: 'hn-note-taking-2025', title: 'Modern note-taking beyond markdown', summary: 'Exploring spatial and visual note-taking paradigms.', url: 'https://news.ycombinator.com/', tags: ['notes', 'spatial', 'ux'] }
     ],
     reddit: [
       { ...common, id: 'reddit-cozy-dev-room', title: 'Cozy developer room inspiration boards', summary: 'Workspace ideas with warm lighting and note-taking systems.', url: 'https://www.reddit.com/r/battlestations/', tags: ['ux', 'workspace', 'cozy'] },
       { ...common, id: 'reddit-desktop-pet', title: 'Desktop pet communities and projects', summary: 'Folklore about virtual companions on your screen.', url: 'https://www.reddit.com/r/desktoppets/', tags: ['pet', 'desktop', 'companion'] },
       { ...common, id: 'reddit-journaling', title: 'Digital journaling with personality', summary: 'Apps that make note-taking feel personal and alive.', url: 'https://www.reddit.com/r/Journaling/', tags: ['journal', 'personal', 'writing'] },
-      { ...common, id: 'reddit-notebook-aesthetic', title: 'Notebook aesthetic and paper UI', summary: 'Design inspiration from physical notebooks and scrapbooks.', url: 'https://www.reddit.com/r/Notebooks/', tags: ['notebook', 'aesthetic', 'paper'] }
+      { ...common, id: 'reddit-notebook-aesthetic', title: 'Notebook aesthetic and paper UI', summary: 'Design inspiration from physical notebooks and scrapbooks.', url: 'https://www.reddit.com/r/Notebooks/', tags: ['notebook', 'aesthetic', 'paper'] },
+      { ...common, id: 'reddit-obsidian-graph', title: 'Obsidian graph view explorations', summary: 'Visualizing knowledge connections in personal vaults.', url: 'https://www.reddit.com/r/ObsidianMD/', tags: ['obsidian', 'graph', 'knowledge'] },
+      { ...common, id: 'reddit-creative-coding', title: 'Creative coding for personal expression', summary: 'Using code as an artistic medium for interactive pieces.', url: 'https://www.reddit.com/r/creativecoding/', tags: ['creative', 'code', 'art'] }
     ],
     youtube: [
       { ...common, id: 'youtube-pixijs-tutorial', title: 'PixiJS animation basics for character sprites', summary: 'A tutorial-style resource for sprite animation loops.', url: 'https://www.youtube.com/results?search_query=PixiJS+sprite+animation', tags: ['pixijs', 'frontend', 'animation'] },
       { ...common, id: 'youtube-character-design', title: 'Character design for indie games', summary: 'Creating expressive animated characters on a budget.', url: 'https://www.youtube.com/results?search_query=character+design+indie', tags: ['character', 'design', 'animation'] },
       { ...common, id: 'youtube-cozy-setup', title: 'Cozy desk setup for productivity', summary: 'Warm workspace ideas with ambient lighting.', url: 'https://www.youtube.com/results?search_query=cozy+desk+setup', tags: ['workspace', 'cozy', 'ambient'] },
-      { ...common, id: 'youtube-memory-palace', title: 'Building a memory palace digitally', summary: 'Techniques for organizing knowledge spatially.', url: 'https://www.youtube.com/results?search_query=memory+palace+digital', tags: ['memory', 'knowledge', 'spatial'] }
+      { ...common, id: 'youtube-memory-palace', title: 'Building a memory palace digitally', summary: 'Techniques for organizing knowledge spatially.', url: 'https://www.youtube.com/results?search_query=memory+palace+digital', tags: ['memory', 'knowledge', 'spatial'] },
+      { ...common, id: 'youtube-procedural-art', title: 'Procedural art with code', summary: 'Generating unique visual patterns through algorithms.', url: 'https://www.youtube.com/results?search_query=procedural+art+code', tags: ['generative', 'art', 'creative'] },
+      { ...common, id: 'youtube-voice-ui', title: 'Voice interface design patterns', summary: 'Designing natural conversational UIs for desktop apps.', url: 'https://www.youtube.com/results?search_query=voice+interface+design', tags: ['voice', 'ui', 'conversation'] }
     ]
   };
 

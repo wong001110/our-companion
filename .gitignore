@@ -1,5 +1,6 @@
 node_modules/
 dist/
+build/
 out/
 .vite/
 coverage/
@@ -10,6 +11,8 @@ coverage/
 .env.local
 npm-debug.log*
 *.tsbuildinfo
+*.zip
+*.log
 
 # Generated TypeScript outputs (source-only TS repo)
 packages/**/src/**/*.js
@@ -19,6 +22,7 @@ apps/**/electron/**/*.d.ts
 apps/**/renderer/src/**/*.js
 apps/**/renderer/src/**/*.d.ts
 !apps/**/renderer/src/global.d.ts
+
 # Vite config build artifacts at app root level
 apps/desktop/vite.*.js
 apps/desktop/vite.*.d.ts
