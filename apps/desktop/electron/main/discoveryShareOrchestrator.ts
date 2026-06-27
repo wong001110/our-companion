@@ -24,6 +24,7 @@ export interface DiscoveryShareOrchestratorDeps {
 }
 
 const STEP_DELAY_MS = 1200;
+const CARD_RENDER_DELAY_MS = 300;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -133,6 +134,7 @@ export class DiscoveryShareOrchestrator {
           tags: reason.tags ?? discovery.tags ?? [],
           source: discovery.source
         });
+        await delay(CARD_RENDER_DELAY_MS);
       }
 
       if (step < 3) {

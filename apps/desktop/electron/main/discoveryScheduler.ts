@@ -62,6 +62,8 @@ export class DiscoveryScheduler {
     if (this.stopped) return;
 
     try {
+      let candidate: Discovery | undefined;
+
       if (this.deps.countSharedToday() < DAILY_SHARE_CAP) {
         if (
           this.deps.runAutonomousCycle &&
@@ -72,15 +74,21 @@ export class DiscoveryScheduler {
         }
 
         const result = await this.deps.refresh();
-        const toAnnounce = result.newlyInserted.filter((discovery) => discovery.status === 'shared');
-        if (toAnnounce.length > 0) {
-          this.deps.shareOrchestrator.enqueue(toAnnounce);
+        const newlyShared = result.newlyInserted.filter((discovery) => discovery.status === 'shared');
+        if (newlyShared.length > 0) {
+          candidate = newlyShared[0];
         }
       }
 
-      const backlog = this.deps.listUnannouncedShared(10);
-      if (backlog.length > 0) {
-        this.deps.shareOrchestrator.enqueue(backlog);
+      if (!candidate) {
+        const backlog = this.deps.listUnannouncedShared(1);
+        if (backlog.length > 0) {
+          candidate = backlog[0];
+        }
+      }
+
+      if (candidate) {
+        this.deps.shareOrchestrator.enqueue([candidate]);
       }
     } catch (error) {
       console.warn('[our-companion] Discovery scheduler tick failed.', error);

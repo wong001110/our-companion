@@ -18,3 +18,4 @@ apps/**/electron/**/*.js
 apps/**/electron/**/*.d.ts
 apps/**/renderer/src/**/*.js
 apps/**/renderer/src/**/*.d.ts
+!apps/**/renderer/src/global.d.ts
