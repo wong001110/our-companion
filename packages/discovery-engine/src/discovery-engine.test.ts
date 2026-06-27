@@ -3,6 +3,8 @@ import {
   applyDailyCap,
   checkDuplicateDiscovery,
   deduplicateDiscoveries,
+  deduplicateCandidates,
+  discoveryDedupeKey,
   discoveryFromSignal,
   fingerprintDiscovery,
   normalizeDiscoveryUrl,
@@ -51,6 +53,48 @@ describe('discovery engine', () => {
     ]);
 
     expect(items).toHaveLength(1);
+  });
+
+  it('deduplicates candidates by normalized title and source', () => {
+    const key = discoveryDedupeKey('Local-first Memory Tools!', 'GitHub');
+    expect(key).toBe('localfirst memory tools::github');
+
+    const candidates = deduplicateCandidates([
+      {
+        id: 'candidate_1',
+        userId: 'default',
+        companionId: 'ann',
+        title: 'Local-first memory tools',
+        summary: 'One',
+        sourceType: 'article',
+        sourceName: 'github',
+        agentType: 'scout',
+        relatedCuriosityTargetId: 'curiosity_1',
+        relevanceScore: 0.8,
+        noveltyScore: 0.7,
+        evidenceScore: 0.7,
+        usefulnessScore: 0.75,
+        collectedAt: 'now'
+      },
+      {
+        id: 'candidate_2',
+        userId: 'default',
+        companionId: 'ann',
+        title: 'Local-first Memory Tools!',
+        summary: 'Duplicate',
+        sourceType: 'article',
+        sourceName: 'github',
+        agentType: 'scout',
+        relatedCuriosityTargetId: 'curiosity_1',
+        relevanceScore: 0.8,
+        noveltyScore: 0.7,
+        evidenceScore: 0.7,
+        usefulnessScore: 0.75,
+        collectedAt: 'now'
+      }
+    ]);
+
+    expect(candidates).toHaveLength(1);
   });
 
   it('normalizes tracking URLs and canonical GitHub repo URLs', () => {

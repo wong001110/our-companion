@@ -77,6 +77,7 @@ describe('insight engine', () => {
       ]
     });
 
+    expect(selectPrimaryInsight(insights)?.title).toBe('Calm technology notes');
     expect(selectPrimaryInsight(insights)?.narration).toContain('I found something');
   });
 

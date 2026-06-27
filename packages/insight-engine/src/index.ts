@@ -90,7 +90,7 @@ export function generateInsights(input: GenerateInsightsInput): CompanionInsight
     id: createId('insight'),
     userId: input.userId,
     companionId: input.companionId,
-    title: primaryCandidate ? `A signal around ${input.curiosityTarget.topic}` : `A question about ${input.curiosityTarget.topic}`,
+    title: primaryCandidate?.title ?? `A question about ${input.curiosityTarget.topic}`,
     type: input.curiosityTarget.explorationType === 'practical' ? 'practical_next_step' : relatedPattern ? 'pattern' : 'observation',
     summary: primaryCandidate?.summary ?? input.curiosityTarget.description,
     insight: primaryCandidate

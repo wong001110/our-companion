@@ -268,10 +268,22 @@ export function scoreDiscovery(item: NormalizedDiscovery, context: RankingContex
   };
 }
 
+export function normalizeDiscoveryTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function discoveryDedupeKey(title: string, source: string): string {
+  return `${normalizeDiscoveryTitle(title)}::${source.toLowerCase()}`;
+}
+
 export function deduplicateDiscoveries(items: NormalizedDiscovery[]): NormalizedDiscovery[] {
   const seen = new Set<string>();
   return items.filter((item) => {
-    const key = item.url || `${item.source}:${item.externalId || item.title}`;
+    const key = item.url || discoveryDedupeKey(item.title, item.source);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -487,7 +499,8 @@ export function scoreCandidate(candidate: Pick<DiscoveryCandidate, 'relevanceSco
 export function deduplicateCandidates(candidates: DiscoveryCandidate[]): DiscoveryCandidate[] {
   const seen = new Set<string>();
   return candidates.filter((candidate) => {
-    const key = (candidate.sourceUrl || `${candidate.sourceName ?? candidate.sourceType}:${candidate.title}`).toLowerCase();
+    const source = candidate.sourceName ?? candidate.sourceType;
+    const key = candidate.sourceUrl?.toLowerCase() || discoveryDedupeKey(candidate.title, source);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
