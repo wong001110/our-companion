@@ -82,6 +82,12 @@ export function EngineObservatory() {
     society: false
   });
   const [loading, setLoading] = useState(false);
+  const [queueStats, setQueueStats] = useState<{ queued: number; presenting: number; dismissed: number; saved: number } | null>(null);
+
+  const refreshQueueStats = useCallback(() => {
+    const stats = window.__discoveryQueue?.getStats();
+    setQueueStats(stats ?? null);
+  }, []);
 
   const loadSnapshot = useCallback(async () => {
     const [nextSnapshot, status] = await Promise.all([
@@ -101,10 +107,11 @@ export function EngineObservatory() {
     setLoading(true);
     try {
       await Promise.all([loadSnapshot(), loadEvents()]);
+      refreshQueueStats();
     } finally {
       setLoading(false);
     }
-  }, [loadEvents, loadSnapshot]);
+  }, [loadEvents, loadSnapshot, refreshQueueStats]);
 
   useEffect(() => {
     void refreshAll();
@@ -395,6 +402,14 @@ export function EngineObservatory() {
                 <li>
                   <strong>Announced</strong> {snapshot.discoveryScheduling.announcedCount}
                 </li>
+                {queueStats && (
+                  <>
+                    <li><strong>Queue: queued</strong> {queueStats.queued}</li>
+                    <li><strong>Queue: presenting</strong> {queueStats.presenting}</li>
+                    <li><strong>Queue: dismissed</strong> {queueStats.dismissed}</li>
+                    <li><strong>Queue: saved</strong> {queueStats.saved}</li>
+                  </>
+                )}
                 {snapshot.discoveryScheduling.lastTickAt && (
                   <li>
                     <strong>Last tick</strong> {new Date(snapshot.discoveryScheduling.lastTickAt).toLocaleTimeString()}
@@ -409,6 +424,8 @@ export function EngineObservatory() {
               <div className="engine-meta" style={{ marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 <button onClick={() => void window.ourCompanion.discovery.generateNow().then(() => void refreshAll())}>Generate now</button>
                 <button onClick={() => void window.ourCompanion.discovery.shareNext().then(() => void refreshAll())}>Share next</button>
+                <button onClick={() => { window.__discoveryQueue?.dismissCurrent(); refreshQueueStats(); void refreshAll(); }}>Dismiss current</button>
+                <button onClick={() => { window.__discoveryQueue?.reset(); refreshQueueStats(); void refreshAll(); }}>Reset queue</button>
                 <button onClick={() => void window.ourCompanion.discovery.resetStatuses().then(() => void refreshAll())}>Reset statuses</button>
                 <button onClick={() => void window.ourCompanion.discovery.countUnannounced().then((r) => { alert(`${r.count} unannounced`); void refreshAll(); })}>Count unannounced</button>
                 <button onClick={() => void window.ourCompanion.discovery.markSharedAsUnannounced().then((r) => { alert(`Cleared history; ${r.count} shared discoveries can now be re-announced`); void refreshAll(); })}>Reset announcement history</button>

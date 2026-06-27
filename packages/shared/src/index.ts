@@ -1060,6 +1060,7 @@ export interface DiscoveryAnnouncePayload {
   recommendedAction?: 'view' | 'save' | 'ignore' | 'add_to_journey';
   tags?: string[];
   source?: string;
+  sourceUrl?: string;
 }
 
 export interface MemorySummary {

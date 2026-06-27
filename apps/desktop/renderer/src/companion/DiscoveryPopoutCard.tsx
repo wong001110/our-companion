@@ -5,6 +5,7 @@ export interface DiscoveryPopoutCardProps {
   cardBody: string;
   tags?: string[];
   source?: string;
+  sourceUrl?: string;
   recommendedAction?: 'view' | 'save' | 'ignore' | 'add_to_journey';
   onView?: () => void;
   onSave?: () => void;
@@ -20,6 +21,7 @@ export function DiscoveryPopoutCard({
   cardBody,
   tags,
   source,
+  sourceUrl,
   recommendedAction,
   onView,
   onSave,
@@ -63,18 +65,26 @@ export function DiscoveryPopoutCard({
     : recommendedAction === 'ignore' ? 'card-mood-calm'
     : 'card-mood-calm';
 
+  const displayTitle = title || `Discovery from ${source ?? 'unknown'}`;
+  const displayBody = cardBody || 'Ann found something worth looking at.';
+
   return (
     <div
       className={`discovery-popout-card ${moodClass} ${visible && !exiting ? 'card-visible' : ''} ${exiting ? 'card-exiting' : ''}`}
       role="article"
-      aria-label={`Discovery: ${title}`}
+      aria-label={`Discovery: ${displayTitle}`}
     >
       <div className="card-header">
         <span className="card-source-badge">{source ?? 'discovery'}</span>
         <button className="card-close-btn" onClick={handleClose} aria-label="Close">✕</button>
       </div>
-      <h3 className="card-title">{title}</h3>
-      <p className="card-body">{cardBody}</p>
+      <h3 className="card-title">{displayTitle}</h3>
+      <p className="card-body">{displayBody}</p>
+      {sourceUrl && (
+        <a className="card-source-link" href={sourceUrl} target="_blank" rel="noopener noreferrer">
+          View source
+        </a>
+      )}
       {tags && tags.length > 0 && (
         <div className="card-tags">
           {tags.slice(0, 5).map((tag) => (

@@ -11,6 +11,7 @@ export interface DiscoveryAnnouncePayload {
   recommendedAction?: 'view' | 'save' | 'ignore' | 'add_to_journey';
   tags?: string[];
   source?: string;
+  sourceUrl?: string;
 }
 
 export interface DiscoveryShareOrchestratorDeps {
@@ -139,7 +140,8 @@ export class DiscoveryShareOrchestrator {
           whyThisMatters: reason.why_this_matters,
           recommendedAction: reason.recommended_action,
           tags: reason.tags ?? discovery.tags ?? [],
-          source: discovery.source
+          source: discovery.source,
+          sourceUrl: discovery.url
         });
         await delay(CARD_RENDER_DELAY_MS);
       }

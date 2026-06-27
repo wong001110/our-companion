@@ -38,6 +38,7 @@ import { getIdleRotationDelay, isIdleState, selectWeightedIdleAnimation } from '
 import { TypewriterSpeechBubble } from '../companion/TypewriterSpeechBubble';
 import { DiscoveryPopoutCard } from '../companion/DiscoveryPopoutCard';
 import { useCompanionSession } from '../companion/useCompanionSession';
+import { DiscoveryQueueManager } from '../companion/DiscoveryQueueManager';
 import { CompanionCanvas, type AnimationName, type CompanionDragPoint } from './CompanionCanvas';
 import { LangContext, useLang, NotebookPage, PaperCard, StickyNote, MiniAnnSticker, ProgressBar, NotebookChatBubble } from './NotebookPrimitives';
 import { EngineObservatory } from '../features/developer/EngineObservatory';
@@ -64,6 +65,12 @@ function CompanionShell() {
   const [speech, setSpeech] = useState<string>();
   const [typewriterMessage, setTypewriterMessage] = useState<string>();
   const [discoveryPopup, setDiscoveryPopup] = useState<DiscoveryAnnouncePayload | null>(null);
+  const queueManagerRef = useRef(new DiscoveryQueueManager());
+
+  useEffect(() => {
+    window.__discoveryQueue = queueManagerRef.current;
+    return () => { delete window.__discoveryQueue; };
+  }, []);
   const [lang, setLang] = useState<Lang>('en');
   const behaviorRef = useRef<CharacterBehaviorSettings | undefined>(undefined);
   const stateRef = useRef<CharacterRuntimeState | undefined>(undefined);
@@ -193,8 +200,12 @@ function CompanionShell() {
       applyState(next);
     });
     const unsubscribeAnnounce = window.ourCompanion.discovery.onAnnounce((payload) => {
-      showTypewriterSpeech(payload.message);
-      setDiscoveryPopup(payload);
+      queueManagerRef.current.enqueue(payload);
+      const current = queueManagerRef.current.presentNext();
+      if (current) {
+        showTypewriterSpeech(current.payload.message);
+        setDiscoveryPopup(current.payload);
+      }
     });
     const unsubscribePerformance = window.ourCompanion.action.onPerformance((script: PerformanceScript) => {
       let delay = 0;
@@ -468,8 +479,17 @@ function CompanionShell() {
           cardBody={discoveryPopup.cardBody ?? discoveryPopup.whyThisMatters ?? ''}
           tags={discoveryPopup.tags}
           source={discoveryPopup.source}
+          sourceUrl={discoveryPopup.sourceUrl}
           recommendedAction={discoveryPopup.recommendedAction}
-          onClose={() => setDiscoveryPopup(null)}
+          onClose={() => {
+            queueManagerRef.current.dismissCurrent();
+            setDiscoveryPopup(null);
+            const next = queueManagerRef.current.presentNext();
+            if (next) {
+              showTypewriterSpeech(next.payload.message);
+              setDiscoveryPopup(next.payload);
+            }
+          }}
         />
       )}
       {phase === 'idle' && textOpen && (
