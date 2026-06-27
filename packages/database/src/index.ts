@@ -330,6 +330,10 @@ export class DatabaseService {
     this.setAppSetting(DISCOVERY_ANNOUNCED_KEY, next);
   }
 
+  clearAnnouncedDiscoveryIds(): void {
+    this.setAppSetting(DISCOVERY_ANNOUNCED_KEY, []);
+  }
+
   listUnannouncedShared(limit = 20): Discovery[] {
     const announced = new Set(this.getAnnouncedDiscoveryIds());
     return this.listDiscoveries({ status: 'shared', limit: limit + announced.size })

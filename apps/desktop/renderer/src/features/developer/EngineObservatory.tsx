@@ -410,7 +410,8 @@ export function EngineObservatory() {
                 <button onClick={() => void window.ourCompanion.discovery.generateNow().then(() => void refreshAll())}>Generate now</button>
                 <button onClick={() => void window.ourCompanion.discovery.shareNext().then(() => void refreshAll())}>Share next</button>
                 <button onClick={() => void window.ourCompanion.discovery.resetStatuses().then(() => void refreshAll())}>Reset statuses</button>
-                <button onClick={() => void window.ourCompanion.discovery.markAllUnannounced().then((r) => { alert(`${r.count} unannounced`); void refreshAll(); })}>Count unannounced</button>
+                <button onClick={() => void window.ourCompanion.discovery.countUnannounced().then((r) => { alert(`${r.count} unannounced`); void refreshAll(); })}>Count unannounced</button>
+                <button onClick={() => void window.ourCompanion.discovery.markSharedAsUnannounced().then((r) => { alert(`Cleared history; ${r.count} shared discoveries can now be re-announced`); void refreshAll(); })}>Reset announcement history</button>
                 <button onClick={() => void window.ourCompanion.discovery.clearPool().then(() => void refreshAll())}>Clear pool</button>
               </div>
             </>

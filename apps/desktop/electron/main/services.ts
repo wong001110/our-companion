@@ -253,11 +253,16 @@ export class AppServices {
       }
       return { reset: true };
     },
-    markAllUnannounced: async () => {
+    countUnannounced: async () => {
       const announced = this.db.getAnnouncedDiscoveryIds();
       const shared = this.db.listDiscoveries({ status: 'shared', limit: 200 });
       const unannounced = shared.filter((d) => !announced.includes(d.id));
       return { count: unannounced.length };
+    },
+    markSharedAsUnannounced: async () => {
+      this.db.clearAnnouncedDiscoveryIds();
+      const shared = this.db.listDiscoveries({ status: 'shared', limit: 200 });
+      return { count: shared.length };
     },
     clearPool: async () => {
       this.db.resetDebugData({ targets: ['discoveries'] });

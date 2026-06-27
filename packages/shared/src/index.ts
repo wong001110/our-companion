@@ -1097,7 +1097,8 @@ export interface OurCompanionApi {
     generateNow(): Promise<Discovery[]>;
     shareNext(): Promise<boolean>;
     resetStatuses(): Promise<{ reset: boolean }>;
-    markAllUnannounced(): Promise<{ count: number }>;
+    countUnannounced(): Promise<{ count: number }>;
+    markSharedAsUnannounced(): Promise<{ count: number }>;
     clearPool(): Promise<{ cleared: boolean }>;
   };
   autonomy: {

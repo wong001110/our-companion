@@ -63,7 +63,8 @@ const api: OurCompanionApi = {
     generateNow: () => invoke('discovery:generateNow'),
     shareNext: () => invoke('discovery:shareNext'),
     resetStatuses: () => invoke('discovery:resetStatuses'),
-    markAllUnannounced: () => invoke('discovery:markAllUnannounced'),
+    countUnannounced: () => invoke('discovery:countUnannounced'),
+    markSharedAsUnannounced: () => invoke('discovery:markSharedAsUnannounced'),
     clearPool: () => invoke('discovery:clearPool')
   },
   autonomy: {
