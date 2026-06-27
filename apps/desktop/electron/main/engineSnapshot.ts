@@ -27,8 +27,18 @@ export function buildEngineSnapshot(
     lastTickAt: orchestrator?.getLastTickAt(),
     lastSkipReason: orchestrator?.getLastSkipReason(),
     lastAnnouncedId: orchestrator?.getLastAnnouncedId(),
+    isProcessing: orchestrator?.isProcessing() ?? false,
+    nextRetryAt: orchestrator?.getNextRetryAt(),
     unannouncedCount,
-    announcedCount: announcedIds.size
+    announcedCount: announcedIds.size,
+    queue: orchestrator?.getQueue().map((q) => ({
+      id: q.discovery.id,
+      title: q.discovery.title,
+      status: q.status,
+      retryCount: q.retryCount,
+      interruptCount: q.interruptCount,
+      retryAfterAt: q.retryAfterAt
+    }))
   };
 
   return {

@@ -1021,8 +1021,18 @@ export interface DiscoverySchedulingDebug {
   lastTickAt?: string;
   lastSkipReason?: string;
   lastAnnouncedId?: string;
+  isProcessing: boolean;
+  nextRetryAt?: number;
   unannouncedCount: number;
   announcedCount: number;
+  queue?: Array<{
+    id: string;
+    title: string;
+    status: string;
+    retryCount: number;
+    interruptCount: number;
+    retryAfterAt?: number;
+  }>;
 }
 
 export interface EngineSnapshot {

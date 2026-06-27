@@ -14,7 +14,7 @@ export interface DiscoveryAnnouncePayload {
   sourceUrl?: string;
 }
 
-export type DiscoveryShareStatus = 'queued' | 'presenting' | 'interrupted' | 'announced';
+export type DiscoveryShareStatus = 'queued' | 'presenting' | 'announced' | 'interrupted' | 'deferred' | 'failed';
 
 export interface QueuedDiscovery {
   discovery: Discovery;
@@ -24,6 +24,8 @@ export interface QueuedDiscovery {
   presentedAt?: string;
   interruptedAt?: string;
   announcedAt?: string;
+  retryAfterAt?: number;
+  interruptCount: number;
 }
 
 export interface DiscoveryShareOrchestratorDeps {
@@ -40,18 +42,45 @@ const STEP_DELAY_MS = 1200;
 const CARD_RENDER_DELAY_MS = 300;
 const CAN_ANNOUNCE_WAIT_MS = 2000;
 const MAX_CAN_ANNOUNCE_RETRIES = 5;
+const MAX_RETRY_COUNT = 3;
+
+const COOLDOWN_MS = [0, 120_000, 300_000, 900_000];
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+    for (const key of [...parsed.searchParams.keys()]) {
+      if (key.startsWith('utm_') || key === 'ref' || key === 'fbclid' || key === 'gclid') {
+        parsed.searchParams.delete(key);
+      }
+    }
+    parsed.searchParams.sort();
+    return parsed.toString().toLowerCase().replace(/\/+$/, '');
+  } catch {
+    return url.trim().toLowerCase();
+  }
+}
+
+function normalizeTitle(title: string): string {
+  return title.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
 }
 
 export class DiscoveryShareOrchestrator {
   private queue: QueuedDiscovery[] = [];
   private busy = false;
   private stopped = false;
+  private processing = false;
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private lastTickAt: string | undefined;
   private lastSkipReason: string | undefined;
   private lastAnnouncedId: string | undefined;
+  private nextRetryAt: number | undefined;
 
   constructor(private readonly deps: DiscoveryShareOrchestratorDeps) {}
 
@@ -60,12 +89,12 @@ export class DiscoveryShareOrchestrator {
   }
 
   hasPending(): boolean {
-    return this.queue.length > 0;
+    return this.queue.some((q) => q.status === 'queued');
   }
 
   getPendingDiscoveryId(): string | undefined {
     const current = this.queue.find((q) => q.status === 'presenting');
-    return current?.discovery.id ?? this.queue[0]?.discovery.id;
+    return current?.discovery.id ?? this.queue.find((q) => q.status === 'queued')?.discovery.id;
   }
 
   getQueueLength(): number {
@@ -88,15 +117,38 @@ export class DiscoveryShareOrchestrator {
     return this.lastAnnouncedId;
   }
 
+  isProcessing(): boolean {
+    return this.processing;
+  }
+
+  getNextRetryAt(): number | undefined {
+    return this.nextRetryAt;
+  }
+
   enqueue(discovery: Discovery): boolean {
     if (this.stopped) { this.lastSkipReason = 'stopped'; return false; }
-    const isActive = this.queue.some((q) => q.discovery.id === discovery.id && q.status !== 'interrupted') ||
-      this.lastAnnouncedId === discovery.id;
-    if (isActive) { this.lastSkipReason = 'duplicate'; return false; }
+
+    const canonicalUrl = normalizeUrl(discovery.url);
+    const normalizedTitle = normalizeTitle(discovery.title);
+    const active = this.queue.filter((q) => q.status === 'queued' || q.status === 'presenting');
+
+    const isDuplicate = active.some((q) => {
+      if (q.discovery.id === discovery.id) return true;
+      const qUrl = normalizeUrl(q.discovery.url);
+      if (canonicalUrl && qUrl && qUrl === canonicalUrl) return true;
+      if (normalizedTitle && normalizeTitle(q.discovery.title) === normalizedTitle &&
+        q.discovery.source === discovery.source) return true;
+      return false;
+    });
+
+    if (isDuplicate) { this.lastSkipReason = 'duplicate'; return false; }
+    if (this.lastAnnouncedId === discovery.id) { this.lastSkipReason = 'already_announced'; return false; }
+
     this.queue.push({
       discovery,
       status: 'queued',
       retryCount: 0,
+      interruptCount: 0,
       enqueuedAt: new Date().toISOString()
     });
     this.lastTickAt = new Date().toISOString();
@@ -109,6 +161,11 @@ export class DiscoveryShareOrchestrator {
     this.stopped = true;
     this.queue = [];
     this.busy = false;
+    this.processing = false;
+    if (this.retryTimer !== undefined) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
   }
 
   clearQueue(): void {
@@ -120,32 +177,62 @@ export class DiscoveryShareOrchestrator {
   }
 
   private async processQueue(): Promise<void> {
-    if (this.busy || this.stopped) return;
+    if (this.processing || this.stopped) return;
+    this.processing = true;
 
-    while (!this.stopped && this.queue.length > 0) {
-      if (!this.deps.canAnnounce()) {
-        let retries = 0;
-        while (!this.deps.canAnnounce() && retries < MAX_CAN_ANNOUNCE_RETRIES && !this.stopped) {
-          this.lastSkipReason = 'cannot_announce';
-          await delay(CAN_ANNOUNCE_WAIT_MS);
-          retries++;
+    try {
+      while (!this.stopped && this.queue.length > 0) {
+        for (const q of this.queue) {
+          if (q.status === 'deferred' && q.retryAfterAt && Date.now() >= q.retryAfterAt) {
+            q.status = 'queued';
+            q.retryAfterAt = undefined;
+          }
         }
+
         if (!this.deps.canAnnounce()) {
-          this.lastSkipReason = 'cannot_announce_timeout';
-          break;
+          let retries = 0;
+          while (!this.deps.canAnnounce() && retries < MAX_CAN_ANNOUNCE_RETRIES && !this.stopped) {
+            this.lastSkipReason = 'cannot_announce';
+            await delay(CAN_ANNOUNCE_WAIT_MS);
+            retries++;
+          }
+          if (!this.deps.canAnnounce()) {
+            this.lastSkipReason = 'cannot_announce_timeout';
+            break;
+          }
+        }
+
+        const entry = this.queue.find((q) => q.status === 'queued');
+        if (!entry) break;
+
+        entry.status = 'presenting';
+        entry.presentedAt = new Date().toISOString();
+        this.busy = true;
+        try {
+          await this.announceDiscovery(entry);
+        } finally {
+          this.busy = false;
         }
       }
-
-      const entry = this.queue.shift()!;
-      entry.status = 'presenting';
-      entry.presentedAt = new Date().toISOString();
-      this.busy = true;
-      try {
-        await this.announceDiscovery(entry);
-      } finally {
-        this.busy = false;
-      }
+    } finally {
+      this.processing = false;
+      this.nextRetryAt = undefined;
     }
+    this.scheduleRetryTimer();
+  }
+
+  private scheduleRetryTimer(): void {
+    if (this.stopped || this.retryTimer !== undefined) return;
+    const deferred = this.queue.find((q) => q.status === 'interrupted' && q.retryAfterAt);
+    if (!deferred || !deferred.retryAfterAt) return;
+
+    const waitMs = Math.max(0, deferred.retryAfterAt - Date.now());
+    if (waitMs > 60_000) return;
+
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      if (!this.stopped) void this.processQueue();
+    }, waitMs + 1000);
   }
 
   private async announceDiscovery(entry: QueuedDiscovery): Promise<void> {
@@ -155,9 +242,12 @@ export class DiscoveryShareOrchestrator {
     if (!this.deps.canAnnounce()) {
       entry.status = 'interrupted';
       entry.interruptedAt = new Date().toISOString();
+      entry.interruptCount++;
       entry.retryCount++;
-      if (entry.retryCount < 3) {
-        this.queue.unshift(entry);
+      if (entry.retryCount < MAX_RETRY_COUNT) {
+        const cooldown = COOLDOWN_MS[Math.min(entry.interruptCount, COOLDOWN_MS.length - 1)];
+        entry.retryAfterAt = Date.now() + cooldown;
+        entry.status = 'deferred';
       }
       return;
     }
@@ -173,16 +263,18 @@ export class DiscoveryShareOrchestrator {
 
     for (let step = 0; step < 4; step += 1) {
       if (this.stopped) {
-        entry.status = 'interrupted';
-        entry.interruptedAt = new Date().toISOString();
+        entry.status = 'failed';
         return;
       }
       if (step > 0 && this.deps.shouldInterruptShare()) {
         entry.status = 'interrupted';
         entry.interruptedAt = new Date().toISOString();
+        entry.interruptCount++;
         entry.retryCount++;
-        if (entry.retryCount < 3) {
-          this.queue.unshift(entry);
+        if (entry.retryCount < MAX_RETRY_COUNT) {
+          const cooldown = COOLDOWN_MS[Math.min(entry.interruptCount, COOLDOWN_MS.length - 1)];
+          entry.retryAfterAt = Date.now() + cooldown;
+          entry.status = 'deferred';
         }
         return;
       }

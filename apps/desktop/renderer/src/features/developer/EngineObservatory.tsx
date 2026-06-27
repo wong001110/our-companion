@@ -385,30 +385,20 @@ export function EngineObservatory() {
           {snapshot?.discoveryScheduling ? (
             <>
               <ul className="engine-snapshot-list">
-                <li>
-                  <strong>Busy</strong> {snapshot.discoveryScheduling.isBusy ? 'yes' : 'no'}
-                </li>
-                <li>
-                  <strong>Has pending</strong> {snapshot.discoveryScheduling.hasPending ? 'yes' : 'no'}
-                </li>
-                <li>
-                  <strong>Queue length</strong> {snapshot.discoveryScheduling.queueLength}
-                </li>
+                <li><strong>Busy</strong> {snapshot.discoveryScheduling.isBusy ? 'yes' : 'no'}</li>
+                <li><strong>Processing</strong> {snapshot.discoveryScheduling.isProcessing ? 'yes' : 'no'}</li>
+                <li><strong>Has pending</strong> {snapshot.discoveryScheduling.hasPending ? 'yes' : 'no'}</li>
+                <li><strong>Queue length</strong> {snapshot.discoveryScheduling.queueLength}</li>
                 {snapshot.discoveryScheduling.pendingDiscoveryId && (
-                  <li>
-                    <strong>Pending ID</strong> {snapshot.discoveryScheduling.pendingDiscoveryId}
-                  </li>
+                  <li><strong>Pending ID</strong> {snapshot.discoveryScheduling.pendingDiscoveryId}</li>
                 )}
-                <li>
-                  <strong>Unannounced</strong> {snapshot.discoveryScheduling.unannouncedCount}
-                </li>
-                <li>
-                  <strong>Announced</strong> {snapshot.discoveryScheduling.announcedCount}
-                </li>
+                <li><strong>Unannounced</strong> {snapshot.discoveryScheduling.unannouncedCount}</li>
+                <li><strong>Announced</strong> {snapshot.discoveryScheduling.announcedCount}</li>
                 {snapshot.discoveryScheduling.lastAnnouncedId && (
-                  <li>
-                    <strong>Last announced</strong> {snapshot.discoveryScheduling.lastAnnouncedId}
-                  </li>
+                  <li><strong>Last announced</strong> {snapshot.discoveryScheduling.lastAnnouncedId}</li>
+                )}
+                {snapshot.discoveryScheduling.nextRetryAt && (
+                  <li><strong>Next retry</strong> {new Date(snapshot.discoveryScheduling.nextRetryAt).toLocaleTimeString()}</li>
                 )}
                 {queueStats && (
                   <>
@@ -419,16 +409,26 @@ export function EngineObservatory() {
                   </>
                 )}
                 {snapshot.discoveryScheduling.lastTickAt && (
-                  <li>
-                    <strong>Last tick</strong> {new Date(snapshot.discoveryScheduling.lastTickAt).toLocaleTimeString()}
-                  </li>
+                  <li><strong>Last tick</strong> {new Date(snapshot.discoveryScheduling.lastTickAt).toLocaleTimeString()}</li>
                 )}
                 {snapshot.discoveryScheduling.lastSkipReason && (
-                  <li>
-                    <strong>Last skip</strong> {snapshot.discoveryScheduling.lastSkipReason}
-                  </li>
+                  <li><strong>Last skip</strong> {snapshot.discoveryScheduling.lastSkipReason}</li>
                 )}
               </ul>
+              {snapshot.discoveryScheduling.queue && snapshot.discoveryScheduling.queue.length > 0 && (
+                <div style={{ marginTop: '8px' }}>
+                  <strong>Queue items:</strong>
+                  <ul className="engine-snapshot-list">
+                    {snapshot.discoveryScheduling.queue.map((item) => (
+                      <li key={item.id}>
+                        <strong>{item.title.slice(0, 40)}</strong>
+                        <span> · {item.status} · retries {item.retryCount} · interrupts {item.interruptCount}</span>
+                        {item.retryAfterAt && <span> · retry after {new Date(item.retryAfterAt).toLocaleTimeString()}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <div className="engine-meta" style={{ marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 <button onClick={() => void window.ourCompanion.discovery.generateNow().then(() => void refreshAll())}>Generate now</button>
                 <button onClick={() => void window.ourCompanion.discovery.shareNext().then(() => void refreshAll())}>Share next</button>
