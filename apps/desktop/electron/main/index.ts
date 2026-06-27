@@ -315,7 +315,7 @@ function startDiscoveryAutomation(): void {
     listUnannouncedShared: (limit) => services.db.listUnannouncedShared(limit),
     getDiscoveryScore: () => services.getEffectiveDiscoveryScore(),
     countSharedToday: () => services.db.countSharedToday(),
-    shareOrchestrator: discoveryShareOrchestrator,
+    selector: discoveryShareOrchestrator,
     runAutonomousCycle: () => services.autonomy.startExploration({ trigger: 'scheduled' }).then(() => undefined),
     countAutonomousCyclesToday: () => services.countAutonomousCyclesToday(),
     canRunAutonomousCycle: () => services.canAnnounceDiscovery()

@@ -6,8 +6,10 @@ export interface DiscoveryRefreshResult {
   newlyInserted: Discovery[];
 }
 
-export interface DiscoveryShareQueue {
-  enqueue(discoveries: Discovery[]): void;
+export interface DiscoverySelector {
+  isBusy(): boolean;
+  hasPending(): boolean;
+  queue(discovery: Discovery): void;
 }
 
 export interface DiscoverySchedulerDeps {
@@ -15,7 +17,7 @@ export interface DiscoverySchedulerDeps {
   listUnannouncedShared: (limit?: number) => Discovery[];
   getDiscoveryScore: () => number;
   countSharedToday: () => number;
-  shareOrchestrator: DiscoveryShareQueue;
+  selector: DiscoverySelector;
   runAutonomousCycle?: () => Promise<void>;
   countAutonomousCyclesToday?: () => number;
   canRunAutonomousCycle?: () => boolean;
@@ -62,7 +64,9 @@ export class DiscoveryScheduler {
     if (this.stopped) return;
 
     try {
-      let candidate: Discovery | undefined;
+      if (this.deps.selector.isBusy() || this.deps.selector.hasPending()) {
+        return;
+      }
 
       if (this.deps.countSharedToday() < DAILY_SHARE_CAP) {
         if (
@@ -76,19 +80,14 @@ export class DiscoveryScheduler {
         const result = await this.deps.refresh();
         const newlyShared = result.newlyInserted.filter((discovery) => discovery.status === 'shared');
         if (newlyShared.length > 0) {
-          candidate = newlyShared[0];
+          this.deps.selector.queue(newlyShared[0]);
+          return;
         }
       }
 
-      if (!candidate) {
-        const backlog = this.deps.listUnannouncedShared(1);
-        if (backlog.length > 0) {
-          candidate = backlog[0];
-        }
-      }
-
-      if (candidate) {
-        this.deps.shareOrchestrator.enqueue([candidate]);
+      const backlog = this.deps.listUnannouncedShared(1);
+      if (backlog.length > 0) {
+        this.deps.selector.queue(backlog[0]);
       }
     } catch (error) {
       console.warn('[our-companion] Discovery scheduler tick failed.', error);

@@ -169,7 +169,6 @@ export class AppServices {
     getFeed: async (input: DiscoveryFeedInput = {}) => this.db.listDiscoveries(input),
     refresh: async (input: { sources?: DiscoverySource[] } = {}) => {
       const result = await this.runDiscoveryRefresh(input.sources);
-      this.queueDiscoveryAnnouncements(result.newlyInserted);
       return result.discoveries;
     },
     markInterested: async (discoveryId: string) => {
@@ -1042,13 +1041,6 @@ export class AppServices {
     return this.db
       .listExplorationCycles(100)
       .filter((cycle) => cycle.trigger !== 'manual' && cycle.startedAt.startsWith(today)).length;
-  }
-
-  private queueDiscoveryAnnouncements(discoveries: Discovery[]): void {
-    const shared = discoveries.filter((discovery) => discovery.status === 'shared');
-    if (shared.length > 0) {
-      this.shareOrchestrator?.enqueue(shared);
-    }
   }
 
   emitFoundationEvent(

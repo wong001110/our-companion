@@ -1,4 +1,4 @@
-import type { CharacterRuntimeState, Discovery, DiscoveryReason, EmotionState, NormalizedDiscovery } from '@our-companion/shared';
+import type { CharacterRuntimeState, Discovery, DiscoveryReason, NormalizedDiscovery } from '@our-companion/shared';
 import { DOMAIN_EVENT_TYPES } from '@our-companion/shared';
 import { createEvent, globalEventBus, type EventBus } from '@our-companion/event-bus';
 
@@ -31,51 +31,50 @@ function delay(ms: number): Promise<void> {
 }
 
 export class DiscoveryShareOrchestrator {
-  private readonly queue: Discovery[] = [];
-  private processing = false;
+  private pendingDiscovery: Discovery | undefined;
+  private busy = false;
   private stopped = false;
 
   constructor(private readonly deps: DiscoveryShareOrchestratorDeps) {}
 
-  enqueue(discoveries: Discovery[]): void {
-    for (const discovery of discoveries) {
-      if (!this.queue.some((item) => item.id === discovery.id)) {
-        this.queue.push(discovery);
-      }
-    }
-    void this.processQueue();
+  isBusy(): boolean {
+    return this.busy;
+  }
+
+  hasPending(): boolean {
+    return this.pendingDiscovery !== undefined;
+  }
+
+  queue(discovery: Discovery): void {
+    if (this.stopped) return;
+    if (this.busy) return;
+    if (this.pendingDiscovery?.id === discovery.id) return;
+    this.pendingDiscovery = discovery;
+    void this.processPending();
   }
 
   stop(): void {
     this.stopped = true;
-    this.queue.length = 0;
+    this.pendingDiscovery = undefined;
+    this.busy = false;
   }
 
   private emitEvent(type: string, payload: Record<string, unknown>): void {
     (this.deps.eventBus ?? globalEventBus).emit(createEvent({ type, source: 'discovery-share-orchestrator', payload }));
   }
 
-  private async processQueue(): Promise<void> {
-    if (this.processing || this.stopped) return;
-    this.processing = true;
+  private async processPending(): Promise<void> {
+    if (this.busy || this.stopped) return;
+    const discovery = this.pendingDiscovery;
+    if (!discovery) return;
+
+    this.busy = true;
+    this.pendingDiscovery = undefined;
 
     try {
-      while (!this.stopped && this.queue.length > 0) {
-        if (!this.deps.canAnnounce()) {
-          await delay(STEP_DELAY_MS);
-          continue;
-        }
-
-        const discovery = this.queue.shift();
-        if (!discovery) break;
-
-        await this.announceDiscovery(discovery);
-      }
+      await this.announceDiscovery(discovery);
     } finally {
-      this.processing = false;
-      if (!this.stopped && this.queue.length > 0) {
-        void this.processQueue();
-      }
+      this.busy = false;
     }
   }
 
@@ -83,10 +82,7 @@ export class DiscoveryShareOrchestrator {
     while (!this.deps.canAnnounce() && !this.stopped) {
       await delay(STEP_DELAY_MS);
     }
-    if (!this.deps.canAnnounce()) {
-      this.queue.unshift(discovery);
-      return;
-    }
+    if (!this.deps.canAnnounce()) return;
 
     this.emitEvent(DOMAIN_EVENT_TYPES.DiscoveryReadyToShare, {
       discoveryId: discovery.id,
@@ -98,14 +94,8 @@ export class DiscoveryShareOrchestrator {
     let state = this.deps.getState();
 
     for (let step = 0; step < 4; step += 1) {
-      if (this.stopped) {
-        this.queue.unshift(discovery);
-        return;
-      }
-      if (step > 0 && this.deps.shouldInterruptShare()) {
-        this.queue.unshift(discovery);
-        return;
-      }
+      if (this.stopped) return;
+      if (step > 0 && this.deps.shouldInterruptShare()) return;
 
       state = advanceCharacter(state, context);
       if (step === 0) {
