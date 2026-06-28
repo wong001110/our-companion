@@ -52,6 +52,7 @@ import {
   createDevAnimationState, parseLocalCommand
 } from './utils';
 import { DebugJsonBlock, DebugTextBlock } from './DebugComponents';
+import { useFloatingPlacement } from '../companion/useFloatingPlacement';
 
 export function App() {
   const mode = new URLSearchParams(window.location.search).get('mode');
@@ -67,6 +68,11 @@ function CompanionShell() {
   const [typewriterMessage, setTypewriterMessage] = useState<string>();
   const [discoveryPopup, setDiscoveryPopup] = useState<PresentationCandidate | null>(null);
   const queueManagerRef = useRef(new DiscoveryQueueManager());
+
+  const floatingPositions = useFloatingPlacement({
+    hasBubble: !!(typewriterMessage || speech),
+    hasCard: !!discoveryPopup,
+  });
 
   useEffect(() => {
     window.__discoveryQueue = queueManagerRef.current;
@@ -481,12 +487,41 @@ function CompanionShell() {
         onDragEnd={handleDragEnd}
       />
       {typewriterMessage && (
-        <TypewriterSpeechBubble message={typewriterMessage} onComplete={handleTypewriterComplete} />
+        <TypewriterSpeechBubble
+          message={typewriterMessage}
+          onComplete={handleTypewriterComplete}
+          style={floatingPositions.bubble ? {
+            position: 'absolute',
+            left: floatingPositions.bubble.rect.x,
+            top: floatingPositions.bubble.rect.y,
+            width: floatingPositions.bubble.rect.width,
+            transform: 'none',
+          } : undefined}
+        />
       )}
-      {!typewriterMessage && speech && <div className="speech-bubble">{speech}</div>}
+      {!typewriterMessage && speech && (
+        <div
+          className="speech-bubble"
+          style={floatingPositions.bubble ? {
+            left: floatingPositions.bubble.rect.x,
+            top: floatingPositions.bubble.rect.y,
+            width: floatingPositions.bubble.rect.width,
+            transform: 'none',
+          } : undefined}
+        >
+          {speech}
+        </div>
+      )}
       {discoveryPopup && (
         <DiscoveryPopoutCard
           candidate={discoveryPopup}
+          style={floatingPositions.card ? {
+            position: 'absolute',
+            left: floatingPositions.card.rect.x,
+            top: floatingPositions.card.rect.y,
+            width: floatingPositions.card.rect.width,
+            right: 'auto',
+          } : undefined}
           onClose={() => {
             queueManagerRef.current.dismissCurrent();
             setDiscoveryPopup(null);

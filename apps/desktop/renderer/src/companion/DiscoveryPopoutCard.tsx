@@ -9,6 +9,7 @@ export interface DiscoveryPopoutCardProps {
   onAddToJourney?: () => void;
   onIgnore?: () => void;
   onClose?: () => void;
+  style?: React.CSSProperties;
 }
 
 const AUTO_DISMISS_MS = 12000;
@@ -19,7 +20,8 @@ export function DiscoveryPopoutCard({
   onSave,
   onAddToJourney,
   onIgnore,
-  onClose
+  onClose,
+  style
 }: DiscoveryPopoutCardProps) {
   const [visible, setVisible] = useState(false);
   const [exiting, setExiting] = useState(false);
@@ -62,6 +64,7 @@ export function DiscoveryPopoutCard({
       className={`discovery-popout-card ${moodClass} ${visible && !exiting ? 'card-visible' : ''} ${exiting ? 'card-exiting' : ''}`}
       role="article"
       aria-label={`Discovery: ${displayTitle}`}
+      style={style}
     >
       <div className="card-header">
         <span className="card-source-badge">{candidate.sourceName ?? 'discovery'}</span>
