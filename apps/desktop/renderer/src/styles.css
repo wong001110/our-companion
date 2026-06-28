@@ -2260,6 +2260,12 @@ textarea {
   border-color: rgba(239, 206, 228, 0.35);
 }
 
+.card-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .card-action-primary {
   background: rgba(116, 80, 148, 0.5);
   border-color: rgba(186, 166, 224, 0.4);

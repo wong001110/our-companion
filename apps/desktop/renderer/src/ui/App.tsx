@@ -54,7 +54,7 @@ import {
 import { DebugJsonBlock, DebugTextBlock } from './DebugComponents';
 import { useFloatingPlacement } from '../companion/useFloatingPlacement';
 import { CompanionQuickActions } from '../companion/CompanionQuickActions';
-import type { Rect } from '../companion/floatingPlacement';
+import { anchorFromBounds, type Rect } from '../companion/floatingPlacement';
 
 export function App() {
   const mode = new URLSearchParams(window.location.search).get('mode');
@@ -69,6 +69,13 @@ function CompanionShell() {
   const [speech, setSpeech] = useState<string>();
   const [typewriterMessage, setTypewriterMessage] = useState<string>();
   const [discoveryPopup, setDiscoveryPopup] = useState<PresentationCandidate | null>(null);
+  const discoveryActionLoadingRef = useRef(false);
+  const [discoveryDebug, setDiscoveryDebug] = useState<{
+    lastAction?: string;
+    lastStatus?: 'success' | 'error';
+    lastError?: string;
+    lastAt?: string;
+  }>({});
   const queueManagerRef = useRef(new DiscoveryQueueManager());
 
   useEffect(() => {
@@ -104,20 +111,16 @@ function CompanionShell() {
   });
   const annPositionRef = useRef(annPosition);
 
-  const floatingPositions = useFloatingPlacement({
-    hasBubble: !!(typewriterMessage || speech),
-    hasCard: !!discoveryPopup,
-    annPosition,
-    screenWorkArea: { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight },
-  });
-
   const quickActionsPositions = useMemo(() => {
-    const anchor = floatingPositions.anchor;
+    const anchor = anchorFromBounds({
+      x: annPosition.x,
+      y: annPosition.y,
+      width: ANN_SPRITE.width,
+      height: ANN_SPRITE.height,
+    });
     const obstacles: Rect[] = [];
-    if (floatingPositions.bubble) obstacles.push(floatingPositions.bubble.rect);
-    if (floatingPositions.card) obstacles.push(floatingPositions.card.rect);
     return { anchor, obstacles };
-  }, [floatingPositions]);
+  }, [annPosition.x, annPosition.y]);
 
   function applyState(next: CharacterRuntimeState) {
     stateRef.current = next;
@@ -154,6 +157,14 @@ function CompanionShell() {
     pauseAmbient: (paused) => {
       sessionActiveRef.current = paused;
     }
+  });
+
+  const floatingPositions = useFloatingPlacement({
+    hasBubble: !!(typewriterMessage || speech),
+    hasCard: !!discoveryPopup,
+    hasTextInput: textOpen && phase === 'idle',
+    annPosition,
+    screenWorkArea: { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight },
   });
 
   const handleTypewriterComplete = useCallback(() => {
@@ -373,6 +384,84 @@ function CompanionShell() {
       showTypewriterSpeech(next.candidate.shareMessage);
       setDiscoveryPopup(next.candidate);
     }
+  }
+
+  function recordDiscoveryDebug(action: string, status: 'success' | 'error', error?: string) {
+    setDiscoveryDebug({
+      lastAction: action,
+      lastStatus: status,
+      lastError: error,
+      lastAt: new Date().toISOString(),
+    });
+  }
+
+  async function handleDiscoverySave(candidate: PresentationCandidate) {
+    if (discoveryActionLoadingRef.current) return;
+    discoveryActionLoadingRef.current = true;
+    try {
+      queueManagerRef.current.saveCurrent();
+      setDiscoveryPopup(null);
+      await window.ourCompanion.discovery.markInterested(candidate.id);
+      recordDiscoveryDebug('save', 'success');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      recordDiscoveryDebug('save', 'error', msg);
+      console.warn('[our-companion] Discovery save failed.', err);
+    } finally {
+      discoveryActionLoadingRef.current = false;
+      advanceQueue();
+    }
+  }
+
+  async function handleDiscoveryAddToJourney(candidate: PresentationCandidate) {
+    if (discoveryActionLoadingRef.current) return;
+    discoveryActionLoadingRef.current = true;
+    try {
+      queueManagerRef.current.dismissCurrent();
+      setDiscoveryPopup(null);
+      await window.ourCompanion.discovery.addToJourney({ discoveryId: candidate.id });
+      recordDiscoveryDebug('add_to_journey', 'success');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      recordDiscoveryDebug('add_to_journey', 'error', msg);
+      console.warn('[our-companion] Discovery add to journey failed.', err);
+    } finally {
+      discoveryActionLoadingRef.current = false;
+      advanceQueue();
+    }
+  }
+
+  async function handleDiscoveryIgnore(candidate: PresentationCandidate) {
+    if (discoveryActionLoadingRef.current) return;
+    discoveryActionLoadingRef.current = true;
+    try {
+      queueManagerRef.current.dismissCurrent();
+      setDiscoveryPopup(null);
+      await window.ourCompanion.discovery.markNotInterested(candidate.id);
+      recordDiscoveryDebug('ignore', 'success');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      recordDiscoveryDebug('ignore', 'error', msg);
+      console.warn('[our-companion] Discovery ignore failed.', err);
+    } finally {
+      discoveryActionLoadingRef.current = false;
+      advanceQueue();
+    }
+  }
+
+  function handleDiscoveryView() {
+    if (discoveryActionLoadingRef.current) return;
+    queueManagerRef.current.dismissCurrent();
+    setDiscoveryPopup(null);
+    void window.ourCompanion.window.openPanel({ annX: annPositionRef.current.x, annY: annPositionRef.current.y });
+    recordDiscoveryDebug('view', 'success');
+  }
+
+  function handleDiscoveryClose() {
+    if (discoveryActionLoadingRef.current) return;
+    queueManagerRef.current.dismissCurrent();
+    setDiscoveryPopup(null);
+    advanceQueue();
   }
 
   useEffect(() => {
@@ -623,6 +712,7 @@ function CompanionShell() {
       {discoveryPopup && (
         <DiscoveryPopoutCard
           candidate={discoveryPopup}
+          loading={discoveryActionLoadingRef.current}
           style={floatingPositions.card ? {
             position: 'absolute',
             left: floatingPositions.card.rect.x,
@@ -630,37 +720,11 @@ function CompanionShell() {
             width: floatingPositions.card.rect.width,
             right: 'auto',
           } : undefined}
-          onView={() => {
-            queueManagerRef.current.dismissCurrent();
-            setDiscoveryPopup(null);
-            void window.ourCompanion.window.openPanel();
-          }}
-          onSave={() => {
-            const id = discoveryPopup.id;
-            queueManagerRef.current.saveCurrent();
-            setDiscoveryPopup(null);
-            void window.ourCompanion.discovery.markInterested(id).catch(() => undefined);
-            advanceQueue();
-          }}
-          onAddToJourney={() => {
-            const id = discoveryPopup.id;
-            queueManagerRef.current.dismissCurrent();
-            setDiscoveryPopup(null);
-            void window.ourCompanion.discovery.addToJourney({ discoveryId: id }).catch(() => undefined);
-            advanceQueue();
-          }}
-          onIgnore={() => {
-            const id = discoveryPopup.id;
-            queueManagerRef.current.dismissCurrent();
-            setDiscoveryPopup(null);
-            void window.ourCompanion.discovery.markNotInterested(id).catch(() => undefined);
-            advanceQueue();
-          }}
-          onClose={() => {
-            queueManagerRef.current.dismissCurrent();
-            setDiscoveryPopup(null);
-            advanceQueue();
-          }}
+          onView={handleDiscoveryView}
+          onSave={() => void handleDiscoverySave(discoveryPopup)}
+          onAddToJourney={() => void handleDiscoveryAddToJourney(discoveryPopup)}
+          onIgnore={() => void handleDiscoveryIgnore(discoveryPopup)}
+          onClose={handleDiscoveryClose}
         />
       )}
       <CompanionQuickActions
@@ -678,7 +742,7 @@ function CompanionShell() {
         }}
         onOpenPanel={() => {
           setQuickActionsVisible(false);
-          void window.ourCompanion.window.openPanel();
+          void window.ourCompanion.window.openPanel({ annX: annPositionRef.current.x, annY: annPositionRef.current.y });
         }}
         onMouseEnter={handleActionsHoverEnter}
         onMouseLeave={handleActionsHoverLeave}
@@ -686,7 +750,14 @@ function CompanionShell() {
       {phase === 'idle' && textOpen && (
         <form
           className="companion-text-input"
-          style={{
+          style={floatingPositions.textInput ? {
+            position: 'absolute',
+            left: floatingPositions.textInput.rect.x,
+            top: floatingPositions.textInput.rect.y,
+            width: floatingPositions.textInput.rect.width,
+            bottom: 'auto',
+            transform: 'none',
+          } : {
             position: 'absolute',
             left: annPosition.x + ANN_SPRITE.width / 2 - 100,
             top: annPosition.y + ANN_SPRITE.height + 8,

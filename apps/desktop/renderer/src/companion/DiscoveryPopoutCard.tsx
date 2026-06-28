@@ -4,6 +4,7 @@ import { titleFallback, bodyFallback } from './PresentationCandidate';
 
 export interface DiscoveryPopoutCardProps {
   candidate: PresentationCandidate;
+  loading?: boolean;
   onView?: () => void;
   onSave?: () => void;
   onAddToJourney?: () => void;
@@ -16,6 +17,7 @@ const AUTO_DISMISS_MS = 12000;
 
 export function DiscoveryPopoutCard({
   candidate,
+  loading = false,
   onView,
   onSave,
   onAddToJourney,
@@ -93,10 +95,10 @@ export function DiscoveryPopoutCard({
         </div>
       )}
       <div className="card-actions">
-        {onView && <button className="card-action-btn" onClick={() => handleAction(onView)}>View</button>}
-        {onSave && <button className="card-action-btn card-action-primary" onClick={() => handleAction(onSave)}>Save</button>}
-        {onAddToJourney && <button className="card-action-btn" onClick={() => handleAction(onAddToJourney)}>Add to Journey</button>}
-        {onIgnore && <button className="card-action-btn card-action-ghost" onClick={() => handleAction(onIgnore)}>Ignore</button>}
+        {onView && <button className="card-action-btn" disabled={loading} onClick={() => handleAction(onView)}>View</button>}
+        {onSave && <button className="card-action-btn card-action-primary" disabled={loading} onClick={() => handleAction(onSave)}>{loading ? 'Saving…' : 'Save'}</button>}
+        {onAddToJourney && <button className="card-action-btn" disabled={loading} onClick={() => handleAction(onAddToJourney)}>{loading ? 'Adding…' : 'Add to Journey'}</button>}
+        {onIgnore && <button className="card-action-btn card-action-ghost" disabled={loading} onClick={() => handleAction(onIgnore)}>Ignore</button>}
       </div>
     </div>
   );

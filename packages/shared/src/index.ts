@@ -1218,7 +1218,7 @@ export interface OurCompanionApi {
     onFoundationEvent(listener: (event: BaseEvent) => void): () => void;
   };
   window: {
-    openPanel(): Promise<boolean>;
+    openPanel(input?: { annX?: number; annY?: number }): Promise<boolean>;
     getBounds(): Promise<WindowBounds>;
     getWorkArea(): Promise<WindowBounds>;
     setMousePassthrough(input: WindowMousePassthroughInput): Promise<boolean>;

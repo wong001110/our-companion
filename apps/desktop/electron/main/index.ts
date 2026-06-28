@@ -67,9 +67,14 @@ function createCompanionWindow(): BrowserWindow {
 }
 
 function createPanelWindow(): BrowserWindow {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const workArea = primaryDisplay.workArea;
+  const panelWidth = Math.min(1180, Math.round(workArea.width * 0.65));
+  const panelHeight = Math.min(760, Math.round(workArea.height * 0.85));
+
   const window = new BrowserWindow({
-    width: 1180,
-    height: 760,
+    width: panelWidth,
+    height: panelHeight,
     minWidth: 900,
     minHeight: 620,
     show: true,
@@ -217,10 +222,34 @@ function registerIpc(): void {
     ipcMain.handle(channel, async (_event, input) => (handler as (input: unknown) => Promise<unknown>)(input));
   }
 
-  ipcMain.handle('window:openPanel', () => {
+  ipcMain.handle('window:openPanel', (_event, input?: { annX?: number; annY?: number }) => {
     if (!panelWindow || panelWindow.isDestroyed()) {
       panelWindow = createPanelWindow();
     }
+
+    if (input?.annX !== undefined && input?.annY !== undefined && companionWindow && !companionWindow.isDestroyed()) {
+      const compBounds = companionWindow.getBounds();
+      const display = screen.getDisplayMatching(compBounds);
+      const workArea = display.workArea;
+      const panelWidth = Math.min(panelWindow.getBounds().width || 1180, workArea.width * 0.65);
+      const panelHeight = Math.min(panelWindow.getBounds().height || 760, workArea.height * 0.85);
+
+      const annScreenX = compBounds.x + input.annX;
+      const spaceRight = workArea.x + workArea.width - annScreenX - 220 - 16;
+
+      let x: number;
+      if (spaceRight >= panelWidth) {
+        x = annScreenX + 220 + 16;
+      } else {
+        x = annScreenX - panelWidth - 16;
+      }
+      x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - panelWidth));
+
+      const y = Math.max(workArea.y, Math.min(compBounds.y + input.annY - 40, workArea.y + workArea.height - panelHeight));
+
+      panelWindow.setBounds({ x: Math.round(x), y: Math.round(y), width: Math.round(panelWidth), height: Math.round(panelHeight) });
+    }
+
     panelWindow.show();
     panelWindow.focus();
     return true;
