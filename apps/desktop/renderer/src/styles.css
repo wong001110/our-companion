@@ -227,28 +227,6 @@ input {
   cursor: grabbing;
 }
 
-.companion-canvas::after {
-  content: 'Click to open · Double-click to talk';
-  position: absolute;
-  bottom: -6px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(42, 28, 44, 0.82);
-  color: #f5eef8;
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-  padding: 4px 10px;
-  border-radius: 999px;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.2s ease 0.6s;
-}
-
-.companion-canvas:hover::after {
-  opacity: 1;
-}
-
 .companion-canvas-visible {
   border-radius: 8px;
 }

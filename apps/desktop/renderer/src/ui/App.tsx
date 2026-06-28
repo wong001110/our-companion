@@ -71,20 +71,6 @@ function CompanionShell() {
   const [discoveryPopup, setDiscoveryPopup] = useState<PresentationCandidate | null>(null);
   const queueManagerRef = useRef(new DiscoveryQueueManager());
 
-  const floatingPositions = useFloatingPlacement({
-    hasBubble: !!(typewriterMessage || speech),
-    hasCard: !!discoveryPopup,
-  });
-
-  const quickActionsPositions = useMemo(() => {
-    const canvasSize = { width: 220, height: 230 };
-    const anchor = floatingPositions.anchor;
-    const obstacles: Rect[] = [];
-    if (floatingPositions.bubble) obstacles.push(floatingPositions.bubble.rect);
-    if (floatingPositions.card) obstacles.push(floatingPositions.card.rect);
-    return { anchor, obstacles };
-  }, [floatingPositions]);
-
   useEffect(() => {
     window.__discoveryQueue = queueManagerRef.current;
     return () => { delete window.__discoveryQueue; };
@@ -105,6 +91,21 @@ function CompanionShell() {
   const quickActionsTimeoutRef = useRef<number | undefined>(undefined);
   const isHoveringAnnRef = useRef(false);
   const isHoveringActionsRef = useRef(false);
+
+  const floatingPositions = useFloatingPlacement({
+    hasBubble: !!(typewriterMessage || speech),
+    hasCard: !!discoveryPopup,
+    annPosition: overlayMode ? annPosition : null,
+    screenWorkArea: overlayMode ? { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight } : undefined,
+  });
+
+  const quickActionsPositions = useMemo(() => {
+    const anchor = floatingPositions.anchor;
+    const obstacles: Rect[] = [];
+    if (floatingPositions.bubble) obstacles.push(floatingPositions.bubble.rect);
+    if (floatingPositions.card) obstacles.push(floatingPositions.card.rect);
+    return { anchor, obstacles };
+  }, [floatingPositions]);
 
   function applyState(next: CharacterRuntimeState) {
     stateRef.current = next;
@@ -189,7 +190,7 @@ function CompanionShell() {
   useEffect(() => {
     if (localStorage.getItem('ann_onboarded')) return;
     const timer = window.setTimeout(() => {
-      showInstantSpeech("Hi! Single-click to open my notebook. Double-click to talk to me.");
+      showInstantSpeech("Hi! Hover over me to see what I can do.");
       localStorage.setItem('ann_onboarded', '1');
     }, 1500);
     return () => window.clearTimeout(timer);
@@ -573,7 +574,14 @@ function CompanionShell() {
   }, []);
 
   return (
-    <main className={`companion-shell ${overlayMode ? 'companion-shell-overlay' : ''}`}>
+    <main
+      className={`companion-shell ${overlayMode ? 'companion-shell-overlay' : ''}`}
+      onClick={(e) => {
+        if (textOpen && !(e.target as HTMLElement).closest('.companion-canvas') && !(e.target as HTMLElement).closest('.companion-text-input')) {
+          closeTextInput();
+        }
+      }}
+    >
       {overlayMode ? (
         <div
           style={{

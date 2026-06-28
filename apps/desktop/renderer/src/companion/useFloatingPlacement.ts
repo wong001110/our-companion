@@ -20,20 +20,27 @@ export type FloatingPositions = {
 export function useFloatingPlacement(opts: {
   hasBubble: boolean;
   hasCard: boolean;
-  windowWidth?: number;
-  windowHeight?: number;
+  annPosition?: { x: number; y: number } | null;
+  screenWorkArea?: Rect;
 }): FloatingPositions {
-  const { hasBubble, hasCard, windowWidth = COMPANION_WINDOW.width, windowHeight = COMPANION_WINDOW.height } = opts;
+  const { hasBubble, hasCard, annPosition, screenWorkArea } = opts;
 
   return useMemo(() => {
-    const workArea: Rect = { x: 0, y: 0, width: windowWidth, height: windowHeight };
+    const workArea = screenWorkArea ?? { x: 0, y: 0, width: COMPANION_WINDOW.width, height: COMPANION_WINDOW.height };
 
-    const anchor = anchorFromBounds({
-      x: (windowWidth - CANVAS_SIZE.width) / 2,
-      y: windowHeight - CANVAS_SIZE.height,
-      width: CANVAS_SIZE.width,
-      height: CANVAS_SIZE.height,
-    });
+    const anchor = annPosition
+      ? anchorFromBounds({
+          x: annPosition.x,
+          y: annPosition.y,
+          width: CANVAS_SIZE.width,
+          height: CANVAS_SIZE.height,
+        })
+      : anchorFromBounds({
+          x: (workArea.width - CANVAS_SIZE.width) / 2,
+          y: workArea.height - CANVAS_SIZE.height,
+          width: CANVAS_SIZE.width,
+          height: CANVAS_SIZE.height,
+        });
 
     const bubble = hasBubble
       ? computeFloatingPosition({
@@ -57,5 +64,5 @@ export function useFloatingPlacement(opts: {
       : null;
 
     return { anchor, bubble, card };
-  }, [hasBubble, hasCard, windowWidth, windowHeight]);
+  }, [hasBubble, hasCard, annPosition?.x, annPosition?.y, screenWorkArea?.width, screenWorkArea?.height]);
 }
