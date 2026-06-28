@@ -53,6 +53,8 @@ import {
 } from './utils';
 import { DebugJsonBlock, DebugTextBlock } from './DebugComponents';
 import { useFloatingPlacement } from '../companion/useFloatingPlacement';
+import { CompanionQuickActions } from '../companion/CompanionQuickActions';
+import { anchorFromBounds, type Rect } from '../companion/floatingPlacement';
 
 export function App() {
   const mode = new URLSearchParams(window.location.search).get('mode');
@@ -74,6 +76,15 @@ function CompanionShell() {
     hasCard: !!discoveryPopup,
   });
 
+  const quickActionsPositions = useMemo(() => {
+    const canvasSize = { width: 220, height: 230 };
+    const anchor = floatingPositions.anchor;
+    const obstacles: Rect[] = [];
+    if (floatingPositions.bubble) obstacles.push(floatingPositions.bubble.rect);
+    if (floatingPositions.card) obstacles.push(floatingPositions.card.rect);
+    return { anchor, obstacles };
+  }, [floatingPositions]);
+
   useEffect(() => {
     window.__discoveryQueue = queueManagerRef.current;
     return () => { delete window.__discoveryQueue; };
@@ -90,6 +101,10 @@ function CompanionShell() {
   const [overlayMode, setOverlayMode] = useState(false);
   const [annPosition, setAnnPosition] = useState<{ x: number; y: number } | null>(null);
   const annPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const [quickActionsVisible, setQuickActionsVisible] = useState(false);
+  const quickActionsTimeoutRef = useRef<number | undefined>(undefined);
+  const isHoveringAnnRef = useRef(false);
+  const isHoveringActionsRef = useRef(false);
 
   function applyState(next: CharacterRuntimeState) {
     stateRef.current = next;
@@ -258,9 +273,51 @@ function CompanionShell() {
     void setMousePassthrough(!isHit);
   }
 
+  function handleAnnHoverEnter() {
+    isHoveringAnnRef.current = true;
+    if (quickActionsTimeoutRef.current !== undefined) {
+      window.clearTimeout(quickActionsTimeoutRef.current);
+      quickActionsTimeoutRef.current = undefined;
+    }
+    setQuickActionsVisible(true);
+    void setMousePassthrough(false);
+  }
+
+  function handleAnnHoverLeave() {
+    isHoveringAnnRef.current = false;
+    scheduleHideQuickActions();
+  }
+
+  function handleActionsHoverEnter() {
+    isHoveringActionsRef.current = true;
+    if (quickActionsTimeoutRef.current !== undefined) {
+      window.clearTimeout(quickActionsTimeoutRef.current);
+      quickActionsTimeoutRef.current = undefined;
+    }
+  }
+
+  function handleActionsHoverLeave() {
+    isHoveringActionsRef.current = false;
+    scheduleHideQuickActions();
+  }
+
+  function scheduleHideQuickActions() {
+    if (quickActionsTimeoutRef.current !== undefined) {
+      window.clearTimeout(quickActionsTimeoutRef.current);
+    }
+    quickActionsTimeoutRef.current = window.setTimeout(() => {
+      if (!isHoveringAnnRef.current && !isHoveringActionsRef.current) {
+        setQuickActionsVisible(false);
+        void setMousePassthrough(true);
+      }
+      quickActionsTimeoutRef.current = undefined;
+    }, 700);
+  }
+
   function handleDragStart(point: CompanionDragPoint) {
     isDraggingRef.current = true;
     dragOriginRef.current = undefined;
+    setQuickActionsVisible(false);
     void window.ourCompanion.companion.reportDragging({ dragging: true });
     void setMousePassthrough(false);
 
@@ -520,13 +577,17 @@ function CompanionShell() {
       position: 'relative',
     } : undefined}>
       {overlayMode ? (
-        <div style={{
-          position: 'absolute',
-          left: annPosition?.x ?? '50%',
-          top: annPosition?.y ?? '80%',
-          transform: annPosition ? 'none' : 'translate(-50%, -50%)',
-          zIndex: 1,
-        }}>
+        <div
+          style={{
+            position: 'absolute',
+            left: annPosition?.x ?? '50%',
+            top: annPosition?.y ?? '80%',
+            transform: annPosition ? 'none' : 'translate(-50%, -50%)',
+            zIndex: 1,
+          }}
+          onMouseEnter={handleAnnHoverEnter}
+          onMouseLeave={handleAnnHoverLeave}
+        >
           <CompanionCanvas
         state={state}
         facing={facing}
@@ -615,6 +676,26 @@ function CompanionShell() {
           }}
         />
       )}
+      <CompanionQuickActions
+        visible={quickActionsVisible && !isDraggingRef.current}
+        anchorRect={quickActionsPositions.anchor}
+        screenWorkArea={{ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }}
+        obstacles={quickActionsPositions.obstacles}
+        onTextChat={() => {
+          setQuickActionsVisible(false);
+          openTextInput();
+        }}
+        onVoiceChat={() => {
+          setQuickActionsVisible(false);
+          toggleListening();
+        }}
+        onOpenPanel={() => {
+          setQuickActionsVisible(false);
+          void window.ourCompanion.window.openPanel();
+        }}
+        onMouseEnter={handleActionsHoverEnter}
+        onMouseLeave={handleActionsHoverLeave}
+      />
       {phase === 'idle' && textOpen && (
         <form className="companion-text-input" onSubmit={(e) => { void handleTextSubmit(e); }}>
           <input

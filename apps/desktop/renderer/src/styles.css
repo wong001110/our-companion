@@ -115,6 +115,40 @@ input {
   animation: speech-cursor-blink 0.9s step-end infinite;
 }
 
+.companion-quick-actions {
+  animation: quick-actions-fade-in 0.2s ease;
+}
+
+@keyframes quick-actions-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.companion-quick-btn {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 16px;
+  background: rgba(75, 58, 101, 0.85);
+  color: #f8edf5;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  pointer-events: all;
+  white-space: nowrap;
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(239, 206, 228, 0.15);
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.companion-quick-btn:hover {
+  background: rgba(100, 75, 130, 0.95);
+  transform: scale(1.05);
+}
+
+.companion-quick-btn:active {
+  transform: scale(0.97);
+}
+
 .companion-text-input {
   position: absolute;
   bottom: 8px;
