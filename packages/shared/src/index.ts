@@ -1210,6 +1210,7 @@ export interface OurCompanionApi {
       display?: { id: number; label: string; size: { width: number; height: number } };
       clickThrough?: boolean;
     }>;
+    onDisplayChanged(listener: (info: { workArea: WindowBounds; display: { id: number; label: string; size: { width: number; height: number } } }) => void): () => void;
   };
   debug: {
     resetData(input: DebugDataResetInput): Promise<DebugDataResetResult>;

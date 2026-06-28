@@ -5,10 +5,11 @@ import { titleFallback, bodyFallback } from './PresentationCandidate';
 export interface DiscoveryPopoutCardProps {
   candidate: PresentationCandidate;
   loading?: boolean;
+  error?: string | null;
   onView?: () => void;
-  onSave?: () => void;
-  onAddToJourney?: () => void;
-  onIgnore?: () => void;
+  onSave?: () => Promise<void>;
+  onAddToJourney?: () => Promise<void>;
+  onIgnore?: () => Promise<void>;
   onClose?: () => void;
   style?: React.CSSProperties;
 }
@@ -18,6 +19,7 @@ const AUTO_DISMISS_MS = 12000;
 export function DiscoveryPopoutCard({
   candidate,
   loading = false,
+  error = null,
   onView,
   onSave,
   onAddToJourney,
@@ -35,14 +37,14 @@ export function DiscoveryPopoutCard({
   }, []);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || loading) return;
     timerRef.current = window.setTimeout(() => {
       handleClose();
     }, AUTO_DISMISS_MS);
     return () => {
       if (timerRef.current !== undefined) window.clearTimeout(timerRef.current);
     };
-  }, [visible]);
+  }, [visible, loading]);
 
   function handleClose() {
     if (exiting) return;
@@ -50,10 +52,10 @@ export function DiscoveryPopoutCard({
     window.setTimeout(() => onClose?.(), 300);
   }
 
-  function handleAction(action: () => void) {
+  async function handleAsyncAction(action: () => Promise<void>) {
+    if (loading) return;
     if (timerRef.current !== undefined) window.clearTimeout(timerRef.current);
-    action();
-    handleClose();
+    await action();
   }
 
   function handleOpenSource() {
@@ -66,11 +68,9 @@ export function DiscoveryPopoutCard({
   const displayTitle = titleFallback(candidate);
   const displayBody = bodyFallback(candidate);
 
-  const moodClass = 'card-mood-calm';
-
   return (
     <div
-      className={`discovery-popout-card ${moodClass} ${visible && !exiting ? 'card-visible' : ''} ${exiting ? 'card-exiting' : ''}`}
+      className={`discovery-popout-card card-mood-calm ${visible && !exiting ? 'card-visible' : ''} ${exiting ? 'card-exiting' : ''}`}
       role="article"
       aria-label={`Discovery: ${displayTitle}`}
       style={style}
@@ -94,11 +94,12 @@ export function DiscoveryPopoutCard({
           ))}
         </div>
       )}
+      {error && <p className="card-error">{error}</p>}
       <div className="card-actions">
-        {onView && <button className="card-action-btn" disabled={loading} onClick={() => handleAction(onView)}>View</button>}
-        {onSave && <button className="card-action-btn card-action-primary" disabled={loading} onClick={() => handleAction(onSave)}>{loading ? 'Saving…' : 'Save'}</button>}
-        {onAddToJourney && <button className="card-action-btn" disabled={loading} onClick={() => handleAction(onAddToJourney)}>{loading ? 'Adding…' : 'Add to Journey'}</button>}
-        {onIgnore && <button className="card-action-btn card-action-ghost" disabled={loading} onClick={() => handleAction(onIgnore)}>Ignore</button>}
+        {onView && <button className="card-action-btn" disabled={loading} onClick={onView}>View</button>}
+        {onSave && <button className="card-action-btn card-action-primary" disabled={loading} onClick={() => void handleAsyncAction(onSave)}>{loading ? 'Saving…' : 'Save'}</button>}
+        {onAddToJourney && <button className="card-action-btn" disabled={loading} onClick={() => void handleAsyncAction(onAddToJourney)}>{loading ? 'Adding…' : 'Add to Journey'}</button>}
+        {onIgnore && <button className="card-action-btn card-action-ghost" disabled={loading} onClick={() => void handleAsyncAction(onIgnore)}>Ignore</button>}
       </div>
     </div>
   );

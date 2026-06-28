@@ -139,6 +139,12 @@ const api: OurCompanionApi = {
     reportSessionPhase: (phase: CompanionSessionPhase) => invoke('companion:reportSessionPhase', phase),
     reportDragging: (input: { dragging: boolean }) => invoke('companion:reportDragging', input),
     getOverlayDebug: () => invoke('companion:getOverlayDebug'),
+    onDisplayChanged: (listener: (info: { workArea: { x: number; y: number; width: number; height: number }; display: { id: number; label: string; size: { width: number; height: number } } }) => void) => {
+      const channel = 'companion:displayChanged';
+      const handler = (_event: Electron.IpcRendererEvent, info: { workArea: { x: number; y: number; width: number; height: number }; display: { id: number; label: string; size: { width: number; height: number } } }) => listener(info);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    },
     onToggleListen: (listener: () => void) => {
       const channel = 'companion:toggleListen';
       const handler = () => listener();

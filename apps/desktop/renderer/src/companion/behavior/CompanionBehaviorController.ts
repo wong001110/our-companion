@@ -86,10 +86,6 @@ export function decideCompanionBehavior(
       return { type: 'present_discovery', reason: 'debug_override_present' };
     }
 
-    if (initiative >= 3 && timeSinceSpeech > MIN_SPEECH_GAP) {
-      return { type: 'present_discovery', reason: 'initiative_meets_threshold' };
-    }
-
     if (initiative >= 2 && timeSinceSpeech > SOFT_HINT_GAP) {
       return { type: 'show_soft_hint', reason: 'soft_hint_available' };
     }

@@ -2318,6 +2318,16 @@ textarea {
   color: rgba(248, 237, 245, 0.75);
 }
 
+.card-error {
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #ffb3bd;
+  background: rgba(231, 83, 99, 0.18);
+  border: 1px solid rgba(231, 83, 99, 0.3);
+}
+
 .card-tags {
   display: flex;
   flex-wrap: wrap;

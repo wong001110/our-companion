@@ -11,6 +11,7 @@ let panelWindow: BrowserWindow | undefined;
 let services: AppServices;
 let discoveryScheduler: DiscoveryScheduler | undefined;
 let discoveryShareOrchestrator: DiscoveryShareOrchestrator | undefined;
+let companionClickThrough = true;
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const companionListenHotkey = 'CommandOrControl+Shift+Space';
@@ -260,6 +261,9 @@ function registerIpc(): void {
   ipcMain.handle('window:setMousePassthrough', (event, input: { passthrough: boolean }) => {
     const window = getSenderWindow(event);
     window.setIgnoreMouseEvents(input.passthrough, { forward: true });
+    if (window === companionWindow) {
+      companionClickThrough = input.passthrough;
+    }
     return input.passthrough;
   });
   ipcMain.handle('companion:getOverlayDebug', () => {
@@ -271,7 +275,7 @@ function registerIpc(): void {
       bounds,
       workArea: { x: workArea.x, y: workArea.y, width: workArea.width, height: workArea.height },
       display: { id: display.id, label: display.label, size: display.size },
-      clickThrough: companionWindow ? true : undefined,
+      clickThrough: companionClickThrough,
     };
   });
 }
@@ -369,6 +373,33 @@ function stopDiscoveryAutomation(): void {
   discoveryShareOrchestrator = undefined;
 }
 
+function registerDisplayListeners(): void {
+  function handleDisplayChange() {
+    if (!companionWindow || companionWindow.isDestroyed()) return;
+    try {
+      const bounds = companionWindow.getBounds();
+      const display = screen.getDisplayMatching(bounds);
+      const workArea = display.workArea;
+      companionWindow.setBounds({
+        x: workArea.x,
+        y: workArea.y,
+        width: workArea.width,
+        height: workArea.height,
+      });
+      companionWindow.webContents.send('companion:displayChanged', {
+        workArea: { x: workArea.x, y: workArea.y, width: workArea.width, height: workArea.height },
+        display: { id: display.id, label: display.label, size: display.size },
+      });
+    } catch {
+      // display may have been disconnected
+    }
+  }
+
+  screen.on('display-added', handleDisplayChange);
+  screen.on('display-removed', handleDisplayChange);
+  screen.on('display-metrics-changed', handleDisplayChange);
+}
+
 app.whenReady().then(() => {
   try {
     services = new AppServices();
@@ -380,6 +411,7 @@ app.whenReady().then(() => {
     createCompanionWindow();
     createPanelWindow();
     startDiscoveryAutomation();
+    registerDisplayListeners();
   } catch (error) {
     console.error('[our-companion] Fatal startup failure.', error);
     createStartupErrorWindow(error);

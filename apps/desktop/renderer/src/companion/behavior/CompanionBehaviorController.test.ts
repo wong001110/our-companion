@@ -52,7 +52,7 @@ describe('decideCompanionBehavior', () => {
     expect(decision.type).toBe('ambient_reaction');
   });
 
-  it('presents discovery when initiative >= 3 and queued', () => {
+  it('shows soft hint when initiative >= 2 and queued', () => {
     const state: CompanionBehaviorState = {
       ...createDefaultBehaviorState(),
       mood: 'curious',
@@ -61,7 +61,7 @@ describe('decideCompanionBehavior', () => {
       lastAnnSpokeAt: Date.now() - 10 * 60_000,
     };
     const decision = decideCompanionBehavior(base({ hasDiscoveryCandidate: true, state }));
-    expect(decision.type).toBe('present_discovery');
+    expect(decision.type).toBe('show_soft_hint');
   });
 
   it('shows soft hint when initiative >= 2', () => {

@@ -71,13 +71,14 @@ function CompanionShell() {
   const [speech, setSpeech] = useState<string>();
   const [typewriterMessage, setTypewriterMessage] = useState<string>();
   const [discoveryPopup, setDiscoveryPopup] = useState<PresentationCandidate | null>(null);
-  const discoveryActionLoadingRef = useRef(false);
   const [discoveryDebug, setDiscoveryDebug] = useState<{
     lastAction?: string;
     lastStatus?: 'success' | 'error';
     lastError?: string;
     lastAt?: string;
   }>({});
+  const [discoveryActionError, setDiscoveryActionError] = useState<string | null>(null);
+  const [discoveryActionLoading, setDiscoveryActionLoading] = useState(false);
   const queueManagerRef = useRef(new DiscoveryQueueManager());
 
   useEffect(() => {
@@ -423,61 +424,67 @@ function CompanionShell() {
   }
 
   async function handleDiscoverySave(candidate: PresentationCandidate) {
-    if (discoveryActionLoadingRef.current) return;
-    discoveryActionLoadingRef.current = true;
+    if (discoveryActionLoading) return;
+    setDiscoveryActionLoading(true);
+    setDiscoveryActionError(null);
     try {
-      queueManagerRef.current.saveCurrent();
-      setDiscoveryPopup(null);
       await window.ourCompanion.discovery.markInterested(candidate.id);
       recordDiscoveryDebug('save', 'success');
+      queueManagerRef.current.saveCurrent();
+      setDiscoveryPopup(null);
+      advanceQueue();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       recordDiscoveryDebug('save', 'error', msg);
+      setDiscoveryActionError(msg);
       console.warn('[our-companion] Discovery save failed.', err);
     } finally {
-      discoveryActionLoadingRef.current = false;
-      advanceQueue();
+      setDiscoveryActionLoading(false);
     }
   }
 
   async function handleDiscoveryAddToJourney(candidate: PresentationCandidate) {
-    if (discoveryActionLoadingRef.current) return;
-    discoveryActionLoadingRef.current = true;
+    if (discoveryActionLoading) return;
+    setDiscoveryActionLoading(true);
+    setDiscoveryActionError(null);
     try {
-      queueManagerRef.current.dismissCurrent();
-      setDiscoveryPopup(null);
       await window.ourCompanion.discovery.addToJourney({ discoveryId: candidate.id });
       recordDiscoveryDebug('add_to_journey', 'success');
+      queueManagerRef.current.dismissCurrent();
+      setDiscoveryPopup(null);
+      advanceQueue();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       recordDiscoveryDebug('add_to_journey', 'error', msg);
+      setDiscoveryActionError(msg);
       console.warn('[our-companion] Discovery add to journey failed.', err);
     } finally {
-      discoveryActionLoadingRef.current = false;
-      advanceQueue();
+      setDiscoveryActionLoading(false);
     }
   }
 
   async function handleDiscoveryIgnore(candidate: PresentationCandidate) {
-    if (discoveryActionLoadingRef.current) return;
-    discoveryActionLoadingRef.current = true;
+    if (discoveryActionLoading) return;
+    setDiscoveryActionLoading(true);
+    setDiscoveryActionError(null);
     try {
-      queueManagerRef.current.dismissCurrent();
-      setDiscoveryPopup(null);
       await window.ourCompanion.discovery.markNotInterested(candidate.id);
       recordDiscoveryDebug('ignore', 'success');
+      queueManagerRef.current.dismissCurrent();
+      setDiscoveryPopup(null);
+      advanceQueue();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       recordDiscoveryDebug('ignore', 'error', msg);
+      setDiscoveryActionError(msg);
       console.warn('[our-companion] Discovery ignore failed.', err);
     } finally {
-      discoveryActionLoadingRef.current = false;
-      advanceQueue();
+      setDiscoveryActionLoading(false);
     }
   }
 
   function handleDiscoveryView() {
-    if (discoveryActionLoadingRef.current) return;
+    if (discoveryActionLoading) return;
     queueManagerRef.current.dismissCurrent();
     setDiscoveryPopup(null);
     void window.ourCompanion.window.openPanel({ annX: annPositionRef.current.x, annY: annPositionRef.current.y });
@@ -485,7 +492,8 @@ function CompanionShell() {
   }
 
   function handleDiscoveryClose() {
-    if (discoveryActionLoadingRef.current) return;
+    if (discoveryActionLoading) return;
+    setDiscoveryActionError(null);
     queueManagerRef.current.dismissCurrent();
     setDiscoveryPopup(null);
     advanceQueue();
@@ -739,7 +747,8 @@ function CompanionShell() {
       {discoveryPopup && (
         <DiscoveryPopoutCard
           candidate={discoveryPopup}
-          loading={discoveryActionLoadingRef.current}
+          loading={discoveryActionLoading}
+          error={discoveryActionError}
           style={floatingPositions.card ? {
             position: 'absolute',
             left: floatingPositions.card.rect.x,
@@ -748,9 +757,9 @@ function CompanionShell() {
             right: 'auto',
           } : undefined}
           onView={handleDiscoveryView}
-          onSave={() => void handleDiscoverySave(discoveryPopup)}
-          onAddToJourney={() => void handleDiscoveryAddToJourney(discoveryPopup)}
-          onIgnore={() => void handleDiscoveryIgnore(discoveryPopup)}
+          onSave={() => handleDiscoverySave(discoveryPopup)}
+          onAddToJourney={() => handleDiscoveryAddToJourney(discoveryPopup)}
+          onIgnore={() => handleDiscoveryIgnore(discoveryPopup)}
           onClose={handleDiscoveryClose}
         />
       )}
