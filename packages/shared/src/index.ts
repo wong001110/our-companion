@@ -1208,7 +1208,8 @@ export interface OurCompanionApi {
     getHistory(input?: CompanionHistoryInput): Promise<CompanionMessage[]>;
     appendMessage(input: CompanionAppendMessageInput): Promise<CompanionMessage>;
     clearHistory(input?: { characterId?: string }): Promise<void>;
-    getOverlayDebug(): Promise<{ mode: 'small-window' | 'fullscreen-overlay'; bounds?: WindowBounds }>;
+    getOverlayDebug(): Promise<{ mode: 'small-window'; bounds?: WindowBounds }>;
+    resizeToContent(input: { x: number; y: number; width: number; height: number }): Promise<WindowBounds | undefined>;
   };
   debug: {
     resetData(input: DebugDataResetInput): Promise<DebugDataResetResult>;
@@ -1222,8 +1223,6 @@ export interface OurCompanionApi {
     getWorkArea(): Promise<WindowBounds>;
     moveTo(input: WindowMoveInput): Promise<WindowBounds>;
     setMousePassthrough(input: WindowMousePassthroughInput): Promise<boolean>;
-    getOverlayMode(): Promise<boolean>;
-    setOverlayMode(input: { enabled: boolean }): Promise<boolean>;
   };
   workspace: {
     getStatus(): Promise<WorkspaceStatusSnapshot>;

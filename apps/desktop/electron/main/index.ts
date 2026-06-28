@@ -11,7 +11,6 @@ let panelWindow: BrowserWindow | undefined;
 let services: AppServices;
 let discoveryScheduler: DiscoveryScheduler | undefined;
 let discoveryShareOrchestrator: DiscoveryShareOrchestrator | undefined;
-let companionOverlayMode = true;
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const companionListenHotkey = 'CommandOrControl+Shift+Space';
@@ -33,10 +32,6 @@ function createCompanionWindow(): BrowserWindow {
   const primaryDisplay = screen.getPrimaryDisplay();
   const workArea = primaryDisplay.workArea;
 
-  if (companionOverlayMode) {
-    return createOverlayCompanionWindow(workArea);
-  }
-
   const window = new BrowserWindow({
     width: companionWindowSize.width,
     height: companionWindowSize.height,
@@ -57,45 +52,6 @@ function createCompanionWindow(): BrowserWindow {
       sandbox: true
     }
   });
-
-  window.once('ready-to-show', () => {
-    keepCompanionOnTop(window);
-    window.show();
-  });
-  window.on('show', () => keepCompanionOnTop(window));
-  window.on('focus', () => keepCompanionOnTop(window));
-  window.on('blur', () => keepCompanionOnTop(window));
-  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  keepCompanionOnTop(window);
-  window.loadURL(rendererUrl('companion'));
-  companionWindow = window;
-  return window;
-}
-
-function createOverlayCompanionWindow(workArea: Electron.Rectangle): BrowserWindow {
-  const window = new BrowserWindow({
-    x: workArea.x,
-    y: workArea.y,
-    width: workArea.width,
-    height: workArea.height,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    show: false,
-    resizable: false,
-    alwaysOnTop: true,
-    hasShadow: false,
-    skipTaskbar: true,
-    icon: nativeImage.createEmpty(),
-    webPreferences: {
-      preload: preloadPath(),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true
-    }
-  });
-
-  window.setIgnoreMouseEvents(true, { forward: true });
 
   window.once('ready-to-show', () => {
     keepCompanionOnTop(window);
@@ -293,19 +249,21 @@ function registerIpc(): void {
     window.setIgnoreMouseEvents(input.passthrough, { forward: true });
     return input.passthrough;
   });
-  ipcMain.handle('window:getOverlayMode', () => companionOverlayMode);
-  ipcMain.handle('window:setOverlayMode', (_event, input: { enabled: boolean }) => {
-    companionOverlayMode = input.enabled;
-    if (companionWindow && !companionWindow.isDestroyed()) {
-      companionWindow.destroy();
-    }
-    createCompanionWindow();
-    return companionOverlayMode;
-  });
   ipcMain.handle('companion:getOverlayDebug', () => ({
-    mode: companionOverlayMode ? 'fullscreen-overlay' as const : 'small-window' as const,
+    mode: 'small-window' as const,
     bounds: companionWindow && !companionWindow.isDestroyed() ? companionWindow.getBounds() : undefined,
   }));
+  ipcMain.handle('companion:resizeToContent', (event, input: { x: number; y: number; width: number; height: number }) => {
+    if (!companionWindow || companionWindow.isDestroyed()) return undefined;
+    const workArea = getWorkAreaForWindow(companionWindow);
+    const x = Math.round(Math.max(workArea.x, Math.min(input.x, workArea.x + workArea.width - input.width)));
+    const y = Math.round(Math.max(workArea.y, Math.min(input.y, workArea.y + workArea.height - input.height)));
+    const width = Math.round(Math.min(input.width, workArea.width));
+    const height = Math.round(Math.min(input.height, workArea.height));
+    companionWindow.setBounds({ x, y, width, height }, false);
+    keepCompanionOnTop(companionWindow);
+    return companionWindow.getBounds();
+  });
 }
 
 function getSenderWindow(event: IpcMainInvokeEvent): BrowserWindow {

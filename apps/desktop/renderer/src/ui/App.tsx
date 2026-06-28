@@ -84,19 +84,18 @@ function CompanionShell() {
   const isDraggingRef = useRef(false);
   const sessionActiveRef = useRef(false);
   const dragOriginRef = useRef<{ windowX: number; windowY: number; screenX: number; screenY: number } | undefined>(undefined);
-  const [overlayMode, setOverlayMode] = useState(false);
-  const [annPosition, setAnnPosition] = useState<{ x: number; y: number } | null>(null);
-  const annPositionRef = useRef<{ x: number; y: number } | null>(null);
   const [quickActionsVisible, setQuickActionsVisible] = useState(false);
   const quickActionsTimeoutRef = useRef<number | undefined>(undefined);
   const isHoveringAnnRef = useRef(false);
   const isHoveringActionsRef = useRef(false);
 
+  const ANCHOR_LOCAL = { x: 110, y: 140, width: 220, height: 230 };
+
   const floatingPositions = useFloatingPlacement({
     hasBubble: !!(typewriterMessage || speech),
     hasCard: !!discoveryPopup,
-    annPosition: overlayMode ? annPosition : null,
-    screenWorkArea: overlayMode ? { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight } : undefined,
+    annPosition: null,
+    screenWorkArea: { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight },
   });
 
   const quickActionsPositions = useMemo(() => {
@@ -106,6 +105,34 @@ function CompanionShell() {
     if (floatingPositions.card) obstacles.push(floatingPositions.card.rect);
     return { anchor, obstacles };
   }, [floatingPositions]);
+
+  useEffect(() => {
+    const rects: Rect[] = [{ ...ANCHOR_LOCAL }];
+    if (floatingPositions.bubble) rects.push(floatingPositions.bubble.rect);
+    if (floatingPositions.card) rects.push(floatingPositions.card.rect);
+    if (quickActionsVisible && quickActionsPositions.anchor) {
+      rects.push({
+        x: quickActionsPositions.anchor.x,
+        y: quickActionsPositions.anchor.y,
+        width: 180,
+        height: 40,
+      });
+    }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const r of rects) {
+      if (r.x < minX) minX = r.x;
+      if (r.y < minY) minY = r.y;
+      if (r.x + r.width > maxX) maxX = r.x + r.width;
+      if (r.y + r.height > maxY) maxY = r.y + r.height;
+    }
+    if (minX === Infinity) return;
+    const padding = 16;
+    const width = Math.max(440, maxX - minX + padding * 2);
+    const height = Math.max(390, maxY - minY + padding * 2);
+    const x = minX - padding;
+    const y = minY - padding;
+    void window.ourCompanion.companion.resizeToContent({ x, y, width, height }).catch(() => undefined);
+  }, [floatingPositions, quickActionsVisible, quickActionsPositions]);
 
   function applyState(next: CharacterRuntimeState) {
     stateRef.current = next;
@@ -323,17 +350,6 @@ function CompanionShell() {
     void window.ourCompanion.companion.reportDragging({ dragging: true });
     void setMousePassthrough(false);
 
-    if (overlayMode) {
-      const current = annPositionRef.current;
-      dragOriginRef.current = {
-        windowX: current?.x ?? 0,
-        windowY: current?.y ?? 0,
-        screenX: point.screenX,
-        screenY: point.screenY
-      };
-      return;
-    }
-
     window.ourCompanion.window
       .getBounds()
       .then((bounds) => {
@@ -352,15 +368,6 @@ function CompanionShell() {
     const origin = dragOriginRef.current;
     if (!origin) return;
 
-    if (overlayMode) {
-      const nextX = origin.windowX + point.screenX - origin.screenX;
-      const nextY = origin.windowY + point.screenY - origin.screenY;
-      const pos = { x: nextX, y: nextY };
-      annPositionRef.current = pos;
-      setAnnPosition(pos);
-      return;
-    }
-
     void window.ourCompanion.window.moveTo({
       x: origin.windowX + point.screenX - origin.screenX,
       y: origin.windowY + point.screenY - origin.screenY
@@ -371,17 +378,6 @@ function CompanionShell() {
     isDraggingRef.current = false;
     dragOriginRef.current = undefined;
     void window.ourCompanion.companion.reportDragging({ dragging: false });
-
-    if (overlayMode) {
-      const pos = annPositionRef.current;
-      if (pos) {
-        void window.ourCompanion.character.updatePosition({ x: pos.x, y: pos.y })
-          .then((nextState) => { stateRef.current = nextState; setState(nextState); })
-          .catch(() => undefined);
-      }
-      return;
-    }
-
     window.ourCompanion.window
       .getBounds()
       .then((bounds) => window.ourCompanion.character.updatePosition({ x: bounds.x, y: bounds.y }))
@@ -397,14 +393,9 @@ function CompanionShell() {
   }
 
   useEffect(() => {
-    void window.ourCompanion.window.getOverlayMode().then((isOverlay) => {
-      setOverlayMode(isOverlay);
-    }).catch(() => undefined);
     void window.ourCompanion.character.getState().then((s) => {
       if (s?.position) {
-        const pos = { x: s.position.x, y: s.position.y };
-        annPositionRef.current = pos;
-        setAnnPosition(pos);
+        void window.ourCompanion.window.moveTo({ x: s.position.x, y: s.position.y }).catch(() => undefined);
       }
     }).catch(() => undefined);
   }, []);
@@ -575,67 +566,37 @@ function CompanionShell() {
 
   return (
     <main
-      className={`companion-shell ${overlayMode ? 'companion-shell-overlay' : ''}`}
+      className="companion-shell"
       onClick={(e) => {
         if (textOpen && !(e.target as HTMLElement).closest('.companion-canvas') && !(e.target as HTMLElement).closest('.companion-text-input')) {
           closeTextInput();
         }
       }}
     >
-      {overlayMode ? (
-        <div
-          style={{
-            position: 'absolute',
-            left: annPosition?.x ?? '50%',
-            top: annPosition?.y ?? '80%',
-            transform: annPosition ? 'none' : 'translate(-50%, -50%)',
-            zIndex: 1,
-            pointerEvents: 'all',
-          }}
-          onMouseEnter={handleAnnHoverEnter}
-          onMouseLeave={handleAnnHoverLeave}
-        >
-          <CompanionCanvas
-        state={state}
-        facing={facing}
-        isListening={phase === 'listening'}
-        animationOverride={isIdleState(state) && !isSessionActive && state?.intent !== 'sharing_discovery' ? idleAnimation : undefined}
-        onPointerHitChange={handlePointerHitChange}
-        onOpenPanel={() => {
-          if (phase === 'idle' && !textOpen) {
-            openTextInput();
-          } else {
-            closeTextInput();
-            void window.ourCompanion.window.openPanel();
-          }
+      <div
+        style={{
+          position: 'absolute',
+          left: ANCHOR_LOCAL.x,
+          top: ANCHOR_LOCAL.y,
+          zIndex: 1,
+          pointerEvents: 'all',
         }}
-        onToggleListen={toggleListening}
-        onDragStart={handleDragStart}
-        onDragMove={handleDragMove}
-        onDragEnd={handleDragEnd}
-      />
-        </div>
-      ) : (
+        onMouseEnter={handleAnnHoverEnter}
+        onMouseLeave={handleAnnHoverLeave}
+      >
         <CompanionCanvas
           state={state}
           facing={facing}
           isListening={phase === 'listening'}
           animationOverride={isIdleState(state) && !isSessionActive && state?.intent !== 'sharing_discovery' ? idleAnimation : undefined}
           onPointerHitChange={handlePointerHitChange}
-          onOpenPanel={() => {
-            if (phase === 'idle' && !textOpen) {
-              openTextInput();
-            } else {
-              closeTextInput();
-              void window.ourCompanion.window.openPanel();
-            }
-          }}
+          onOpenPanel={() => undefined}
           onToggleListen={toggleListening}
           onDragStart={handleDragStart}
           onDragMove={handleDragMove}
           onDragEnd={handleDragEnd}
         />
-      )}
+      </div>
       {typewriterMessage && (
         <TypewriterSpeechBubble
           message={typewriterMessage}
@@ -729,13 +690,13 @@ function CompanionShell() {
       {phase === 'idle' && textOpen && (
         <form
           className="companion-text-input"
-          style={overlayMode ? {
+          style={{
             position: 'absolute',
-            left: (annPosition?.x ?? 0) - 100,
-            top: (annPosition?.y ?? 0) + 130,
+            left: ANCHOR_LOCAL.x - 100,
+            top: ANCHOR_LOCAL.y + ANCHOR_LOCAL.height + 8,
             bottom: 'auto',
             transform: 'none',
-          } : undefined}
+          }}
           onSubmit={(e) => { void handleTextSubmit(e); }}
         >
           <input
