@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   anchorFromBounds,
   computeFloatingPosition,
@@ -18,6 +18,7 @@ export type CompanionQuickActionsProps = {
 };
 
 const ACTION_SIZE = { width: 180, height: 40 };
+const FADE_DURATION_MS = 180;
 
 export function CompanionQuickActions({
   visible,
@@ -30,8 +31,24 @@ export function CompanionQuickActions({
   onMouseEnter,
   onMouseLeave,
 }: CompanionQuickActionsProps) {
+  const [mounted, setMounted] = useState(false);
+  const [fadingIn, setFadingIn] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => setFadingIn(true));
+      });
+    } else {
+      setFadingIn(false);
+      const timer = window.setTimeout(() => setMounted(false), FADE_DURATION_MS);
+      return () => window.clearTimeout(timer);
+    }
+  }, [visible]);
+
   const position = useMemo(() => {
-    if (!visible) return null;
+    if (!mounted) return null;
     const anchor = anchorFromBounds(anchorRect);
     return computeFloatingPosition({
       anchorRect: anchor,
@@ -41,9 +58,9 @@ export function CompanionQuickActions({
       gap: 8,
       obstacles,
     });
-  }, [visible, anchorRect, screenWorkArea, obstacles]);
+  }, [mounted, anchorRect, screenWorkArea, obstacles]);
 
-  if (!visible || !position) return null;
+  if (!mounted || !position) return null;
 
   return (
     <div
@@ -58,8 +75,9 @@ export function CompanionQuickActions({
         gap: '6px',
         zIndex: 20,
         pointerEvents: 'all',
-        opacity: 1,
-        transition: 'opacity 0.2s ease',
+        opacity: fadingIn ? 1 : 0,
+        transform: fadingIn ? 'translateY(0) scale(1)' : 'translateY(-4px) scale(0.96)',
+        transition: `opacity ${FADE_DURATION_MS}ms ease, transform ${FADE_DURATION_MS}ms ease`,
       }}
     >
       <button className="companion-quick-btn" onClick={onTextChat} style={{ pointerEvents: 'all' }}>

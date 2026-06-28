@@ -58,6 +58,7 @@ import { CompanionQuickActions } from '../companion/CompanionQuickActions';
 import { anchorFromBounds, type Rect } from '../companion/floatingPlacement';
 import { useCompanionBehavior } from '../companion/behavior/useCompanionBehavior';
 import type { CompanionBehaviorDecision } from '../companion/behavior/CompanionBehaviorController';
+import { useInteractiveRegion } from '../companion/useInteractiveRegion';
 
 export function App() {
   const mode = new URLSearchParams(window.location.search).get('mode');
@@ -80,7 +81,6 @@ function CompanionShell() {
   const behaviorRef = useRef<CharacterBehaviorSettings | undefined>(undefined);
   const stateRef = useRef<CharacterRuntimeState | undefined>(undefined);
   const langRef = useRef<Lang>('en');
-  const mousePassthroughRef = useRef<boolean | undefined>(undefined);
   const isDraggingRef = useRef(false);
   const sessionActiveRef = useRef(false);
   const dragOriginRef = useRef<{ screenX: number; screenY: number } | undefined>(undefined);
@@ -88,6 +88,8 @@ function CompanionShell() {
   const quickActionsTimeoutRef = useRef<number | undefined>(undefined);
   const isHoveringAnnRef = useRef(false);
   const isHoveringActionsRef = useRef(false);
+
+  const interactive = useInteractiveRegion();
 
   const ANN_SPRITE = { width: 220, height: 230 };
   const [annPosition, setAnnPosition] = useState<{ x: number; y: number }>(() => {
@@ -173,8 +175,8 @@ function CompanionShell() {
 
   const openTextInput = useCallback(() => {
     setTextOpen(true);
-    void setMousePassthrough(false);
-  }, []);
+    interactive.enter('chat-input');
+  }, [interactive]);
 
   const closeTextInput = useCallback(() => {
     setTextOpen(false);
@@ -200,9 +202,9 @@ function CompanionShell() {
 
   useEffect(() => {
     if (!textOpen) {
-      void setMousePassthrough(true);
+      interactive.leave('chat-input');
     }
-  }, [textOpen]);
+  }, [textOpen, interactive]);
 
   useEffect(() => {
     document.documentElement.classList.add('companion-mode');
@@ -219,7 +221,6 @@ function CompanionShell() {
   }, []);
 
   useEffect(() => {
-    void setMousePassthrough(true);
     return () => {
       void window.ourCompanion.window.setMousePassthrough({ passthrough: false });
     };
@@ -281,18 +282,12 @@ function CompanionShell() {
     };
   }, []);
 
-  async function setMousePassthrough(passthrough: boolean) {
-    if (mousePassthroughRef.current === passthrough) return;
-    mousePassthroughRef.current = passthrough;
-    try {
-      await window.ourCompanion.window.setMousePassthrough({ passthrough });
-    } catch {
-      mousePassthroughRef.current = undefined;
-    }
-  }
-
   function handlePointerHitChange(isHit: boolean) {
-    void setMousePassthrough(!isHit);
+    if (isHit) {
+      interactive.enter('ann-sprite');
+    } else {
+      interactive.leave('ann-sprite');
+    }
   }
 
   function handleAnnHoverEnter() {
@@ -302,12 +297,13 @@ function CompanionShell() {
       quickActionsTimeoutRef.current = undefined;
     }
     setQuickActionsVisible(true);
-    void setMousePassthrough(false);
+    interactive.enter('ann-hover');
   }
 
   function handleAnnHoverLeave() {
     isHoveringAnnRef.current = false;
     scheduleHideQuickActions();
+    interactive.leave('ann-hover');
   }
 
   function handleActionsHoverEnter() {
@@ -316,12 +312,13 @@ function CompanionShell() {
       window.clearTimeout(quickActionsTimeoutRef.current);
       quickActionsTimeoutRef.current = undefined;
     }
-    void setMousePassthrough(false);
+    interactive.enter('quick-actions');
   }
 
   function handleActionsHoverLeave() {
     isHoveringActionsRef.current = false;
     scheduleHideQuickActions();
+    interactive.leave('quick-actions');
   }
 
   function scheduleHideQuickActions() {
@@ -331,10 +328,9 @@ function CompanionShell() {
     quickActionsTimeoutRef.current = window.setTimeout(() => {
       if (!isHoveringAnnRef.current && !isHoveringActionsRef.current) {
         setQuickActionsVisible(false);
-        void setMousePassthrough(true);
       }
       quickActionsTimeoutRef.current = undefined;
-    }, 700);
+    }, 150);
   }
 
   function handleDragStart(point: CompanionDragPoint) {
@@ -342,7 +338,7 @@ function CompanionShell() {
     dragOriginRef.current = undefined;
     setQuickActionsVisible(false);
     void window.ourCompanion.companion.reportDragging({ dragging: true });
-    void setMousePassthrough(false);
+    interactive.enter('ann-drag');
     dragOriginRef.current = { screenX: point.screenX, screenY: point.screenY };
   }
 
@@ -365,6 +361,7 @@ function CompanionShell() {
     isDraggingRef.current = false;
     dragOriginRef.current = undefined;
     void window.ourCompanion.companion.reportDragging({ dragging: false });
+    interactive.leave('ann-drag');
     const pos = annPositionRef.current;
     localStorage.setItem('ann_position', JSON.stringify(pos));
     void window.ourCompanion.character.updatePosition({ x: pos.x, y: pos.y })
@@ -594,6 +591,8 @@ function CompanionShell() {
         <TypewriterSpeechBubble
           message={speech.typewriterMessage}
           onComplete={handleTypewriterComplete}
+          onMouseEnter={() => interactive.enter('speech-bubble')}
+          onMouseLeave={() => interactive.leave('speech-bubble')}
           style={floatingPositions.bubble ? {
             position: 'absolute',
             left: floatingPositions.bubble.rect.x,
@@ -606,6 +605,8 @@ function CompanionShell() {
       {!speech.typewriterMessage && speech.speech && (
         <div
           className="speech-bubble"
+          onMouseEnter={() => interactive.enter('speech-bubble')}
+          onMouseLeave={() => interactive.leave('speech-bubble')}
           style={floatingPositions.bubble ? {
             left: floatingPositions.bubble.rect.x,
             top: floatingPositions.bubble.rect.y,
@@ -628,6 +629,8 @@ function CompanionShell() {
             width: floatingPositions.card.rect.width,
             right: 'auto',
           } : undefined}
+          onMouseEnter={() => interactive.enter('discovery-card')}
+          onMouseLeave={() => interactive.leave('discovery-card')}
           onView={discovery.view}
           onSave={() => discovery.save(discovery.popup!)}
           onAddToJourney={() => discovery.addToJourney(discovery.popup!)}

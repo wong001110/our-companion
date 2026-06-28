@@ -4,10 +4,12 @@ import { HOLD_AFTER_COMPLETE_MS, getMsPerCharacter, splitCharacters } from './ty
 export interface TypewriterSpeechBubbleProps {
   message: string;
   onComplete?: () => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
   style?: React.CSSProperties;
 }
 
-export function TypewriterSpeechBubble({ message, onComplete, style }: TypewriterSpeechBubbleProps) {
+export function TypewriterSpeechBubble({ message, onComplete, onMouseEnter, onMouseLeave, style }: TypewriterSpeechBubbleProps) {
   const [visibleText, setVisibleText] = useState('');
   const [isTyping, setIsTyping] = useState(true);
   const charactersRef = useRef<string[]>([]);
@@ -58,7 +60,13 @@ export function TypewriterSpeechBubble({ message, onComplete, style }: Typewrite
   if (!message) return null;
 
   return (
-    <div className="speech-bubble speech-bubble-typing" aria-live="polite" style={style}>
+    <div
+      className="speech-bubble speech-bubble-typing"
+      aria-live="polite"
+      style={style}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
       {visibleText}
       {isTyping && <span className="speech-bubble-cursor" aria-hidden="true">▍</span>}
     </div>

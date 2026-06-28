@@ -6,6 +6,8 @@ export interface DiscoveryPopoutCardProps {
   candidate: PresentationCandidate;
   loading?: boolean;
   error?: string | null;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
   onView?: () => void;
   onSave?: () => Promise<void>;
   onAddToJourney?: () => Promise<void>;
@@ -20,6 +22,8 @@ export function DiscoveryPopoutCard({
   candidate,
   loading = false,
   error = null,
+  onMouseEnter,
+  onMouseLeave,
   onView,
   onSave,
   onAddToJourney,
@@ -74,6 +78,8 @@ export function DiscoveryPopoutCard({
       role="article"
       aria-label={`Discovery: ${displayTitle}`}
       style={style}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       <div className="card-header">
         <span className="card-source-badge">{candidate.sourceName ?? 'discovery'}</span>
