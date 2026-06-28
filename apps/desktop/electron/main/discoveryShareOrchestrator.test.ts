@@ -249,4 +249,126 @@ describe('DiscoveryShareOrchestrator', () => {
     expect(orchestrator.getLastSkipReason()).toBe('duplicate');
     vi.useRealTimers();
   });
+
+  it('deferred-only queue does not call canAnnounce', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const canAnnounce = vi.fn(() => true);
+    const orchestrator = new DiscoveryShareOrchestrator({
+      ...createDeps(),
+      shouldInterruptShare: () => true,
+      canAnnounce
+    });
+
+    orchestrator.enqueue(sampleDiscovery('no_can'));
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    const entry = orchestrator.getQueue().find((q) => q.discovery.id === 'no_can');
+    expect(entry?.status).toBe('deferred');
+
+    const callsBefore = canAnnounce.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(canAnnounce.mock.calls.length).toBe(callsBefore);
+    vi.useRealTimers();
+  });
+
+  it('queued discovery calls canAnnounce', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const canAnnounce = vi.fn(() => true);
+    const markAnnounced = vi.fn();
+    const orchestrator = new DiscoveryShareOrchestrator({
+      ...createDeps(),
+      canAnnounce,
+      markAnnounced
+    });
+
+    orchestrator.enqueue(sampleDiscovery('yes_can'));
+    await vi.runAllTimersAsync();
+    expect(canAnnounce).toHaveBeenCalled();
+    expect(markAnnounced).toHaveBeenCalledWith('yes_can');
+    vi.useRealTimers();
+  });
+
+  it('nearest retry time selected across deferred entries', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const orchestrator = new DiscoveryShareOrchestrator({
+      ...createDeps(),
+      shouldInterruptShare: () => true
+    });
+
+    orchestrator.enqueue(sampleDiscovery('near1'));
+    orchestrator.enqueue(sampleDiscovery('near2'));
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    const deferred = orchestrator.getQueue().filter((q) => q.status === 'deferred');
+    expect(deferred.length).toBeGreaterThanOrEqual(1);
+    const nearestRetryAt = deferred.reduce((min, q) => q.retryAfterAt! < min ? q.retryAfterAt! : min, Infinity);
+    expect(orchestrator.getNextRetryAt()).toBe(nearestRetryAt);
+    vi.useRealTimers();
+  });
+
+  it('clearQueue cancels retry timer', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const orchestrator = new DiscoveryShareOrchestrator({
+      ...createDeps(),
+      shouldInterruptShare: () => true
+    });
+
+    orchestrator.enqueue(sampleDiscovery('cancel'));
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    const entry = orchestrator.getQueue().find((q) => q.discovery.id === 'cancel');
+    expect(entry?.status).toBe('deferred');
+    expect(orchestrator.getNextRetryAt()).toBeDefined();
+
+    orchestrator.clearQueue();
+    expect(orchestrator.getNextRetryAt()).toBeUndefined();
+    expect(orchestrator.getQueueLength()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it('announced item removed from queue', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const orchestrator = new DiscoveryShareOrchestrator(createDeps());
+
+    orchestrator.enqueue(sampleDiscovery('removed'));
+    await vi.runAllTimersAsync();
+
+    expect(orchestrator.getQueue()).toHaveLength(0);
+    expect(orchestrator.getQueueLength()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it('interrupted discovery does not replay immediately', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let interruptCount = 0;
+    const orchestrator = new DiscoveryShareOrchestrator({
+      ...createDeps(),
+      shouldInterruptShare: () => { interruptCount++; return interruptCount <= 1; }
+    });
+
+    orchestrator.enqueue(sampleDiscovery('no_immediate'));
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    const entry = orchestrator.getQueue().find((q) => q.discovery.id === 'no_immediate');
+    expect(entry?.status).toBe('deferred');
+    expect(entry?.retryAfterAt).toBeGreaterThan(Date.now());
+    vi.useRealTimers();
+  });
+
+  it('max interrupts stops retrying', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const markAnnounced = vi.fn();
+    const orchestrator = new DiscoveryShareOrchestrator({
+      ...createDeps(),
+      shouldInterruptShare: () => true,
+      markAnnounced
+    });
+
+    orchestrator.enqueue(sampleDiscovery('exhaust'));
+    await vi.runAllTimersAsync();
+
+    expect(markAnnounced).not.toHaveBeenCalled();
+    expect(orchestrator.getQueueLength()).toBe(0);
+    vi.useRealTimers();
+  });
 });
