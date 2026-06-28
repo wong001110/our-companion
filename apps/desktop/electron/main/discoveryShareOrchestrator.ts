@@ -230,11 +230,14 @@ export class DiscoveryShareOrchestrator {
 
   private scheduleRetryTimer(): void {
     if (this.stopped || this.retryTimer !== undefined) return;
-    const deferred = this.queue.find((q) => q.status === 'deferred' && q.retryAfterAt);
-    if (!deferred || !deferred.retryAfterAt) return;
+    const deferredEntries = this.queue.filter((q) => q.status === 'deferred' && q.retryAfterAt);
+    if (deferredEntries.length === 0) return;
 
-    const waitMs = Math.max(0, deferred.retryAfterAt - Date.now());
-    this.nextRetryAt = deferred.retryAfterAt;
+    const nearest = deferredEntries.reduce((min, q) => q.retryAfterAt! < min ? q.retryAfterAt! : min, Infinity);
+    if (!Number.isFinite(nearest)) return;
+
+    const waitMs = Math.max(0, nearest - Date.now());
+    this.nextRetryAt = nearest;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = undefined;
       if (!this.stopped) void this.processQueue();
