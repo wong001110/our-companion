@@ -196,6 +196,9 @@ export class DiscoveryShareOrchestrator {
 
         this.queue = this.queue.filter((q) => q.status !== 'announced' && q.status !== 'failed' && q.status !== 'interrupted');
 
+        const entry = this.queue.find((q) => q.status === 'queued');
+        if (!entry) break;
+
         if (!this.deps.canAnnounce()) {
           let retries = 0;
           while (!this.deps.canAnnounce() && retries < MAX_CAN_ANNOUNCE_RETRIES && !this.stopped) {
@@ -208,9 +211,6 @@ export class DiscoveryShareOrchestrator {
             break;
           }
         }
-
-        const entry = this.queue.find((q) => q.status === 'queued');
-        if (!entry) break;
 
         entry.status = 'presenting';
         entry.presentedAt = new Date().toISOString();
