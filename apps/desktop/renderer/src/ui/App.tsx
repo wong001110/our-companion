@@ -33,12 +33,13 @@ import type {
 } from '@our-companion/shared';
 import { COMPANION_CHAT_RETENTION_DAYS } from '@our-companion/shared';
 import { t, type Lang } from '../i18n';
-import { getSpeechDuration, getWalkDelay, getWalkDelayRange, selectSpeechLine } from '../character/ann/companionBehavior';
+import { getWalkDelay, getWalkDelayRange, selectSpeechLine } from '../character/ann/companionBehavior';
 import { getIdleRotationDelay, isIdleState, selectWeightedIdleAnimation } from '../character/ann/idleBehavior';
 import { TypewriterSpeechBubble } from '../companion/TypewriterSpeechBubble';
 import { DiscoveryPopoutCard } from '../companion/DiscoveryPopoutCard';
 import { useCompanionSession } from '../companion/useCompanionSession';
-import { DiscoveryQueueManager } from '../companion/DiscoveryQueueManager';
+import { useSpeech } from '../companion/useSpeech';
+import { useDiscoveryPresentation } from '../companion/useDiscoveryPresentation';
 import type { PresentationCandidate } from '../companion/PresentationCandidate';
 import { CompanionCanvas, type AnimationName, type CompanionDragPoint } from './CompanionCanvas';
 import { LangContext, useLang, NotebookPage, PaperCard, StickyNote, MiniAnnSticker, ProgressBar, NotebookChatBubble } from './NotebookPrimitives';
@@ -68,29 +69,18 @@ function CompanionShell() {
   const [state, setState] = useState<CharacterRuntimeState>();
   const [facing, setFacing] = useState<'left' | 'right'>('right');
   const [idleAnimation, setIdleAnimation] = useState<AnimationName>('idle_laptop');
-  const [speech, setSpeech] = useState<string>();
-  const [typewriterMessage, setTypewriterMessage] = useState<string>();
-  const [discoveryPopup, setDiscoveryPopup] = useState<PresentationCandidate | null>(null);
-  const [discoveryDebug, setDiscoveryDebug] = useState<{
-    lastAction?: string;
-    lastStatus?: 'success' | 'error';
-    lastError?: string;
-    lastAt?: string;
-  }>({});
-  const [discoveryActionError, setDiscoveryActionError] = useState<string | null>(null);
-  const [discoveryActionLoading, setDiscoveryActionLoading] = useState(false);
-  const queueManagerRef = useRef(new DiscoveryQueueManager());
 
-  useEffect(() => {
-    window.__discoveryQueue = queueManagerRef.current;
-    return () => { delete window.__discoveryQueue; };
-  }, []);
+  const speech = useSpeech();
+
+  const discovery = useDiscoveryPresentation({
+    onDismissed: () => behavior.recordDismiss(),
+  });
+
   const [lang, setLang] = useState<Lang>('en');
   const behaviorRef = useRef<CharacterBehaviorSettings | undefined>(undefined);
   const stateRef = useRef<CharacterRuntimeState | undefined>(undefined);
   const langRef = useRef<Lang>('en');
   const mousePassthroughRef = useRef<boolean | undefined>(undefined);
-  const speechTimeoutRef = useRef<number | undefined>(undefined);
   const isDraggingRef = useRef(false);
   const sessionActiveRef = useRef(false);
   const dragOriginRef = useRef<{ screenX: number; screenY: number } | undefined>(undefined);
@@ -130,24 +120,6 @@ function CompanionShell() {
     setState(next);
   }
 
-  function showInstantSpeech(message: string) {
-    setTypewriterMessage(undefined);
-    setSpeech(message);
-    if (speechTimeoutRef.current !== undefined) {
-      window.clearTimeout(speechTimeoutRef.current);
-    }
-    speechTimeoutRef.current = window.setTimeout(() => setSpeech(undefined), getSpeechDuration(message));
-  }
-
-  function showTypewriterSpeech(message: string) {
-    setSpeech(undefined);
-    if (speechTimeoutRef.current !== undefined) {
-      window.clearTimeout(speechTimeoutRef.current);
-      speechTimeoutRef.current = undefined;
-    }
-    setTypewriterMessage(message);
-  }
-
   const [textInput, setTextInput] = useState('');
   const [textOpen, setTextOpen] = useState(false);
   const textInputRef = useRef<HTMLInputElement>(null);
@@ -155,15 +127,15 @@ function CompanionShell() {
   const { phase, toggleListening, runTurn, onTypewriterComplete, isSessionActive } = useCompanionSession({
     stateRef,
     applyState,
-    onInstantSpeech: showInstantSpeech,
-    onTypewriterSpeech: showTypewriterSpeech,
+    onInstantSpeech: speech.showInstant,
+    onTypewriterSpeech: speech.showTypewriter,
     pauseAmbient: (paused) => {
       sessionActiveRef.current = paused;
     }
   });
 
   const behavior = useCompanionBehavior({
-    hasDiscoveryCandidate: !!queueManagerRef.current.getNext(),
+    hasDiscoveryCandidate: discovery.hasCandidate(),
     userIsTyping: textOpen,
     panelOpen: false,
     activeConversation: phase !== 'idle',
@@ -173,32 +145,31 @@ function CompanionShell() {
   const [softHintVisible, setSoftHintVisible] = useState(false);
 
   function handleBehaviorDecision(decision: CompanionBehaviorDecision) {
-    if (decision.type === 'show_soft_hint' && !discoveryPopup && !softHintVisible) {
+    if (decision.type === 'show_soft_hint' && !discovery.popup && !softHintVisible) {
       setSoftHintVisible(true);
       behavior.recordSpeech();
-      showInstantSpeech("I found something that might connect to what you were exploring. Want to see it?");
-    } else if (decision.type === 'present_discovery' && !discoveryPopup) {
-      const next = queueManagerRef.current.presentNext();
+      speech.showInstant("I found something that might connect to what you were exploring. Want to see it?");
+    } else if (decision.type === 'present_discovery' && !discovery.popup) {
+      const next = discovery.presentNext();
       if (next) {
-        showTypewriterSpeech(next.candidate.shareMessage);
-        setDiscoveryPopup(next.candidate);
+        speech.showTypewriter(next.shareMessage);
         behavior.recordDiscoveryPresented();
       }
     }
   }
 
   const floatingPositions = useFloatingPlacement({
-    hasBubble: !!(typewriterMessage || speech),
-    hasCard: !!discoveryPopup,
+    hasBubble: speech.hasSpeech,
+    hasCard: !!discovery.popup,
     hasTextInput: textOpen && phase === 'idle',
     annPosition,
     screenWorkArea: { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight },
   });
 
   const handleTypewriterComplete = useCallback(() => {
-    setTypewriterMessage(undefined);
+    speech.onTypewriterComplete();
     onTypewriterComplete();
-  }, [onTypewriterComplete]);
+  }, [speech.onTypewriterComplete, onTypewriterComplete]);
 
   const openTextInput = useCallback(() => {
     setTextOpen(true);
@@ -241,7 +212,7 @@ function CompanionShell() {
   useEffect(() => {
     if (localStorage.getItem('ann_onboarded')) return;
     const timer = window.setTimeout(() => {
-      showInstantSpeech("Hi! Hover over me to see what I can do.");
+      speech.showInstant("Hi! Hover over me to see what I can do.");
       localStorage.setItem('ann_onboarded', '1');
     }, 1500);
     return () => window.clearTimeout(timer);
@@ -287,11 +258,10 @@ function CompanionShell() {
         sourceUrl: payload.sourceUrl,
         tags: payload.tags
       };
-      queueManagerRef.current.enqueue(pc);
-      const current = queueManagerRef.current.presentNext();
+      discovery.enqueue(pc);
+      const current = discovery.presentNext();
       if (current) {
-        showTypewriterSpeech(current.candidate.shareMessage);
-        setDiscoveryPopup(current.candidate);
+        speech.showTypewriter(current.shareMessage);
       }
     });
     const unsubscribePerformance = window.ourCompanion.action.onPerformance((script: PerformanceScript) => {
@@ -402,103 +372,6 @@ function CompanionShell() {
       .catch(() => undefined);
   }
 
-  function showSpeech(message: string) {
-    showTypewriterSpeech(message);
-  }
-
-  function advanceQueue() {
-    const next = queueManagerRef.current.presentNext();
-    if (next) {
-      showTypewriterSpeech(next.candidate.shareMessage);
-      setDiscoveryPopup(next.candidate);
-    }
-  }
-
-  function recordDiscoveryDebug(action: string, status: 'success' | 'error', error?: string) {
-    setDiscoveryDebug({
-      lastAction: action,
-      lastStatus: status,
-      lastError: error,
-      lastAt: new Date().toISOString(),
-    });
-  }
-
-  async function handleDiscoverySave(candidate: PresentationCandidate) {
-    if (discoveryActionLoading) return;
-    setDiscoveryActionLoading(true);
-    setDiscoveryActionError(null);
-    try {
-      await window.ourCompanion.discovery.markInterested(candidate.id);
-      recordDiscoveryDebug('save', 'success');
-      queueManagerRef.current.saveCurrent();
-      setDiscoveryPopup(null);
-      advanceQueue();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      recordDiscoveryDebug('save', 'error', msg);
-      setDiscoveryActionError(msg);
-      console.warn('[our-companion] Discovery save failed.', err);
-    } finally {
-      setDiscoveryActionLoading(false);
-    }
-  }
-
-  async function handleDiscoveryAddToJourney(candidate: PresentationCandidate) {
-    if (discoveryActionLoading) return;
-    setDiscoveryActionLoading(true);
-    setDiscoveryActionError(null);
-    try {
-      await window.ourCompanion.discovery.addToJourney({ discoveryId: candidate.id });
-      recordDiscoveryDebug('add_to_journey', 'success');
-      queueManagerRef.current.dismissCurrent();
-      setDiscoveryPopup(null);
-      advanceQueue();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      recordDiscoveryDebug('add_to_journey', 'error', msg);
-      setDiscoveryActionError(msg);
-      console.warn('[our-companion] Discovery add to journey failed.', err);
-    } finally {
-      setDiscoveryActionLoading(false);
-    }
-  }
-
-  async function handleDiscoveryIgnore(candidate: PresentationCandidate) {
-    if (discoveryActionLoading) return;
-    setDiscoveryActionLoading(true);
-    setDiscoveryActionError(null);
-    try {
-      await window.ourCompanion.discovery.markNotInterested(candidate.id);
-      recordDiscoveryDebug('ignore', 'success');
-      queueManagerRef.current.dismissCurrent();
-      setDiscoveryPopup(null);
-      advanceQueue();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      recordDiscoveryDebug('ignore', 'error', msg);
-      setDiscoveryActionError(msg);
-      console.warn('[our-companion] Discovery ignore failed.', err);
-    } finally {
-      setDiscoveryActionLoading(false);
-    }
-  }
-
-  function handleDiscoveryView() {
-    if (discoveryActionLoading) return;
-    queueManagerRef.current.dismissCurrent();
-    setDiscoveryPopup(null);
-    void window.ourCompanion.window.openPanel({ annX: annPositionRef.current.x, annY: annPositionRef.current.y });
-    recordDiscoveryDebug('view', 'success');
-  }
-
-  function handleDiscoveryClose() {
-    if (discoveryActionLoading) return;
-    setDiscoveryActionError(null);
-    queueManagerRef.current.dismissCurrent();
-    setDiscoveryPopup(null);
-    advanceQueue();
-  }
-
   useEffect(() => {
     const saved = localStorage.getItem('ann_position');
     if (saved) {
@@ -565,7 +438,7 @@ function CompanionShell() {
 
         const direction = targetX < currentX ? 'left' : 'right';
         setFacing(direction);
-        showSpeech(selectSpeechLine('walk_start', Math.random, langRef.current));
+        speech.showTypewriter(selectSpeechLine('walk_start', Math.random, langRef.current));
         previewState('walking', 'wandering');
 
         const startX = currentX;
@@ -607,7 +480,7 @@ function CompanionShell() {
       } finally {
         if (!isDraggingRef.current) {
           previewState('idle', 'waiting');
-          if (!cancelled) showSpeech(selectSpeechLine('walk_end', Math.random, langRef.current));
+          if (!cancelled) speech.showTypewriter(selectSpeechLine('walk_end', Math.random, langRef.current));
         }
       }
     }
@@ -657,7 +530,7 @@ function CompanionShell() {
       if (cancelled) return;
       ambientTimeout = window.setTimeout(() => {
         if (isIdleState(stateRef.current) && !isAmbientPaused()) {
-          showInstantSpeech(selectSpeechLine('ambient', Math.random, langRef.current));
+          speech.showInstant(selectSpeechLine('ambient', Math.random, langRef.current));
         }
         scheduleAmbientSpeech();
       }, randomBetween(30000, 65000));
@@ -680,7 +553,6 @@ function CompanionShell() {
       if (idleTimeout !== undefined) window.clearTimeout(idleTimeout);
       if (ambientTimeout !== undefined) window.clearTimeout(ambientTimeout);
       if (behaviorRefreshTimeout !== undefined) window.clearTimeout(behaviorRefreshTimeout);
-      if (speechTimeoutRef.current !== undefined) window.clearTimeout(speechTimeoutRef.current);
       if (animationFrame !== undefined) window.cancelAnimationFrame(animationFrame);
     };
   }, []);
@@ -718,9 +590,9 @@ function CompanionShell() {
           onDragEnd={handleDragEnd}
         />
       </div>
-      {typewriterMessage && (
+      {speech.typewriterMessage && (
         <TypewriterSpeechBubble
-          message={typewriterMessage}
+          message={speech.typewriterMessage}
           onComplete={handleTypewriterComplete}
           style={floatingPositions.bubble ? {
             position: 'absolute',
@@ -731,7 +603,7 @@ function CompanionShell() {
           } : undefined}
         />
       )}
-      {!typewriterMessage && speech && (
+      {!speech.typewriterMessage && speech.speech && (
         <div
           className="speech-bubble"
           style={floatingPositions.bubble ? {
@@ -741,14 +613,14 @@ function CompanionShell() {
             transform: 'none',
           } : undefined}
         >
-          {speech}
+          {speech.speech}
         </div>
       )}
-      {discoveryPopup && (
+      {discovery.popup && (
         <DiscoveryPopoutCard
-          candidate={discoveryPopup}
-          loading={discoveryActionLoading}
-          error={discoveryActionError}
+          candidate={discovery.popup}
+          loading={discovery.actionLoading}
+          error={discovery.actionError}
           style={floatingPositions.card ? {
             position: 'absolute',
             left: floatingPositions.card.rect.x,
@@ -756,14 +628,14 @@ function CompanionShell() {
             width: floatingPositions.card.rect.width,
             right: 'auto',
           } : undefined}
-          onView={handleDiscoveryView}
-          onSave={() => handleDiscoverySave(discoveryPopup)}
-          onAddToJourney={() => handleDiscoveryAddToJourney(discoveryPopup)}
-          onIgnore={() => handleDiscoveryIgnore(discoveryPopup)}
-          onClose={handleDiscoveryClose}
+          onView={discovery.view}
+          onSave={() => discovery.save(discovery.popup!)}
+          onAddToJourney={() => discovery.addToJourney(discovery.popup!)}
+          onIgnore={() => discovery.ignore(discovery.popup!)}
+          onClose={discovery.dismiss}
         />
       )}
-      {softHintVisible && !discoveryPopup && queueManagerRef.current.getNext() && (
+      {softHintVisible && !discovery.popup && discovery.hasCandidate() && (
         <div
           className="companion-soft-hint"
           style={floatingPositions.card ? {
@@ -779,10 +651,9 @@ function CompanionShell() {
             <button className="companion-quick-btn" onClick={() => {
               setSoftHintVisible(false);
               behavior.setDiscoveryPresentationState('presented');
-              const next = queueManagerRef.current.presentNext();
+              const next = discovery.presentNext();
               if (next) {
-                showTypewriterSpeech(next.candidate.shareMessage);
-                setDiscoveryPopup(next.candidate);
+                speech.showTypewriter(next.shareMessage);
                 behavior.recordDiscoveryPresented();
               }
             }}>Show me</button>
