@@ -43,6 +43,16 @@ export function useInteractiveRegion() {
     }
   }, [syncPassthrough]);
 
+  const clearAll = useCallback(() => {
+    if (graceTimerRef.current !== undefined) {
+      window.clearTimeout(graceTimerRef.current);
+      graceTimerRef.current = undefined;
+    }
+    regionsRef.current.clear();
+    setActiveRegions(new Set());
+    syncPassthrough(regionsRef.current);
+  }, [syncPassthrough]);
+
   useEffect(() => {
     return () => {
       if (graceTimerRef.current !== undefined) {
@@ -55,6 +65,7 @@ export function useInteractiveRegion() {
     activeRegions,
     enter,
     leave,
+    clearAll,
     isInteractive: activeRegions.size > 0,
   };
 }

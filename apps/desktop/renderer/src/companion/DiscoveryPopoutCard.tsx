@@ -8,7 +8,7 @@ export interface DiscoveryPopoutCardProps {
   error?: string | null;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
-  onView?: () => void;
+  onViewSource?: () => void;
   onSave?: () => Promise<void>;
   onAddToJourney?: () => Promise<void>;
   onIgnore?: () => Promise<void>;
@@ -24,7 +24,7 @@ export function DiscoveryPopoutCard({
   error = null,
   onMouseEnter,
   onMouseLeave,
-  onView,
+  onViewSource,
   onSave,
   onAddToJourney,
   onIgnore,
@@ -102,7 +102,7 @@ export function DiscoveryPopoutCard({
       )}
       {error && <p className="card-error">{error}</p>}
       <div className="card-actions">
-        {onView && <button className="card-action-btn" disabled={loading} onClick={onView}>View</button>}
+        {onViewSource && <button className="card-action-btn" disabled={loading} onClick={onViewSource}>View Source</button>}
         {onSave && <button className="card-action-btn card-action-primary" disabled={loading} onClick={() => void handleAsyncAction(onSave)}>{loading ? 'Saving…' : 'Save'}</button>}
         {onAddToJourney && <button className="card-action-btn" disabled={loading} onClick={() => void handleAsyncAction(onAddToJourney)}>{loading ? 'Adding…' : 'Add to Journey'}</button>}
         {onIgnore && <button className="card-action-btn card-action-ghost" disabled={loading} onClick={() => void handleAsyncAction(onIgnore)}>Ignore</button>}

@@ -571,9 +571,20 @@ function CompanionShell() {
           zIndex: 1,
           pointerEvents: 'all',
         }}
-        onMouseEnter={handleAnnHoverEnter}
-        onMouseLeave={handleAnnHoverLeave}
       >
+        <div
+          style={{
+            position: 'absolute',
+            left: ANN_SPRITE.width * 0.25,
+            top: ANN_SPRITE.height * 0.2,
+            width: ANN_SPRITE.width * 0.5,
+            height: ANN_SPRITE.height * 0.6,
+            zIndex: 2,
+            pointerEvents: 'all',
+          }}
+          onMouseEnter={handleAnnHoverEnter}
+          onMouseLeave={handleAnnHoverLeave}
+        />
         <CompanionCanvas
           state={state}
           facing={facing}
@@ -631,11 +642,20 @@ function CompanionShell() {
           } : undefined}
           onMouseEnter={() => interactive.enter('discovery-card')}
           onMouseLeave={() => interactive.leave('discovery-card')}
-          onView={discovery.view}
+          onViewSource={() => {
+            if (discovery.popup?.sourceUrl) {
+              void window.ourCompanion.tool.execute({ toolName: 'open_url', args: { url: discovery.popup.sourceUrl } }).catch(() => undefined);
+            }
+            discovery.dismiss();
+            interactive.clearAll();
+          }}
           onSave={() => discovery.save(discovery.popup!)}
           onAddToJourney={() => discovery.addToJourney(discovery.popup!)}
           onIgnore={() => discovery.ignore(discovery.popup!)}
-          onClose={discovery.dismiss}
+          onClose={() => {
+            discovery.dismiss();
+            interactive.clearAll();
+          }}
         />
       )}
       {softHintVisible && !discovery.popup && discovery.hasCandidate() && (
