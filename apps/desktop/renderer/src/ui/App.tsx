@@ -284,12 +284,7 @@ function CompanionShell() {
     };
   }, []);
 
-  function handlePointerHitChange(isHit: boolean) {
-    if (isHit) {
-      interactive.enter('ann-sprite');
-    } else {
-      interactive.leave('ann-sprite');
-    }
+  function handlePointerHitChange(_isHit: boolean) {
   }
 
   function handleAnnHoverEnter() {
