@@ -55,6 +55,7 @@ import {
 import { DebugJsonBlock, DebugTextBlock } from './DebugComponents';
 import { useFloatingPlacement } from '../companion/useFloatingPlacement';
 import { CompanionQuickActions } from '../companion/CompanionQuickActions';
+import { DragHandle } from '../companion/DragHandle';
 import { anchorFromBounds, type Rect } from '../companion/floatingPlacement';
 import { useCompanionBehavior } from '../companion/behavior/useCompanionBehavior';
 import type { CompanionBehaviorDecision } from '../companion/behavior/CompanionBehaviorController';
@@ -86,6 +87,7 @@ function CompanionShell() {
   const dragOriginRef = useRef<{ screenX: number; screenY: number } | undefined>(undefined);
   const [quickActionsVisible, setQuickActionsVisible] = useState(false);
   const quickActionsTimeoutRef = useRef<number | undefined>(undefined);
+  const [dragHandleVisible, setDragHandleVisible] = useState(false);
   const isHoveringAnnRef = useRef(false);
   const isHoveringActionsRef = useRef(false);
 
@@ -297,6 +299,7 @@ function CompanionShell() {
       quickActionsTimeoutRef.current = undefined;
     }
     setQuickActionsVisible(true);
+    setDragHandleVisible(true);
     interactive.enter('ann-hover');
   }
 
@@ -328,6 +331,7 @@ function CompanionShell() {
     quickActionsTimeoutRef.current = window.setTimeout(() => {
       if (!isHoveringAnnRef.current && !isHoveringActionsRef.current) {
         setQuickActionsVisible(false);
+        setDragHandleVisible(false);
       }
       quickActionsTimeoutRef.current = undefined;
     }, 150);
@@ -337,6 +341,7 @@ function CompanionShell() {
     isDraggingRef.current = true;
     dragOriginRef.current = undefined;
     setQuickActionsVisible(false);
+    setDragHandleVisible(false);
     void window.ourCompanion.companion.reportDragging({ dragging: true });
     interactive.enter('ann-drag');
     dragOriginRef.current = { screenX: point.screenX, screenY: point.screenY };
@@ -585,6 +590,11 @@ function CompanionShell() {
           onMouseEnter={handleAnnHoverEnter}
           onMouseLeave={handleAnnHoverLeave}
         />
+        <DragHandle
+          visible={dragHandleVisible}
+          width={ANN_SPRITE.width}
+          height={ANN_SPRITE.height}
+        />
         <CompanionCanvas
           state={state}
           facing={facing}
@@ -642,13 +652,6 @@ function CompanionShell() {
           } : undefined}
           onMouseEnter={() => interactive.enter('discovery-card')}
           onMouseLeave={() => interactive.leave('discovery-card')}
-          onViewSource={() => {
-            if (discovery.popup?.sourceUrl) {
-              void window.ourCompanion.tool.execute({ toolName: 'open_url', args: { url: discovery.popup.sourceUrl } }).catch(() => undefined);
-            }
-            discovery.dismiss();
-            interactive.clearAll();
-          }}
           onSave={() => discovery.save(discovery.popup!)}
           onAddToJourney={() => discovery.addToJourney(discovery.popup!)}
           onIgnore={() => discovery.ignore(discovery.popup!)}
