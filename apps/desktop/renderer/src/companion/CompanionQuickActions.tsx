@@ -19,6 +19,7 @@ export type CompanionQuickActionsProps = {
 
 const ACTION_SIZE = { width: 180, height: 40 };
 const FADE_DURATION_MS = 180;
+const POSITION_OFFSET_Y = 8;
 
 export function CompanionQuickActions({
   visible,
@@ -33,16 +34,22 @@ export function CompanionQuickActions({
 }: CompanionQuickActionsProps) {
   const [mounted, setMounted] = useState(false);
   const [fadingIn, setFadingIn] = useState(false);
+  const [exiting, setExiting] = useState(false);
 
   useEffect(() => {
     if (visible) {
       setMounted(true);
+      setExiting(false);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => setFadingIn(true));
       });
-    } else {
+    } else if (mounted) {
       setFadingIn(false);
-      const timer = window.setTimeout(() => setMounted(false), FADE_DURATION_MS);
+      setExiting(true);
+      const timer = window.setTimeout(() => {
+        setMounted(false);
+        setExiting(false);
+      }, FADE_DURATION_MS);
       return () => window.clearTimeout(timer);
     }
   }, [visible]);
@@ -54,13 +61,15 @@ export function CompanionQuickActions({
       anchorRect: anchor,
       floatingSize: ACTION_SIZE,
       screenWorkArea,
-      preferredPlacements: ['top', 'right', 'left', 'bottom'],
+      preferredPlacements: ['top', 'bottom', 'right', 'left'],
       gap: 8,
       obstacles,
     });
   }, [mounted, anchorRect, screenWorkArea, obstacles]);
 
   if (!mounted || !position) return null;
+
+  const isActive = fadingIn && !exiting;
 
   return (
     <div
@@ -70,13 +79,13 @@ export function CompanionQuickActions({
       style={{
         position: 'absolute',
         left: position.rect.x,
-        top: position.rect.y,
+        top: position.rect.y + POSITION_OFFSET_Y,
         display: 'flex',
         gap: '6px',
         zIndex: 20,
         pointerEvents: 'all',
-        opacity: fadingIn ? 1 : 0,
-        transform: fadingIn ? 'translateY(0) scale(1)' : 'translateY(-4px) scale(0.96)',
+        opacity: isActive ? 1 : 0,
+        transform: isActive ? 'translateY(0) scale(1)' : 'translateY(8px) scale(0.96)',
         transition: `opacity ${FADE_DURATION_MS}ms ease, transform ${FADE_DURATION_MS}ms ease`,
       }}
     >

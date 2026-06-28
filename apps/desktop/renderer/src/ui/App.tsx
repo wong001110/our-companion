@@ -183,7 +183,10 @@ function CompanionShell() {
   const closeTextInput = useCallback(() => {
     setTextOpen(false);
     setTextInput('');
-  }, []);
+    interactive.leave('chat-input');
+    interactive.leave('ann-hover');
+    interactive.leave('quick-actions');
+  }, [interactive]);
 
   const handleTextSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -201,12 +204,6 @@ function CompanionShell() {
       closeTextInput();
     }
   }, [phase, textOpen, closeTextInput]);
-
-  useEffect(() => {
-    if (!textOpen) {
-      interactive.leave('chat-input');
-    }
-  }, [textOpen, interactive]);
 
   useEffect(() => {
     document.documentElement.classList.add('companion-mode');
@@ -571,20 +568,9 @@ function CompanionShell() {
           zIndex: 1,
           pointerEvents: 'all',
         }}
+        onMouseEnter={handleAnnHoverEnter}
+        onMouseLeave={handleAnnHoverLeave}
       >
-        <div
-          style={{
-            position: 'absolute',
-            left: ANN_SPRITE.width * 0.25,
-            top: ANN_SPRITE.height * 0.2,
-            width: ANN_SPRITE.width * 0.5,
-            height: ANN_SPRITE.height * 0.6,
-            zIndex: 2,
-            pointerEvents: 'all',
-          }}
-          onMouseEnter={handleAnnHoverEnter}
-          onMouseLeave={handleAnnHoverLeave}
-        />
         <DragHandle
           visible={dragHandleVisible}
           width={ANN_SPRITE.width}
