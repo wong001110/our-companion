@@ -516,15 +516,18 @@ function CompanionShell() {
 
   return (
     <main className="companion-shell" style={overlayMode ? {
+      display: 'block',
       position: 'relative',
     } : undefined}>
-      <div style={overlayMode && annPosition ? {
-        position: 'absolute',
-        left: annPosition.x,
-        top: annPosition.y,
-        zIndex: 1,
-      } : undefined}>
-        <CompanionCanvas
+      {overlayMode ? (
+        <div style={{
+          position: 'absolute',
+          left: annPosition?.x ?? '50%',
+          top: annPosition?.y ?? '80%',
+          transform: annPosition ? 'none' : 'translate(-50%, -50%)',
+          zIndex: 1,
+        }}>
+          <CompanionCanvas
         state={state}
         facing={facing}
         isListening={phase === 'listening'}
@@ -543,7 +546,28 @@ function CompanionShell() {
         onDragMove={handleDragMove}
         onDragEnd={handleDragEnd}
       />
-      </div>
+        </div>
+      ) : (
+        <CompanionCanvas
+          state={state}
+          facing={facing}
+          isListening={phase === 'listening'}
+          animationOverride={isIdleState(state) && !isSessionActive && state?.intent !== 'sharing_discovery' ? idleAnimation : undefined}
+          onPointerHitChange={handlePointerHitChange}
+          onOpenPanel={() => {
+            if (phase === 'idle' && !textOpen) {
+              openTextInput();
+            } else {
+              closeTextInput();
+              void window.ourCompanion.window.openPanel();
+            }
+          }}
+          onToggleListen={toggleListening}
+          onDragStart={handleDragStart}
+          onDragMove={handleDragMove}
+          onDragEnd={handleDragEnd}
+        />
+      )}
       {typewriterMessage && (
         <TypewriterSpeechBubble
           message={typewriterMessage}

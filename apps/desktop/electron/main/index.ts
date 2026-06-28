@@ -11,7 +11,7 @@ let panelWindow: BrowserWindow | undefined;
 let services: AppServices;
 let discoveryScheduler: DiscoveryScheduler | undefined;
 let discoveryShareOrchestrator: DiscoveryShareOrchestrator | undefined;
-let companionOverlayMode = false;
+let companionOverlayMode = true;
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const companionListenHotkey = 'CommandOrControl+Shift+Space';
