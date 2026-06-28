@@ -83,18 +83,31 @@ function CompanionShell() {
   const speechTimeoutRef = useRef<number | undefined>(undefined);
   const isDraggingRef = useRef(false);
   const sessionActiveRef = useRef(false);
-  const dragOriginRef = useRef<{ windowX: number; windowY: number; screenX: number; screenY: number } | undefined>(undefined);
+  const dragOriginRef = useRef<{ screenX: number; screenY: number } | undefined>(undefined);
   const [quickActionsVisible, setQuickActionsVisible] = useState(false);
   const quickActionsTimeoutRef = useRef<number | undefined>(undefined);
   const isHoveringAnnRef = useRef(false);
   const isHoveringActionsRef = useRef(false);
 
-  const ANCHOR_LOCAL = { x: 110, y: 140, width: 220, height: 230 };
+  const ANN_SPRITE = { width: 220, height: 230 };
+  const [annPosition, setAnnPosition] = useState<{ x: number; y: number }>(() => {
+    try {
+      const saved = localStorage.getItem('ann_position');
+      if (saved) {
+        const p = JSON.parse(saved) as { x: number; y: number };
+        return { x: p.x, y: p.y };
+      }
+    } catch { /* ignore */ }
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    return { x: Math.round(w / 2 - ANN_SPRITE.width / 2), y: Math.round(h * 0.6) };
+  });
+  const annPositionRef = useRef(annPosition);
 
   const floatingPositions = useFloatingPlacement({
     hasBubble: !!(typewriterMessage || speech),
     hasCard: !!discoveryPopup,
-    annPosition: null,
+    annPosition,
     screenWorkArea: { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight },
   });
 
@@ -105,34 +118,6 @@ function CompanionShell() {
     if (floatingPositions.card) obstacles.push(floatingPositions.card.rect);
     return { anchor, obstacles };
   }, [floatingPositions]);
-
-  useEffect(() => {
-    const rects: Rect[] = [{ ...ANCHOR_LOCAL }];
-    if (floatingPositions.bubble) rects.push(floatingPositions.bubble.rect);
-    if (floatingPositions.card) rects.push(floatingPositions.card.rect);
-    if (quickActionsVisible && quickActionsPositions.anchor) {
-      rects.push({
-        x: quickActionsPositions.anchor.x,
-        y: quickActionsPositions.anchor.y,
-        width: 180,
-        height: 40,
-      });
-    }
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const r of rects) {
-      if (r.x < minX) minX = r.x;
-      if (r.y < minY) minY = r.y;
-      if (r.x + r.width > maxX) maxX = r.x + r.width;
-      if (r.y + r.height > maxY) maxY = r.y + r.height;
-    }
-    if (minX === Infinity) return;
-    const padding = 16;
-    const width = Math.max(440, maxX - minX + padding * 2);
-    const height = Math.max(390, maxY - minY + padding * 2);
-    const x = minX - padding;
-    const y = minY - padding;
-    void window.ourCompanion.companion.resizeToContent({ x, y, width, height }).catch(() => undefined);
-  }, [floatingPositions, quickActionsVisible, quickActionsPositions]);
 
   function applyState(next: CharacterRuntimeState) {
     stateRef.current = next;
@@ -349,42 +334,32 @@ function CompanionShell() {
     setQuickActionsVisible(false);
     void window.ourCompanion.companion.reportDragging({ dragging: true });
     void setMousePassthrough(false);
-
-    window.ourCompanion.window
-      .getBounds()
-      .then((bounds) => {
-        if (!isDraggingRef.current) return;
-        dragOriginRef.current = {
-          windowX: bounds.x,
-          windowY: bounds.y,
-          screenX: point.screenX,
-          screenY: point.screenY
-        };
-      })
-      .catch(() => undefined);
+    dragOriginRef.current = { screenX: point.screenX, screenY: point.screenY };
   }
 
   function handleDragMove(point: CompanionDragPoint) {
     const origin = dragOriginRef.current;
     if (!origin) return;
-
-    void window.ourCompanion.window.moveTo({
-      x: origin.windowX + point.screenX - origin.screenX,
-      y: origin.windowY + point.screenY - origin.screenY
-    });
+    const dx = point.screenX - origin.screenX;
+    const dy = point.screenY - origin.screenY;
+    const next = {
+      x: annPositionRef.current.x + dx,
+      y: annPositionRef.current.y + dy,
+    };
+    annPositionRef.current = next;
+    setAnnPosition(next);
+    origin.screenX = point.screenX;
+    origin.screenY = point.screenY;
   }
 
   function handleDragEnd() {
     isDraggingRef.current = false;
     dragOriginRef.current = undefined;
     void window.ourCompanion.companion.reportDragging({ dragging: false });
-    window.ourCompanion.window
-      .getBounds()
-      .then((bounds) => window.ourCompanion.character.updatePosition({ x: bounds.x, y: bounds.y }))
-      .then((nextState) => {
-        stateRef.current = nextState;
-        setState(nextState);
-      })
+    const pos = annPositionRef.current;
+    localStorage.setItem('ann_position', JSON.stringify(pos));
+    void window.ourCompanion.character.updatePosition({ x: pos.x, y: pos.y })
+      .then((nextState) => { stateRef.current = nextState; setState(nextState); })
       .catch(() => undefined);
   }
 
@@ -393,11 +368,20 @@ function CompanionShell() {
   }
 
   useEffect(() => {
-    void window.ourCompanion.character.getState().then((s) => {
-      if (s?.position) {
-        void window.ourCompanion.window.moveTo({ x: s.position.x, y: s.position.y }).catch(() => undefined);
-      }
-    }).catch(() => undefined);
+    const saved = localStorage.getItem('ann_position');
+    if (saved) {
+      try {
+        const p = JSON.parse(saved) as { x: number; y: number };
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const clamped = {
+          x: Math.max(0, Math.min(p.x, w - ANN_SPRITE.width)),
+          y: Math.max(0, Math.min(p.y, h - ANN_SPRITE.height)),
+        };
+        setAnnPosition(clamped);
+        annPositionRef.current = clamped;
+      } catch { /* ignore */ }
+    }
   }, []);
 
   useEffect(() => {
@@ -576,8 +560,8 @@ function CompanionShell() {
       <div
         style={{
           position: 'absolute',
-          left: ANCHOR_LOCAL.x,
-          top: ANCHOR_LOCAL.y,
+          left: annPosition.x,
+          top: annPosition.y,
           zIndex: 1,
           pointerEvents: 'all',
         }}
@@ -692,8 +676,8 @@ function CompanionShell() {
           className="companion-text-input"
           style={{
             position: 'absolute',
-            left: ANCHOR_LOCAL.x - 100,
-            top: ANCHOR_LOCAL.y + ANCHOR_LOCAL.height + 8,
+            left: annPosition.x + ANN_SPRITE.width / 2 - 100,
+            top: annPosition.y + ANN_SPRITE.height + 8,
             bottom: 'auto',
             transform: 'none',
           }}

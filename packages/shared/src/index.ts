@@ -1209,7 +1209,6 @@ export interface OurCompanionApi {
     appendMessage(input: CompanionAppendMessageInput): Promise<CompanionMessage>;
     clearHistory(input?: { characterId?: string }): Promise<void>;
     getOverlayDebug(): Promise<{ mode: 'small-window'; bounds?: WindowBounds }>;
-    resizeToContent(input: { x: number; y: number; width: number; height: number }): Promise<WindowBounds | undefined>;
   };
   debug: {
     resetData(input: DebugDataResetInput): Promise<DebugDataResetResult>;

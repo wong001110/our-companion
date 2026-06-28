@@ -139,7 +139,6 @@ const api: OurCompanionApi = {
     reportSessionPhase: (phase: CompanionSessionPhase) => invoke('companion:reportSessionPhase', phase),
     reportDragging: (input: { dragging: boolean }) => invoke('companion:reportDragging', input),
     getOverlayDebug: () => invoke('companion:getOverlayDebug'),
-    resizeToContent: (input: { x: number; y: number; width: number; height: number }) => invoke('companion:resizeToContent', input),
     onToggleListen: (listener: () => void) => {
       const channel = 'companion:toggleListen';
       const handler = () => listener();

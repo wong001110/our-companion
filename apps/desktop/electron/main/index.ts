@@ -14,10 +14,6 @@ let discoveryShareOrchestrator: DiscoveryShareOrchestrator | undefined;
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const companionListenHotkey = 'CommandOrControl+Shift+Space';
-const companionWindowSize = {
-  width: 440,
-  height: 390
-};
 
 function rendererUrl(mode: 'companion' | 'panel'): string {
   if (isDev) return `${process.env.VITE_DEV_SERVER_URL}?mode=${mode}`;
@@ -33,10 +29,10 @@ function createCompanionWindow(): BrowserWindow {
   const workArea = primaryDisplay.workArea;
 
   const window = new BrowserWindow({
-    width: companionWindowSize.width,
-    height: companionWindowSize.height,
-    x: workArea.x + workArea.width - companionWindowSize.width - 24,
-    y: workArea.y + workArea.height - companionWindowSize.height - 24,
+    x: workArea.x,
+    y: workArea.y,
+    width: workArea.width,
+    height: workArea.height,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -44,6 +40,7 @@ function createCompanionWindow(): BrowserWindow {
     resizable: false,
     alwaysOnTop: true,
     hasShadow: false,
+    skipTaskbar: true,
     icon: nativeImage.createEmpty(),
     webPreferences: {
       preload: preloadPath(),
@@ -52,6 +49,8 @@ function createCompanionWindow(): BrowserWindow {
       sandbox: true
     }
   });
+
+  window.setIgnoreMouseEvents(true, { forward: true });
 
   window.once('ready-to-show', () => {
     keepCompanionOnTop(window);
@@ -231,17 +230,12 @@ function registerIpc(): void {
   ipcMain.handle('window:getWorkArea', (event) => getWorkAreaForWindow(getSenderWindow(event)));
   ipcMain.handle('window:moveTo', (event, input: { x: number; y: number }) => {
     const window = getSenderWindow(event);
+    if (window === companionWindow) return window.getBounds();
     const bounds = window.getBounds();
-    const size = window === companionWindow ? companionWindowSize : bounds;
     const workArea = getWorkAreaForWindow(window);
-    const nextX = clamp(Math.round(input.x), workArea.x, workArea.x + workArea.width - size.width);
-    const nextY = clamp(Math.round(input.y), workArea.y, workArea.y + workArea.height - size.height);
-    if (window === companionWindow) {
-      window.setBounds({ x: nextX, y: nextY, ...companionWindowSize }, false);
-      keepCompanionOnTop(window);
-    } else {
-      window.setPosition(nextX, nextY, false);
-    }
+    const nextX = clamp(Math.round(input.x), workArea.x, workArea.x + workArea.width - bounds.width);
+    const nextY = clamp(Math.round(input.y), workArea.y, workArea.y + workArea.height - bounds.height);
+    window.setPosition(nextX, nextY, false);
     return window.getBounds();
   });
   ipcMain.handle('window:setMousePassthrough', (event, input: { passthrough: boolean }) => {
@@ -253,17 +247,6 @@ function registerIpc(): void {
     mode: 'small-window' as const,
     bounds: companionWindow && !companionWindow.isDestroyed() ? companionWindow.getBounds() : undefined,
   }));
-  ipcMain.handle('companion:resizeToContent', (event, input: { x: number; y: number; width: number; height: number }) => {
-    if (!companionWindow || companionWindow.isDestroyed()) return undefined;
-    const workArea = getWorkAreaForWindow(companionWindow);
-    const x = Math.round(Math.max(workArea.x, Math.min(input.x, workArea.x + workArea.width - input.width)));
-    const y = Math.round(Math.max(workArea.y, Math.min(input.y, workArea.y + workArea.height - input.height)));
-    const width = Math.round(Math.min(input.width, workArea.width));
-    const height = Math.round(Math.min(input.height, workArea.height));
-    companionWindow.setBounds({ x, y, width, height }, false);
-    keepCompanionOnTop(companionWindow);
-    return companionWindow.getBounds();
-  });
 }
 
 function getSenderWindow(event: IpcMainInvokeEvent): BrowserWindow {
