@@ -170,6 +170,11 @@ export class DiscoveryShareOrchestrator {
 
   clearQueue(): void {
     this.queue = [];
+    if (this.retryTimer !== undefined) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
+    this.nextRetryAt = undefined;
   }
 
   private emitEvent(type: string, payload: Record<string, unknown>): void {
@@ -223,12 +228,13 @@ export class DiscoveryShareOrchestrator {
 
   private scheduleRetryTimer(): void {
     if (this.stopped || this.retryTimer !== undefined) return;
-    const deferred = this.queue.find((q) => q.status === 'interrupted' && q.retryAfterAt);
+    const deferred = this.queue.find((q) => q.status === 'deferred' && q.retryAfterAt);
     if (!deferred || !deferred.retryAfterAt) return;
 
     const waitMs = Math.max(0, deferred.retryAfterAt - Date.now());
     if (waitMs > 60_000) return;
 
+    this.nextRetryAt = deferred.retryAfterAt;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = undefined;
       if (!this.stopped) void this.processQueue();
