@@ -228,25 +228,23 @@ function registerIpc(): void {
 
   ipcMain.handle('window:getBounds', (event) => getSenderWindow(event).getBounds());
   ipcMain.handle('window:getWorkArea', (event) => getWorkAreaForWindow(getSenderWindow(event)));
-  ipcMain.handle('window:moveTo', (event, input: { x: number; y: number }) => {
-    const window = getSenderWindow(event);
-    if (window === companionWindow) return window.getBounds();
-    const bounds = window.getBounds();
-    const workArea = getWorkAreaForWindow(window);
-    const nextX = clamp(Math.round(input.x), workArea.x, workArea.x + workArea.width - bounds.width);
-    const nextY = clamp(Math.round(input.y), workArea.y, workArea.y + workArea.height - bounds.height);
-    window.setPosition(nextX, nextY, false);
-    return window.getBounds();
-  });
   ipcMain.handle('window:setMousePassthrough', (event, input: { passthrough: boolean }) => {
     const window = getSenderWindow(event);
     window.setIgnoreMouseEvents(input.passthrough, { forward: true });
     return input.passthrough;
   });
-  ipcMain.handle('companion:getOverlayDebug', () => ({
-    mode: 'small-window' as const,
-    bounds: companionWindow && !companionWindow.isDestroyed() ? companionWindow.getBounds() : undefined,
-  }));
+  ipcMain.handle('companion:getOverlayDebug', () => {
+    const bounds = companionWindow && !companionWindow.isDestroyed() ? companionWindow.getBounds() : undefined;
+    const display = bounds ? screen.getDisplayMatching(bounds) : screen.getPrimaryDisplay();
+    const workArea = display.workArea;
+    return {
+      mode: 'workarea-overlay' as const,
+      bounds,
+      workArea: { x: workArea.x, y: workArea.y, width: workArea.width, height: workArea.height },
+      display: { id: display.id, label: display.label, size: display.size },
+      clickThrough: companionWindow ? true : undefined,
+    };
+  });
 }
 
 function getSenderWindow(event: IpcMainInvokeEvent): BrowserWindow {
@@ -277,10 +275,6 @@ function registerCompanionHotkey(): void {
 
 function unregisterCompanionHotkey(): void {
   globalShortcut.unregister(companionListenHotkey);
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }
 
 function startDiscoveryAutomation(): void {

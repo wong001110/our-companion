@@ -1,7 +1,6 @@
 export type {
   OurCompanionApi,
   WindowBounds,
-  WindowMoveInput,
   WindowMousePassthroughInput,
   DebugDataResetTarget,
   DebugDataResetInput,

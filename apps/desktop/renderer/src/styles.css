@@ -85,12 +85,6 @@ input {
   pointer-events: none;
 }
 
-.companion-shell-overlay {
-  display: block;
-  position: relative;
-  pointer-events: none;
-}
-
 .speech-bubble {
   position: absolute;
   left: 50%;
@@ -2142,8 +2136,6 @@ textarea {
 
 .discovery-popout-card {
   position: absolute;
-  right: 16px;
-  top: 16px;
   width: 320px;
   max-width: calc(100vw - 32px);
   background: linear-gradient(135deg, rgba(75, 58, 101, 0.95), rgba(42, 28, 44, 0.97));
@@ -2170,14 +2162,6 @@ textarea {
   opacity: 0;
   transform: translateY(-6px) scale(0.97);
   transition: opacity 0.3s ease, transform 0.3s ease;
-}
-
-.discovery-popout-card.card-mood-excited {
-  border-color: rgba(255, 183, 197, 0.35);
-}
-
-.discovery-popout-card.card-mood-curious {
-  border-color: rgba(186, 166, 224, 0.35);
 }
 
 .card-header {

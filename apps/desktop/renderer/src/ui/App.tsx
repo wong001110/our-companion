@@ -54,7 +54,7 @@ import {
 import { DebugJsonBlock, DebugTextBlock } from './DebugComponents';
 import { useFloatingPlacement } from '../companion/useFloatingPlacement';
 import { CompanionQuickActions } from '../companion/CompanionQuickActions';
-import { anchorFromBounds, type Rect } from '../companion/floatingPlacement';
+import type { Rect } from '../companion/floatingPlacement';
 
 export function App() {
   const mode = new URLSearchParams(window.location.search).get('mode');
@@ -367,6 +367,14 @@ function CompanionShell() {
     showTypewriterSpeech(message);
   }
 
+  function advanceQueue() {
+    const next = queueManagerRef.current.presentNext();
+    if (next) {
+      showTypewriterSpeech(next.candidate.shareMessage);
+      setDiscoveryPopup(next.candidate);
+    }
+  }
+
   useEffect(() => {
     const saved = localStorage.getItem('ann_position');
     if (saved) {
@@ -416,29 +424,31 @@ function CompanionShell() {
       try {
         if (cancelled || isDraggingRef.current || isAmbientPaused()) return;
 
-        const [bounds, workArea] = await Promise.all([window.ourCompanion.window.getBounds(), window.ourCompanion.window.getWorkArea()]);
+        const workArea = await window.ourCompanion.window.getWorkArea();
         if (cancelled || isDraggingRef.current) return;
 
+        const annWidth = ANN_SPRITE.width;
+        const annHeight = ANN_SPRITE.height;
         const minX = workArea.x + 12;
-        const maxX = workArea.x + workArea.width - bounds.width - 12;
+        const maxX = workArea.x + workArea.width - annWidth - 12;
         if (maxX <= minX) return;
 
+        const currentX = annPositionRef.current.x;
         let targetX = randomBetween(minX, maxX);
-        if (Math.abs(targetX - bounds.x) < 80) {
-          targetX = bounds.x < (minX + maxX) / 2 ? maxX : minX;
+        if (Math.abs(targetX - currentX) < 80) {
+          targetX = currentX < (minX + maxX) / 2 ? maxX : minX;
         }
 
-        const direction = targetX < bounds.x ? 'left' : 'right';
+        const direction = targetX < currentX ? 'left' : 'right';
         setFacing(direction);
         showSpeech(selectSpeechLine('walk_start', Math.random, langRef.current));
         previewState('walking', 'wandering');
 
-        const startX = bounds.x;
-        const startY = clamp(bounds.y, workArea.y, workArea.y + workArea.height - bounds.height);
+        const startX = currentX;
+        const startY = clamp(annPositionRef.current.y, workArea.y, workArea.y + workArea.height - annHeight);
         const distance = Math.abs(targetX - startX);
         const durationMs = clamp((distance / 115) * 1000, 900, 5200);
         const startedAt = performance.now();
-        let lastMoveAt = 0;
 
         await new Promise<void>((resolve) => {
           const step = (now: number) => {
@@ -449,11 +459,9 @@ function CompanionShell() {
 
             const progress = Math.min(1, (now - startedAt) / durationMs);
             const nextX = startX + (targetX - startX) * easeInOut(progress);
-
-            if (now - lastMoveAt > 28 || progress === 1) {
-              lastMoveAt = now;
-              window.ourCompanion.window.moveTo({ x: nextX, y: startY }).catch(() => undefined);
-            }
+            const nextPos = { x: Math.round(nextX), y: startY };
+            annPositionRef.current = nextPos;
+            setAnnPosition(nextPos);
 
             if (progress < 1) {
               animationFrame = window.requestAnimationFrame(step);
@@ -465,6 +473,11 @@ function CompanionShell() {
 
           animationFrame = window.requestAnimationFrame(step);
         });
+
+        void window.ourCompanion.character.updatePosition({ x: annPositionRef.current.x, y: annPositionRef.current.y })
+          .then((nextState) => { stateRef.current = nextState; setState(nextState); })
+          .catch(() => undefined);
+        localStorage.setItem('ann_position', JSON.stringify(annPositionRef.current));
       } catch (error) {
         console.warn('[our-companion] Companion walk failed; scheduling next walk.', error);
       } finally {
@@ -623,31 +636,30 @@ function CompanionShell() {
             void window.ourCompanion.window.openPanel();
           }}
           onSave={() => {
+            const id = discoveryPopup.id;
+            queueManagerRef.current.saveCurrent();
+            setDiscoveryPopup(null);
+            void window.ourCompanion.discovery.markInterested(id).catch(() => undefined);
+            advanceQueue();
+          }}
+          onAddToJourney={() => {
+            const id = discoveryPopup.id;
             queueManagerRef.current.dismissCurrent();
             setDiscoveryPopup(null);
-            const next = queueManagerRef.current.presentNext();
-            if (next) {
-              showTypewriterSpeech(next.candidate.shareMessage);
-              setDiscoveryPopup(next.candidate);
-            }
+            void window.ourCompanion.discovery.addToJourney({ discoveryId: id }).catch(() => undefined);
+            advanceQueue();
           }}
           onIgnore={() => {
+            const id = discoveryPopup.id;
             queueManagerRef.current.dismissCurrent();
             setDiscoveryPopup(null);
-            const next = queueManagerRef.current.presentNext();
-            if (next) {
-              showTypewriterSpeech(next.candidate.shareMessage);
-              setDiscoveryPopup(next.candidate);
-            }
+            void window.ourCompanion.discovery.markNotInterested(id).catch(() => undefined);
+            advanceQueue();
           }}
           onClose={() => {
             queueManagerRef.current.dismissCurrent();
             setDiscoveryPopup(null);
-            const next = queueManagerRef.current.presentNext();
-            if (next) {
-              showTypewriterSpeech(next.candidate.shareMessage);
-              setDiscoveryPopup(next.candidate);
-            }
+            advanceQueue();
           }}
         />
       )}

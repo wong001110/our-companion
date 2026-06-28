@@ -161,7 +161,6 @@ const api: OurCompanionApi = {
     openPanel: () => invoke('window:openPanel'),
     getBounds: () => invoke('window:getBounds'),
     getWorkArea: () => invoke('window:getWorkArea'),
-    moveTo: (input) => invoke('window:moveTo', input),
     setMousePassthrough: (input) => invoke('window:setMousePassthrough', input)
   },
   workspace: {

@@ -962,11 +962,6 @@ export interface WindowBounds {
   height: number;
 }
 
-export interface WindowMoveInput {
-  x: number;
-  y: number;
-}
-
 export interface WindowMousePassthroughInput {
   passthrough: boolean;
 }
@@ -1208,7 +1203,13 @@ export interface OurCompanionApi {
     getHistory(input?: CompanionHistoryInput): Promise<CompanionMessage[]>;
     appendMessage(input: CompanionAppendMessageInput): Promise<CompanionMessage>;
     clearHistory(input?: { characterId?: string }): Promise<void>;
-    getOverlayDebug(): Promise<{ mode: 'small-window'; bounds?: WindowBounds }>;
+    getOverlayDebug(): Promise<{
+      mode: 'workarea-overlay';
+      bounds?: WindowBounds;
+      workArea?: WindowBounds;
+      display?: { id: number; label: string; size: { width: number; height: number } };
+      clickThrough?: boolean;
+    }>;
   };
   debug: {
     resetData(input: DebugDataResetInput): Promise<DebugDataResetResult>;
@@ -1220,7 +1221,6 @@ export interface OurCompanionApi {
     openPanel(): Promise<boolean>;
     getBounds(): Promise<WindowBounds>;
     getWorkArea(): Promise<WindowBounds>;
-    moveTo(input: WindowMoveInput): Promise<WindowBounds>;
     setMousePassthrough(input: WindowMousePassthroughInput): Promise<boolean>;
   };
   workspace: {

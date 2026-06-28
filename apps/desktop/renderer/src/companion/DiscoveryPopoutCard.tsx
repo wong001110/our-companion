@@ -54,6 +54,13 @@ export function DiscoveryPopoutCard({
     handleClose();
   }
 
+  function handleOpenSource() {
+    if (!candidate.sourceUrl) return;
+    if (timerRef.current !== undefined) window.clearTimeout(timerRef.current);
+    void window.ourCompanion.tool.execute({ toolName: 'open_url', args: { url: candidate.sourceUrl } }).catch(() => undefined);
+    handleClose();
+  }
+
   const displayTitle = titleFallback(candidate);
   const displayBody = bodyFallback(candidate);
 
@@ -74,9 +81,9 @@ export function DiscoveryPopoutCard({
       <p className="card-hook">{candidate.oneLineHook}</p>
       <p className="card-body">{displayBody}</p>
       {candidate.sourceUrl && (
-        <a className="card-source-link" href={candidate.sourceUrl} target="_blank" rel="noopener noreferrer">
+        <button className="card-source-link" onClick={handleOpenSource}>
           View source
-        </a>
+        </button>
       )}
       {candidate.tags && candidate.tags.length > 0 && (
         <div className="card-tags">
