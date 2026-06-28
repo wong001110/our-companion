@@ -439,6 +439,16 @@ export function EngineObservatory() {
                 <button onClick={() => void window.ourCompanion.discovery.markSharedAsUnannounced().then((r) => { alert(`Cleared history; ${r.count} shared discoveries can now be re-announced`); void refreshAll(); })}>Reset announcement history</button>
                 <button onClick={() => void window.ourCompanion.discovery.clearPool().then(() => void refreshAll())}>Clear pool</button>
               </div>
+              <div style={{ marginTop: '8px' }}>
+                <strong>Simulation:</strong>
+                <div style={{ marginTop: '4px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  <button onClick={() => void window.ourCompanion.discovery.simulateCanAnnounceDisabled(true).then(() => void refreshAll())}>Block Ann</button>
+                  <button onClick={() => void window.ourCompanion.discovery.simulateCanAnnounceDisabled(false).then(() => void refreshAll())}>Unblock Ann</button>
+                  <button onClick={() => void window.ourCompanion.discovery.simulateInterruptEnabled(true).then(() => void refreshAll())}>Simulate interrupt</button>
+                  <button onClick={() => void window.ourCompanion.discovery.simulateInterruptEnabled(false).then(() => void refreshAll())}>Stop interrupt</button>
+                  <button onClick={() => void window.ourCompanion.discovery.clearSimulation().then(() => void refreshAll())}>Clear simulation</button>
+                </div>
+              </div>
             </>
           ) : (
             <p className="engine-empty">No scheduling data.</p>

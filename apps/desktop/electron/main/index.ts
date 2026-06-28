@@ -164,6 +164,10 @@ function registerIpc(): void {
     'discovery:countUnannounced': services.discovery.countUnannounced,
     'discovery:markSharedAsUnannounced': services.discovery.markSharedAsUnannounced,
     'discovery:clearPool': services.discovery.clearPool,
+    'discovery:simulateCanAnnounceDisabled': services.discovery.simulateCanAnnounceDisabled,
+    'discovery:simulateInterruptEnabled': services.discovery.simulateInterruptEnabled,
+    'discovery:clearSimulation': services.discovery.clearSimulation,
+    'discovery:getSimulationState': services.discovery.getSimulationState,
     'autonomy:startExploration': services.autonomy.startExploration,
     'autonomy:getCurrentCycle': services.autonomy.getCurrentCycle,
     'autonomy:getCycleHistory': services.autonomy.getCycleHistory,
@@ -208,7 +212,7 @@ function registerIpc(): void {
   } as const;
 
   for (const [channel, handler] of Object.entries(routes)) {
-    ipcMain.handle(channel, async (_event, input) => handler(input));
+    ipcMain.handle(channel, async (_event, input) => (handler as (input: unknown) => Promise<unknown>)(input));
   }
 
   ipcMain.handle('window:openPanel', () => {

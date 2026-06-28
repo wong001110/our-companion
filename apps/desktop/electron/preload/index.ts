@@ -65,7 +65,11 @@ const api: OurCompanionApi = {
     resetStatuses: () => invoke('discovery:resetStatuses'),
     countUnannounced: () => invoke('discovery:countUnannounced'),
     markSharedAsUnannounced: () => invoke('discovery:markSharedAsUnannounced'),
-    clearPool: () => invoke('discovery:clearPool')
+    clearPool: () => invoke('discovery:clearPool'),
+    simulateCanAnnounceDisabled: (disabled: boolean) => invoke('discovery:simulateCanAnnounceDisabled', disabled),
+    simulateInterruptEnabled: (enabled: boolean) => invoke('discovery:simulateInterruptEnabled', enabled),
+    clearSimulation: () => invoke('discovery:clearSimulation'),
+    getSimulationState: () => invoke('discovery:getSimulationState')
   },
   autonomy: {
     startExploration: (input?: StartExplorationInput) => invoke('autonomy:startExploration', input),

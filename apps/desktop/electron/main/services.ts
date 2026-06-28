@@ -267,6 +267,21 @@ export class AppServices {
     clearPool: async () => {
       this.db.resetDebugData({ targets: ['discoveries'] });
       return { cleared: true };
+    },
+    simulateCanAnnounceDisabled: async (disabled: boolean) => {
+      this.shareOrchestrator?.setSimulateCanAnnounceDisabled(disabled);
+      return { disabled };
+    },
+    simulateInterruptEnabled: async (enabled: boolean) => {
+      this.shareOrchestrator?.setSimulateInterruptEnabled(enabled);
+      return { enabled };
+    },
+    clearSimulation: async () => {
+      this.shareOrchestrator?.clearSimulation();
+      return { cleared: true };
+    },
+    getSimulationState: async () => {
+      return this.shareOrchestrator?.isSimulating() ?? { canAnnounceDisabled: false, interruptEnabled: false };
     }
   };
 

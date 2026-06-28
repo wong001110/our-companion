@@ -81,8 +81,37 @@ export class DiscoveryShareOrchestrator {
   private lastSkipReason: string | undefined;
   private lastAnnouncedId: string | undefined;
   private nextRetryAt: number | undefined;
+  private simulateCanAnnounceDisabled = false;
+  private simulateInterruptEnabled = false;
 
   constructor(private readonly deps: DiscoveryShareOrchestratorDeps) {}
+
+  setSimulateCanAnnounceDisabled(disabled: boolean): void {
+    this.simulateCanAnnounceDisabled = disabled;
+  }
+
+  setSimulateInterruptEnabled(enabled: boolean): void {
+    this.simulateInterruptEnabled = enabled;
+  }
+
+  clearSimulation(): void {
+    this.simulateCanAnnounceDisabled = false;
+    this.simulateInterruptEnabled = false;
+  }
+
+  isSimulating(): { canAnnounceDisabled: boolean; interruptEnabled: boolean } {
+    return { canAnnounceDisabled: this.simulateCanAnnounceDisabled, interruptEnabled: this.simulateInterruptEnabled };
+  }
+
+  private canAnnounceNow(): boolean {
+    if (this.simulateCanAnnounceDisabled) return false;
+    return this.deps.canAnnounce();
+  }
+
+  private shouldInterruptNow(): boolean {
+    if (this.simulateInterruptEnabled) return true;
+    return this.deps.shouldInterruptShare();
+  }
 
   isBusy(): boolean {
     return this.busy;
@@ -162,6 +191,8 @@ export class DiscoveryShareOrchestrator {
     this.queue = [];
     this.busy = false;
     this.processing = false;
+    this.nextRetryAt = undefined;
+    this.lastSkipReason = undefined;
     if (this.retryTimer !== undefined) {
       clearTimeout(this.retryTimer);
       this.retryTimer = undefined;
@@ -199,14 +230,14 @@ export class DiscoveryShareOrchestrator {
         const entry = this.queue.find((q) => q.status === 'queued');
         if (!entry) break;
 
-        if (!this.deps.canAnnounce()) {
+        if (!this.canAnnounceNow()) {
           let retries = 0;
-          while (!this.deps.canAnnounce() && retries < MAX_CAN_ANNOUNCE_RETRIES && !this.stopped) {
+          while (!this.canAnnounceNow() && retries < MAX_CAN_ANNOUNCE_RETRIES && !this.stopped) {
             this.lastSkipReason = 'cannot_announce';
             await delay(CAN_ANNOUNCE_WAIT_MS);
             retries++;
           }
-          if (!this.deps.canAnnounce()) {
+          if (!this.canAnnounceNow()) {
             this.lastSkipReason = 'cannot_announce_timeout';
             break;
           }
@@ -237,8 +268,18 @@ export class DiscoveryShareOrchestrator {
       : undefined;
     this.nextRetryAt = Number.isFinite(nearest) ? nearest : undefined;
 
-    if (this.retryTimer !== undefined) return;
-    if (this.nextRetryAt === undefined) return;
+    if (this.nextRetryAt === undefined) {
+      if (this.retryTimer !== undefined) {
+        clearTimeout(this.retryTimer);
+        this.retryTimer = undefined;
+      }
+      return;
+    }
+
+    if (this.retryTimer !== undefined) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
 
     const waitMs = Math.max(0, this.nextRetryAt - Date.now());
     this.retryTimer = setTimeout(() => {
@@ -248,10 +289,10 @@ export class DiscoveryShareOrchestrator {
   }
 
   private async announceDiscovery(entry: QueuedDiscovery): Promise<void> {
-    while (!this.deps.canAnnounce() && !this.stopped) {
+    while (!this.canAnnounceNow() && !this.stopped) {
       await delay(STEP_DELAY_MS);
     }
-    if (!this.deps.canAnnounce()) {
+    if (!this.canAnnounceNow()) {
       entry.status = 'interrupted';
       entry.interruptedAt = new Date().toISOString();
       entry.interruptCount++;
@@ -278,7 +319,7 @@ export class DiscoveryShareOrchestrator {
         entry.status = 'failed';
         return;
       }
-      if (step > 0 && this.deps.shouldInterruptShare()) {
+      if (step > 0 && this.shouldInterruptNow()) {
         entry.status = 'interrupted';
         entry.interruptedAt = new Date().toISOString();
         entry.interruptCount++;

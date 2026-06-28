@@ -1113,6 +1113,10 @@ export interface OurCompanionApi {
     countUnannounced(): Promise<{ count: number }>;
     markSharedAsUnannounced(): Promise<{ count: number }>;
     clearPool(): Promise<{ cleared: boolean }>;
+    simulateCanAnnounceDisabled(disabled: boolean): Promise<{ disabled: boolean }>;
+    simulateInterruptEnabled(enabled: boolean): Promise<{ enabled: boolean }>;
+    clearSimulation(): Promise<{ cleared: boolean }>;
+    getSimulationState(): Promise<{ canAnnounceDisabled: boolean; interruptEnabled: boolean }>;
   };
   autonomy: {
     startExploration(input?: StartExplorationInput): Promise<ExplorationCycleResult>;
