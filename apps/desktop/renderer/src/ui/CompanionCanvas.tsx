@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import type { CharacterRuntimeState } from '@our-companion/shared';
-import { annAnimations, type AnimationName, type AnnAnimationConfig } from '../character/ann/animationConfig';
+import { createAnnAnimations, type AnimationName, type AnnAnimationConfig } from '../character/ann/animationConfig';
 import { SpriteAnimator } from '../character/SpriteAnimator';
+import { DEFAULT_ASSET_ROOT } from '../character/AssetResolver';
+import { resolveAnimation, getAvailableClipNames } from '../character/AnimationResolver';
+import type { AnimationIntent } from '../character/AnimationCategories';
 
 export type { AnimationName };
 
@@ -16,6 +19,7 @@ interface CompanionCanvasProps {
   state?: CharacterRuntimeState;
   compact?: boolean;
   animationOverride?: AnimationName;
+  assetRoot?: string;
   facing?: 'left' | 'right';
   isListening?: boolean;
   onPointerHitChange?: (isHit: boolean) => void;
@@ -35,6 +39,7 @@ export function CompanionCanvas({
   state,
   compact = false,
   animationOverride,
+  assetRoot = DEFAULT_ASSET_ROOT,
   facing = 'right',
   isListening = false,
   onPointerHitChange,
@@ -54,9 +59,14 @@ export function CompanionCanvas({
   const singleClickTimeoutRef = useRef<number | undefined>(undefined);
   const [assetFailed, setAssetFailed] = useState(false);
   const intent = state?.intent ?? 'waiting';
+  const animations = useMemo(() => createAnnAnimations(assetRoot), [assetRoot]);
+  const availableClips = useMemo(() => getAvailableClipNames(animations), [animations]);
   const animation = useMemo(() => {
-    return animationOverride ? annAnimations[animationOverride] : selectAnimation(state);
-  }, [animationOverride, state?.coreState, state?.intent]);
+    if (animationOverride) return animations[animationOverride];
+    const intent = stateToIntent(state);
+    const resolution = resolveAnimation({ intent }, availableClips);
+    return animations[resolution.clip as AnimationName] ?? animations.idle_laptop;
+  }, [animationOverride, state?.coreState, state?.intent, animations, availableClips]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -269,36 +279,22 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function selectAnimation(state?: CharacterRuntimeState): AnnAnimationConfig {
-  if (!state) return annAnimations.idle_laptop;
-  if (state.coreState === 'listening') {
-    return annAnimations.think;
-  }
-  if (state.coreState === 'executing') {
-    return annAnimations.focus_typing;
-  }
-  if (state.coreState === 'returning') {
-    return annAnimations.return;
-  }
-  if (state.coreState === 'talking') {
-    return annAnimations.talk;
-  }
-  if (state.intent === 'sharing_discovery' || state.coreState === 'discovering') {
-    return annAnimations.discovery;
-  }
+function stateToIntent(state?: CharacterRuntimeState): AnimationIntent {
+  if (!state) return 'idle';
+  if (state.coreState === 'listening') return 'think';
+  if (state.coreState === 'executing') return 'work_focus';
+  if (state.coreState === 'returning') return 'expedition_return';
+  if (state.coreState === 'talking') return 'talk_neutral';
+  if (state.intent === 'sharing_discovery' || state.coreState === 'discovering') return 'expedition_present';
   if (
     state.intent === 'reviewing_memory' ||
     state.intent === 'reflecting_journey' ||
     state.intent === 'organizing_backpack' ||
     state.coreState === 'thinking' ||
     state.coreState === 'observing'
-  ) {
-    return annAnimations.think;
-  }
-  if (state.intent === 'wandering' || state.coreState === 'walking') {
-    return annAnimations.walk;
-  }
-  return annAnimations.idle_laptop;
+  ) return 'think';
+  if (state.intent === 'wandering' || state.coreState === 'walking') return 'walk_right';
+  return 'idle';
 }
 
 function FallbackAnn({ intent, compact, facing }: { intent: string; compact: boolean; facing: 'left' | 'right' }) {

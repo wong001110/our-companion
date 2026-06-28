@@ -216,7 +216,14 @@ function registerIpc(): void {
     'debug:getFoundationLog': services.debug.getFoundationLog,
     'debug:getEngineSnapshot': services.debug.getEngineSnapshot,
     'workspace:getStatus': services.workspace.getStatus,
-    'workspace:getSummary': services.workspace.getSummary
+    'workspace:getSummary': services.workspace.getSummary,
+    'companionNew:create': services.companionNew.create,
+    'companionNew:list': services.companionNew.list,
+    'companionNew:get': services.companionNew.get,
+    'companionNew:update': services.companionNew.update,
+    'companionNew:delete': services.companionNew.delete,
+    'companionNew:setPrimary': services.companionNew.setPrimary,
+    'companionNew:getPrimary': services.companionNew.getPrimary
   } as const;
 
   for (const [channel, handler] of Object.entries(routes)) {

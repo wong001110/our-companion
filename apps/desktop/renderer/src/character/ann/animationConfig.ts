@@ -1,17 +1,17 @@
 import type { SpriteSheetConfig } from '../SpriteAnimator';
+import { AssetResolver, DEFAULT_ASSET_ROOT } from '../AssetResolver';
 
 export const ANN_FRAME = { width: 300, height: 300 } as const;
-
-const sheetPath = (file: string) => `assets/characters/ann/animations/${file}`;
 
 export interface AnnAnimationConfig extends SpriteSheetConfig {
   name: string;
 }
 
-function anim(name: string, frames: number, frameMs: number): AnnAnimationConfig {
+function anim(name: string, frames: number, frameMs: number, assetRoot: string): AnnAnimationConfig {
+  const resolver = new AssetResolver(assetRoot);
   return {
     name,
-    sheet: sheetPath(`${name}.png`),
+    sheet: resolver.animation(name),
     frameWidth: ANN_FRAME.width,
     frameHeight: ANN_FRAME.height,
     frames,
@@ -21,22 +21,26 @@ function anim(name: string, frames: number, frameMs: number): AnnAnimationConfig
   };
 }
 
-export const annAnimations = {
-  idle_laptop: anim('idle_laptop', 6, 520),
-  idle_coffee: anim('idle_coffee', 4, 620),
-  idle_notes: anim('idle_notes', 3, 520),
-  idle_tired: anim('idle_tired', 4, 560),
-  walk: anim('walk', 8, 180),
-  return: anim('return', 4, 220),
-  think: anim('think', 6, 420),
-  focus_typing: anim('focus_typing', 4, 220),
-  discovery: anim('discovery', 8, 260),
-  discovery_shy: anim('discovery_shy', 4, 340),
-  talk: anim('talk', 6, 280),
-  talk_happy: anim('talk_happy', 4, 300),
-  task_start: anim('task_start', 4, 300),
-  task_success: anim('task_success', 4, 320),
-  task_failed: anim('task_failed', 4, 360)
-} as const satisfies Record<string, AnnAnimationConfig>;
+export function createAnnAnimations(assetRoot: string = DEFAULT_ASSET_ROOT) {
+  return {
+    idle_laptop: anim('idle_laptop', 6, 520, assetRoot),
+    idle_coffee: anim('idle_coffee', 4, 620, assetRoot),
+    idle_notes: anim('idle_notes', 3, 520, assetRoot),
+    idle_tired: anim('idle_tired', 4, 560, assetRoot),
+    walk: anim('walk', 8, 180, assetRoot),
+    return: anim('return', 4, 220, assetRoot),
+    think: anim('think', 6, 420, assetRoot),
+    focus_typing: anim('focus_typing', 4, 220, assetRoot),
+    discovery: anim('discovery', 8, 260, assetRoot),
+    discovery_shy: anim('discovery_shy', 4, 340, assetRoot),
+    talk: anim('talk', 6, 280, assetRoot),
+    talk_happy: anim('talk_happy', 4, 300, assetRoot),
+    task_start: anim('task_start', 4, 300, assetRoot),
+    task_success: anim('task_success', 4, 320, assetRoot),
+    task_failed: anim('task_failed', 4, 360, assetRoot)
+  } as const satisfies Record<string, AnnAnimationConfig>;
+}
+
+export const annAnimations = createAnnAnimations();
 
 export type AnimationName = keyof typeof annAnimations;

@@ -6,6 +6,10 @@ import type {
   CompanionHistoryInput,
   CompanionInsight,
   CompanionMessage,
+  CompanionPersonality,
+  CompanionProfile,
+  CreateCompanionInput,
+  UpdateCompanionInput,
   CuriosityTarget,
   DebugDataResetInput,
   DebugDataResetResult,
@@ -161,6 +165,70 @@ export class DatabaseService {
     const character = this.getActiveCharacters().find((item) => item.id === characterId);
     if (!character) throw new Error(`Character not found: ${characterId}`);
     return character;
+  }
+
+  // ─── Companion CRUD ──────────────────────────────────────────────────────
+
+  createCompanion(input: CreateCompanionInput): CompanionProfile {
+    const id = createId('companion');
+    const timestamp = nowIso();
+    this.db
+      .prepare(
+        `INSERT INTO companions (id, name, personality_description, personality_json, asset_root, is_primary, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?)`
+      )
+      .run(id, input.name, input.personalityDescription, JSON.stringify(input.personality), input.assetRoot, timestamp, timestamp);
+    return this.getCompanion(id)!;
+  }
+
+  getCompanion(id: string): CompanionProfile | null {
+    const row = this.db
+      .prepare('SELECT * FROM companions WHERE id = ?')
+      .get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return mapCompanionProfile(row);
+  }
+
+  listCompanions(): CompanionProfile[] {
+    const rows = this.db
+      .prepare('SELECT * FROM companions ORDER BY is_primary DESC, created_at ASC')
+      .all() as Array<Record<string, unknown>>;
+    return rows.map(mapCompanionProfile);
+  }
+
+  updateCompanion(id: string, input: UpdateCompanionInput): CompanionProfile {
+    const existing = this.getCompanion(id);
+    if (!existing) throw new Error(`Companion not found: ${id}`);
+    const timestamp = nowIso();
+    const name = input.name ?? existing.name;
+    const personalityDescription = input.personalityDescription ?? existing.personalityDescription;
+    const personality = input.personality ?? existing.personality;
+    const assetRoot = input.assetRoot ?? existing.assetRoot;
+    this.db
+      .prepare(
+        `UPDATE companions SET name = ?, personality_description = ?, personality_json = ?, asset_root = ?, updated_at = ? WHERE id = ?`
+      )
+      .run(name, personalityDescription, JSON.stringify(personality), assetRoot, timestamp, id);
+    return this.getCompanion(id)!;
+  }
+
+  deleteCompanion(id: string): { id: string; deleted: true } {
+    this.db.prepare('DELETE FROM companions WHERE id = ?').run(id);
+    return { id, deleted: true };
+  }
+
+  setPrimaryCompanion(id: string): CompanionProfile {
+    this.db.prepare('UPDATE companions SET is_primary = 0').run();
+    this.db.prepare('UPDATE companions SET is_primary = 1 WHERE id = ?').run(id);
+    return this.getCompanion(id)!;
+  }
+
+  getPrimaryCompanion(): CompanionProfile | null {
+    const row = this.db
+      .prepare('SELECT * FROM companions WHERE is_primary = 1 LIMIT 1')
+      .get() as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return mapCompanionProfile(row);
   }
 
   insertMemoryNode(node: MemoryNode): MemoryNode {
@@ -1245,5 +1313,18 @@ function createInitialCharacterStateLocal(characterId: string) {
     position: { x: 120, y: 320 },
     lastActivityAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
+  };
+}
+
+function mapCompanionProfile(row: Record<string, unknown>): CompanionProfile {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    personalityDescription: row.personality_description ? String(row.personality_description) : '',
+    personality: JSON.parse(String(row.personality_json || '{}')) as CompanionPersonality,
+    assetRoot: String(row.asset_root),
+    isPrimary: Number(row.is_primary) === 1,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
   };
 }

@@ -1228,6 +1228,7 @@ export interface OurCompanionApi {
     getStatus(): Promise<WorkspaceStatusSnapshot>;
     getSummary(): Promise<WorkspaceSummary>;
   };
+  companionNew: CompanionApi;
 }
 
 export const DEFAULT_CHARACTER_ID = 'ann';
@@ -1545,6 +1546,63 @@ export interface DiscoveryUserReaction {
   sentiment?: 'positive' | 'neutral' | 'negative';
   note?: string;
   timestamp: string;
+}
+
+// ============================================================================
+// VOLUME X — Companion Data Model
+// ============================================================================
+
+export interface CompanionPersonality {
+  energy: number;
+  curiosity: number;
+  sociability: number;
+  diligence: number;
+  playfulness: number;
+  confidence: number;
+  calmness: number;
+  shyness: number;
+}
+
+export interface CompanionProfile {
+  id: string;
+  name: string;
+  personalityDescription: string;
+  personality: CompanionPersonality;
+  assetRoot: string;
+  isPrimary: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateCompanionInput {
+  name: string;
+  personalityDescription: string;
+  personality: CompanionPersonality;
+  assetRoot: string;
+}
+
+export interface UpdateCompanionInput {
+  name?: string;
+  personalityDescription?: string;
+  personality?: CompanionPersonality;
+  assetRoot?: string;
+}
+
+export type CompanionAssetPack = {
+  id: string;
+  name: string;
+  path: string;
+  preview?: string;
+};
+
+export interface CompanionApi {
+  create(input: CreateCompanionInput): Promise<CompanionProfile>;
+  list(): Promise<CompanionProfile[]>;
+  get(id: string): Promise<CompanionProfile | null>;
+  update(input: { id: string } & UpdateCompanionInput): Promise<CompanionProfile>;
+  delete(id: string): Promise<{ id: string; deleted: true }>;
+  setPrimary(id: string): Promise<CompanionProfile>;
+  getPrimary(): Promise<CompanionProfile | null>;
 }
 
 export type OutsidePanelMode = 'closed' | 'peek' | 'compact' | 'expanded' | 'discussion' | 'history';

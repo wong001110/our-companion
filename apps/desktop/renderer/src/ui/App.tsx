@@ -60,14 +60,104 @@ import { anchorFromBounds, type Rect } from '../companion/floatingPlacement';
 import { useCompanionBehavior } from '../companion/behavior/useCompanionBehavior';
 import type { CompanionBehaviorDecision } from '../companion/behavior/CompanionBehaviorController';
 import { useInteractiveRegion } from '../companion/useInteractiveRegion';
+import type { CompanionProfile } from '@our-companion/shared';
+import { CompanionCreationPage } from '../companion/creation/CompanionCreationPage';
+import { CompanionSelectionPage } from '../companion/selection/CompanionSelectionPage';
+
+type AppView = 'loading' | 'creation' | 'selection' | 'companion' | 'panel';
 
 export function App() {
   const mode = new URLSearchParams(window.location.search).get('mode');
-  if (mode === 'companion') return <CompanionShell />;
+  if (mode === 'panel') return <PanelShell />;
+  return <CompanionEntryShell />;
+}
+
+function CompanionEntryShell() {
+  const [view, setView] = useState<AppView>('loading');
+  const [activeCompanion, setActiveCompanion] = useState<CompanionProfile | null>(null);
+  const [editingCompanion, setEditingCompanion] = useState<CompanionProfile | undefined>(undefined);
+
+  useEffect(() => {
+    void initCompanion();
+  }, []);
+
+  async function initCompanion() {
+    try {
+      const lastId = localStorage.getItem('last_companion_id');
+      if (lastId) {
+        const companion = await window.ourCompanion.companionNew.get(lastId);
+        if (companion) {
+          setActiveCompanion(companion);
+          setView('companion');
+          return;
+        }
+      }
+
+      const list = await window.ourCompanion.companionNew.list();
+      if (list.length === 0) {
+        setView('creation');
+      } else {
+        setView('selection');
+      }
+    } catch {
+      setView('creation');
+    }
+  }
+
+  function handleCompanionCreated(companion: CompanionProfile) {
+    localStorage.setItem('last_companion_id', companion.id);
+    setActiveCompanion(companion);
+    setEditingCompanion(undefined);
+    setView('companion');
+  }
+
+  function handleCompanionSelected(companion: CompanionProfile) {
+    localStorage.setItem('last_companion_id', companion.id);
+    setActiveCompanion(companion);
+    setView('companion');
+  }
+
+  function handleEditCompanion(companion: CompanionProfile) {
+    setEditingCompanion(companion);
+    setView('creation');
+  }
+
+  function handleSwitchCompanion() {
+    setView('selection');
+  }
+
+  if (view === 'loading') {
+    return <div className="companion-loading"><p>Loading...</p></div>;
+  }
+
+  if (view === 'creation') {
+    return (
+      <CompanionCreationPage
+        editCompanion={editingCompanion}
+        onComplete={handleCompanionCreated}
+        onCancel={editingCompanion ? () => { setEditingCompanion(undefined); setView('selection'); } : undefined}
+      />
+    );
+  }
+
+  if (view === 'selection') {
+    return (
+      <CompanionSelectionPage
+        onSelect={handleCompanionSelected}
+        onCreateNew={() => { setEditingCompanion(undefined); setView('creation'); }}
+        onEdit={handleEditCompanion}
+      />
+    );
+  }
+
+  if (activeCompanion) {
+    return <CompanionShell companion={activeCompanion} onSwitchCompanion={handleSwitchCompanion} />;
+  }
+
   return <PanelShell />;
 }
 
-function CompanionShell() {
+function CompanionShell({ companion, onSwitchCompanion }: { companion: CompanionProfile; onSwitchCompanion: () => void }) {
   const [state, setState] = useState<CharacterRuntimeState>();
   const [facing, setFacing] = useState<'left' | 'right'>('right');
   const [idleAnimation, setIdleAnimation] = useState<AnimationName>('idle_laptop');
@@ -208,6 +298,16 @@ function CompanionShell() {
   useEffect(() => {
     document.documentElement.classList.add('companion-mode');
     return () => document.documentElement.classList.remove('companion-mode');
+  }, []);
+
+  useEffect(() => {
+    setIdleAnimation('idle_laptop');
+    const timer = window.setTimeout(() => {
+      if (stateRef.current) {
+        previewState('idle', 'waiting');
+      }
+    }, 1500);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -422,22 +522,34 @@ function CompanionShell() {
         const annHeight = ANN_SPRITE.height;
         const minX = workArea.x + 12;
         const maxX = workArea.x + workArea.width - annWidth - 12;
-        if (maxX <= minX) return;
+        const minY = workArea.y + 12;
+        const maxY = workArea.y + workArea.height - annHeight - 12;
+        if (maxX <= minX || maxY <= minY) return;
 
         const currentX = annPositionRef.current.x;
+        const currentY = annPositionRef.current.y;
         let targetX = randomBetween(minX, maxX);
-        if (Math.abs(targetX - currentX) < 80) {
+        let targetY = randomBetween(minY, maxY);
+        if (Math.abs(targetX - currentX) < 80 && Math.abs(targetY - currentY) < 80) {
           targetX = currentX < (minX + maxX) / 2 ? maxX : minX;
+          targetY = currentY < (minY + maxY) / 2 ? maxY : minY;
         }
 
-        const direction = targetX < currentX ? 'left' : 'right';
-        setFacing(direction);
+        const dx = targetX - currentX;
+        const dy = targetY - currentY;
+        const isHorizontalDominant = Math.abs(dx) >= Math.abs(dy);
+
+        if (isHorizontalDominant) {
+          setFacing(dx < 0 ? 'left' : 'right');
+        }
+        setIdleAnimation(isHorizontalDominant ? (dx < 0 ? 'walk' : 'walk') : 'walk');
+
         speech.showTypewriter(selectSpeechLine('walk_start', Math.random, langRef.current));
         previewState('walking', 'wandering');
 
         const startX = currentX;
-        const startY = clamp(annPositionRef.current.y, workArea.y, workArea.y + workArea.height - annHeight);
-        const distance = Math.abs(targetX - startX);
+        const startY = currentY;
+        const distance = Math.hypot(dx, dy);
         const durationMs = clamp((distance / 115) * 1000, 900, 5200);
         const startedAt = performance.now();
 
@@ -449,8 +561,10 @@ function CompanionShell() {
             }
 
             const progress = Math.min(1, (now - startedAt) / durationMs);
-            const nextX = startX + (targetX - startX) * easeInOut(progress);
-            const nextPos = { x: Math.round(nextX), y: startY };
+            const eased = easeInOut(progress);
+            const nextX = startX + (targetX - startX) * eased;
+            const nextY = startY + (targetY - startY) * eased;
+            const nextPos = { x: Math.round(nextX), y: Math.round(nextY) };
             annPositionRef.current = nextPos;
             setAnnPosition(nextPos);
 
@@ -580,6 +694,7 @@ function CompanionShell() {
           state={state}
           facing={facing}
           isListening={phase === 'listening'}
+          assetRoot={companion.assetRoot}
           animationOverride={isIdleState(state) && !isSessionActive && state?.intent !== 'sharing_discovery' ? idleAnimation : undefined}
           onPointerHitChange={handlePointerHitChange}
           onOpenPanel={() => undefined}

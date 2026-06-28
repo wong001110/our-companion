@@ -310,4 +310,18 @@ CREATE INDEX IF NOT EXISTS idx_exploration_events_cycle ON exploration_loop_even
 CREATE INDEX IF NOT EXISTS idx_discovery_feedback_cycle ON discovery_feedback(cycle_id);
 CREATE INDEX IF NOT EXISTS idx_companion_messages_created ON companion_messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_companion_messages_character_created ON companion_messages(character_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS companions (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  personality_description TEXT,
+  personality_json TEXT NOT NULL DEFAULT '{}',
+  asset_root TEXT NOT NULL DEFAULT 'assets/companions/default',
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  settings_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_companions_primary ON companions(is_primary);
 `;

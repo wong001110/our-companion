@@ -49,9 +49,11 @@ import type {
   CompanionAppendMessageInput,
   CompanionHistoryInput,
   CompanionMessage,
+  CompanionProfile,
   CompanionReplyLanguage,
   CompanionSessionPhase,
   CompanionTurnInput,
+  CreateCompanionInput,
   CreateJourneyInput,
   CreateMemoryEdgeInput,
   CreateMemoryNodeInput,
@@ -77,6 +79,7 @@ import type {
   UiLang,
   UpdateAiSettingsInput,
   UpdateCharacterBehaviorSettingsInput,
+  UpdateCompanionInput,
   UpdateSpeechSettingsInput,
   UpdateMemoryNodeInput
 } from '@our-companion/shared';
@@ -163,6 +166,31 @@ export class AppServices {
         intent: saved.intent
       });
       return saved;
+    }
+  };
+
+  companionNew = {
+    create: async (input: CreateCompanionInput): Promise<CompanionProfile> => {
+      return this.db.createCompanion(input);
+    },
+    list: async (): Promise<CompanionProfile[]> => {
+      return this.db.listCompanions();
+    },
+    get: async (id: string): Promise<CompanionProfile | null> => {
+      return this.db.getCompanion(id);
+    },
+    update: async (input: { id: string } & UpdateCompanionInput): Promise<CompanionProfile> => {
+      const { id, ...rest } = input;
+      return this.db.updateCompanion(id, rest);
+    },
+    delete: async (id: string): Promise<{ id: string; deleted: true }> => {
+      return this.db.deleteCompanion(id);
+    },
+    setPrimary: async (id: string): Promise<CompanionProfile> => {
+      return this.db.setPrimaryCompanion(id);
+    },
+    getPrimary: async (): Promise<CompanionProfile | null> => {
+      return this.db.getPrimaryCompanion();
     }
   };
 

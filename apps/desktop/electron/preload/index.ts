@@ -7,6 +7,8 @@ import type {
   BaseEvent,
   CharacterRuntimeState,
   ChatInput,
+  CompanionProfile,
+  CreateCompanionInput,
   ExplorationLoopEvent,
   CompanionAppendMessageInput,
   CompanionHistoryInput,
@@ -25,6 +27,7 @@ import type {
   StartExplorationInput,
   SubmitDiscoveryFeedbackInput,
   ToolExecuteInput,
+  UpdateCompanionInput,
   UpdateMemoryNodeInput
 } from '@our-companion/shared';
 
@@ -172,6 +175,15 @@ const api: OurCompanionApi = {
   workspace: {
     getStatus: () => invoke('workspace:getStatus'),
     getSummary: () => invoke('workspace:getSummary'),
+  },
+  companionNew: {
+    create: (input: CreateCompanionInput) => invoke<CompanionProfile>('companionNew:create', input),
+    list: () => invoke<CompanionProfile[]>('companionNew:list'),
+    get: (id: string) => invoke<CompanionProfile | null>('companionNew:get', id),
+    update: (input: { id: string } & UpdateCompanionInput) => invoke<CompanionProfile>('companionNew:update', input),
+    delete: (id: string) => invoke<{ id: string; deleted: true }>('companionNew:delete', id),
+    setPrimary: (id: string) => invoke<CompanionProfile>('companionNew:setPrimary', id),
+    getPrimary: () => invoke<CompanionProfile | null>('companionNew:getPrimary')
   }
 };
 
