@@ -82,6 +82,13 @@ input {
   justify-items: center;
   background: transparent;
   -webkit-app-region: no-drag;
+  pointer-events: none;
+}
+
+.companion-shell-overlay {
+  display: block;
+  position: relative;
+  pointer-events: none;
 }
 
 .speech-bubble {
@@ -105,7 +112,7 @@ input {
   font-weight: 700;
   line-height: 1.35;
   text-align: center;
-  pointer-events: none;
+  pointer-events: all;
   z-index: 2;
 }
 

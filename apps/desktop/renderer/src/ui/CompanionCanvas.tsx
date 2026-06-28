@@ -175,25 +175,13 @@ export function CompanionCanvas({
       suppressClickRef.current = false;
       return;
     }
-    if (onPointerHitChange && !isPointerHitRef.current) return;
-
-    if (singleClickTimeoutRef.current !== undefined) {
-      window.clearTimeout(singleClickTimeoutRef.current);
-    }
-
-    singleClickTimeoutRef.current = window.setTimeout(() => {
-      singleClickTimeoutRef.current = undefined;
-      onOpenPanel?.();
-    }, 280);
   }
 
   function handleDoubleClick() {
-    if (singleClickTimeoutRef.current !== undefined) {
-      window.clearTimeout(singleClickTimeoutRef.current);
-      singleClickTimeoutRef.current = undefined;
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
     }
-    if (onPointerHitChange && !isPointerHitRef.current) return;
-    onToggleListen?.();
   }
 
   function pointerHitTest(event: PointerEvent<HTMLDivElement>): boolean {

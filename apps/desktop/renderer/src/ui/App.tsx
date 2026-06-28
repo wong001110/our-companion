@@ -294,6 +294,7 @@ function CompanionShell() {
       window.clearTimeout(quickActionsTimeoutRef.current);
       quickActionsTimeoutRef.current = undefined;
     }
+    void setMousePassthrough(false);
   }
 
   function handleActionsHoverLeave() {
@@ -572,10 +573,7 @@ function CompanionShell() {
   }, []);
 
   return (
-    <main className="companion-shell" style={overlayMode ? {
-      display: 'block',
-      position: 'relative',
-    } : undefined}>
+    <main className={`companion-shell ${overlayMode ? 'companion-shell-overlay' : ''}`}>
       {overlayMode ? (
         <div
           style={{
@@ -584,6 +582,7 @@ function CompanionShell() {
             top: annPosition?.y ?? '80%',
             transform: annPosition ? 'none' : 'translate(-50%, -50%)',
             zIndex: 1,
+            pointerEvents: 'all',
           }}
           onMouseEnter={handleAnnHoverEnter}
           onMouseLeave={handleAnnHoverLeave}
@@ -665,6 +664,29 @@ function CompanionShell() {
             width: floatingPositions.card.rect.width,
             right: 'auto',
           } : undefined}
+          onView={() => {
+            queueManagerRef.current.dismissCurrent();
+            setDiscoveryPopup(null);
+            void window.ourCompanion.window.openPanel();
+          }}
+          onSave={() => {
+            queueManagerRef.current.dismissCurrent();
+            setDiscoveryPopup(null);
+            const next = queueManagerRef.current.presentNext();
+            if (next) {
+              showTypewriterSpeech(next.candidate.shareMessage);
+              setDiscoveryPopup(next.candidate);
+            }
+          }}
+          onIgnore={() => {
+            queueManagerRef.current.dismissCurrent();
+            setDiscoveryPopup(null);
+            const next = queueManagerRef.current.presentNext();
+            if (next) {
+              showTypewriterSpeech(next.candidate.shareMessage);
+              setDiscoveryPopup(next.candidate);
+            }
+          }}
           onClose={() => {
             queueManagerRef.current.dismissCurrent();
             setDiscoveryPopup(null);
@@ -697,7 +719,17 @@ function CompanionShell() {
         onMouseLeave={handleActionsHoverLeave}
       />
       {phase === 'idle' && textOpen && (
-        <form className="companion-text-input" onSubmit={(e) => { void handleTextSubmit(e); }}>
+        <form
+          className="companion-text-input"
+          style={overlayMode ? {
+            position: 'absolute',
+            left: (annPosition?.x ?? 0) - 100,
+            top: (annPosition?.y ?? 0) + 130,
+            bottom: 'auto',
+            transform: 'none',
+          } : undefined}
+          onSubmit={(e) => { void handleTextSubmit(e); }}
+        >
           <input
             ref={textInputRef}
             value={textInput}

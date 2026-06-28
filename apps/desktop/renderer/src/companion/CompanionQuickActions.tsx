@@ -62,13 +62,13 @@ export function CompanionQuickActions({
         transition: 'opacity 0.2s ease',
       }}
     >
-      <button className="companion-quick-btn" onClick={onTextChat}>
+      <button className="companion-quick-btn" onClick={onTextChat} style={{ pointerEvents: 'all' }}>
         💬 Chat
       </button>
-      <button className="companion-quick-btn" onClick={onVoiceChat} title="Voice coming soon">
+      <button className="companion-quick-btn" onClick={onVoiceChat} title="Voice coming soon" style={{ pointerEvents: 'all' }}>
         🎙 Talk
       </button>
-      <button className="companion-quick-btn" onClick={onOpenPanel}>
+      <button className="companion-quick-btn" onClick={onOpenPanel} style={{ pointerEvents: 'all' }}>
         📖 Panel
       </button>
     </div>
