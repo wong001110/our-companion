@@ -106,33 +106,35 @@ describe('DiscoveryShareOrchestrator', () => {
 
   it('interrupted discovery exhausts retries then stops', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    const orchestrator = new DiscoveryShareOrchestrator({ ...createDeps(), shouldInterruptShare: () => true });
+    const markAnnounced = vi.fn();
+    const orchestrator = new DiscoveryShareOrchestrator({ ...createDeps(), shouldInterruptShare: () => true, markAnnounced });
 
     orchestrator.enqueue(sampleDiscovery('give_up'));
     await vi.runAllTimersAsync();
 
-    const entry = orchestrator.getQueue().find((q) => q.discovery.id === 'give_up');
-    expect(entry?.retryCount).toBeGreaterThanOrEqual(1);
-    expect(['interrupted', 'deferred']).toContain(entry?.status);
     expect(orchestrator.getLastAnnouncedId()).toBeUndefined();
+    expect(markAnnounced).not.toHaveBeenCalled();
+    expect(orchestrator.getQueueLength()).toBe(0);
     vi.useRealTimers();
   });
 
-  it('partial interrupts leave deferred entry with correct state', async () => {
+  it('partial interrupts eventually succeed after cooldown', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let count = 0;
+    const markAnnounced = vi.fn();
     const orchestrator = new DiscoveryShareOrchestrator({
       ...createDeps(),
-      shouldInterruptShare: () => { count++; return count <= 2; }
+      shouldInterruptShare: () => { count++; return count <= 2; },
+      markAnnounced
     });
 
     orchestrator.enqueue(sampleDiscovery('partial'));
     await vi.runAllTimersAsync();
 
     expect(count).toBeGreaterThanOrEqual(1);
-    const entry = orchestrator.getQueue().find((q) => q.discovery.id === 'partial');
-    expect(entry?.interruptCount).toBeGreaterThanOrEqual(1);
-    expect(entry?.retryAfterAt).toBeGreaterThan(Date.now());
+    expect(orchestrator.getLastAnnouncedId()).toBe('partial');
+    expect(markAnnounced).toHaveBeenCalledWith('partial');
+    expect(orchestrator.getQueueLength()).toBe(0);
     vi.useRealTimers();
   });
 
@@ -185,21 +187,23 @@ describe('DiscoveryShareOrchestrator', () => {
     vi.useRealTimers();
   });
 
-  it('interrupted discovery gets deferred with cooldown', async () => {
+  it('interrupted discovery retries after cooldown', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    let interruptCount = 0;
+    const markAnnounced = vi.fn();
     const orchestrator = new DiscoveryShareOrchestrator({
       ...createDeps(),
-      shouldInterruptShare: () => true
+      shouldInterruptShare: () => { interruptCount++; return interruptCount <= 1; },
+      markAnnounced
     });
 
     orchestrator.enqueue(sampleDiscovery('defer'));
     await vi.runAllTimersAsync();
 
-    const queue = orchestrator.getQueue();
-    const entry = queue.find((q) => q.discovery.id === 'defer');
-    expect(entry?.status).toBe('deferred');
-    expect(entry?.interruptCount).toBe(1);
-    expect(entry?.retryAfterAt).toBeGreaterThan(Date.now());
+    expect(interruptCount).toBeGreaterThanOrEqual(1);
+    expect(orchestrator.getLastAnnouncedId()).toBe('defer');
+    expect(markAnnounced).toHaveBeenCalledWith('defer');
+    expect(orchestrator.getQueueLength()).toBe(0);
     vi.useRealTimers();
   });
 
@@ -210,6 +214,38 @@ describe('DiscoveryShareOrchestrator', () => {
     orchestrator.enqueue(sampleDiscovery('reason_test'));
     const result = orchestrator.enqueue(sampleDiscovery('reason_test'));
     expect(result).toBe(false);
+    expect(orchestrator.getLastSkipReason()).toBe('duplicate');
+    vi.useRealTimers();
+  });
+
+  it('queue does not grow forever after completions', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const markAnnounced = vi.fn();
+    const orchestrator = new DiscoveryShareOrchestrator({ ...createDeps(), markAnnounced });
+
+    orchestrator.enqueue(sampleDiscovery('a'));
+    orchestrator.enqueue(sampleDiscovery('b'));
+    orchestrator.enqueue(sampleDiscovery('c'));
+    await vi.runAllTimersAsync();
+
+    expect(orchestrator.getQueueLength()).toBe(0);
+    expect(orchestrator.getQueue()).toHaveLength(0);
+    vi.useRealTimers();
+  });
+
+  it('deferred entry blocks duplicate enqueue', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const orchestrator = new DiscoveryShareOrchestrator({
+      ...createDeps(),
+      shouldInterruptShare: () => true
+    });
+
+    orchestrator.enqueue(sampleDiscovery('defer_dedup'));
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    const entry = orchestrator.getQueue().find((q) => q.discovery.id === 'defer_dedup');
+    expect(entry?.status).toBe('deferred');
+    expect(orchestrator.enqueue(sampleDiscovery('defer_dedup'))).toBe(false);
     expect(orchestrator.getLastSkipReason()).toBe('duplicate');
     vi.useRealTimers();
   });

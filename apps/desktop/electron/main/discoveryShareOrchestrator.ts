@@ -98,7 +98,7 @@ export class DiscoveryShareOrchestrator {
   }
 
   getQueueLength(): number {
-    return this.queue.length;
+    return this.queue.filter((q) => q.status === 'queued' || q.status === 'presenting' || q.status === 'deferred').length;
   }
 
   getQueue(): QueuedDiscovery[] {
@@ -130,7 +130,7 @@ export class DiscoveryShareOrchestrator {
 
     const canonicalUrl = normalizeUrl(discovery.url);
     const normalizedTitle = normalizeTitle(discovery.title);
-    const active = this.queue.filter((q) => q.status === 'queued' || q.status === 'presenting');
+    const active = this.queue.filter((q) => q.status === 'queued' || q.status === 'presenting' || q.status === 'deferred');
 
     const isDuplicate = active.some((q) => {
       if (q.discovery.id === discovery.id) return true;
@@ -194,6 +194,8 @@ export class DiscoveryShareOrchestrator {
           }
         }
 
+        this.queue = this.queue.filter((q) => q.status !== 'announced' && q.status !== 'failed' && q.status !== 'interrupted');
+
         if (!this.deps.canAnnounce()) {
           let retries = 0;
           while (!this.deps.canAnnounce() && retries < MAX_CAN_ANNOUNCE_RETRIES && !this.stopped) {
@@ -232,8 +234,6 @@ export class DiscoveryShareOrchestrator {
     if (!deferred || !deferred.retryAfterAt) return;
 
     const waitMs = Math.max(0, deferred.retryAfterAt - Date.now());
-    if (waitMs > 60_000) return;
-
     this.nextRetryAt = deferred.retryAfterAt;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = undefined;
