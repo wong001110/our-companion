@@ -85,6 +85,105 @@ input {
   pointer-events: none;
 }
 
+.companion-soft-hint {
+  position: absolute;
+  background: linear-gradient(135deg, rgba(75, 58, 101, 0.92), rgba(42, 28, 44, 0.95));
+  border: 1.5px solid rgba(239, 206, 228, 0.2);
+  border-radius: 14px;
+  padding: 14px 16px;
+  z-index: 10;
+  pointer-events: all;
+  box-shadow:
+    0 4px 20px rgba(87, 59, 37, 0.25),
+    0 1px 4px rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(8px);
+  animation: soft-hint-fade-in 0.3s ease;
+}
+
+.companion-soft-hint p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: #f8edf5;
+  line-height: 1.4;
+}
+
+.soft-hint-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.soft-hint-dismiss {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(239, 206, 228, 0.15);
+}
+
+@keyframes soft-hint-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.behavior-debug-panel {
+  border: 1px solid rgba(137, 89, 190, 0.18);
+  border-radius: 8px;
+  padding: 14px;
+  background: transparent;
+}
+
+.behavior-debug-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.behavior-debug-block {
+  display: grid;
+  gap: 4px;
+}
+
+.behavior-debug-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(247, 237, 245, 0.55);
+  text-transform: uppercase;
+}
+
+.behavior-debug-block select {
+  width: 100%;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(137, 89, 190, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f7edf5;
+  font-size: 12px;
+}
+
+.behavior-debug-status {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0;
+}
+
+.behavior-debug-status-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+}
+
+.behavior-debug-value {
+  font-size: 12px;
+  color: #f7edf5;
+}
+
+.behavior-debug-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
 .speech-bubble {
   position: absolute;
   left: 50%;

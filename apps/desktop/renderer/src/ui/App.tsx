@@ -55,6 +55,8 @@ import { DebugJsonBlock, DebugTextBlock } from './DebugComponents';
 import { useFloatingPlacement } from '../companion/useFloatingPlacement';
 import { CompanionQuickActions } from '../companion/CompanionQuickActions';
 import { anchorFromBounds, type Rect } from '../companion/floatingPlacement';
+import { useCompanionBehavior } from '../companion/behavior/useCompanionBehavior';
+import type { CompanionBehaviorDecision } from '../companion/behavior/CompanionBehaviorController';
 
 export function App() {
   const mode = new URLSearchParams(window.location.search).get('mode');
@@ -158,6 +160,31 @@ function CompanionShell() {
       sessionActiveRef.current = paused;
     }
   });
+
+  const behavior = useCompanionBehavior({
+    hasDiscoveryCandidate: !!queueManagerRef.current.getNext(),
+    userIsTyping: textOpen,
+    panelOpen: false,
+    activeConversation: phase !== 'idle',
+    onDecision: (decision) => handleBehaviorDecision(decision),
+  });
+
+  const [softHintVisible, setSoftHintVisible] = useState(false);
+
+  function handleBehaviorDecision(decision: CompanionBehaviorDecision) {
+    if (decision.type === 'show_soft_hint' && !discoveryPopup && !softHintVisible) {
+      setSoftHintVisible(true);
+      behavior.recordSpeech();
+      showInstantSpeech("I found something that might connect to what you were exploring. Want to see it?");
+    } else if (decision.type === 'present_discovery' && !discoveryPopup) {
+      const next = queueManagerRef.current.presentNext();
+      if (next) {
+        showTypewriterSpeech(next.candidate.shareMessage);
+        setDiscoveryPopup(next.candidate);
+        behavior.recordDiscoveryPresented();
+      }
+    }
+  }
 
   const floatingPositions = useFloatingPlacement({
     hasBubble: !!(typewriterMessage || speech),
@@ -726,6 +753,36 @@ function CompanionShell() {
           onIgnore={() => void handleDiscoveryIgnore(discoveryPopup)}
           onClose={handleDiscoveryClose}
         />
+      )}
+      {softHintVisible && !discoveryPopup && queueManagerRef.current.getNext() && (
+        <div
+          className="companion-soft-hint"
+          style={floatingPositions.card ? {
+            position: 'absolute',
+            left: floatingPositions.card.rect.x,
+            top: floatingPositions.card.rect.y,
+            width: floatingPositions.card.rect.width,
+            right: 'auto',
+          } : undefined}
+        >
+          <p>I found something interesting. Want to see it?</p>
+          <div className="soft-hint-actions">
+            <button className="companion-quick-btn" onClick={() => {
+              setSoftHintVisible(false);
+              behavior.setDiscoveryPresentationState('presented');
+              const next = queueManagerRef.current.presentNext();
+              if (next) {
+                showTypewriterSpeech(next.candidate.shareMessage);
+                setDiscoveryPopup(next.candidate);
+                behavior.recordDiscoveryPresented();
+              }
+            }}>Show me</button>
+            <button className="companion-quick-btn soft-hint-dismiss" onClick={() => {
+              setSoftHintVisible(false);
+              behavior.recordDismiss();
+            }}>Not now</button>
+          </div>
+        </div>
       )}
       <CompanionQuickActions
         visible={quickActionsVisible && !isDraggingRef.current}

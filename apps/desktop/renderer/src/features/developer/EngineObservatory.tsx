@@ -8,6 +8,9 @@ import type {
   SpeechStatus
 } from '@our-companion/shared';
 import { WorkspaceStatusPanel } from './WorkspaceStatusPanel';
+import { BehaviorDebugPanel } from '../../companion/behavior/BehaviorDebugPanel';
+import type { CompanionBehaviorState, CompanionMode, CompanionMood, CompanionEnergy, CompanionFocus, InitiativeLevel, DiscoveryPresentationState } from '../../companion/behavior/CompanionBehaviorTypes';
+import { createDefaultBehaviorState } from '../../companion/behavior/CompanionBehaviorTypes';
 
 const PIPELINE_STEPS: ExplorationState[] = [
   'idle',
@@ -84,6 +87,36 @@ export function EngineObservatory() {
   });
   const [loading, setLoading] = useState(false);
   const [queueStats, setQueueStats] = useState<{ queued: number; presenting: number; dismissed: number; saved: number } | null>(null);
+  const [behaviorState, setBehaviorState] = useState<CompanionBehaviorState>(createDefaultBehaviorState);
+  const [behaviorDecision, setBehaviorDecision] = useState<{ type: string; reason: string } | null>(null);
+  const [recentDismissCount, setRecentDismissCount] = useState(0);
+  const [recentIgnoreCount, setRecentIgnoreCount] = useState(0);
+
+  function updateBehavior(partial: Partial<CompanionBehaviorState>) {
+    setBehaviorState((prev) => ({ ...prev, ...partial }));
+  }
+
+  function handleBehaviorSetMode(mode: CompanionMode) { updateBehavior({ mode }); }
+  function handleBehaviorSetMood(mood: CompanionMood) { updateBehavior({ mood }); }
+  function handleBehaviorSetEnergy(energy: CompanionEnergy) { updateBehavior({ energy }); }
+  function handleBehaviorSetFocus(focus: CompanionFocus) { updateBehavior({ focus }); }
+  function handleBehaviorSetInitiativeLevel(level: InitiativeLevel) { updateBehavior({ initiativeLevel: level }); }
+  function handleBehaviorSetDiscoveryPresentationState(s: DiscoveryPresentationState) { updateBehavior({ discoveryPresentationState: s }); }
+  function handleBehaviorSetDebugOverride(on: boolean) { updateBehavior({ debugOverride: on }); }
+  function handleBehaviorForceDecision() {
+    setBehaviorDecision({ type: 'forced', reason: 'manual_force' });
+  }
+  function handleBehaviorResetTimers() {
+    updateBehavior({
+      lastAnnSpokeAt: null,
+      lastUserInteractionAt: null,
+      lastDiscoveryPresentedAt: null,
+      lastUserDismissedAt: null,
+      interruptionSuppressedUntil: null,
+    });
+    setRecentDismissCount(0);
+    setRecentIgnoreCount(0);
+  }
 
   const refreshQueueStats = useCallback(() => {
     const stats = window.__discoveryQueue?.getStats();
@@ -534,6 +567,24 @@ export function EngineObservatory() {
           <p className="engine-empty">Society engine is not wired into the desktop app in v1.</p>
         </SnapshotPanel>
       </div>
+
+      <SnapshotPanel title="Behavior Controller" open={expandedPanels.behavior ?? false} onToggle={() => togglePanel('behavior')}>
+        <BehaviorDebugPanel
+          state={behaviorState}
+          lastDecision={behaviorDecision}
+          recentDismissCount={recentDismissCount}
+          recentIgnoreCount={recentIgnoreCount}
+          onSetMode={handleBehaviorSetMode}
+          onSetMood={handleBehaviorSetMood}
+          onSetEnergy={handleBehaviorSetEnergy}
+          onSetFocus={handleBehaviorSetFocus}
+          onSetInitiativeLevel={handleBehaviorSetInitiativeLevel}
+          onSetDiscoveryPresentationState={handleBehaviorSetDiscoveryPresentationState}
+          onSetDebugOverride={handleBehaviorSetDebugOverride}
+          onForceDecision={handleBehaviorForceDecision}
+          onResetTimers={handleBehaviorResetTimers}
+        />
+      </SnapshotPanel>
 
       {snapshot?.capturedAt && (
         <p className="engine-meta">Snapshot captured at {new Date(snapshot.capturedAt).toLocaleString()}</p>
