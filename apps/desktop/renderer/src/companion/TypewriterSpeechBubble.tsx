@@ -13,6 +13,8 @@ export function TypewriterSpeechBubble({ message, onComplete, style }: Typewrite
   const charactersRef = useRef<string[]>([]);
   const indexRef = useRef(0);
   const timeoutRef = useRef<number | undefined>(undefined);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   useEffect(() => {
     charactersRef.current = splitCharacters(message);
@@ -22,7 +24,7 @@ export function TypewriterSpeechBubble({ message, onComplete, style }: Typewrite
 
     if (charactersRef.current.length === 0) {
       setIsTyping(false);
-      onComplete?.();
+      onCompleteRef.current?.();
       return;
     }
 
@@ -36,7 +38,7 @@ export function TypewriterSpeechBubble({ message, onComplete, style }: Typewrite
       if (nextIndex >= charactersRef.current.length) {
         setIsTyping(false);
         timeoutRef.current = window.setTimeout(() => {
-          onComplete?.();
+          onCompleteRef.current?.();
         }, HOLD_AFTER_COMPLETE_MS);
         return;
       }
@@ -51,7 +53,7 @@ export function TypewriterSpeechBubble({ message, onComplete, style }: Typewrite
         window.clearTimeout(timeoutRef.current);
       }
     };
-  }, [message, onComplete]);
+  }, [message]);
 
   if (!message) return null;
 
