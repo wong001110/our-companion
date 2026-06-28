@@ -13,6 +13,7 @@ import {
 } from '@our-companion/ai-engine';
 import { directPerformance, planAction, runActionPlan, type ActionOrchestratorDeps } from '@our-companion/action-engine';
 import { advanceCharacter, applyEmotionEvent } from '@our-companion/character-engine';
+import { collectWorkspaceStatus, type WorkspaceStatusSnapshot } from './workspaceStatus';
 import { generateCuriosityTargets } from '@our-companion/curiosity-engine';
 import { assessCuriosity } from '@our-companion/curiosity-engine';
 import { DatabaseService } from '@our-companion/database';
@@ -700,6 +701,11 @@ export class AppServices {
     resetData: async (input: DebugDataResetInput) => this.db.resetDebugData(input),
     getFoundationLog: async (input: FoundationEventLogInput = {}) => this.getFoundationLog(input),
     getEngineSnapshot: async (input: EngineSnapshotInput = {}) => buildEngineSnapshot(this.db, input, undefined, this.shareOrchestrator)
+  };
+
+  workspace = {
+    getStatus: async (): Promise<WorkspaceStatusSnapshot> => collectWorkspaceStatus(),
+    getSummary: async (): Promise<WorkspaceStatusSnapshot['summary']> => collectWorkspaceStatus().summary,
   };
 
   attachShareOrchestrator(orchestrator: DiscoveryShareOrchestrator): void {

@@ -7,6 +7,7 @@ import type {
   ExplorationState,
   SpeechStatus
 } from '@our-companion/shared';
+import { WorkspaceStatusPanel } from './WorkspaceStatusPanel';
 
 const PIPELINE_STEPS: ExplorationState[] = [
   'idle',
@@ -471,6 +472,10 @@ export function EngineObservatory() {
           ) : (
             <p className="engine-empty">No companion insights.</p>
           )}
+        </SnapshotPanel>
+
+        <SnapshotPanel title="Workspace Status" open={expandedPanels.workspace ?? false} onToggle={() => togglePanel('workspace')}>
+          <WorkspaceStatusPanel />
         </SnapshotPanel>
 
         <SnapshotPanel title="Decision" open={expandedPanels.decision} onToggle={() => togglePanel('decision')}>

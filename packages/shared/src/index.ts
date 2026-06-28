@@ -1089,6 +1089,38 @@ export interface ToolIntent {
   user_facing_summary: string;
 }
 
+export interface WorkspaceStatusMetrics {
+  cpuUsage?: number;
+  memoryUsage?: number;
+  memoryTotal?: number;
+  memoryUsed?: number;
+  gpuStatus?: string;
+  batteryPercent?: number;
+  batteryCharging?: boolean;
+  networkOnline?: boolean;
+  uptime?: number;
+  platform?: string;
+  hostname?: string;
+  cpuModel?: string;
+  cpuCores?: number;
+  arch?: string;
+}
+
+export interface WorkspaceSummary {
+  cpu: 'low' | 'medium' | 'high' | 'unknown';
+  memory: 'low' | 'medium' | 'high' | 'unknown';
+  battery: 'charging' | 'normal' | 'low' | 'unknown';
+  network: 'online' | 'offline' | 'unknown';
+}
+
+export interface WorkspaceStatusSnapshot {
+  metrics: WorkspaceStatusMetrics;
+  summary: WorkspaceSummary;
+  lastUpdatedAt: number;
+  availableMetrics: string[];
+  unavailableMetrics: string[];
+}
+
 export interface OurCompanionApi {
   character: {
     getState(characterId?: string): Promise<CharacterRuntimeState>;
@@ -1176,6 +1208,7 @@ export interface OurCompanionApi {
     getHistory(input?: CompanionHistoryInput): Promise<CompanionMessage[]>;
     appendMessage(input: CompanionAppendMessageInput): Promise<CompanionMessage>;
     clearHistory(input?: { characterId?: string }): Promise<void>;
+    getOverlayDebug(): Promise<{ mode: 'small-window' | 'fullscreen-overlay'; bounds?: WindowBounds }>;
   };
   debug: {
     resetData(input: DebugDataResetInput): Promise<DebugDataResetResult>;
@@ -1189,6 +1222,12 @@ export interface OurCompanionApi {
     getWorkArea(): Promise<WindowBounds>;
     moveTo(input: WindowMoveInput): Promise<WindowBounds>;
     setMousePassthrough(input: WindowMousePassthroughInput): Promise<boolean>;
+    getOverlayMode(): Promise<boolean>;
+    setOverlayMode(input: { enabled: boolean }): Promise<boolean>;
+  };
+  workspace: {
+    getStatus(): Promise<WorkspaceStatusSnapshot>;
+    getSummary(): Promise<WorkspaceSummary>;
   };
 }
 

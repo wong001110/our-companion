@@ -87,6 +87,9 @@ function CompanionShell() {
   const isDraggingRef = useRef(false);
   const sessionActiveRef = useRef(false);
   const dragOriginRef = useRef<{ windowX: number; windowY: number; screenX: number; screenY: number } | undefined>(undefined);
+  const [overlayMode, setOverlayMode] = useState(false);
+  const [annPosition, setAnnPosition] = useState<{ x: number; y: number } | null>(null);
+  const annPositionRef = useRef<{ x: number; y: number } | null>(null);
 
   function applyState(next: CharacterRuntimeState) {
     stateRef.current = next;
@@ -260,6 +263,18 @@ function CompanionShell() {
     dragOriginRef.current = undefined;
     void window.ourCompanion.companion.reportDragging({ dragging: true });
     void setMousePassthrough(false);
+
+    if (overlayMode) {
+      const current = annPositionRef.current;
+      dragOriginRef.current = {
+        windowX: current?.x ?? 0,
+        windowY: current?.y ?? 0,
+        screenX: point.screenX,
+        screenY: point.screenY
+      };
+      return;
+    }
+
     window.ourCompanion.window
       .getBounds()
       .then((bounds) => {
@@ -277,6 +292,16 @@ function CompanionShell() {
   function handleDragMove(point: CompanionDragPoint) {
     const origin = dragOriginRef.current;
     if (!origin) return;
+
+    if (overlayMode) {
+      const nextX = origin.windowX + point.screenX - origin.screenX;
+      const nextY = origin.windowY + point.screenY - origin.screenY;
+      const pos = { x: nextX, y: nextY };
+      annPositionRef.current = pos;
+      setAnnPosition(pos);
+      return;
+    }
+
     void window.ourCompanion.window.moveTo({
       x: origin.windowX + point.screenX - origin.screenX,
       y: origin.windowY + point.screenY - origin.screenY
@@ -287,6 +312,17 @@ function CompanionShell() {
     isDraggingRef.current = false;
     dragOriginRef.current = undefined;
     void window.ourCompanion.companion.reportDragging({ dragging: false });
+
+    if (overlayMode) {
+      const pos = annPositionRef.current;
+      if (pos) {
+        void window.ourCompanion.character.updatePosition({ x: pos.x, y: pos.y })
+          .then((nextState) => { stateRef.current = nextState; setState(nextState); })
+          .catch(() => undefined);
+      }
+      return;
+    }
+
     window.ourCompanion.window
       .getBounds()
       .then((bounds) => window.ourCompanion.character.updatePosition({ x: bounds.x, y: bounds.y }))
@@ -300,6 +336,19 @@ function CompanionShell() {
   function showSpeech(message: string) {
     showTypewriterSpeech(message);
   }
+
+  useEffect(() => {
+    void window.ourCompanion.window.getOverlayMode().then((isOverlay) => {
+      setOverlayMode(isOverlay);
+    }).catch(() => undefined);
+    void window.ourCompanion.character.getState().then((s) => {
+      if (s?.position) {
+        const pos = { x: s.position.x, y: s.position.y };
+        annPositionRef.current = pos;
+        setAnnPosition(pos);
+      }
+    }).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -466,8 +515,16 @@ function CompanionShell() {
   }, []);
 
   return (
-    <main className="companion-shell">
-      <CompanionCanvas
+    <main className="companion-shell" style={overlayMode ? {
+      position: 'relative',
+    } : undefined}>
+      <div style={overlayMode && annPosition ? {
+        position: 'absolute',
+        left: annPosition.x,
+        top: annPosition.y,
+        zIndex: 1,
+      } : undefined}>
+        <CompanionCanvas
         state={state}
         facing={facing}
         isListening={phase === 'listening'}
@@ -486,6 +543,7 @@ function CompanionShell() {
         onDragMove={handleDragMove}
         onDragEnd={handleDragEnd}
       />
+      </div>
       {typewriterMessage && (
         <TypewriterSpeechBubble
           message={typewriterMessage}

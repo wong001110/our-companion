@@ -11,6 +11,7 @@ let panelWindow: BrowserWindow | undefined;
 let services: AppServices;
 let discoveryScheduler: DiscoveryScheduler | undefined;
 let discoveryShareOrchestrator: DiscoveryShareOrchestrator | undefined;
+let companionOverlayMode = false;
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const companionListenHotkey = 'CommandOrControl+Shift+Space';
@@ -29,13 +30,18 @@ function preloadPath(): string {
 }
 
 function createCompanionWindow(): BrowserWindow {
-  const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const workArea = primaryDisplay.workArea;
+
+  if (companionOverlayMode) {
+    return createOverlayCompanionWindow(workArea);
+  }
 
   const window = new BrowserWindow({
     width: companionWindowSize.width,
     height: companionWindowSize.height,
-    x: screenWidth - companionWindowSize.width - 24,
-    y: screenHeight - companionWindowSize.height - 24,
+    x: workArea.x + workArea.width - companionWindowSize.width - 24,
+    y: workArea.y + workArea.height - companionWindowSize.height - 24,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -51,6 +57,45 @@ function createCompanionWindow(): BrowserWindow {
       sandbox: true
     }
   });
+
+  window.once('ready-to-show', () => {
+    keepCompanionOnTop(window);
+    window.show();
+  });
+  window.on('show', () => keepCompanionOnTop(window));
+  window.on('focus', () => keepCompanionOnTop(window));
+  window.on('blur', () => keepCompanionOnTop(window));
+  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  keepCompanionOnTop(window);
+  window.loadURL(rendererUrl('companion'));
+  companionWindow = window;
+  return window;
+}
+
+function createOverlayCompanionWindow(workArea: Electron.Rectangle): BrowserWindow {
+  const window = new BrowserWindow({
+    x: workArea.x,
+    y: workArea.y,
+    width: workArea.width,
+    height: workArea.height,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    show: false,
+    resizable: false,
+    alwaysOnTop: true,
+    hasShadow: false,
+    skipTaskbar: true,
+    icon: nativeImage.createEmpty(),
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+
+  window.setIgnoreMouseEvents(true, { forward: true });
 
   window.once('ready-to-show', () => {
     keepCompanionOnTop(window);
@@ -208,7 +253,9 @@ function registerIpc(): void {
     'companion:reportDragging': services.companion.reportDragging,
     'debug:resetData': services.debug.resetData,
     'debug:getFoundationLog': services.debug.getFoundationLog,
-    'debug:getEngineSnapshot': services.debug.getEngineSnapshot
+    'debug:getEngineSnapshot': services.debug.getEngineSnapshot,
+    'workspace:getStatus': services.workspace.getStatus,
+    'workspace:getSummary': services.workspace.getSummary
   } as const;
 
   for (const [channel, handler] of Object.entries(routes)) {
@@ -246,6 +293,19 @@ function registerIpc(): void {
     window.setIgnoreMouseEvents(input.passthrough, { forward: true });
     return input.passthrough;
   });
+  ipcMain.handle('window:getOverlayMode', () => companionOverlayMode);
+  ipcMain.handle('window:setOverlayMode', (_event, input: { enabled: boolean }) => {
+    companionOverlayMode = input.enabled;
+    if (companionWindow && !companionWindow.isDestroyed()) {
+      companionWindow.destroy();
+    }
+    createCompanionWindow();
+    return companionOverlayMode;
+  });
+  ipcMain.handle('companion:getOverlayDebug', () => ({
+    mode: companionOverlayMode ? 'fullscreen-overlay' as const : 'small-window' as const,
+    bounds: companionWindow && !companionWindow.isDestroyed() ? companionWindow.getBounds() : undefined,
+  }));
 }
 
 function getSenderWindow(event: IpcMainInvokeEvent): BrowserWindow {

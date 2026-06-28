@@ -138,6 +138,7 @@ const api: OurCompanionApi = {
     clearHistory: (input?: { characterId?: string }) => invoke('companion:clearHistory', input),
     reportSessionPhase: (phase: CompanionSessionPhase) => invoke('companion:reportSessionPhase', phase),
     reportDragging: (input: { dragging: boolean }) => invoke('companion:reportDragging', input),
+    getOverlayDebug: () => invoke('companion:getOverlayDebug'),
     onToggleListen: (listener: () => void) => {
       const channel = 'companion:toggleListen';
       const handler = () => listener();
@@ -161,7 +162,13 @@ const api: OurCompanionApi = {
     getBounds: () => invoke('window:getBounds'),
     getWorkArea: () => invoke('window:getWorkArea'),
     moveTo: (input) => invoke('window:moveTo', input),
-    setMousePassthrough: (input) => invoke('window:setMousePassthrough', input)
+    setMousePassthrough: (input) => invoke('window:setMousePassthrough', input),
+    getOverlayMode: () => invoke('window:getOverlayMode'),
+    setOverlayMode: (input: { enabled: boolean }) => invoke('window:setOverlayMode', input)
+  },
+  workspace: {
+    getStatus: () => invoke('workspace:getStatus'),
+    getSummary: () => invoke('workspace:getSummary'),
   }
 };
 
