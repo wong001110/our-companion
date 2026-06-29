@@ -92,17 +92,17 @@ export function easeInOut(progress: number): number {
   return progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
 }
 
-export function annStatusMessage(state?: CharacterRuntimeState): string {
-  if (!state) return 'Ann is settling in and opening a fresh page.';
-  if (state.intent === 'sharing_discovery' || state.coreState === 'discovering') return 'Ann found something curious and tucked it into the notebook.';
-  if (state.intent === 'reviewing_memory') return 'Ann is reading your notes and thinking about what matters.';
-  if (state.intent === 'reflecting_journey') return 'Ann is connecting the dots across your current journey.';
-  if (state.intent === 'helping_task') return 'Ann is focused beside you and helping with the next step.';
-  if (state.intent === 'wandering') return 'Ann is stretching her legs, then coming back to the page.';
-  return 'Ann is quietly here, keeping an eye on new ideas.';
+export function companionStatusMessage(state?: CharacterRuntimeState): string {
+  if (!state) return 'Companion is settling in and opening a fresh page.';
+  if (state.intent === 'sharing_discovery' || state.coreState === 'discovering') return 'Companion found something curious and tucked it into the notebook.';
+  if (state.intent === 'reviewing_memory') return 'Companion is reading your notes and thinking about what matters.';
+  if (state.intent === 'reflecting_journey') return 'Companion is connecting the dots across your current journey.';
+  if (state.intent === 'helping_task') return 'Companion is focused beside you and helping with the next step.';
+  if (state.intent === 'wandering') return 'Companion is stretching its legs, then coming back to the page.';
+  return 'Companion is quietly here, keeping an eye on new ideas.';
 }
 
-export function annMoodLabel(state?: CharacterRuntimeState): string {
+export function companionMoodLabel(state?: CharacterRuntimeState): string {
   const emotion = state?.emotion;
   if (!emotion) return 'Curious & Excited';
   const entries = Object.entries(emotion).sort((a, b) => b[1] - a[1]);

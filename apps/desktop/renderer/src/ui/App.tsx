@@ -49,7 +49,7 @@ import {
   type Tab, type DevAnimation, devAnimations, formatJson, formatDuration,
   formatDiscoveryTime, formatRelativeDate, formatShortDate, formatAskResult,
   readable, capitalize, randomBetween, clamp, easeInOut,
-  annStatusMessage, annMoodLabel, tabLabel, debugPreview,
+  companionStatusMessage, companionMoodLabel, tabLabel, debugPreview,
   createDevAnimationState, parseLocalCommand
 } from './utils';
 import { DebugJsonBlock, DebugTextBlock } from './DebugComponents';
@@ -179,13 +179,13 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const [quickActionsVisible, setQuickActionsVisible] = useState(false);
   const quickActionsTimeoutRef = useRef<number | undefined>(undefined);
   const [dragHandleVisible, setDragHandleVisible] = useState(false);
-  const isHoveringAnnRef = useRef(false);
+  const isHoveringCompanionRef = useRef(false);
   const isHoveringActionsRef = useRef(false);
 
   const interactive = useInteractiveRegion();
 
-  const ANN_SPRITE = { width: 220, height: 230 };
-  const [annPosition, setAnnPosition] = useState<{ x: number; y: number }>(() => {
+  const COMPANION_SPRITE = { width: 220, height: 230 };
+  const [companionPosition, setCompanionPosition] = useState<{ x: number; y: number }>(() => {
     try {
       const saved = localStorage.getItem(companionKey('position'));
       if (saved) {
@@ -195,20 +195,20 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     } catch { /* ignore */ }
     const w = window.innerWidth;
     const h = window.innerHeight;
-    return { x: Math.round(w / 2 - ANN_SPRITE.width / 2), y: Math.round(h * 0.6) };
+    return { x: Math.round(w / 2 - COMPANION_SPRITE.width / 2), y: Math.round(h * 0.6) };
   });
-  const annPositionRef = useRef(annPosition);
+  const companionPositionRef = useRef(companionPosition);
 
   const quickActionsPositions = useMemo(() => {
     const anchor = anchorFromBounds({
-      x: annPosition.x,
-      y: annPosition.y,
-      width: ANN_SPRITE.width,
-      height: ANN_SPRITE.height,
+      x: companionPosition.x,
+      y: companionPosition.y,
+      width: COMPANION_SPRITE.width,
+      height: COMPANION_SPRITE.height,
     });
     const obstacles: Rect[] = [];
     return { anchor, obstacles };
-  }, [annPosition.x, annPosition.y]);
+  }, [companionPosition.x, companionPosition.y]);
 
   function applyState(next: CharacterRuntimeState) {
     stateRef.current = next;
@@ -245,7 +245,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     if (decision.type === 'show_soft_hint' && !discovery.popup && !softHintVisible) {
       setSoftHintVisible(true);
       behavior.recordSpeech();
-      speech.showInstant("I found something that might connect to what you were exploring. Want to see it?");
+      speech.showInstant(`${companion.name} found something interesting. Want to see it?`);
     } else if (decision.type === 'present_discovery' && !discovery.popup) {
       const next = discovery.presentNext();
       if (next) {
@@ -259,7 +259,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     hasBubble: speech.hasSpeech,
     hasCard: !!discovery.popup,
     hasTextInput: textOpen && phase === 'idle',
-    annPosition,
+    companionPosition,
     screenWorkArea: { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight },
   });
 
@@ -389,8 +389,8 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   function handlePointerHitChange(_isHit: boolean) {
   }
 
-  function handleAnnHoverEnter() {
-    isHoveringAnnRef.current = true;
+  function handleCompanionHoverEnter() {
+    isHoveringCompanionRef.current = true;
     if (quickActionsTimeoutRef.current !== undefined) {
       window.clearTimeout(quickActionsTimeoutRef.current);
       quickActionsTimeoutRef.current = undefined;
@@ -400,8 +400,8 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     interactive.enter('ann-hover');
   }
 
-  function handleAnnHoverLeave() {
-    isHoveringAnnRef.current = false;
+  function handleCompanionHoverLeave() {
+    isHoveringCompanionRef.current = false;
     scheduleHideQuickActions();
     interactive.leave('ann-hover');
   }
@@ -426,7 +426,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       window.clearTimeout(quickActionsTimeoutRef.current);
     }
     quickActionsTimeoutRef.current = window.setTimeout(() => {
-      if (!isHoveringAnnRef.current && !isHoveringActionsRef.current) {
+      if (!isHoveringCompanionRef.current && !isHoveringActionsRef.current) {
         setQuickActionsVisible(false);
         setDragHandleVisible(false);
       }
@@ -440,7 +440,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     setQuickActionsVisible(false);
     setDragHandleVisible(false);
     void window.ourCompanion.companion.reportDragging({ dragging: true });
-    interactive.enter('ann-drag');
+    interactive.enter('companion-drag');
     dragOriginRef.current = { screenX: point.screenX, screenY: point.screenY };
   }
 
@@ -450,11 +450,11 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     const dx = point.screenX - origin.screenX;
     const dy = point.screenY - origin.screenY;
     const next = {
-      x: annPositionRef.current.x + dx,
-      y: annPositionRef.current.y + dy,
+      x: companionPositionRef.current.x + dx,
+      y: companionPositionRef.current.y + dy,
     };
-    annPositionRef.current = next;
-    setAnnPosition(next);
+    companionPositionRef.current = next;
+    setCompanionPosition(next);
     origin.screenX = point.screenX;
     origin.screenY = point.screenY;
   }
@@ -463,8 +463,8 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     isDraggingRef.current = false;
     dragOriginRef.current = undefined;
     void window.ourCompanion.companion.reportDragging({ dragging: false });
-    interactive.leave('ann-drag');
-    const pos = annPositionRef.current;
+    interactive.leave('companion-drag');
+    const pos = companionPositionRef.current;
     localStorage.setItem(companionKey('position'), JSON.stringify(pos));
     void window.ourCompanion.character.updatePosition({ characterId: companion.id, x: pos.x, y: pos.y })
       .then((nextState) => { stateRef.current = nextState; setState(nextState); })
@@ -479,11 +479,11 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
         const w = window.innerWidth;
         const h = window.innerHeight;
         const clamped = {
-          x: Math.max(0, Math.min(p.x, w - ANN_SPRITE.width)),
-          y: Math.max(0, Math.min(p.y, h - ANN_SPRITE.height)),
+          x: Math.max(0, Math.min(p.x, w - COMPANION_SPRITE.width)),
+          y: Math.max(0, Math.min(p.y, h - COMPANION_SPRITE.height)),
         };
-        setAnnPosition(clamped);
-        annPositionRef.current = clamped;
+        setCompanionPosition(clamped);
+        companionPositionRef.current = clamped;
       } catch { /* ignore */ }
     }
   }, []);
@@ -523,16 +523,16 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
         const workArea = await window.ourCompanion.window.getWorkArea();
         if (cancelled || isDraggingRef.current) return;
 
-        const annWidth = ANN_SPRITE.width;
-        const annHeight = ANN_SPRITE.height;
+        const companionWidth = COMPANION_SPRITE.width;
+        const companionHeight = COMPANION_SPRITE.height;
         const minX = workArea.x + 12;
-        const maxX = workArea.x + workArea.width - annWidth - 12;
+        const maxX = workArea.x + workArea.width - companionWidth - 12;
         const minY = workArea.y + 12;
-        const maxY = workArea.y + workArea.height - annHeight - 12;
+        const maxY = workArea.y + workArea.height - companionHeight - 12;
         if (maxX <= minX || maxY <= minY) return;
 
-        const currentX = annPositionRef.current.x;
-        const currentY = annPositionRef.current.y;
+        const currentX = companionPositionRef.current.x;
+        const currentY = companionPositionRef.current.y;
         let targetX = randomBetween(minX, maxX);
         let targetY = randomBetween(minY, maxY);
         if (Math.abs(targetX - currentX) < 80 && Math.abs(targetY - currentY) < 80) {
@@ -570,8 +570,8 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
             const nextX = startX + (targetX - startX) * eased;
             const nextY = startY + (targetY - startY) * eased;
             const nextPos = { x: Math.round(nextX), y: Math.round(nextY) };
-            annPositionRef.current = nextPos;
-            setAnnPosition(nextPos);
+            companionPositionRef.current = nextPos;
+            setCompanionPosition(nextPos);
 
             if (progress < 1) {
               animationFrame = window.requestAnimationFrame(step);
@@ -584,10 +584,10 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           animationFrame = window.requestAnimationFrame(step);
         });
 
-        void window.ourCompanion.character.updatePosition({ characterId: companion.id, x: annPositionRef.current.x, y: annPositionRef.current.y })
+        void window.ourCompanion.character.updatePosition({ characterId: companion.id, x: companionPositionRef.current.x, y: companionPositionRef.current.y })
           .then((nextState) => { stateRef.current = nextState; setState(nextState); })
           .catch(() => undefined);
-        localStorage.setItem(companionKey('position'), JSON.stringify(annPositionRef.current));
+        localStorage.setItem(companionKey('position'), JSON.stringify(companionPositionRef.current));
       } catch (error) {
         console.warn('[our-companion] Companion walk failed; scheduling next walk.', error);
       } finally {
@@ -682,18 +682,18 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       <div
         style={{
           position: 'absolute',
-          left: annPosition.x,
-          top: annPosition.y,
+          left: companionPosition.x,
+          top: companionPosition.y,
           zIndex: 1,
           pointerEvents: 'all',
         }}
-        onMouseEnter={handleAnnHoverEnter}
-        onMouseLeave={handleAnnHoverLeave}
+        onMouseEnter={handleCompanionHoverEnter}
+        onMouseLeave={handleCompanionHoverLeave}
       >
         <DragHandle
           visible={dragHandleVisible}
-          width={ANN_SPRITE.width}
-          height={ANN_SPRITE.height}
+          width={COMPANION_SPRITE.width}
+          height={COMPANION_SPRITE.height}
         />
         <CompanionCanvas
           state={state}
@@ -773,7 +773,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
             right: 'auto',
           } : undefined}
         >
-          <p>I found something interesting. Want to see it?</p>
+          <p>{companion.name} found something interesting. Want to see it?</p>
           <div className="soft-hint-actions">
             <button className="companion-quick-btn" onClick={() => {
               setSoftHintVisible(false);
@@ -806,7 +806,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
         }}
         onOpenPanel={() => {
           setQuickActionsVisible(false);
-          void window.ourCompanion.window.openPanel({ annX: annPositionRef.current.x, annY: annPositionRef.current.y });
+          void window.ourCompanion.window.openPanel({ annX: companionPositionRef.current.x, annY: companionPositionRef.current.y });
         }}
         onSwitchCompanion={() => {
           setQuickActionsVisible(false);
@@ -827,8 +827,8 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
             transform: 'none',
           } : {
             position: 'absolute',
-            left: annPosition.x + ANN_SPRITE.width / 2 - 100,
-            top: annPosition.y + ANN_SPRITE.height + 8,
+            left: companionPosition.x + COMPANION_SPRITE.width / 2 - 100,
+            top: companionPosition.y + COMPANION_SPRITE.height + 8,
             bottom: 'auto',
             transform: 'none',
           }}
@@ -899,7 +899,7 @@ function PanelShell() {
     };
   }, []);
 
-  async function sendAnnExploring() {
+  async function sendCompanionExploring() {
     if (exploring) return;
     setExploring(true);
     try {
@@ -959,7 +959,7 @@ function PanelShell() {
               exploration={exploration}
               explorationEvents={explorationEvents}
               exploring={exploring}
-              onStartExploration={sendAnnExploring}
+              onStartExploration={sendCompanionExploring}
               onSubmitFeedback={submitExplorationFeedback}
               onRefresh={refreshAll}
             />
@@ -969,7 +969,7 @@ function PanelShell() {
               discoveries={discoveries}
               exploration={exploration}
               exploring={exploring}
-              onStartExploration={sendAnnExploring}
+              onStartExploration={sendCompanionExploring}
               onSubmitFeedback={submitExplorationFeedback}
               onRefresh={refreshAll}
             />
@@ -1013,8 +1013,8 @@ function HomeView({
           <div className="companion-status-content">
             <MiniCompanionSticker />
             <div>
-              <p>{annStatusMessage(state)}</p>
-              <span className="soft-pill">{annMoodLabel(state)}</span>
+              <p>{companionStatusMessage(state)}</p>
+              <span className="soft-pill">{companionMoodLabel(state)}</span>
             </div>
           </div>
         </PaperCard>
@@ -1073,7 +1073,7 @@ function HomeView({
         <PaperCard title={t(lang, 'home_mood')} tape>
           <div className="mood-row">
             <span className="doodle-face" aria-hidden="true">:)</span>
-            <strong>{annMoodLabel(state)}</strong>
+            <strong>{companionMoodLabel(state)}</strong>
           </div>
         </PaperCard>
 
@@ -1650,7 +1650,7 @@ function VoiceSettingsCard() {
 
   return (
     <PaperCard title={t(lang, 'voice_title')} tape className="settings-panel">
-      <p>Talk to Ann on the desktop companion with double-click or Ctrl+Shift+Space.</p>
+      <p>Talk to your companion on the desktop with double-click or Ctrl+Shift+Space.</p>
       <p><strong>Hotkey:</strong> Ctrl+Shift+Space</p>
       <p><strong>Whisper model:</strong> {speechStatus?.model ?? 'ggml-small.bin'}</p>
       <p><strong>Status:</strong> {loading ? t(lang, 'voice_download_checking') : speechStatus?.ready ? t(lang, 'voice_status_ready') : speechStatus?.error}</p>
@@ -1692,7 +1692,7 @@ function ActionPermissionsCard() {
 
   return (
     <PaperCard title="Action Permissions" tape className="settings-panel">
-      <p>Control what Ann is allowed to do when you ask her to perform desktop actions.</p>
+      <p>Control what your companion is allowed to do when you ask it to perform desktop actions.</p>
       {ALL_PERMISSION_SCOPES.map((scope) => (
         <label key={scope} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
           <span style={{ flex: 1, textTransform: 'capitalize' }}>{scope}</span>
@@ -1732,10 +1732,10 @@ function BehaviorPanel({ settings, onRefresh }: { settings?: CharacterBehaviorSe
         <span>Movement score: {settings?.effectiveMovement ?? draftMovement}</span>
         <input type="range" min="0" max="100" value={draftMovement} onChange={(event) => setDraftMovement(Number(event.target.value))} onMouseUp={() => saveMovement(draftMovement)} onKeyUp={(event) => { if (event.key === 'Enter') saveMovement(draftMovement); }} />
       </label>
-      <p>{settings?.source === 'override' ? 'Using your override.' : 'Using Ann personality default.'} Current walk rest is about {Math.round(range.minMs / 1000)}-{Math.round(range.maxMs / 1000)} seconds.</p>
+      <p>{settings?.source === 'override' ? 'Using your override.' : 'Using companion personality default.'} Current walk rest is about {Math.round(range.minMs / 1000)}-{Math.round(range.maxMs / 1000)} seconds.</p>
       <div className="action-row">
         <button onClick={() => saveMovement(draftMovement)}>Save movement</button>
-        <button onClick={resetMovement}>Reset to Ann</button>
+        <button onClick={resetMovement}>Reset to default</button>
       </div>
     </div>
   );
@@ -1757,7 +1757,7 @@ function DeveloperPreview({ state, devAnimation, animationOverride, onAnimationC
       <div className="dev-animation-panel">
         <p className="eyebrow">Developer use</p>
         <h2>Animation review</h2>
-        <div className="segmented-control" aria-label="Preview Ann animation">
+        <div className="segmented-control" aria-label="Preview companion animation">
           {devAnimations.map((animation) => (
             <button key={animation} className={devAnimation === animation ? 'active' : ''} onClick={() => onAnimationChange(animation)}>
               {animation === 'live' ? 'Live' : readable(animation)}

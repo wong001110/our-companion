@@ -24,7 +24,7 @@ export function titleFallback(candidate: PresentationCandidate): string {
 }
 
 export function bodyFallback(candidate: PresentationCandidate): string {
-  return candidate.whyYouMightCare || 'Ann found something worth looking at.';
+  return candidate.whyYouMightCare || 'Companion found something worth looking at.';
 }
 
 export function normalizeUrl(url?: string): string | undefined {

@@ -22,18 +22,18 @@ export function useFloatingPlacement(opts: {
   hasBubble: boolean;
   hasCard: boolean;
   hasTextInput: boolean;
-  annPosition?: { x: number; y: number } | null;
+  companionPosition?: { x: number; y: number } | null;
   screenWorkArea?: Rect;
 }): FloatingPositions {
-  const { hasBubble, hasCard, hasTextInput, annPosition, screenWorkArea } = opts;
+  const { hasBubble, hasCard, hasTextInput, companionPosition, screenWorkArea } = opts;
 
   return useMemo(() => {
     const workArea = screenWorkArea ?? { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
 
-    const anchor = annPosition
+    const anchor = companionPosition
       ? anchorFromBounds({
-          x: annPosition.x,
-          y: annPosition.y,
+          x: companionPosition.x,
+          y: companionPosition.y,
           width: CANVAS_SIZE.width,
           height: CANVAS_SIZE.height,
         })
@@ -80,5 +80,5 @@ export function useFloatingPlacement(opts: {
       : null;
 
     return { anchor, bubble, card, textInput };
-  }, [hasBubble, hasCard, hasTextInput, annPosition?.x, annPosition?.y, screenWorkArea?.width, screenWorkArea?.height]);
+  }, [hasBubble, hasCard, hasTextInput, companionPosition?.x, companionPosition?.y, screenWorkArea?.width, screenWorkArea?.height]);
 }
