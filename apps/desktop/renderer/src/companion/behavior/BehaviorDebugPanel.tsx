@@ -107,7 +107,7 @@ export function BehaviorDebugPanel({
         </div>
         <div className="behavior-debug-status-item">
           <span className="behavior-debug-label">Last Spoke</span>
-          <span className="behavior-debug-value">{formatTime(state.lastAnnSpokeAt)}</span>
+          <span className="behavior-debug-value">{formatTime(state.lastCompanionSpokeAt)}</span>
         </div>
         <div className="behavior-debug-status-item">
           <span className="behavior-debug-label">Last User Interaction</span>

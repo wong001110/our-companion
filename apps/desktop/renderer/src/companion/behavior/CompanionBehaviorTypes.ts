@@ -45,7 +45,7 @@ export interface CompanionBehaviorState {
   discoveryPresentationState: DiscoveryPresentationState;
 
   lastUserInteractionAt: number | null;
-  lastAnnSpokeAt: number | null;
+  lastCompanionSpokeAt: number | null;
   lastDiscoveryPresentedAt: number | null;
   lastUserDismissedAt: number | null;
 
@@ -63,7 +63,7 @@ export function createDefaultBehaviorState(): CompanionBehaviorState {
     initiativeLevel: 2,
     discoveryPresentationState: 'none',
     lastUserInteractionAt: null,
-    lastAnnSpokeAt: null,
+    lastCompanionSpokeAt: null,
     lastDiscoveryPresentedAt: null,
     lastUserDismissedAt: null,
     interruptionSuppressedUntil: null,

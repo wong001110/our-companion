@@ -108,7 +108,7 @@ export function EngineObservatory() {
   }
   function handleBehaviorResetTimers() {
     updateBehavior({
-      lastAnnSpokeAt: null,
+      lastCompanionSpokeAt: null,
       lastUserInteractionAt: null,
       lastDiscoveryPresentedAt: null,
       lastUserDismissedAt: null,
@@ -233,7 +233,7 @@ export function EngineObservatory() {
             ))}
           </ul>
         ) : (
-          <p className="engine-empty">No exploration events yet. Send Ann exploring to populate this.</p>
+          <p className="engine-empty">No exploration events yet. Send companion exploring to populate this.</p>
         )}
       </section>
 

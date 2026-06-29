@@ -62,7 +62,7 @@ export function NotebookChatBubble({
   meta,
   children
 }: {
-  speaker: 'ann' | 'user' | 'system';
+  speaker: 'companion' | 'user' | 'system';
   time: string;
   meta?: ReactNode;
   children: ReactNode;
@@ -78,14 +78,14 @@ export function NotebookChatBubble({
   );
 }
 
-export function MiniAnnSticker() {
+export function MiniCompanionSticker() {
   return (
-    <div className="mini-ann-sticker" aria-hidden="true">
-      <span className="mini-ann-hair" />
-      <span className="mini-ann-face" />
-      <span className="mini-ann-eye left" />
-      <span className="mini-ann-eye right" />
-      <span className="mini-ann-body" />
+    <div className="mini-companion-sticker" aria-hidden="true">
+      <span className="mini-companion-hair" />
+      <span className="mini-companion-face" />
+      <span className="mini-companion-eye left" />
+      <span className="mini-companion-eye right" />
+      <span className="mini-companion-body" />
     </div>
   );
 }

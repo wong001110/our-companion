@@ -46,7 +46,7 @@ describe('decideCompanionBehavior', () => {
     const state: CompanionBehaviorState = {
       ...createDefaultBehaviorState(),
       lastUserInteractionAt: Date.now() - 20 * 60_000,
-      lastAnnSpokeAt: Date.now() - 10 * 60_000,
+      lastCompanionSpokeAt: Date.now() - 10 * 60_000,
     };
     const decision = decideCompanionBehavior(base({ state }));
     expect(decision.type).toBe('ambient_reaction');
@@ -58,7 +58,7 @@ describe('decideCompanionBehavior', () => {
       mood: 'curious',
       initiativeLevel: 3,
       discoveryPresentationState: 'queued',
-      lastAnnSpokeAt: Date.now() - 10 * 60_000,
+      lastCompanionSpokeAt: Date.now() - 10 * 60_000,
     };
     const decision = decideCompanionBehavior(base({ hasDiscoveryCandidate: true, state }));
     expect(decision.type).toBe('show_soft_hint');
@@ -70,7 +70,7 @@ describe('decideCompanionBehavior', () => {
       mood: 'curious',
       initiativeLevel: 2,
       discoveryPresentationState: 'queued',
-      lastAnnSpokeAt: Date.now() - 10 * 60_000,
+      lastCompanionSpokeAt: Date.now() - 10 * 60_000,
     };
     const decision = decideCompanionBehavior(base({ hasDiscoveryCandidate: true, state }));
     expect(decision.type).toBe('show_soft_hint');

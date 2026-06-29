@@ -14,6 +14,12 @@ npm-debug.log*
 *.zip
 *.log
 
+# User-generated companion data
+user-data/
+companion-cache/
+*.cache
+*.tmp
+
 # Generated TypeScript outputs (source-only TS repo)
 packages/**/src/**/*.js
 packages/**/src/**/*.d.ts

@@ -32,13 +32,13 @@ export function evaluateInterruption(
     };
   }
 
-  if (state.lastAnnSpokeAt !== null) {
-    const elapsed = now - state.lastAnnSpokeAt;
+  if (state.lastCompanionSpokeAt !== null) {
+    const elapsed = now - state.lastCompanionSpokeAt;
     if (elapsed < MIN_TIME_BETWEEN_SPEECH_MS) {
       return {
         allowed: false,
         reason: 'spoke_too_recently',
-        suppressedUntil: state.lastAnnSpokeAt + MIN_TIME_BETWEEN_SPEECH_MS,
+        suppressedUntil: state.lastCompanionSpokeAt + MIN_TIME_BETWEEN_SPEECH_MS,
       };
     }
   }

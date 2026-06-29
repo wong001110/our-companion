@@ -35,14 +35,14 @@ describe('evaluateInterruption', () => {
   });
 
   it('blocks when spoke too recently', () => {
-    const state = { ...createDefaultBehaviorState(), lastAnnSpokeAt: Date.now() - 60_000 };
+    const state = { ...createDefaultBehaviorState(), lastCompanionSpokeAt: Date.now() - 60_000 };
     const result = evaluateInterruption(state, Date.now(), false);
     expect(result.allowed).toBe(false);
     expect(result.reason).toBe('spoke_too_recently');
   });
 
   it('allows when enough time since last speech', () => {
-    const state = { ...createDefaultBehaviorState(), lastAnnSpokeAt: Date.now() - MIN_TIME_BETWEEN_SPEECH_MS - 1000 };
+    const state = { ...createDefaultBehaviorState(), lastCompanionSpokeAt: Date.now() - MIN_TIME_BETWEEN_SPEECH_MS - 1000 };
     const result = evaluateInterruption(state, Date.now(), false);
     expect(result.allowed).toBe(true);
   });
@@ -52,7 +52,7 @@ describe('evaluateInterruption', () => {
       ...createDefaultBehaviorState(),
       debugOverride: true,
       interruptionSuppressedUntil: Date.now() + 60_000,
-      lastAnnSpokeAt: Date.now(),
+      lastCompanionSpokeAt: Date.now(),
     };
     const result = evaluateInterruption(state, Date.now(), true);
     expect(result.allowed).toBe(true);

@@ -33,8 +33,8 @@ import type {
 } from '@our-companion/shared';
 import { COMPANION_CHAT_RETENTION_DAYS } from '@our-companion/shared';
 import { t, type Lang } from '../i18n';
-import { getWalkDelay, getWalkDelayRange, selectSpeechLine } from '../character/ann/companionBehavior';
-import { getIdleRotationDelay, isIdleState, selectWeightedIdleAnimation } from '../character/ann/idleBehavior';
+import { getWalkDelay, getWalkDelayRange, selectSpeechLine } from '../companion/runtime/companionBehavior';
+import { getIdleRotationDelay, isIdleState, selectWeightedIdleAnimation } from '../companion/runtime/idleBehavior';
 import { TypewriterSpeechBubble } from '../companion/TypewriterSpeechBubble';
 import { DiscoveryPopoutCard } from '../companion/DiscoveryPopoutCard';
 import { useCompanionSession } from '../companion/useCompanionSession';
@@ -42,7 +42,7 @@ import { useSpeech } from '../companion/useSpeech';
 import { useDiscoveryPresentation } from '../companion/useDiscoveryPresentation';
 import type { PresentationCandidate } from '../companion/PresentationCandidate';
 import { CompanionCanvas, type AnimationName, type CompanionDragPoint } from './CompanionCanvas';
-import { LangContext, useLang, NotebookPage, PaperCard, StickyNote, MiniAnnSticker, ProgressBar, NotebookChatBubble } from './NotebookPrimitives';
+import { LangContext, useLang, NotebookPage, PaperCard, StickyNote, MiniCompanionSticker, ProgressBar, NotebookChatBubble } from './NotebookPrimitives';
 import { EngineObservatory } from '../features/developer/EngineObservatory';
 import { useAudioCapture } from '../companion/useAudioCapture';
 import {
@@ -231,6 +231,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   });
 
   const behavior = useCompanionBehavior({
+    companionId: companion.id,
     hasDiscoveryCandidate: discovery.hasCandidate(),
     userIsTyping: textOpen,
     panelOpen: false,
@@ -367,10 +368,6 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
         tags: payload.tags
       };
       discovery.enqueue(pc);
-      const current = discovery.presentNext();
-      if (current) {
-        speech.showTypewriter(current.shareMessage);
-      }
     });
     const unsubscribePerformance = window.ourCompanion.action.onPerformance((script: PerformanceScript) => {
       let delay = 0;
@@ -841,7 +838,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
             ref={textInputRef}
             value={textInput}
             onChange={(e) => setTextInput(e.target.value)}
-            placeholder="Type to Ann…"
+            placeholder={`Type to ${companion.name}…`}
             autoFocus
             onKeyDown={(e) => {
               if (e.key === 'Escape') closeTextInput();
@@ -1012,9 +1009,9 @@ function HomeView({
   return (
     <NotebookPage eyebrow={t(lang, 'home_eyebrow')} title={t(lang, 'home_title')} note={`${character?.name ?? 'Ann'} is keeping a soft page open for the things we are building together.`}>
       <div className="home-notebook-grid">
-        <PaperCard className="ann-status-card" title={t(lang, 'home_ann_status_card')} tape>
-          <div className="ann-status-content">
-            <MiniAnnSticker />
+        <PaperCard className="companion-status-card" title={t(lang, 'home_ann_status_card')} tape>
+          <div className="companion-status-content">
+            <MiniCompanionSticker />
             <div>
               <p>{annStatusMessage(state)}</p>
               <span className="soft-pill">{annMoodLabel(state)}</span>
@@ -1022,10 +1019,10 @@ function HomeView({
           </div>
         </PaperCard>
 
-        <StickyNote title={t(lang, 'home_ann_message_title')} className="ann-message-note">
+        <StickyNote title={t(lang, 'home_ann_message_title')} className="companion-message-note">
           <p>{t(lang, 'home_ann_message_body')}</p>
           <button onClick={() => void onStartExploration()} disabled={exploring} className="primary-notebook-action">
-            {exploring ? 'Ann is exploring...' : 'Send Ann exploring'}
+            {exploring ? 'Exploring...' : 'Send companion exploring'}
           </button>
         </StickyNote>
 
@@ -1127,7 +1124,7 @@ function DiscoveryView({ discoveries, exploration, exploring, onStartExploration
         </div>
         <div className="action-row">
           <button onClick={() => void onStartExploration()} disabled={exploring}>
-            {exploring ? 'Exploring...' : 'Send Ann exploring'}
+            {exploring ? 'Exploring...' : 'Send companion exploring'}
           </button>
           <button onClick={refreshDiscovery}>{t(lang, 'discovery_refresh')}</button>
         </div>
@@ -1355,14 +1352,14 @@ function AskView({ onRefresh }: { onRefresh: () => Promise<void> }) {
     <NotebookPage eyebrow={t(lang, 'ask_eyebrow')} title={t(lang, 'ask_title')} note={t(lang, 'ask_note')}>
       <section className="chat-paper">
         {result && (
-          <NotebookChatBubble speaker="ann" time="Just now">
+          <NotebookChatBubble speaker="companion" time="Just now">
             {formatAskResult(result)}
           </NotebookChatBubble>
         )}
         {permissionsNeeded.length > 0 && (
           <div className="paper-card">
             <p className="eyebrow">Permission needed</p>
-            <p>Ann needs access to: {permissionsNeeded.join(', ')}</p>
+            <p>Companion needs access to: {permissionsNeeded.join(', ')}</p>
             <label className="checkbox-row">
               <input type="checkbox" checked={alwaysAllow} onChange={(e) => setAlwaysAllow(e.target.checked)} />
               <span>Always allow for this type of action</span>
@@ -1448,8 +1445,8 @@ function ChatView() {
     }
   }
 
-  function bubbleSpeaker(msg: CompanionMessage): 'ann' | 'user' | 'system' {
-    if (msg.role === 'assistant') return 'ann';
+  function bubbleSpeaker(msg: CompanionMessage): 'companion' | 'user' | 'system' {
+    if (msg.role === 'assistant') return 'companion';
     if (msg.role === 'user') return 'user';
     return 'system';
   }

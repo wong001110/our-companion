@@ -1,4 +1,4 @@
-import { getSpeechDuration } from '../character/ann/companionBehavior';
+import { getSpeechDuration } from './runtime/companionBehavior';
 
 export const MIN_MS_PER_CHARACTER = 24;
 export const HOLD_AFTER_COMPLETE_MS = 1500;

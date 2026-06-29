@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { getSpeechDuration } from '../character/ann/companionBehavior';
+import { getSpeechDuration } from './runtime/companionBehavior';
 
 export function useSpeech() {
   const [speech, setSpeech] = useState<string>();

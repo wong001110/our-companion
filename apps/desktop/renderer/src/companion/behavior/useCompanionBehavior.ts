@@ -18,11 +18,11 @@ import {
   applyIgnoreSuppression,
 } from './InterruptionPolicy';
 
-const STORAGE_KEY = 'ann_behavior_state';
+const STORAGE_KEY_PREFIX = 'companion:behavior:';
 
-function loadPersistedState(): Partial<CompanionBehaviorState> {
+function loadPersistedState(companionId: string): Partial<CompanionBehaviorState> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(`${STORAGE_KEY_PREFIX}${companionId}`);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     return {
@@ -38,9 +38,9 @@ function loadPersistedState(): Partial<CompanionBehaviorState> {
   }
 }
 
-function persistState(state: CompanionBehaviorState): void {
+function persistState(companionId: string, state: CompanionBehaviorState): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    localStorage.setItem(`${STORAGE_KEY_PREFIX}${companionId}`, JSON.stringify({
       mode: state.mode,
       mood: state.mood,
       energy: state.energy,
@@ -52,6 +52,7 @@ function persistState(state: CompanionBehaviorState): void {
 }
 
 export interface UseCompanionBehaviorOptions {
+  companionId: string;
   hasDiscoveryCandidate: boolean;
   userIsTyping: boolean;
   panelOpen: boolean;
@@ -60,10 +61,10 @@ export interface UseCompanionBehaviorOptions {
 }
 
 export function useCompanionBehavior(opts: UseCompanionBehaviorOptions) {
-  const { hasDiscoveryCandidate, userIsTyping, panelOpen, activeConversation, onDecision } = opts;
+  const { companionId, hasDiscoveryCandidate, userIsTyping, panelOpen, activeConversation, onDecision } = opts;
 
   const [state, setState] = useState<CompanionBehaviorState>(() => {
-    const persisted = loadPersistedState();
+    const persisted = loadPersistedState(companionId);
     return { ...createDefaultBehaviorState(), ...persisted };
   });
   const stateRef = useRef(state);
@@ -76,8 +77,8 @@ export function useCompanionBehavior(opts: UseCompanionBehaviorOptions) {
 
   useEffect(() => {
     stateRef.current = state;
-    persistState(state);
-  }, [state]);
+    persistState(companionId, state);
+  }, [companionId, state]);
 
   const evaluate = useCallback(() => {
     const now = Date.now();
@@ -109,7 +110,7 @@ export function useCompanionBehavior(opts: UseCompanionBehaviorOptions) {
   }, []);
 
   const recordSpeech = useCallback(() => {
-    setState((prev) => ({ ...prev, lastAnnSpokeAt: Date.now() }));
+    setState((prev) => ({ ...prev, lastCompanionSpokeAt: Date.now() }));
   }, []);
 
   const recordDiscoveryPresented = useCallback(() => {
@@ -167,7 +168,7 @@ export function useCompanionBehavior(opts: UseCompanionBehaviorOptions) {
   const resetTimers = useCallback(() => {
     setState((prev) => ({
       ...prev,
-      lastAnnSpokeAt: null,
+      lastCompanionSpokeAt: null,
       lastUserInteractionAt: null,
       lastDiscoveryPresentedAt: null,
       lastUserDismissedAt: null,

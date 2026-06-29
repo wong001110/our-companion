@@ -1138,14 +1138,14 @@ textarea {
   grid-column: span 2;
 }
 
-.ann-status-content {
+.companion-status-content {
   display: grid;
   grid-template-columns: 90px minmax(0, 1fr);
   gap: 16px;
   align-items: center;
 }
 
-.mini-ann-sticker {
+.mini-companion-sticker {
   position: relative;
   width: 78px;
   height: 88px;
@@ -1154,14 +1154,14 @@ textarea {
   box-shadow: inset 0 0 0 4px #fff8ed;
 }
 
-.mini-ann-hair,
-.mini-ann-face,
-.mini-ann-body,
-.mini-ann-eye {
+.mini-companion-hair,
+.mini-companion-face,
+.mini-companion-body,
+.mini-companion-eye {
   position: absolute;
 }
 
-.mini-ann-hair {
+.mini-companion-hair {
   left: 19px;
   top: 13px;
   width: 40px;
@@ -1170,7 +1170,7 @@ textarea {
   background: #21172d;
 }
 
-.mini-ann-face {
+.mini-companion-face {
   left: 24px;
   top: 28px;
   width: 30px;
@@ -1179,7 +1179,7 @@ textarea {
   background: #f4d0bf;
 }
 
-.mini-ann-eye {
+.mini-companion-eye {
   top: 38px;
   width: 5px;
   height: 7px;
@@ -1188,15 +1188,15 @@ textarea {
   z-index: 2;
 }
 
-.mini-ann-eye.left {
+.mini-companion-eye.left {
   left: 32px;
 }
 
-.mini-ann-eye.right {
+.mini-companion-eye.right {
   right: 32px;
 }
 
-.mini-ann-body {
+.mini-companion-body {
   left: 25px;
   bottom: 12px;
   width: 30px;
@@ -1430,7 +1430,7 @@ textarea {
   border-image-source: url('/assets/panel/frames/chat-bubble-user.png');
 }
 
-.notebook-chat-bubble.ann {
+.notebook-chat-bubble.companion {
   justify-self: start;
   border-image-source: url('/assets/panel/frames/chat-bubble-ann.png');
 }
@@ -1451,7 +1451,7 @@ textarea {
   background-image: url('/assets/panel/frames/chat-bubble-tail-user.png');
 }
 
-.notebook-chat-bubble.ann::after {
+.notebook-chat-bubble.companion::after {
   left: 18px;
   background-image: url('/assets/panel/frames/chat-bubble-tail-ann.png');
 }

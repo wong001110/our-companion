@@ -69,7 +69,7 @@ export function decideCompanionBehavior(
   const initiative = adjustedInitiative(state);
 
   const timeSinceInteraction = timeSince(state.lastUserInteractionAt, now);
-  const timeSinceSpeech = timeSince(state.lastAnnSpokeAt, now);
+  const timeSinceSpeech = timeSince(state.lastCompanionSpokeAt, now);
 
   if (activeConversation || state.focus === 'listening' || state.focus === 'thinking') {
     return { type: 'start_conversation', reason: 'active_conversation' };
