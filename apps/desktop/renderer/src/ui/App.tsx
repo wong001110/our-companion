@@ -277,7 +277,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     setTextOpen(false);
     setTextInput('');
     interactive.leave('chat-input');
-    interactive.leave('ann-hover');
+    interactive.leave('companion-hover');
     interactive.leave('quick-actions');
   }, [interactive]);
 
@@ -397,13 +397,13 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     }
     setQuickActionsVisible(true);
     setDragHandleVisible(true);
-    interactive.enter('ann-hover');
+    interactive.enter('companion-hover');
   }
 
   function handleCompanionHoverLeave() {
     isHoveringCompanionRef.current = false;
     scheduleHideQuickActions();
-    interactive.leave('ann-hover');
+    interactive.leave('companion-hover');
   }
 
   function handleActionsHoverEnter() {
