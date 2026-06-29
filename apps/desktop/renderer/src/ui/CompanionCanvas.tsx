@@ -4,7 +4,7 @@ import { createCompanionAnimations, type AnimationName, type CompanionAnimationC
 import { SpriteAnimator } from '../character/SpriteAnimator';
 import { DEFAULT_ASSET_ROOT } from '../character/AssetResolver';
 import { resolveAnimation, getAvailableClipNames } from '../character/AnimationResolver';
-import type { AnimationIntent } from '../character/AnimationCategories';
+import type { CompanionAnimationName } from '../companion/runtime/animationRegistry';
 
 export type { AnimationName };
 
@@ -65,7 +65,7 @@ export function CompanionCanvas({
     if (animationOverride) return animations[animationOverride];
     const intent = stateToIntent(state);
     const resolution = resolveAnimation({ intent }, availableClips);
-    return animations[resolution.clip as AnimationName] ?? animations.idle_laptop;
+    return animations[resolution.clip as AnimationName] ?? animations.Idle_Neutral;
   }, [animationOverride, state?.coreState, state?.intent, animations, availableClips]);
 
   useEffect(() => {
@@ -279,22 +279,22 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function stateToIntent(state?: CharacterRuntimeState): AnimationIntent {
-  if (!state) return 'idle';
-  if (state.coreState === 'listening') return 'think';
-  if (state.coreState === 'executing') return 'work_focus';
-  if (state.coreState === 'returning') return 'expedition_return';
-  if (state.coreState === 'talking') return 'talk_neutral';
-  if (state.intent === 'sharing_discovery' || state.coreState === 'discovering') return 'expedition_present';
+function stateToIntent(state?: CharacterRuntimeState): CompanionAnimationName {
+  if (!state) return 'Idle_Neutral';
+  if (state.coreState === 'listening') return 'Think';
+  if (state.coreState === 'executing') return 'Work_Focus';
+  if (state.coreState === 'returning') return 'Expedition_Return';
+  if (state.coreState === 'talking') return 'Talk_Neutral';
+  if (state.intent === 'sharing_discovery' || state.coreState === 'discovering') return 'Expedition_Present';
   if (
     state.intent === 'reviewing_memory' ||
     state.intent === 'reflecting_journey' ||
     state.intent === 'organizing_backpack' ||
     state.coreState === 'thinking' ||
     state.coreState === 'observing'
-  ) return 'think';
-  if (state.intent === 'wandering' || state.coreState === 'walking') return 'walk_right';
-  return 'idle';
+  ) return 'Think';
+  if (state.intent === 'wandering' || state.coreState === 'walking') return 'Walk_Right';
+  return 'Idle_Neutral';
 }
 
 function FallbackCompanion({ intent, compact, facing }: { intent: string; compact: boolean; facing: 'left' | 'right' }) {

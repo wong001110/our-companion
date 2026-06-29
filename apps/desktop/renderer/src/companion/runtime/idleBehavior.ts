@@ -1,7 +1,7 @@
 import type { CharacterRuntimeState, CompanionPersonality } from '@our-companion/shared';
-import type { AnimationName } from '../../character/ann/animationConfig';
+import type { CompanionAnimationName } from './animationRegistry';
 
-export type IdleAnimationName = Extract<AnimationName, 'idle_laptop' | 'idle_notes' | 'idle_coffee' | 'idle_tired'>;
+export type IdleAnimationName = Extract<CompanionAnimationName, 'Idle_Neutral' | 'Idle_Breathe' | 'Idle_Sleepy' | 'Idle_Sleeping'>;
 
 interface IdleWeight {
   animation: IdleAnimationName;
@@ -9,10 +9,10 @@ interface IdleWeight {
 }
 
 const idleAnimations: IdleWeight[] = [
-  { animation: 'idle_laptop', baseWeight: 45 },
-  { animation: 'idle_notes', baseWeight: 25 },
-  { animation: 'idle_coffee', baseWeight: 20 },
-  { animation: 'idle_tired', baseWeight: 10 }
+  { animation: 'Idle_Neutral', baseWeight: 45 },
+  { animation: 'Idle_Breathe', baseWeight: 25 },
+  { animation: 'Idle_Sleepy', baseWeight: 20 },
+  { animation: 'Idle_Sleeping', baseWeight: 10 }
 ];
 
 export function isIdleState(state?: Pick<CharacterRuntimeState, 'coreState' | 'intent'>): boolean {
@@ -42,7 +42,7 @@ export function selectWeightedIdleAnimation(
     if (roll < cursor) return item.animation;
   }
 
-  return 'idle_laptop';
+  return 'Idle_Neutral';
 }
 
 function applyPersonalityWeight(item: IdleWeight, personality: CompanionPersonality): number {
@@ -50,18 +50,18 @@ function applyPersonalityWeight(item: IdleWeight, personality: CompanionPersonal
   const { energy, curiosity, shyness, diligence } = personality;
 
   switch (item.animation) {
-    case 'idle_tired':
+    case 'Idle_Sleepy':
       weight += energy < 30 ? 20 : energy < 50 ? 10 : 0;
       weight += shyness > 70 ? 5 : 0;
       break;
-    case 'idle_notes':
+    case 'Idle_Breathe':
       weight += curiosity > 60 ? 10 : 0;
       weight += diligence > 70 ? 8 : 0;
       break;
-    case 'idle_coffee':
+    case 'Idle_Sleeping':
       weight += energy < 40 ? 8 : 0;
       break;
-    case 'idle_laptop':
+    case 'Idle_Neutral':
       weight += diligence > 60 ? 10 : 0;
       break;
   }

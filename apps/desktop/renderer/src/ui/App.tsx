@@ -161,7 +161,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const companionKey = (suffix: string) => `companion:${companion.id}:${suffix}`;
   const [state, setState] = useState<CharacterRuntimeState>();
   const [facing, setFacing] = useState<'left' | 'right'>('right');
-  const [idleAnimation, setIdleAnimation] = useState<AnimationName>('idle_laptop');
+  const [idleAnimation, setIdleAnimation] = useState<AnimationName>('Idle_Neutral');
 
   const speech = useSpeech();
 
@@ -304,7 +304,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   }, []);
 
   useEffect(() => {
-    setIdleAnimation('idle_laptop');
+    setIdleAnimation('Idle_Neutral');
     const timer = window.setTimeout(() => {
       if (stateRef.current) {
         const base = stateRef.current;
@@ -547,7 +547,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
         if (isHorizontalDominant) {
           setFacing(dx < 0 ? 'left' : 'right');
         }
-        setIdleAnimation(isHorizontalDominant ? (dx < 0 ? 'walk' : 'walk') : 'walk');
+        setIdleAnimation(dx < 0 ? 'Walk_Left' : 'Walk_Right');
 
         speech.showTypewriter(selectSpeechLine('walk_start', Math.random, langRef.current));
         previewState('walking', 'wandering');

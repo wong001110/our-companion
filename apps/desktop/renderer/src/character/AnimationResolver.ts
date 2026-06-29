@@ -1,17 +1,18 @@
 import type { CompanionPersonality } from '@our-companion/shared';
-import type { AnimationIntent } from './AnimationCategories';
+import type { CompanionAnimationName } from '../companion/runtime/animationRegistry';
+import { ANIMATION_REGISTRY, getAnimationFallback } from '../companion/runtime/animationRegistry';
 import { categorizeIntent, CATEGORY_FALLBACKS, FALLBACK_CLIP } from './AnimationCategories';
 
 export interface AnimationRequest {
-  intent: AnimationIntent;
+  intent: CompanionAnimationName;
   personality?: CompanionPersonality;
 }
 
 export interface AnimationResolution {
-  clip: string;
-  intent: AnimationIntent;
+  clip: CompanionAnimationName;
+  intent: CompanionAnimationName;
   usedFallback: boolean;
-  fallbackChain: string[];
+  fallbackChain: CompanionAnimationName[];
 }
 
 export function resolveAnimation(
@@ -19,11 +20,11 @@ export function resolveAnimation(
   availableClips: string[]
 ): AnimationResolution {
   const { intent, personality } = request;
-  const fallbackChain: string[] = [];
+  const fallbackChain: CompanionAnimationName[] = [];
 
   let resolvedIntent = intent;
 
-  if (intent === 'idle' && personality) {
+  if (intent === 'Idle_Neutral' && personality) {
     resolvedIntent = personalityModifyIdle(personality);
   }
 
@@ -32,6 +33,12 @@ export function resolveAnimation(
   }
 
   fallbackChain.push(resolvedIntent);
+
+  const registryFallback = getAnimationFallback(resolvedIntent);
+  if (availableClips.includes(registryFallback)) {
+    fallbackChain.push(registryFallback);
+    return { clip: registryFallback, intent: resolvedIntent, usedFallback: true, fallbackChain };
+  }
 
   const category = categorizeIntent(resolvedIntent);
   const categoryFallbacks = CATEGORY_FALLBACKS[category];
@@ -47,14 +54,14 @@ export function resolveAnimation(
   return { clip: FALLBACK_CLIP, intent: resolvedIntent, usedFallback: true, fallbackChain };
 }
 
-function personalityModifyIdle(personality: CompanionPersonality): AnimationIntent {
+function personalityModifyIdle(personality: CompanionPersonality): CompanionAnimationName {
   const { energy, curiosity, shyness } = personality;
 
-  if (energy < 20) return 'idle_sleepy';
-  if (energy < 35 && shyness > 60) return 'idle_sleepy';
-  if (curiosity > 70) return 'idle_breathe';
+  if (energy < 20) return 'Idle_Sleepy';
+  if (energy < 35 && shyness > 60) return 'Idle_Sleepy';
+  if (curiosity > 70) return 'Idle_Breathe';
 
-  return 'idle';
+  return 'Idle_Neutral';
 }
 
 export function getAvailableClipNames(animations: Record<string, unknown>): string[] {

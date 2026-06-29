@@ -1,0 +1,66 @@
+import type { CompanionAnimationName } from './animationRegistry';
+
+export const ANIMATION_MIGRATION_MAP: Record<string, CompanionAnimationName> = {
+  idle: 'Idle_Neutral',
+  idle_neutral: 'Idle_Neutral',
+  idle_breathe: 'Idle_Breathe',
+  breathe: 'Idle_Breathe',
+  idle_tired: 'Idle_Sleepy',
+  sleepy: 'Idle_Sleepy',
+  sleep: 'Idle_Sleeping',
+  sleeping: 'Idle_Sleeping',
+  listen: 'Listening',
+  listening: 'Listening',
+  waiting: 'Waiting_Response',
+  waiting_response: 'Waiting_Response',
+  drag_hold: 'Drag_Hold',
+  drag_release: 'Drag_Release',
+  drag_end: 'Drag_Release',
+  talk: 'Talk_Neutral',
+  talk_neutral: 'Talk_Neutral',
+  talk_happy: 'Talk_Happy',
+  talk_thinking: 'Talk_Thinking',
+  talk_concerned: 'Talk_Concerned',
+  thinking: 'Think',
+  think: 'Think',
+  walk_left: 'Walk_Left',
+  walk_right: 'Walk_Right',
+  walk_up: 'Walk_Up',
+  walk_down: 'Walk_Down',
+  walk_up_left: 'Walk_UpLeft',
+  walk_up_right: 'Walk_UpRight',
+  walk_down_left: 'Walk_DownLeft',
+  walk_down_right: 'Walk_DownRight',
+  enter: 'Enter',
+  leave: 'Leave',
+  task_start: 'Expedition_Prepare',
+  task_prepare: 'Expedition_Prepare',
+  expedition_start: 'Expedition_Leave',
+  task_leave: 'Expedition_Leave',
+  discovering: 'Expedition_Leave',
+  task_return: 'Expedition_Return',
+  task_success: 'Expedition_Return',
+  return: 'Expedition_Return',
+  present: 'Expedition_Present',
+  discovery_present: 'Expedition_Present',
+  work: 'Work_Focus',
+  work_focus: 'Work_Focus',
+  music: 'Music_Idle',
+  music_idle: 'Music_Idle',
+  idle_laptop: 'Idle_Neutral',
+  idle_coffee: 'Idle_Breathe',
+  idle_notes: 'Idle_Neutral',
+  walk: 'Walk_Right',
+  focus_typing: 'Work_Focus',
+  discovery: 'Expedition_Present',
+  discovery_shy: 'Expedition_Present',
+  task_failed: 'Expedition_Return',
+};
+
+export function migrateAnimationName(oldName: string): CompanionAnimationName {
+  return ANIMATION_MIGRATION_MAP[oldName] ?? 'Idle_Neutral';
+}
+
+export function isLegacyAnimationName(name: string): boolean {
+  return name in ANIMATION_MIGRATION_MAP;
+}

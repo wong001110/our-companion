@@ -1,27 +1,27 @@
 import type { ActionPlan, ActionRunResult, AiDebugEntry, CharacterRuntimeState, CompanionReplyLanguage, DebugDataResetTarget, Discovery, PermissionScope, ToolExecutionResult, ToolPreview, UiLang, UpdateAiSettingsInput, UpdateSpeechSettingsInput } from '@our-companion/shared';
 import { t, type Lang } from '../i18n';
 import type { AnimationName } from './CompanionCanvas';
+import type { CompanionAnimationName } from '../companion/runtime/animationRegistry';
 
 export type Tab = 'home' | 'discovery' | 'journey' | 'memory' | 'chat' | 'ask' | 'settings';
 export type DevAnimation = 'live' | AnimationName;
 
 export const devAnimations: DevAnimation[] = [
   'live',
-  'idle_laptop',
-  'idle_coffee',
-  'idle_notes',
-  'idle_tired',
-  'walk',
-  'return',
-  'think',
-  'focus_typing',
-  'discovery',
-  'discovery_shy',
-  'talk',
-  'talk_happy',
-  'task_start',
-  'task_success',
-  'task_failed'
+  'Idle_Neutral',
+  'Idle_Breathe',
+  'Idle_Sleepy',
+  'Idle_Sleeping',
+  'Walk_Left',
+  'Walk_Right',
+  'Think',
+  'Work_Focus',
+  'Expedition_Present',
+  'Talk_Neutral',
+  'Talk_Happy',
+  'Expedition_Prepare',
+  'Expedition_Leave',
+  'Expedition_Return',
 ];
 
 export function formatJson(value: unknown): string {
@@ -130,34 +130,34 @@ export function debugPreview(entry: AiDebugEntry): string {
 
 export function createDevAnimationState(animation: AnimationName): CharacterRuntimeState {
   const stateByAnimation: Record<AnimationName, Pick<CharacterRuntimeState, 'coreState' | 'intent'>> = {
-    idle_laptop: { coreState: 'idle', intent: 'waiting' },
-    idle_coffee: { coreState: 'idle', intent: 'waiting' },
-    idle_notes: { coreState: 'organizing_backpack', intent: 'organizing_backpack' },
-    idle_tired: { coreState: 'idle', intent: 'waiting' },
-    walk: { coreState: 'walking', intent: 'wandering' },
-    return: { coreState: 'returning', intent: 'wandering' },
-    think: { coreState: 'thinking', intent: 'reviewing_memory' },
-    focus_typing: { coreState: 'executing', intent: 'helping_task' },
-    discovery: { coreState: 'discovering', intent: 'sharing_discovery' },
-    discovery_shy: { coreState: 'discovering', intent: 'sharing_discovery' },
-    talk: { coreState: 'talking', intent: 'sharing_discovery' },
-    talk_happy: { coreState: 'talking', intent: 'sharing_discovery' },
-    task_start: { coreState: 'executing', intent: 'helping_task' },
-    task_success: { coreState: 'executing', intent: 'helping_task' },
-    task_failed: { coreState: 'executing', intent: 'helping_task' }
+    Idle_Neutral: { coreState: 'idle', intent: 'waiting' },
+    Idle_Breathe: { coreState: 'idle', intent: 'waiting' },
+    Idle_Sleepy: { coreState: 'idle', intent: 'waiting' },
+    Idle_Sleeping: { coreState: 'idle', intent: 'waiting' },
+    Walk_Left: { coreState: 'walking', intent: 'wandering' },
+    Walk_Right: { coreState: 'walking', intent: 'wandering' },
+    Think: { coreState: 'thinking', intent: 'reviewing_memory' },
+    Work_Focus: { coreState: 'executing', intent: 'helping_task' },
+    Expedition_Present: { coreState: 'discovering', intent: 'sharing_discovery' },
+    Talk_Neutral: { coreState: 'talking', intent: 'sharing_discovery' },
+    Talk_Happy: { coreState: 'talking', intent: 'sharing_discovery' },
+    Expedition_Prepare: { coreState: 'executing', intent: 'helping_task' },
+    Expedition_Leave: { coreState: 'executing', intent: 'helping_task' },
+    Expedition_Return: { coreState: 'returning', intent: 'wandering' },
+    Listening: { coreState: 'listening', intent: 'asking_permission' },
   };
 
   return {
-    characterId: 'ann-dev-preview',
+    characterId: 'companion-dev-preview',
     ...stateByAnimation[animation],
     emotion: {
       neutral: 0.4,
-      curious: animation === 'discovery' ? 0.8 : 0.3,
+      curious: animation === 'Expedition_Present' ? 0.8 : 0.3,
       happy: 0.35,
-      excited: animation === 'walk' || animation === 'discovery' ? 0.65 : 0.2,
+      excited: animation === 'Walk_Right' || animation === 'Expedition_Present' ? 0.65 : 0.2,
       shy: 0,
       confused: 0,
-      focused: animation === 'think' ? 0.85 : 0.3,
+      focused: animation === 'Think' ? 0.85 : 0.3,
       tired: 0,
       proud: 0,
       concerned: 0
