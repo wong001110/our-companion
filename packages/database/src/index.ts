@@ -1324,6 +1324,7 @@ function mapCompanionProfile(row: Record<string, unknown>): CompanionProfile {
     personality: JSON.parse(String(row.personality_json || '{}')) as CompanionPersonality,
     assetRoot: String(row.asset_root),
     isPrimary: Number(row.is_primary) === 1,
+    isBuiltIn: Number(row.is_builtin) === 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };

@@ -47,7 +47,7 @@ export function CompanionCreationPage({ editCompanion, onComplete, onCancel }: C
         name: name.trim(),
         personalityDescription: description,
         personality,
-        assetRoot: 'assets/companions/ann'
+        assetRoot: 'assets/companions/default'
       };
 
       let companion: CompanionProfile;
@@ -55,6 +55,10 @@ export function CompanionCreationPage({ editCompanion, onComplete, onCancel }: C
         companion = await window.ourCompanion.companionNew.update({ id: editCompanion.id, ...input });
       } else {
         companion = await window.ourCompanion.companionNew.create(input);
+      }
+      const assetRoot = await window.ourCompanion.companionNew.getAssetRoot(companion.id);
+      if (assetRoot !== companion.assetRoot) {
+        companion = await window.ourCompanion.companionNew.update({ id: companion.id, assetRoot });
       }
       await window.ourCompanion.companionNew.setPrimary(companion.id);
       onComplete(companion);

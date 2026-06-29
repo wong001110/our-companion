@@ -318,6 +318,7 @@ CREATE TABLE IF NOT EXISTS companions (
   personality_json TEXT NOT NULL DEFAULT '{}',
   asset_root TEXT NOT NULL DEFAULT 'assets/companions/default',
   is_primary INTEGER NOT NULL DEFAULT 0,
+  is_builtin INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   settings_json TEXT

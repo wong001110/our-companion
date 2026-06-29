@@ -223,7 +223,8 @@ function registerIpc(): void {
     'companionNew:update': services.companionNew.update,
     'companionNew:delete': services.companionNew.delete,
     'companionNew:setPrimary': services.companionNew.setPrimary,
-    'companionNew:getPrimary': services.companionNew.getPrimary
+    'companionNew:getPrimary': services.companionNew.getPrimary,
+    'companionNew:getAssetRoot': services.companionNew.getAssetRoot
   } as const;
 
   for (const [channel, handler] of Object.entries(routes)) {

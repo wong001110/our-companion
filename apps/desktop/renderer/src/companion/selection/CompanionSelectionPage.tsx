@@ -39,6 +39,26 @@ export function CompanionSelectionPage({ onSelect, onCreateNew, onEdit }: Compan
     void loadCompanions();
   }
 
+  async function handleEdit(companion: CompanionProfile) {
+    if (companion.isBuiltIn) {
+      const clone = await window.ourCompanion.companionNew.create({
+        name: `${companion.name} (Copy)`,
+        personalityDescription: companion.personalityDescription,
+        personality: companion.personality,
+        assetRoot: companion.assetRoot
+      });
+      const assetRoot = await window.ourCompanion.companionNew.getAssetRoot(clone.id);
+      if (assetRoot !== clone.assetRoot) {
+        const updated = await window.ourCompanion.companionNew.update({ id: clone.id, assetRoot });
+        onEdit(updated);
+      } else {
+        onEdit(clone);
+      }
+    } else {
+      onEdit(companion);
+    }
+  }
+
   function personalitySummary(p: CompanionPersonality): string {
     const top = PERSONALITY_TRAITS
       .filter((t) => p[t] > 65)
@@ -69,9 +89,10 @@ export function CompanionSelectionPage({ onSelect, onCreateNew, onEdit }: Compan
             <h3 className="companion-card-name">{companion.name}</h3>
             <p className="companion-card-trait">{personalitySummary(companion.personality)}</p>
             {companion.isPrimary && <span className="companion-card-badge">Active</span>}
+            {companion.isBuiltIn && <span className="companion-card-badge companion-card-builtin">Built-in</span>}
             <div className="companion-card-actions">
               <button className="btn-primary btn-sm" onClick={() => void onSelect(companion)}>Start</button>
-              <button className="btn-secondary btn-sm" onClick={() => onEdit(companion)}>Edit</button>
+              <button className="btn-secondary btn-sm" onClick={() => void handleEdit(companion)}>Edit</button>
               {confirmDelete === companion.id ? (
                 <div className="confirm-delete">
                   <span>Sure?</span>

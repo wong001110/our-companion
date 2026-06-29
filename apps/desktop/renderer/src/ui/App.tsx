@@ -158,6 +158,7 @@ function CompanionEntryShell() {
 }
 
 function CompanionShell({ companion, onSwitchCompanion }: { companion: CompanionProfile; onSwitchCompanion: () => void }) {
+  const companionKey = (suffix: string) => `companion:${companion.id}:${suffix}`;
   const [state, setState] = useState<CharacterRuntimeState>();
   const [facing, setFacing] = useState<'left' | 'right'>('right');
   const [idleAnimation, setIdleAnimation] = useState<AnimationName>('idle_laptop');
@@ -186,7 +187,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const ANN_SPRITE = { width: 220, height: 230 };
   const [annPosition, setAnnPosition] = useState<{ x: number; y: number }>(() => {
     try {
-      const saved = localStorage.getItem('ann_position');
+      const saved = localStorage.getItem(companionKey('position'));
       if (saved) {
         const p = JSON.parse(saved) as { x: number; y: number };
         return { x: p.x, y: p.y };
@@ -219,6 +220,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const textInputRef = useRef<HTMLInputElement>(null);
 
   const { phase, toggleListening, runTurn, onTypewriterComplete, isSessionActive } = useCompanionSession({
+    characterId: companion.id,
     stateRef,
     applyState,
     onInstantSpeech: speech.showInstant,
@@ -304,17 +306,23 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     setIdleAnimation('idle_laptop');
     const timer = window.setTimeout(() => {
       if (stateRef.current) {
-        previewState('idle', 'waiting');
+        const base = stateRef.current;
+        setState({
+          ...base,
+          coreState: 'idle',
+          intent: 'waiting',
+          updatedAt: new Date().toISOString()
+        });
       }
     }, 1500);
     return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
-    if (localStorage.getItem('ann_onboarded')) return;
+    if (localStorage.getItem(companionKey('onboarded'))) return;
     const timer = window.setTimeout(() => {
       speech.showInstant("Hi! Hover over me to see what I can do.");
-      localStorage.setItem('ann_onboarded', '1');
+      localStorage.setItem(companionKey('onboarded'), '1');
     }, 1500);
     return () => window.clearTimeout(timer);
   }, []);
@@ -460,14 +468,14 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     void window.ourCompanion.companion.reportDragging({ dragging: false });
     interactive.leave('ann-drag');
     const pos = annPositionRef.current;
-    localStorage.setItem('ann_position', JSON.stringify(pos));
-    void window.ourCompanion.character.updatePosition({ x: pos.x, y: pos.y })
+    localStorage.setItem(companionKey('position'), JSON.stringify(pos));
+    void window.ourCompanion.character.updatePosition({ characterId: companion.id, x: pos.x, y: pos.y })
       .then((nextState) => { stateRef.current = nextState; setState(nextState); })
       .catch(() => undefined);
   }
 
   useEffect(() => {
-    const saved = localStorage.getItem('ann_position');
+    const saved = localStorage.getItem(companionKey('position'));
     if (saved) {
       try {
         const p = JSON.parse(saved) as { x: number; y: number };
@@ -579,10 +587,10 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           animationFrame = window.requestAnimationFrame(step);
         });
 
-        void window.ourCompanion.character.updatePosition({ x: annPositionRef.current.x, y: annPositionRef.current.y })
+        void window.ourCompanion.character.updatePosition({ characterId: companion.id, x: annPositionRef.current.x, y: annPositionRef.current.y })
           .then((nextState) => { stateRef.current = nextState; setState(nextState); })
           .catch(() => undefined);
-        localStorage.setItem('ann_position', JSON.stringify(annPositionRef.current));
+        localStorage.setItem(companionKey('position'), JSON.stringify(annPositionRef.current));
       } catch (error) {
         console.warn('[our-companion] Companion walk failed; scheduling next walk.', error);
       } finally {
@@ -595,7 +603,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
 
     async function refreshBehaviorSettings() {
       try {
-        behaviorRef.current = await window.ourCompanion.character.getBehaviorSettings();
+        behaviorRef.current = await window.ourCompanion.character.getBehaviorSettings(companion.id);
       } catch (error) {
         console.warn('[our-companion] Unable to refresh companion behavior settings.', error);
       }
@@ -644,7 +652,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       }, randomBetween(30000, 65000));
     }
 
-    Promise.all([window.ourCompanion.character.getState(), window.ourCompanion.character.getBehaviorSettings()]).then(([next, behavior]) => {
+    Promise.all([window.ourCompanion.character.getState(companion.id), window.ourCompanion.character.getBehaviorSettings(companion.id)]).then(([next, behavior]) => {
       if (cancelled) return;
       behaviorRef.current = behavior;
       applyStateFromEffect(next);
@@ -802,6 +810,10 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
         onOpenPanel={() => {
           setQuickActionsVisible(false);
           void window.ourCompanion.window.openPanel({ annX: annPositionRef.current.x, annY: annPositionRef.current.y });
+        }}
+        onSwitchCompanion={() => {
+          setQuickActionsVisible(false);
+          onSwitchCompanion();
         }}
         onMouseEnter={handleActionsHoverEnter}
         onMouseLeave={handleActionsHoverLeave}

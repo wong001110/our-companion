@@ -8,6 +8,7 @@ export interface CompanionSessionSpeech {
 }
 
 interface UseCompanionSessionOptions {
+  characterId: string;
   stateRef: React.MutableRefObject<CharacterRuntimeState | undefined>;
   applyState: (next: CharacterRuntimeState) => void;
   onInstantSpeech: (message: string) => void;
@@ -31,6 +32,7 @@ function previewState(
 }
 
 export function useCompanionSession({
+  characterId,
   stateRef,
   applyState,
   onInstantSpeech,
@@ -73,6 +75,7 @@ export function useCompanionSession({
         role: 'system',
         content,
         source: 'voice',
+        characterId,
         status,
         metadata
       });
@@ -94,7 +97,7 @@ export function useCompanionSession({
       applyPreview('thinking', 'helping_task');
 
       try {
-        const reply = await window.ourCompanion.companion.turn({ message: trimmed, source });
+        const reply = await window.ourCompanion.companion.turn({ characterId, message: trimmed, source });
         setSessionPhase('talking');
         applyPreview('talking', 'helping_task');
         onTypewriterSpeech(reply.message);

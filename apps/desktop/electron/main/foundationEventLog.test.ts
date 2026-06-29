@@ -12,11 +12,11 @@ describe('foundation event log', () => {
     const services = new AppServices(':memory:');
 
     services.emitFoundationEvent('CompanionDecisionMade', 'decision', { action: 'speak' }, 'corr_1');
-    services.emitFoundationEvent('AnnStateChanged', 'character', { coreState: 'idle' });
+    services.emitFoundationEvent('CharacterStateChanged', 'character', { coreState: 'idle' });
 
     const all = await services.debug.getFoundationLog({ limit: 10 });
     expect(all).toHaveLength(2);
-    expect(all[0].type).toBe('AnnStateChanged');
+    expect(all[0].type).toBe('CharacterStateChanged');
 
     const decisions = await services.debug.getFoundationLog({ source: 'decision', limit: 10 });
     expect(decisions).toHaveLength(1);

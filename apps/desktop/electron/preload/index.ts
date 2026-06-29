@@ -39,7 +39,7 @@ const api: OurCompanionApi = {
   character: {
     getState: (characterId?: string) => invoke('character:getState', characterId),
     getActive: () => invoke('character:getActive'),
-    getBehaviorSettings: () => invoke('character:getBehaviorSettings'),
+    getBehaviorSettings: (characterId?: string) => invoke('character:getBehaviorSettings', characterId),
     updateBehaviorSettings: (input) => invoke('character:updateBehaviorSettings', input),
     setPrimary: (characterId: string) => invoke('character:setPrimary', characterId),
     updatePosition: (input: { characterId?: string; x: number; y: number }) => invoke('character:updatePosition', input),
@@ -183,7 +183,8 @@ const api: OurCompanionApi = {
     update: (input: { id: string } & UpdateCompanionInput) => invoke<CompanionProfile>('companionNew:update', input),
     delete: (id: string) => invoke<{ id: string; deleted: true }>('companionNew:delete', id),
     setPrimary: (id: string) => invoke<CompanionProfile>('companionNew:setPrimary', id),
-    getPrimary: () => invoke<CompanionProfile | null>('companionNew:getPrimary')
+    getPrimary: () => invoke<CompanionProfile | null>('companionNew:getPrimary'),
+    getAssetRoot: (id: string) => invoke<string>('companionNew:getAssetRoot', id)
   }
 };
 

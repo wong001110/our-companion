@@ -255,7 +255,7 @@ export function CompanionCanvas({
       onPointerLeave={handlePointerLeave}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
-      aria-label="Ann companion"
+      aria-label="Companion"
     >
       {isListening && <div className="companion-listening-indicator" aria-label="Listening" />}
       {!assetFailed && (
@@ -266,7 +266,7 @@ export function CompanionCanvas({
           <figcaption>{intentLabel(intent)}</figcaption>
         </figure>
       )}
-      {assetFailed && <FallbackAnn intent={intent} compact={compact} facing={facing} />}
+      {assetFailed && <FallbackCompanion intent={intent} compact={compact} facing={facing} />}
     </div>
   );
 }
@@ -297,7 +297,7 @@ function stateToIntent(state?: CharacterRuntimeState): AnimationIntent {
   return 'idle';
 }
 
-function FallbackAnn({ intent, compact, facing }: { intent: string; compact: boolean; facing: 'left' | 'right' }) {
+function FallbackCompanion({ intent, compact, facing }: { intent: string; compact: boolean; facing: 'left' | 'right' }) {
   return (
     <div className={`fallback-ann fallback-ann-facing-${facing} ${compact ? 'fallback-ann-compact' : ''}`}>
       <div className="fallback-ann-shadow" />

@@ -1120,7 +1120,7 @@ export interface OurCompanionApi {
   character: {
     getState(characterId?: string): Promise<CharacterRuntimeState>;
     getActive(): Promise<CharacterProfile[]>;
-    getBehaviorSettings(): Promise<CharacterBehaviorSettings>;
+    getBehaviorSettings(characterId?: string): Promise<CharacterBehaviorSettings>;
     updateBehaviorSettings(input: UpdateCharacterBehaviorSettingsInput): Promise<CharacterBehaviorSettings>;
     setPrimary(characterId: string): Promise<CharacterProfile>;
     updatePosition(input: { characterId?: string; x: number; y: number }): Promise<CharacterRuntimeState>;
@@ -1570,6 +1570,7 @@ export interface CompanionProfile {
   personality: CompanionPersonality;
   assetRoot: string;
   isPrimary: boolean;
+  isBuiltIn: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -1603,6 +1604,7 @@ export interface CompanionApi {
   delete(id: string): Promise<{ id: string; deleted: true }>;
   setPrimary(id: string): Promise<CompanionProfile>;
   getPrimary(): Promise<CompanionProfile | null>;
+  getAssetRoot(id: string): Promise<string>;
 }
 
 export type OutsidePanelMode = 'closed' | 'peek' | 'compact' | 'expanded' | 'discussion' | 'history';

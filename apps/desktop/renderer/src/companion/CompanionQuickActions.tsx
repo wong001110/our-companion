@@ -13,6 +13,7 @@ export type CompanionQuickActionsProps = {
   onTextChat: () => void;
   onVoiceChat: () => void;
   onOpenPanel: () => void;
+  onSwitchCompanion?: () => void;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
 };
@@ -29,6 +30,7 @@ export function CompanionQuickActions({
   onTextChat,
   onVoiceChat,
   onOpenPanel,
+  onSwitchCompanion,
   onMouseEnter,
   onMouseLeave,
 }: CompanionQuickActionsProps) {
@@ -98,6 +100,11 @@ export function CompanionQuickActions({
       <button className="companion-quick-btn" onClick={onOpenPanel} style={{ pointerEvents: 'all' }}>
         📖 Panel
       </button>
+      {onSwitchCompanion && (
+        <button className="companion-quick-btn" onClick={onSwitchCompanion} style={{ pointerEvents: 'all' }}>
+          🔄 Switch
+        </button>
+      )}
     </div>
   );
 }

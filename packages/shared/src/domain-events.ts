@@ -3,7 +3,7 @@ export const DOMAIN_EVENT_TYPES = {
   CharacterEmotionChanged: 'CharacterEmotionChanged',
   DiscoveryReadyToShare: 'DiscoveryReadyToShare',
   DiscoveryAnnounced: 'DiscoveryAnnounced',
-  AnnMessageQueued: 'AnnMessageQueued',
+  CompanionMessageQueued: 'CompanionMessageQueued',
   MemoryCreated: 'MemoryCreated',
   JourneyUpdated: 'JourneyUpdated',
   ActionPlanCreated: 'ActionPlanCreated',
@@ -37,7 +37,7 @@ export interface DiscoveryAnnouncedPayload {
   message: string;
 }
 
-export interface AnnMessageQueuedPayload {
+export interface CompanionMessageQueuedPayload {
   characterId?: string;
   source?: string;
   message?: string;
@@ -93,7 +93,7 @@ export type DomainEventPayloadMap = {
   CharacterEmotionChanged: CharacterEmotionChangedPayload;
   DiscoveryReadyToShare: DiscoveryReadyToSharePayload;
   DiscoveryAnnounced: DiscoveryAnnouncedPayload;
-  AnnMessageQueued: AnnMessageQueuedPayload;
+  CompanionMessageQueued: CompanionMessageQueuedPayload;
   MemoryCreated: MemoryCreatedPayload;
   JourneyUpdated: JourneyUpdatedPayload;
   ActionPlanCreated: ActionPlanCreatedPayload;

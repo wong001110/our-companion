@@ -349,7 +349,7 @@ export class DiscoveryShareOrchestrator {
 
       if (step === 0) {
         const reason = await this.deps.generateReason(entry.discovery);
-        this.emitEvent(DOMAIN_EVENT_TYPES.AnnMessageQueued, {
+        this.emitEvent(DOMAIN_EVENT_TYPES.CompanionMessageQueued, {
           discoveryId: entry.discovery.id,
           title: reason.card_title ?? entry.discovery.title,
           message: reason.short_message,

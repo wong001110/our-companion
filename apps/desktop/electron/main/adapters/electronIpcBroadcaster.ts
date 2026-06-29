@@ -20,7 +20,7 @@ export class ElectronIpcBroadcaster {
       getPanelWindow()?.webContents.send('character:stateChanged', payload);
     });
 
-    eventBus.subscribe(DOMAIN_EVENT_TYPES.AnnMessageQueued, (event) => {
+    eventBus.subscribe(DOMAIN_EVENT_TYPES.CompanionMessageQueued, (event) => {
       const payload = event.payload as Record<string, unknown> | undefined;
       getCompanionWindow()?.webContents.send('discovery:announce', payload);
       getPanelWindow()?.webContents.send('discovery:announce', payload);

@@ -136,13 +136,13 @@ export class AppServices {
   character = {
     getState: async (characterId?: string) => this.db.getCharacterState(characterId),
     getActive: async () => this.db.getActiveCharacters(),
-    getBehaviorSettings: async () => this.getCharacterBehaviorSettings(),
+    getBehaviorSettings: async (characterId?: string) => this.getCharacterBehaviorSettings(characterId),
     updateBehaviorSettings: async (input: UpdateCharacterBehaviorSettingsInput) => this.updateCharacterBehaviorSettings(input),
     setPrimary: async (characterId: string) => this.db.setPrimaryCharacter(characterId),
     updatePosition: async (input: { characterId?: string; x: number; y: number }) => {
       const state = this.db.getCharacterState(input.characterId);
       const next = this.db.saveCharacterState({ ...state, position: { x: input.x, y: input.y } });
-      this.emitFoundationEvent('AnnStateChanged', 'character', {
+      this.emitFoundationEvent('CharacterStateChanged', 'character', {
         characterId: next.characterId,
         coreState: next.coreState,
         intent: next.intent,
@@ -160,7 +160,7 @@ export class AppServices {
         userActive: true
       });
       const saved = this.db.saveCharacterState(next);
-      this.emitFoundationEvent('AnnStateChanged', 'character', {
+      this.emitFoundationEvent('CharacterStateChanged', 'character', {
         characterId: saved.characterId,
         coreState: saved.coreState,
         intent: saved.intent
@@ -191,6 +191,14 @@ export class AppServices {
     },
     getPrimary: async (): Promise<CompanionProfile | null> => {
       return this.db.getPrimaryCompanion();
+    },
+    getAssetRoot: async (id: string): Promise<string> => {
+      const companion = this.db.getCompanion(id);
+      if (!companion) throw new Error(`Companion not found: ${id}`);
+      if (companion.isBuiltIn) return companion.assetRoot;
+      const companionsDir = path.join(app.getPath('userData'), 'companions', id, 'assets');
+      fs.mkdirSync(companionsDir, { recursive: true });
+      return companionsDir;
     }
   };
 
@@ -349,11 +357,13 @@ export class AppServices {
     getEntries: async (input: { type?: 'daily' | 'weekly' | 'milestone'; limit?: number } = {}) => this.db.listDiaryEntries(input),
     generateDaily: async (input: { characterId?: string } = {}) => {
       const correlationId = createId('corr');
+      const primary = this.db.getPrimaryCompanion();
+      const characterId = input.characterId ?? primary?.id ?? DEFAULT_CHARACTER_ID;
       this.emitFoundationEvent('ReflectionRequested', 'reflection', {
-        characterId: input.characterId ?? DEFAULT_CHARACTER_ID
+        characterId
       }, correlationId);
       const entry = generateDailyDiary({
-        characterId: input.characterId ?? DEFAULT_CHARACTER_ID,
+        characterId,
         milestones: this.db.listMilestones().slice(0, 10),
         savedDiscoveries: this.db.listDiscoveries({ status: 'saved', limit: 10 }) as Discovery[],
         completedTasks: [],
@@ -442,11 +452,16 @@ export class AppServices {
       replyLanguage === 'zh-CN'
         ? '请始终用中文（简体）回复用户。'
         : 'Always reply in English.';
+    const companion = this.db.getCompanion(characterId);
+    const name = companion?.name ?? 'Ann';
+    const personalityDesc = companion?.personalityDescription
+      ? `Personality: ${companion.personalityDescription}.`
+      : '';
     return [
       {
         role: 'system',
         content:
-          `You are Ann, the active companion inside Our Companion. Be warm, brief, curious, and never romantic or clingy. ${langInstruction}`
+          `You are ${name}, the active companion inside Our Companion. ${personalityDesc} Be warm, brief, curious, and never romantic or clingy. ${langInstruction}`
       },
       ...history.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
       { role: 'user', content: userMessage }
@@ -472,7 +487,7 @@ export class AppServices {
           content: message
         });
         this.db.insertCompanionMessage({ role: 'assistant', content: message, source: 'panel', characterId });
-        this.emitFoundationEvent('AnnMessageQueued', 'speech', {
+        this.emitFoundationEvent('CompanionMessageQueued', 'speech', {
           characterId,
           source: 'panel',
           message
@@ -499,7 +514,7 @@ export class AppServices {
           status: 'error',
           metadata: { error: message }
         });
-        this.emitFoundationEvent('AnnMessageQueued', 'speech', {
+        this.emitFoundationEvent('CompanionMessageQueued', 'speech', {
           characterId,
           source: 'panel',
           status: 'error',
@@ -509,8 +524,13 @@ export class AppServices {
       }
     },
     generateDiscoveryReason: async (input: { discovery: NormalizedDiscovery }) => {
+      const primary = this.db.getPrimaryCompanion();
+      const name = primary?.name ?? 'Ann';
+      const personalityDesc = primary?.personalityDescription
+        ? ` Personality: ${primary.personalityDescription}`
+        : '';
       const fallback = {
-        why_this_matters: `${input.discovery.title} matches Ann's curiosity around web, UX, and exploration.`,
+        why_this_matters: `${input.discovery.title} matches ${name}'s curiosity around web, UX, and exploration.`,
         recommended_action: 'view' as const,
         short_message: 'I found something that might be worth a small look.',
         tags: input.discovery.tags
@@ -519,10 +539,10 @@ export class AppServices {
         {
           role: 'system',
           content:
-            'You are Ann, the user\'s desktop companion.\n\n' +
+            `You are ${name}, the user's desktop companion.${personalityDesc}\n\n` +
             'Your job is NOT to explain the full discovery aloud.\n' +
             'You should gently point out why this discovery may interest the user.\n\n' +
-            'Speak like Ann:\n' +
+            `Speak like ${name}:\n` +
             '- soft\n' +
             '- curious\n' +
             '- concise\n' +
@@ -540,7 +560,7 @@ export class AppServices {
             '  "tags": string[]\n' +
             '}\n\n' +
             'Rules:\n' +
-            '- short_message is what Ann says aloud.\n' +
+            `- short_message is what ${name} says aloud.\n` +
             '- short_message MUST be 80-140 characters, personality-first, conversational.\n' +
             '- Never narrate the full discovery content.\n' +
             '- Examples: "I found something that reminded me of what we have been discussing." or "This looks surprisingly relevant to your recent interests."\n' +
@@ -672,7 +692,7 @@ export class AppServices {
             reason: 'expertise_topic_match'
           });
         }
-        this.emitFoundationEvent('AnnMessageQueued', 'speech', {
+        this.emitFoundationEvent('CompanionMessageQueued', 'speech', {
           characterId,
           source,
           message
@@ -699,7 +719,7 @@ export class AppServices {
           status: 'error',
           metadata: { error: errMsg }
         });
-        this.emitFoundationEvent('AnnMessageQueued', 'speech', {
+        this.emitFoundationEvent('CompanionMessageQueued', 'speech', {
           characterId,
           source,
           status: 'error',
@@ -753,7 +773,9 @@ export class AppServices {
   }
 
   private setAutonomyCharacterState(coreState: CharacterRuntimeState['coreState'], intent: CharacterRuntimeState['intent']): CharacterRuntimeState {
-    const state = this.db.getCharacterState(DEFAULT_CHARACTER_ID);
+    const primary = this.db.getPrimaryCompanion();
+    const characterId = primary?.id ?? DEFAULT_CHARACTER_ID;
+    const state = this.db.getCharacterState(characterId);
     const next = this.db.saveCharacterState({
       ...state,
       coreState,
@@ -761,7 +783,7 @@ export class AppServices {
       updatedAt: nowIso()
     });
     this.characterBroadcaster?.(next);
-    this.emitFoundationEvent('AnnStateChanged', 'character', {
+    this.emitFoundationEvent('CharacterStateChanged', 'character', {
       characterId: next.characterId,
       coreState: next.coreState,
       intent: next.intent
@@ -805,23 +827,26 @@ export class AppServices {
   }
 
   private messageForExplorationState(state: ExplorationState): string {
+    const primary = this.db.getPrimaryCompanion();
+    const name = primary?.name ?? 'Ann';
     const messages: Record<ExplorationState, string> = {
-      idle: 'Ann is idle.',
-      curious: 'Ann became curious.',
-      planning: 'Ann is planning where to look.',
-      exploring: 'Ann went exploring.',
-      collecting: 'Ann found candidate signals.',
-      synthesizing: 'Ann is thinking about what the findings mean.',
-      returning: 'Ann is coming back.',
-      sharing: 'Ann returned with something.',
-      reflecting: 'Ann is reflecting on the feedback.'
+      idle: `${name} is idle.`,
+      curious: `${name} became curious.`,
+      planning: `${name} is planning where to look.`,
+      exploring: `${name} went exploring.`,
+      collecting: `${name} found candidate signals.`,
+      synthesizing: `${name} is thinking about what the findings mean.`,
+      returning: `${name} is coming back.`,
+      sharing: `${name} returned with something.`,
+      reflecting: `${name} is reflecting on the feedback.`
     };
     return messages[state];
   }
 
   private async runAutonomousExploration(input: StartExplorationInput = {}): Promise<ExplorationCycleResult> {
     const userId = input.userId ?? 'default';
-    const companionId = input.companionId ?? DEFAULT_CHARACTER_ID;
+    const primary = this.db.getPrimaryCompanion();
+    const companionId = input.companionId ?? primary?.id ?? DEFAULT_CHARACTER_ID;
     const trigger = input.trigger ?? 'manual';
     const characterState = this.db.getCharacterState(companionId);
     const characterProfile = this.db.getActiveCharacters().find((character) => character.id === companionId);
@@ -878,7 +903,7 @@ export class AppServices {
       insightIds: [],
       startedAt: nowIso()
     });
-    this.recordExplorationEvent(cycle, 'curious', selectedCuriosityTarget?.reason ?? 'Ann became curious.');
+    this.recordExplorationEvent(cycle, 'curious', selectedCuriosityTarget?.reason ?? `${this.db.getPrimaryCompanion()?.name ?? 'Ann'} became curious.`);
     this.setAutonomyCharacterState('thinking', 'reviewing_memory');
 
     if (!selectedCuriosityTarget) {
@@ -944,7 +969,7 @@ export class AppServices {
         cycleId: cycle.id,
         insightId: selectedInsight.id
       });
-      this.emitFoundationEvent('AnnMessageQueued', 'speech', {
+      this.emitFoundationEvent('CompanionMessageQueued', 'speech', {
         discoveryId: selectedInsight.id,
         cycleId: cycle.id,
         message: selectedInsight.narration ?? selectedInsight.summary
@@ -984,7 +1009,7 @@ export class AppServices {
       state: 'reflecting',
       completedAt: nowIso()
     });
-    this.recordExplorationEvent(reflected, 'reflecting', 'Ann recorded what happened after sharing the insight.', {
+    this.recordExplorationEvent(reflected, 'reflecting', `${this.db.getPrimaryCompanion()?.name ?? 'Ann'} recorded what happened after sharing the insight.`, {
       feedback: feedback.value
     });
 
@@ -1013,7 +1038,7 @@ export class AppServices {
         id: createId('diary'),
         characterId: cycle.companionId,
         type: 'milestone',
-        title: 'Ann brought something back',
+        title: `${this.db.getPrimaryCompanion()?.name ?? 'Ann'} brought something back`,
         content: `I explored ${insight.title} and the user wanted to keep it. I added it to memory ${memory.id} so I can connect it to future curiosity.`,
         relatedJourneyId: activeJourney.id,
         createdAt: nowIso()
@@ -1048,7 +1073,7 @@ export class AppServices {
       updatedAt: nowIso()
     });
     this.characterBroadcaster?.(settled);
-    this.emitFoundationEvent('AnnStateChanged', 'character', {
+    this.emitFoundationEvent('CharacterStateChanged', 'character', {
       characterId: settled.characterId,
       coreState: settled.coreState,
       intent: settled.intent
@@ -1102,7 +1127,9 @@ export class AppServices {
   }
 
   getEffectiveDiscoveryScore(): number {
-    const rules = this.db.getCharacterBehaviorRules(DEFAULT_CHARACTER_ID);
+    const primary = this.db.getPrimaryCompanion();
+    const characterId = primary?.id ?? DEFAULT_CHARACTER_ID;
+    const rules = this.db.getCharacterBehaviorRules(characterId);
     return clampScore(Number(rules.discovery ?? 35));
   }
 
@@ -1110,7 +1137,8 @@ export class AppServices {
     if (this.companionSessionPhase !== 'idle') return false;
     if (this.companionDragging) return false;
 
-    const state = this.db.getCharacterState();
+    const primary = this.db.getPrimaryCompanion();
+    const state = this.db.getCharacterState(primary?.id);
     if (state.intent === 'helping_task' || state.intent === 'asking_permission') return false;
     if (state.intent === 'sharing_discovery') return true;
     if (['listening', 'executing'].includes(state.coreState)) return false;
@@ -1289,8 +1317,9 @@ export class AppServices {
     });
   }
 
-  private getCharacterBehaviorSettings(): CharacterBehaviorSettings {
-    const rules = this.db.getCharacterBehaviorRules(DEFAULT_CHARACTER_ID);
+  private getCharacterBehaviorSettings(characterId?: string): CharacterBehaviorSettings {
+    const id = characterId ?? DEFAULT_CHARACTER_ID;
+    const rules = this.db.getCharacterBehaviorRules(id);
     const movementDefault = clampScore(Number(rules.movement ?? 25));
     const stored = this.db.getAppSetting<StoredCharacterBehaviorSettings>(CHARACTER_BEHAVIOR_SETTINGS_KEY) ?? {};
     const movementOverride =
