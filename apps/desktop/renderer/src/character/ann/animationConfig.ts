@@ -3,11 +3,11 @@ import { AssetResolver, DEFAULT_ASSET_ROOT } from '../AssetResolver';
 
 export const ANN_FRAME = { width: 300, height: 300 } as const;
 
-export interface AnnAnimationConfig extends SpriteSheetConfig {
+export interface CompanionAnimationConfig extends SpriteSheetConfig {
   name: string;
 }
 
-function anim(name: string, frames: number, frameMs: number, assetRoot: string): AnnAnimationConfig {
+function anim(name: string, frames: number, frameMs: number, assetRoot: string): CompanionAnimationConfig {
   const resolver = new AssetResolver(assetRoot);
   return {
     name,
@@ -21,7 +21,7 @@ function anim(name: string, frames: number, frameMs: number, assetRoot: string):
   };
 }
 
-export function createAnnAnimations(assetRoot: string = DEFAULT_ASSET_ROOT) {
+export function createCompanionAnimations(assetRoot: string = DEFAULT_ASSET_ROOT) {
   return {
     idle_laptop: anim('idle_laptop', 6, 520, assetRoot),
     idle_coffee: anim('idle_coffee', 4, 620, assetRoot),
@@ -38,9 +38,9 @@ export function createAnnAnimations(assetRoot: string = DEFAULT_ASSET_ROOT) {
     task_start: anim('task_start', 4, 300, assetRoot),
     task_success: anim('task_success', 4, 320, assetRoot),
     task_failed: anim('task_failed', 4, 360, assetRoot)
-  } as const satisfies Record<string, AnnAnimationConfig>;
+  } as const satisfies Record<string, CompanionAnimationConfig>;
 }
 
-export const annAnimations = createAnnAnimations();
+export const companionAnimations = createCompanionAnimations();
 
-export type AnimationName = keyof typeof annAnimations;
+export type AnimationName = keyof typeof companionAnimations;

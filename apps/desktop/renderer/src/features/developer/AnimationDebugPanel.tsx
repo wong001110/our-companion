@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { CompanionPersonality } from '@our-companion/shared';
 import type { AnimationIntent } from '../../character/AnimationCategories';
 import { resolveAnimation, getAvailableClipNames } from '../../character/AnimationResolver';
-import { createAnnAnimations } from '../../character/ann/animationConfig';
+import { createCompanionAnimations } from '../../character/ann/animationConfig';
 
 interface AnimationDebugPanelProps {
   currentAnimation?: string;
@@ -34,7 +34,7 @@ export function AnimationDebugPanel({
   onPersonalityChange
 }: AnimationDebugPanelProps) {
   const [selectedIntent, setSelectedIntent] = useState<AnimationIntent>('idle');
-  const animations = createAnnAnimations();
+  const animations = createCompanionAnimations();
   const availableClips = getAvailableClipNames(animations);
   const resolution = resolveAnimation({ intent: selectedIntent, personality }, availableClips);
 

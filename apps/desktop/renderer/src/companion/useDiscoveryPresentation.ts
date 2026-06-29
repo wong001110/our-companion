@@ -62,14 +62,6 @@ export function useDiscoveryPresentation(opts: {
     }));
   }, []);
 
-  const advanceQueue = useCallback(() => {
-    const next = queueRef.current.presentNext();
-    if (next) {
-      setPopup(next.candidate);
-      onAnnounce?.(next.candidate);
-    }
-  }, [onAnnounce]);
-
   const enqueue = useCallback((candidate: PresentationCandidate): boolean => {
     return queueRef.current.enqueue(candidate);
   }, []);
@@ -93,7 +85,6 @@ export function useDiscoveryPresentation(opts: {
       queueRef.current.saveCurrent();
       debugCountersRef.current.saved += 1;
       setPopup(null);
-      advanceQueue();
       updateDebugCounters();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -103,7 +94,7 @@ export function useDiscoveryPresentation(opts: {
     } finally {
       setActionLoading(false);
     }
-  }, [actionLoading, recordDebug, advanceQueue, updateDebugCounters]);
+  }, [actionLoading, recordDebug, updateDebugCounters]);
 
   const addToJourney = useCallback(async (candidate: PresentationCandidate) => {
     if (actionLoading) return;
@@ -114,7 +105,7 @@ export function useDiscoveryPresentation(opts: {
       recordDebug('add_to_journey', 'success');
       queueRef.current.dismissCurrent();
       setPopup(null);
-      advanceQueue();
+      updateDebugCounters();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       recordDebug('add_to_journey', 'error', msg);
@@ -123,7 +114,7 @@ export function useDiscoveryPresentation(opts: {
     } finally {
       setActionLoading(false);
     }
-  }, [actionLoading, recordDebug, advanceQueue]);
+  }, [actionLoading, recordDebug, updateDebugCounters]);
 
   const ignore = useCallback(async (candidate: PresentationCandidate) => {
     if (actionLoading) return;
@@ -135,7 +126,6 @@ export function useDiscoveryPresentation(opts: {
       queueRef.current.dismissCurrent();
       debugCountersRef.current.ignored += 1;
       setPopup(null);
-      advanceQueue();
       updateDebugCounters();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -145,7 +135,7 @@ export function useDiscoveryPresentation(opts: {
     } finally {
       setActionLoading(false);
     }
-  }, [actionLoading, recordDebug, advanceQueue, updateDebugCounters]);
+  }, [actionLoading, recordDebug, updateDebugCounters]);
 
   const view = useCallback(() => {
     if (actionLoading) return;
@@ -162,10 +152,9 @@ export function useDiscoveryPresentation(opts: {
     queueRef.current.dismissCurrent();
     debugCountersRef.current.dismissed += 1;
     setPopup(null);
-    advanceQueue();
     updateDebugCounters();
     onDismissed?.();
-  }, [actionLoading, advanceQueue, onDismissed, updateDebugCounters]);
+  }, [actionLoading, onDismissed, updateDebugCounters]);
 
   const getQueue = useCallback(() => queueRef.current, []);
 
@@ -183,7 +172,6 @@ export function useDiscoveryPresentation(opts: {
     ignore,
     view,
     dismiss,
-    advanceQueue,
     getQueue,
     hasCandidate,
   };

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import type { CharacterRuntimeState } from '@our-companion/shared';
-import { createAnnAnimations, type AnimationName, type AnnAnimationConfig } from '../character/ann/animationConfig';
+import { createCompanionAnimations, type AnimationName, type CompanionAnimationConfig } from '../character/ann/animationConfig';
 import { SpriteAnimator } from '../character/SpriteAnimator';
 import { DEFAULT_ASSET_ROOT } from '../character/AssetResolver';
 import { resolveAnimation, getAvailableClipNames } from '../character/AnimationResolver';
@@ -59,7 +59,7 @@ export function CompanionCanvas({
   const singleClickTimeoutRef = useRef<number | undefined>(undefined);
   const [assetFailed, setAssetFailed] = useState(false);
   const intent = state?.intent ?? 'waiting';
-  const animations = useMemo(() => createAnnAnimations(assetRoot), [assetRoot]);
+  const animations = useMemo(() => createCompanionAnimations(assetRoot), [assetRoot]);
   const availableClips = useMemo(() => getAvailableClipNames(animations), [animations]);
   const animation = useMemo(() => {
     if (animationOverride) return animations[animationOverride];
