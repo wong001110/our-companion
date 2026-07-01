@@ -84,6 +84,24 @@ export class DatabaseService {
 
     const state = createInitialCharacterStateLocal(DEFAULT_CHARACTER_ID);
     this.saveCharacterState(state);
+
+    const hasCompanion = this.db.prepare('SELECT 1 FROM companions LIMIT 1').get();
+    if (!hasCompanion) {
+      this.db
+        .prepare(
+          `INSERT INTO companions (id, name, personality_description, personality_json, asset_root, is_primary, is_builtin, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?)`
+        )
+        .run(
+          DEFAULT_CHARACTER_ID,
+          'Ann',
+          'Ann is quiet, curious, slightly lazy and enjoys exploring new things.',
+          JSON.stringify({ energy: 30, curiosity: 80, sociability: 30, diligence: 55, playfulness: 45, confidence: 40, calmness: 75, shyness: 70 }),
+          'assets/companions/default',
+          timestamp,
+          timestamp
+        );
+    }
   }
 
   getCharacterState(characterId = DEFAULT_CHARACTER_ID): CharacterRuntimeState {

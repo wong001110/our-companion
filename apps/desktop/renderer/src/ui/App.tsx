@@ -64,18 +64,16 @@ import type { CompanionProfile } from '@our-companion/shared';
 import { CompanionCreationPage } from '../companion/creation/CompanionCreationPage';
 import { CompanionSelectionPage } from '../companion/selection/CompanionSelectionPage';
 
-type AppView = 'loading' | 'creation' | 'selection' | 'companion' | 'panel';
-
 export function App() {
   const mode = new URLSearchParams(window.location.search).get('mode');
   if (mode === 'panel') return <PanelShell />;
+  if (mode === 'creation') return <CreationShell />;
   return <CompanionEntryShell />;
 }
 
 function CompanionEntryShell() {
-  const [view, setView] = useState<AppView>('loading');
   const [activeCompanion, setActiveCompanion] = useState<CompanionProfile | null>(null);
-  const [editingCompanion, setEditingCompanion] = useState<CompanionProfile | undefined>(undefined);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     void initCompanion();
@@ -83,78 +81,42 @@ function CompanionEntryShell() {
 
   async function initCompanion() {
     try {
-      const lastId = localStorage.getItem('last_companion_id');
-      if (lastId) {
-        const companion = await window.ourCompanion.companionNew.get(lastId);
-        if (companion) {
-          setActiveCompanion(companion);
-          setView('companion');
-          return;
-        }
-      }
-
-      const list = await window.ourCompanion.companionNew.list();
-      if (list.length === 0) {
-        setView('creation');
-      } else {
-        setView('selection');
+      const companion = await window.ourCompanion.companionNew.getPrimary();
+      if (companion) {
+        setActiveCompanion(companion);
       }
     } catch {
-      setView('creation');
+      // no companion
     }
+    setLoaded(true);
   }
 
-  function handleCompanionCreated(companion: CompanionProfile) {
-    localStorage.setItem('last_companion_id', companion.id);
-    setActiveCompanion(companion);
-    setEditingCompanion(undefined);
-    setView('companion');
-  }
+  useEffect(() => {
+    const unsub = window.ourCompanion.creation.onCompleted((companion) => {
+      setActiveCompanion(companion);
+    });
+    return unsub;
+  }, []);
 
-  function handleCompanionSelected(companion: CompanionProfile) {
-    localStorage.setItem('last_companion_id', companion.id);
-    setActiveCompanion(companion);
-    setView('companion');
-  }
+  useEffect(() => {
+    const unsub = window.ourCompanion.companion.onRefresh(async () => {
+      try {
+        const companion = await window.ourCompanion.companionNew.getPrimary();
+        if (companion) setActiveCompanion(companion);
+      } catch { /* ignore */ }
+    });
+    return unsub;
+  }, []);
 
-  function handleEditCompanion(companion: CompanionProfile) {
-    setEditingCompanion(companion);
-    setView('creation');
-  }
-
-  function handleSwitchCompanion() {
-    setView('selection');
-  }
-
-  if (view === 'loading') {
-    return <div className="companion-loading"><p>Loading...</p></div>;
-  }
-
-  if (view === 'creation') {
-    return (
-      <CompanionCreationPage
-        editCompanion={editingCompanion}
-        onComplete={handleCompanionCreated}
-        onCancel={editingCompanion ? () => { setEditingCompanion(undefined); setView('selection'); } : undefined}
-      />
-    );
-  }
-
-  if (view === 'selection') {
-    return (
-      <CompanionSelectionPage
-        onSelect={handleCompanionSelected}
-        onCreateNew={() => { setEditingCompanion(undefined); setView('creation'); }}
-        onEdit={handleEditCompanion}
-      />
-    );
-  }
+  if (!loaded) return null;
 
   if (activeCompanion) {
-    return <CompanionShell companion={activeCompanion} onSwitchCompanion={handleSwitchCompanion} />;
+    return <CompanionShell companion={activeCompanion} onSwitchCompanion={() => {
+      void window.ourCompanion.window.openPanelForSwitch();
+    }} />;
   }
 
-  return <PanelShell />;
+  return null;
 }
 
 function CompanionShell({ companion, onSwitchCompanion }: { companion: CompanionProfile; onSwitchCompanion: () => void }) {
@@ -181,6 +143,16 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const [dragHandleVisible, setDragHandleVisible] = useState(false);
   const isHoveringCompanionRef = useRef(false);
   const isHoveringActionsRef = useRef(false);
+
+  useEffect(() => {
+    const unsub = window.ourCompanion.app.onExitAnimation(() => {
+      setIdleAnimation('Expedition_Leave');
+      window.setTimeout(() => {
+        void window.ourCompanion.app.quit();
+      }, 1800);
+    });
+    return unsub;
+  }, []);
 
   const interactive = useInteractiveRegion();
 
@@ -850,7 +822,74 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   );
 }
 
+function CreationShell() {
+  const [view, setView] = useState<'select' | 'create' | 'edit'>('select');
+  const [editingCompanion, setEditingCompanion] = useState<CompanionProfile | undefined>(undefined);
+
+  useEffect(() => {
+    document.documentElement.classList.add('creation-mode');
+    return () => document.documentElement.classList.remove('creation-mode');
+  }, []);
+
+  function handleComplete(companion: CompanionProfile) {
+    void window.ourCompanion.companionNew.setPrimary(companion.id).then(() => {
+      void window.ourCompanion.creation.closeWindow();
+    });
+  }
+
+  function handleEdit(companion: CompanionProfile) {
+    setEditingCompanion(companion);
+    setView('edit');
+  }
+
+  function handleClose() {
+    void window.ourCompanion.app.quit();
+  }
+
+  if (view === 'create' || view === 'edit') {
+    return (
+      <main className="creation-shell">
+        <CreationDragHandle />
+        <button className="creation-close-btn" onClick={handleClose} title="Close">
+          &#x2715;
+        </button>
+        <CompanionCreationPage
+          editCompanion={editingCompanion}
+          onComplete={handleComplete}
+          onCancel={() => { setEditingCompanion(undefined); setView('select'); }}
+        />
+      </main>
+    );
+  }
+
+  return (
+    <main className="creation-shell">
+      <CreationDragHandle />
+      <button className="creation-close-btn" onClick={handleClose} title="Close">
+        &#x2715;
+      </button>
+      <CompanionSelectionPage
+        onSelect={(companion) => handleComplete(companion)}
+        onCreateNew={() => { setEditingCompanion(undefined); setView('create'); }}
+        onEdit={handleEdit}
+      />
+    </main>
+  );
+}
+
+function CreationDragHandle() {
+  return (
+    <div
+      className="creation-drag-handle"
+    />
+  );
+}
+
 function PanelShell() {
+  return <PanelDashboard />;
+}
+
+function PanelDashboard() {
   const [tab, setTab] = useState<Tab>('home');
   const [lang, setLang] = useState<Lang>('en');
   const [state, setState] = useState<CharacterRuntimeState>();
@@ -947,6 +986,13 @@ function PanelShell() {
               </button>
             ))}
           </nav>
+          <div className="sidebar-footer">
+            <button className="sidebar-exit-btn" onClick={() => {
+              void window.ourCompanion.app.exitWithAnimation();
+            }}>
+              Exit App
+            </button>
+          </div>
         </aside>
         <section className="workspace">
           {tab === 'home' && (

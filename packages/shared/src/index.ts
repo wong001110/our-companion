@@ -1198,6 +1198,7 @@ export interface OurCompanionApi {
   companion: {
     turn(input: CompanionTurnInput): Promise<{ message: string }>;
     onToggleListen(listener: () => void): () => void;
+    onRefresh(listener: () => void): () => void;
     reportSessionPhase(phase: CompanionSessionPhase): Promise<void>;
     reportDragging(input: { dragging: boolean }): Promise<void>;
     getHistory(input?: CompanionHistoryInput): Promise<CompanionMessage[]>;
@@ -1220,13 +1221,25 @@ export interface OurCompanionApi {
   };
   window: {
     openPanel(input?: { annX?: number; annY?: number }): Promise<boolean>;
+    openPanelForSwitch(): Promise<boolean>;
+    showCompanion(): Promise<void>;
     getBounds(): Promise<WindowBounds>;
     getWorkArea(): Promise<WindowBounds>;
     setMousePassthrough(input: WindowMousePassthroughInput): Promise<boolean>;
   };
+  creation: {
+    onCompleted(listener: (companion: CompanionProfile) => void): () => void;
+    openWindow(): Promise<boolean>;
+    closeWindow(): Promise<boolean>;
+  };
   workspace: {
     getStatus(): Promise<WorkspaceStatusSnapshot>;
     getSummary(): Promise<WorkspaceSummary>;
+  };
+  app: {
+    quit(): Promise<boolean>;
+    exitWithAnimation(): Promise<boolean>;
+    onExitAnimation(listener: () => void): () => void;
   };
   companionNew: CompanionApi;
 }

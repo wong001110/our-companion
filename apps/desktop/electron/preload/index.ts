@@ -153,6 +153,12 @@ const api: OurCompanionApi = {
       const handler = () => listener();
       ipcRenderer.on(channel, handler);
       return () => ipcRenderer.removeListener(channel, handler);
+    },
+    onRefresh: (listener: () => void) => {
+      const channel = 'companion:refresh';
+      const handler = () => listener();
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
     }
   },
   debug: {
@@ -168,13 +174,35 @@ const api: OurCompanionApi = {
   },
   window: {
     openPanel: (input?: { annX?: number; annY?: number }) => invoke('window:openPanel', input),
+    openPanelForSwitch: () => invoke('window:openPanelForSwitch'),
+    showCompanion: () => invoke('window:showCompanion'),
     getBounds: () => invoke('window:getBounds'),
     getWorkArea: () => invoke('window:getWorkArea'),
     setMousePassthrough: (input) => invoke('window:setMousePassthrough', input)
   },
+  creation: {
+    onCompleted: (listener: (companion: CompanionProfile) => void) => {
+      const channel = 'creation:completed';
+      const handler = (_event: Electron.IpcRendererEvent, companion: CompanionProfile) => listener(companion);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    },
+    openWindow: () => invoke<boolean>('creation:openWindow'),
+    closeWindow: () => invoke<boolean>('creation:closeWindow')
+  },
   workspace: {
     getStatus: () => invoke('workspace:getStatus'),
     getSummary: () => invoke('workspace:getSummary'),
+  },
+  app: {
+    quit: () => invoke<boolean>('app:quit'),
+    exitWithAnimation: () => invoke<boolean>('app:exitWithAnimation'),
+    onExitAnimation: (listener: () => void) => {
+      const channel = 'companion:exitAnimation';
+      const handler = () => listener();
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    }
   },
   companionNew: {
     create: (input: CreateCompanionInput) => invoke<CompanionProfile>('companionNew:create', input),

@@ -529,6 +529,32 @@ input {
   border-right: 1px solid rgba(238, 218, 235, 0.12);
   padding: 22px 16px;
   background: rgba(18, 17, 27, 0.78);
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid rgba(238, 218, 235, 0.08);
+}
+
+.sidebar-exit-btn {
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  color: rgba(248, 237, 245, 0.4);
+  background: transparent;
+  border: 1px solid rgba(239, 206, 228, 0.1);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.sidebar-exit-btn:hover {
+  color: #f28b82;
+  background: rgba(220, 80, 80, 0.12);
+  border-color: rgba(220, 80, 80, 0.3);
 }
 
 .brand-mark {
@@ -2393,4 +2419,371 @@ textarea {
 .card-action-ghost:hover {
   background: rgba(255, 255, 255, 0.05);
   color: rgba(248, 237, 245, 0.7);
+}
+
+/* ─── Creation Window ─────────────────────────────────────────────────────── */
+
+html.creation-mode,
+html.creation-mode body {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #111019;
+}
+
+html.creation-mode #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.creation-shell {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #111019;
+}
+
+.creation-drag-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  -webkit-app-region: drag;
+  cursor: grab;
+  z-index: 100;
+}
+
+.creation-close-btn {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(248, 237, 245, 0.5);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 101;
+  -webkit-app-region: no-drag;
+  transition: background 0.15s, color 0.15s;
+}
+
+.creation-close-btn:hover {
+  background: rgba(220, 80, 80, 0.35);
+  color: #f9eef6;
+}
+
+/* ─── Companion Creation Page ─────────────────────────────────────────────── */
+
+.companion-creation-page {
+  width: 100%;
+  max-width: 480px;
+  padding: 32px 28px;
+}
+
+.creation-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(239, 206, 228, 0.12);
+  border-radius: 16px;
+  padding: 32px 28px;
+}
+
+.creation-card h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.creation-subtitle {
+  margin: 0 0 24px;
+  color: rgba(248, 237, 245, 0.55);
+  font-size: 13px;
+}
+
+.creation-step {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.creation-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(248, 237, 245, 0.8);
+}
+
+.creation-input,
+.creation-textarea {
+  width: 100%;
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(239, 206, 228, 0.18);
+  border-radius: 8px;
+  color: #f9eef6;
+  font-size: 14px;
+  outline: none;
+}
+
+.creation-input:focus,
+.creation-textarea:focus {
+  border-color: rgba(186, 166, 224, 0.5);
+}
+
+.creation-textarea {
+  resize: vertical;
+  min-height: 80px;
+  font-family: inherit;
+}
+
+.creation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.creation-error {
+  color: #f28b82;
+  font-size: 12px;
+  margin: 0;
+}
+
+/* ─── Personality Bars ────────────────────────────────────────────────────── */
+
+.personality-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.personality-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.personality-label {
+  width: 90px;
+  font-size: 12px;
+  color: rgba(248, 237, 245, 0.7);
+}
+
+.personality-bar-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.personality-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #7c52a8, #baa6e0);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.personality-value {
+  width: 28px;
+  text-align: right;
+  font-size: 12px;
+  color: rgba(248, 237, 245, 0.55);
+}
+
+/* ─── Companion Selection Page ────────────────────────────────────────────── */
+
+.companion-selection-page {
+  width: 100%;
+  max-width: 520px;
+  padding: 32px 28px;
+}
+
+.selection-header {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.selection-header h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.selection-header p {
+  margin: 0;
+  color: rgba(248, 237, 245, 0.55);
+  font-size: 13px;
+}
+
+.selection-loading {
+  text-align: center;
+  padding: 48px 0;
+  color: rgba(248, 237, 245, 0.5);
+  font-size: 14px;
+}
+
+.companion-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.companion-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(239, 206, 228, 0.12);
+  border-radius: 12px;
+  padding: 18px 14px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.companion-card:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(239, 206, 228, 0.28);
+}
+
+.companion-card-primary {
+  border-color: rgba(186, 166, 224, 0.45);
+  background: rgba(116, 80, 148, 0.12);
+}
+
+.companion-card-new {
+  border-style: dashed;
+}
+
+.companion-card-new:hover {
+  border-color: rgba(186, 166, 224, 0.5);
+}
+
+.companion-card-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(116, 80, 148, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 10px;
+}
+
+.new-avatar {
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 22px;
+  color: rgba(248, 237, 245, 0.6);
+}
+
+.avatar-emoji {
+  font-size: 20px;
+  font-weight: 700;
+  color: #baa6e0;
+}
+
+.companion-card-name {
+  margin: 0 0 2px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.companion-card-trait {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: rgba(248, 237, 245, 0.45);
+}
+
+.companion-card-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(116, 80, 148, 0.4);
+  color: #baa6e0;
+  margin-bottom: 8px;
+}
+
+.companion-card-builtin {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(248, 237, 245, 0.5);
+}
+
+.companion-card-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.btn-sm {
+  min-height: 28px;
+  font-size: 11px;
+  padding: 4px 10px;
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: rgba(239, 206, 228, 0.15);
+  color: rgba(248, 237, 245, 0.45);
+}
+
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(248, 237, 245, 0.7);
+}
+
+.btn-danger {
+  background: rgba(180, 60, 60, 0.5);
+  border-color: rgba(220, 100, 100, 0.4);
+  color: #f9eef6;
+}
+
+.btn-danger:hover {
+  background: rgba(180, 60, 60, 0.7);
+}
+
+.confirm-delete {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: rgba(248, 237, 245, 0.6);
+}
+
+/* ─── AI Config Banner & Form ─────────────────────────────────────────────── */
+
+.ai-config-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 18px;
+  border-radius: 10px;
+  background: rgba(220, 160, 60, 0.12);
+  border: 1px solid rgba(220, 160, 60, 0.25);
+  font-size: 12px;
+  color: rgba(248, 237, 245, 0.7);
+}
+
+.ai-config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.selection-footer {
+  margin-top: 20px;
+  text-align: center;
 }

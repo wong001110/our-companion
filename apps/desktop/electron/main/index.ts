@@ -8,6 +8,7 @@ import { ElectronIpcBroadcaster } from './adapters/electronIpcBroadcaster';
 
 let companionWindow: BrowserWindow | undefined;
 let panelWindow: BrowserWindow | undefined;
+let creationWindow: BrowserWindow | undefined;
 let services: AppServices;
 let discoveryScheduler: DiscoveryScheduler | undefined;
 let discoveryShareOrchestrator: DiscoveryShareOrchestrator | undefined;
@@ -16,7 +17,7 @@ let companionClickThrough = true;
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const companionListenHotkey = 'CommandOrControl+Shift+Space';
 
-function rendererUrl(mode: 'companion' | 'panel'): string {
+function rendererUrl(mode: 'companion' | 'panel' | 'creation'): string {
   if (isDev) return `${process.env.VITE_DEV_SERVER_URL}?mode=${mode}`;
   return `file://${path.join(app.getAppPath(), 'dist/renderer/index.html')}?mode=${mode}`;
 }
@@ -53,15 +54,14 @@ function createCompanionWindow(): BrowserWindow {
 
   window.setIgnoreMouseEvents(true, { forward: true });
 
-  window.once('ready-to-show', () => {
-    keepCompanionOnTop(window);
-    window.show();
-  });
   window.on('show', () => keepCompanionOnTop(window));
   window.on('focus', () => keepCompanionOnTop(window));
   window.on('blur', () => keepCompanionOnTop(window));
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  keepCompanionOnTop(window);
+  window.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    const prefix = `[renderer:${level}]`;
+    console.log(`${prefix} ${message} (${sourceId}:${line})`);
+  });
   window.loadURL(rendererUrl('companion'));
   companionWindow = window;
   return window;
@@ -78,7 +78,7 @@ function createPanelWindow(): BrowserWindow {
     height: panelHeight,
     minWidth: 900,
     minHeight: 620,
-    show: true,
+    show: false,
     title: 'Our Companion',
     webPreferences: {
       preload: preloadPath(),
@@ -93,8 +93,50 @@ function createPanelWindow(): BrowserWindow {
     window.hide();
   });
 
+  window.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    const prefix = `[renderer:${level}]`;
+    console.log(`${prefix} ${message} (${sourceId}:${line})`);
+  });
   window.loadURL(rendererUrl('panel'));
   panelWindow = window;
+  return window;
+}
+
+function createCreationWindow(): BrowserWindow {
+  if (creationWindow && !creationWindow.isDestroyed()) {
+    creationWindow.focus();
+    return creationWindow;
+  }
+
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const workArea = primaryDisplay.workArea;
+  const windowWidth = 560;
+  const windowHeight = 580;
+
+  const window = new BrowserWindow({
+    width: windowWidth,
+    height: windowHeight,
+    x: Math.round(workArea.x + (workArea.width - windowWidth) / 2),
+    y: Math.round(workArea.y + (workArea.height - windowHeight) / 2),
+    frame: false,
+    resizable: false,
+    show: false,
+    title: 'Create Companion',
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+
+  window.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    const prefix = `[renderer:${level}]`;
+    console.log(`${prefix} ${message} (${sourceId}:${line})`);
+  });
+  window.loadURL(rendererUrl('creation'));
+  window.once('ready-to-show', () => window.show());
+  creationWindow = window;
   return window;
 }
 
@@ -264,6 +306,68 @@ function registerIpc(): void {
     return true;
   });
 
+  ipcMain.handle('window:showCompanion', () => {
+    if (panelWindow && !panelWindow.isDestroyed()) {
+      panelWindow.hide();
+    }
+    if (companionWindow && !companionWindow.isDestroyed()) {
+      companionWindow.show();
+      keepCompanionOnTop(companionWindow);
+      companionWindow.webContents.send('companion:refresh');
+    }
+  });
+
+  ipcMain.handle('window:openPanelForSwitch', () => {
+    if (companionWindow && !companionWindow.isDestroyed()) {
+      companionWindow.hide();
+    }
+    if (panelWindow && !panelWindow.isDestroyed()) {
+      panelWindow.show();
+      panelWindow.focus();
+    }
+    return true;
+  });
+
+  ipcMain.handle('creation:completed', (_event, companion) => {
+    if (creationWindow && !creationWindow.isDestroyed()) {
+      creationWindow.close();
+      creationWindow = undefined;
+    }
+    createCompanionWindow();
+    createPanelWindow();
+    startDiscoveryAutomation();
+    if (companionWindow && !companionWindow.isDestroyed()) {
+      companionWindow.show();
+      keepCompanionOnTop(companionWindow);
+      companionWindow.webContents.send('creation:completed', companion);
+    }
+  });
+
+  ipcMain.handle('creation:openWindow', () => {
+    createCreationWindow();
+    return true;
+  });
+
+  ipcMain.handle('creation:closeWindow', () => {
+    if (creationWindow && !creationWindow.isDestroyed()) {
+      creationWindow.close();
+      creationWindow = undefined;
+    }
+    return true;
+  });
+
+  ipcMain.handle('app:quit', () => {
+    app.quit();
+    return true;
+  });
+
+  ipcMain.handle('app:exitWithAnimation', () => {
+    if (companionWindow && !companionWindow.isDestroyed()) {
+      companionWindow.webContents.send('companion:exitAnimation');
+    }
+    return true;
+  });
+
   ipcMain.handle('window:getBounds', (event) => getSenderWindow(event).getBounds());
   ipcMain.handle('window:getWorkArea', (event) => getWorkAreaForWindow(getSenderWindow(event)));
   ipcMain.handle('window:setMousePassthrough', (event, input: { passthrough: boolean }) => {
@@ -416,9 +520,7 @@ app.whenReady().then(() => {
       callback(permission === 'media');
     });
     registerCompanionHotkey();
-    createCompanionWindow();
-    createPanelWindow();
-    startDiscoveryAutomation();
+    createCreationWindow();
     registerDisplayListeners();
   } catch (error) {
     console.error('[our-companion] Fatal startup failure.', error);
@@ -428,8 +530,7 @@ app.whenReady().then(() => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createCompanionWindow();
-      createPanelWindow();
+      createCreationWindow();
     }
   });
 });
