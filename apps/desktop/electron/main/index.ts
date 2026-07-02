@@ -1,12 +1,49 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeImage, screen, session } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeImage, protocol, screen, session } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
 import { loadEnv } from './env';
 import { AppServices } from './services';
 import { DiscoveryScheduler } from './discoveryScheduler';
 import { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 import { ElectronIpcBroadcaster } from './adapters/electronIpcBroadcaster';
+
+function registerCompanionProtocol(): void {
+  protocol.handle('companion', (request) => {
+    const url = new URL(request.url);
+    const companionId = url.hostname;
+    const filePath = url.pathname.replace(/^\//, '');
+    const fullPath = path.join(
+      app.getPath('userData'),
+      'companions',
+      companionId,
+      filePath,
+    );
+
+    if (!fs.existsSync(fullPath)) {
+      return new Response('Not found', { status: 404 });
+    }
+
+    const ext = path.extname(fullPath).toLowerCase();
+    const mime: Record<string, string> = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.svg': 'image/svg+xml',
+      '.mp3': 'audio/mpeg',
+      '.wav': 'audio/wav',
+      '.ogg': 'audio/ogg',
+      '.json': 'application/json',
+    };
+    const contentType = mime[ext] ?? 'application/octet-stream';
+    const buffer = fs.readFileSync(fullPath);
+    return new Response(buffer, {
+      headers: { 'Content-Type': contentType },
+    });
+  });
+}
 
 let companionWindow: BrowserWindow | undefined;
 let panelWindow: BrowserWindow | undefined;
@@ -550,6 +587,7 @@ app.whenReady().then(async () => {
       });
     }
 
+    registerCompanionProtocol();
     services = new AppServices();
     registerIpc();
     session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
