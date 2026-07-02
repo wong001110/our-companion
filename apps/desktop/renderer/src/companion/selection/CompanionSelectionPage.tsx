@@ -12,6 +12,51 @@ const PERSONALITY_TRAITS: (keyof CompanionPersonality)[] = [
   'playfulness', 'confidence', 'calmness', 'shyness'
 ];
 
+function CompanionAvatar({ companion }: { companion: CompanionProfile }) {
+  const [src, setSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.ourCompanion.companionNew.readAsset({
+      companionId: companion.id,
+      subfolder: 'animations',
+      fileName: 'Idle_Neutral.png'
+    }).then((result) => {
+      if (cancelled || !result?.dataUrl) return;
+      const img = new Image();
+      img.onload = () => {
+        if (cancelled) return;
+        const frameW = img.naturalHeight;
+        const frameH = img.naturalHeight;
+        const canvas = document.createElement('canvas');
+        canvas.width = frameW;
+        canvas.height = frameH;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.clearRect(0, 0, frameW, frameH);
+        ctx.drawImage(img, 0, 0, frameW, frameH, 0, 0, frameW, frameH);
+        setSrc(canvas.toDataURL('image/png'));
+      };
+      img.src = result.dataUrl;
+    }).catch(() => {
+      if (!cancelled) setSrc(null);
+    });
+
+    return () => { cancelled = true; };
+  }, [companion.id]);
+
+  if (src) {
+    return <img className="companion-card-sprite" src={src} alt={companion.name} />;
+  }
+
+  return (
+    <div className="companion-card-avatar-missing">
+      <span className="companion-card-avatar-missing-icon">?</span>
+      <span className="companion-card-avatar-missing-text">No sprite</span>
+    </div>
+  );
+}
+
 export function CompanionSelectionPage({ onSelect, onCreateNew, onEdit }: CompanionSelectionPageProps) {
   const [companions, setCompanions] = useState<CompanionProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,26 +121,6 @@ export function CompanionSelectionPage({ onSelect, onCreateNew, onEdit }: Compan
     await window.ourCompanion.companionNew.delete(id);
     setConfirmDelete(null);
     void loadCompanions();
-  }
-
-  async function handleEdit(companion: CompanionProfile) {
-    if (companion.isBuiltIn) {
-      const clone = await window.ourCompanion.companionNew.create({
-        name: `${companion.name} (Copy)`,
-        personalityDescription: companion.personalityDescription,
-        personality: companion.personality,
-        assetRoot: companion.assetRoot
-      });
-      const assetRoot = await window.ourCompanion.companionNew.getAssetRoot(clone.id);
-      if (assetRoot !== clone.assetRoot) {
-        const updated = await window.ourCompanion.companionNew.update({ id: clone.id, assetRoot });
-        onEdit(updated);
-      } else {
-        onEdit(clone);
-      }
-    } else {
-      onEdit(companion);
-    }
   }
 
   function personalitySummary(p: CompanionPersonality): string {
@@ -173,16 +198,13 @@ export function CompanionSelectionPage({ onSelect, onCreateNew, onEdit }: Compan
       <div className="companion-grid">
         {companions.map((companion) => (
           <div key={companion.id} className={`companion-card ${companion.isPrimary ? 'companion-card-primary' : ''}`}>
-            <div className="companion-card-avatar">
-              <span className="avatar-emoji">{companion.name.charAt(0)}</span>
-            </div>
+            <CompanionAvatar companion={companion} />
             <h3 className="companion-card-name">{companion.name}</h3>
             <p className="companion-card-trait">{personalitySummary(companion.personality)}</p>
             {companion.isPrimary && <span className="companion-card-badge">Active</span>}
-            {companion.isBuiltIn && <span className="companion-card-badge companion-card-builtin">Built-in</span>}
             <div className="companion-card-actions">
               <button className="btn-primary btn-sm" onClick={() => void onSelect(companion)}>Start</button>
-              <button className="btn-secondary btn-sm" onClick={() => void handleEdit(companion)}>Edit</button>
+              <button className="btn-secondary btn-sm" onClick={() => onEdit(companion)}>Edit</button>
               {confirmDelete === companion.id ? (
                 <div className="confirm-delete">
                   <span>Sure?</span>

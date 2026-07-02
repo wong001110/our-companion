@@ -1,7 +1,7 @@
 export interface SpriteSheetConfig {
   sheet: string;
-  frameWidth: number;
-  frameHeight: number;
+  frameWidth?: number;
+  frameHeight?: number;
   frames: number;
   frameMs: number;
   columns?: number;
@@ -20,8 +20,10 @@ export interface SpriteAnimatorOptions {
 
 export class SpriteAnimator {
   private readonly config: SpriteSheetConfig;
-  private readonly columns: number;
-  private readonly rows: number;
+  private columns: number;
+  private rows: number;
+  private frameWidth: number;
+  private frameHeight: number;
   private readonly onError?: () => void;
   private readonly cacheKey: string;
 
@@ -36,6 +38,8 @@ export class SpriteAnimator {
     this.config = config;
     this.columns = config.columns ?? config.frames;
     this.rows = config.rows ?? 1;
+    this.frameWidth = config.frameWidth ?? 0;
+    this.frameHeight = config.frameHeight ?? 0;
     this.onError = options.onError;
     this.cacheKey = options.cacheKey ?? config.sheet;
   }
@@ -50,6 +54,12 @@ export class SpriteAnimator {
           return;
         }
         this.image = image;
+
+        if (!this.frameWidth || !this.frameHeight) {
+          this.frameWidth = Math.floor(image.naturalWidth / this.columns);
+          this.frameHeight = Math.floor(image.naturalHeight / this.rows);
+        }
+
         resolve();
       };
 
@@ -109,24 +119,27 @@ export class SpriteAnimator {
       return;
     }
 
-    const { frameWidth, frameHeight } = this.config;
     const column = this.frameIndex % this.columns;
     const row = Math.floor(this.frameIndex / this.columns);
-    const sx = column * frameWidth;
-    const sy = row * frameHeight;
+    const sx = Math.floor(column * this.frameWidth);
+    const sy = Math.floor(row * this.frameHeight);
 
     context.clearRect(0, 0, viewport.width, viewport.height);
 
     const scale = Math.min(
-      (viewport.width * 0.94) / frameWidth,
-      (viewport.height * 0.94) / frameHeight
+      viewport.width / this.frameWidth,
+      viewport.height / this.frameHeight
     );
-    const dw = frameWidth * scale;
-    const dh = frameHeight * scale;
+    const dw = this.frameWidth * scale;
+    const dh = this.frameHeight * scale;
     const dx = (viewport.width - dw) / 2;
     const dy = viewport.height - dh;
 
-    context.drawImage(image, sx, sy, frameWidth, frameHeight, dx, dy, dw, dh);
+    context.drawImage(
+      image,
+      sx, sy, this.frameWidth - 1, this.frameHeight - 1,
+      dx, dy, dw, dh
+    );
     this.frameIndex = (this.frameIndex + 1) % this.config.frames;
   }
 }

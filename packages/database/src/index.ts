@@ -32,7 +32,7 @@ import type {
   Pattern
 } from '@our-companion/shared';
 import type { ActionPermissionState } from '@our-companion/shared';
-import { COMPANION_CHAT_RETENTION_DAYS, DEFAULT_CHARACTER_ID, createId, nowIso } from '@our-companion/shared';
+import { COMPANION_CHAT_RETENTION_DAYS, createId, nowIso } from '@our-companion/shared';
 import { sqliteSchema } from './schema';
 
 const DISCOVERY_ANNOUNCED_KEY = 'discovery.announcedIds';
@@ -52,63 +52,19 @@ export class DatabaseService {
     this.db = new DatabaseSync(options.path ?? ':memory:');
     this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec(sqliteSchema);
-    this.seedAnn();
   }
 
   close(): void {
     this.db.close();
   }
 
-  seedAnn(): void {
-    const timestamp = nowIso();
-    this.db
-      .prepare(
-        `INSERT OR IGNORE INTO characters (id, name, package_id, is_primary, is_active, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(DEFAULT_CHARACTER_ID, 'Ann', 'ann', 1, 1, timestamp, timestamp);
-
-    this.db
-      .prepare(
-        `INSERT OR IGNORE INTO character_profiles
-         (character_id, core_personality_json, expertise_json, speaking_style_json, behavior_rules_json)
-         VALUES (?, ?, ?, ?, ?)`
-      )
-      .run(
-        DEFAULT_CHARACTER_ID,
-        JSON.stringify(['introverted', 'curious', 'warm', 'observant']),
-        JSON.stringify(['web', 'frontend', 'ux']),
-        JSON.stringify({ tone: 'warm', length: 'short', avoid: ['romantic', 'clingy', 'preachy'] }),
-        JSON.stringify({ movement: 25, discovery: 35, curiosity: 80, focus: 85, shyness: 70, reflection: 95 })
-      );
-
-    const state = createInitialCharacterStateLocal(DEFAULT_CHARACTER_ID);
-    this.saveCharacterState(state);
-
-    const hasCompanion = this.db.prepare('SELECT 1 FROM companions LIMIT 1').get();
-    if (!hasCompanion) {
-      this.db
-        .prepare(
-          `INSERT INTO companions (id, name, personality_description, personality_json, asset_root, is_primary, is_builtin, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?)`
-        )
-        .run(
-          DEFAULT_CHARACTER_ID,
-          'Ann',
-          'Ann is quiet, curious, slightly lazy and enjoys exploring new things.',
-          JSON.stringify({ energy: 30, curiosity: 80, sociability: 30, diligence: 55, playfulness: 45, confidence: 40, calmness: 75, shyness: 70 }),
-          'assets/companions/default',
-          timestamp,
-          timestamp
-        );
-    }
-  }
-
-  getCharacterState(characterId = DEFAULT_CHARACTER_ID): CharacterRuntimeState {
+  getCharacterState(characterId?: string): CharacterRuntimeState {
+    const id = characterId ?? this.getPrimaryCompanion()?.id;
+    if (!id) return createInitialCharacterStateLocal('default');
     const row = this.db
       .prepare('SELECT * FROM character_state WHERE character_id = ?')
-      .get(characterId) as Record<string, unknown> | undefined;
-    if (!row) return createInitialCharacterStateLocal(characterId);
+      .get(id) as Record<string, unknown> | undefined;
+    if (!row) return createInitialCharacterStateLocal(id);
     return {
       characterId: String(row.character_id),
       coreState: row.core_state as CharacterRuntimeState['coreState'],
@@ -170,10 +126,12 @@ export class DatabaseService {
     }));
   }
 
-  getCharacterBehaviorRules(characterId = DEFAULT_CHARACTER_ID): Record<string, unknown> {
+  getCharacterBehaviorRules(characterId?: string): Record<string, unknown> {
+    const id = characterId ?? this.getPrimaryCompanion()?.id;
+    if (!id) return {};
     const row = this.db
       .prepare('SELECT behavior_rules_json FROM character_profiles WHERE character_id = ?')
-      .get(characterId) as { behavior_rules_json: string } | undefined;
+      .get(id) as { behavior_rules_json: string } | undefined;
     return row ? (JSON.parse(row.behavior_rules_json) as Record<string, unknown>) : {};
   }
 
@@ -882,6 +840,46 @@ export class DatabaseService {
     return value;
   }
 
+  getUser(): { id: string; username: string; displayName: string; email?: string; passwordHash: string; createdAt: string; updatedAt: string } | null {
+    const row = this.db.prepare('SELECT * FROM users LIMIT 1').get() as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      username: String(row.username),
+      displayName: String(row.display_name),
+      email: row.email ? String(row.email) : undefined,
+      passwordHash: String(row.password_hash),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    };
+  }
+
+  getUserByUsername(username: string): { id: string; username: string; displayName: string; email?: string; passwordHash: string; createdAt: string; updatedAt: string } | null {
+    const row = this.db.prepare('SELECT * FROM users WHERE username = ?').get(username) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      username: String(row.username),
+      displayName: String(row.display_name),
+      email: row.email ? String(row.email) : undefined,
+      passwordHash: String(row.password_hash),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    };
+  }
+
+  createUser(input: { username: string; displayName: string; email?: string; password: string }): { id: string; username: string; displayName: string; email?: string; createdAt: string; updatedAt: string } {
+    const existing = this.db.prepare('SELECT 1 FROM users WHERE username = ?').get(input.username);
+    if (existing) throw new Error('Username already taken');
+    const id = createId('user');
+    const now = nowIso();
+    this.db.prepare(
+      `INSERT INTO users (id, username, display_name, email, password_hash, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, input.username, input.displayName, input.email ?? null, input.password, now, now);
+    return { id, username: input.username, displayName: input.displayName, email: input.email, createdAt: now, updatedAt: now };
+  }
+
   getActionPermissions(): ActionPermissionState {
     return this.getAppSetting<ActionPermissionState>('action.permissions') ?? {
       browser: 'ask',
@@ -908,7 +906,7 @@ export class DatabaseService {
   insertCompanionMessage(input: CompanionAppendMessageInput): CompanionMessage {
     const id = createId('msg');
     const now = nowIso();
-    const characterId = input.characterId ?? DEFAULT_CHARACTER_ID;
+    const characterId = input.characterId ?? this.getPrimaryCompanion()?.id ?? 'default';
     this.db
       .prepare(
         `INSERT INTO companion_messages (id, character_id, role, content, source, status, metadata_json, created_at)

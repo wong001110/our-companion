@@ -2,8 +2,6 @@ import type { SpriteSheetConfig } from '../SpriteAnimator';
 import { AssetResolver, DEFAULT_ASSET_ROOT } from '../AssetResolver';
 import type { CompanionAnimationName } from '../../companion/runtime/animationRegistry';
 
-export const ANN_FRAME = { width: 300, height: 300 } as const;
-
 export interface CompanionAnimationConfig extends SpriteSheetConfig {
   name: CompanionAnimationName;
 }
@@ -13,8 +11,6 @@ function anim(name: CompanionAnimationName, frames: number, frameMs: number, ass
   return {
     name,
     sheet: resolver.animation(name),
-    frameWidth: ANN_FRAME.width,
-    frameHeight: ANN_FRAME.height,
     frames,
     frameMs,
     columns: frames,

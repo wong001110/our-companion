@@ -21,6 +21,7 @@ import type {
   JourneyMilestone,
   MemoryGraph,
   MemoryNode,
+  OnlineMode,
   PermissionScope,
   PerformanceScript,
   SpeechSettings,
@@ -29,7 +30,8 @@ import type {
   ToolPreview,
   UiLang,
   UpdateAiSettingsInput,
-  UpdateSpeechSettingsInput
+  UpdateSpeechSettingsInput,
+  UserProfile
 } from '@our-companion/shared';
 import { COMPANION_CHAT_RETENTION_DAYS } from '@our-companion/shared';
 import { t, type Lang } from '../i18n';
@@ -62,6 +64,7 @@ import type { CompanionBehaviorDecision } from '../companion/behavior/CompanionB
 import { useInteractiveRegion } from '../companion/useInteractiveRegion';
 import type { CompanionProfile } from '@our-companion/shared';
 import { CompanionCreationPage } from '../companion/creation/CompanionCreationPage';
+import { CompanionEditPage } from '../companion/creation/CompanionEditPage';
 import { CompanionSelectionPage } from '../companion/selection/CompanionSelectionPage';
 
 export function App() {
@@ -833,7 +836,7 @@ function CreationShell() {
 
   function handleComplete(companion: CompanionProfile) {
     void window.ourCompanion.companionNew.setPrimary(companion.id).then(() => {
-      void window.ourCompanion.creation.closeWindow();
+      void window.ourCompanion.creation.completed(companion);
     });
   }
 
@@ -842,11 +845,32 @@ function CreationShell() {
     setView('edit');
   }
 
+  function handleEditComplete(companion: CompanionProfile) {
+    setEditingCompanion(undefined);
+    setView('select');
+  }
+
   function handleClose() {
     void window.ourCompanion.app.quit();
   }
 
-  if (view === 'create' || view === 'edit') {
+  if (view === 'edit' && editingCompanion) {
+    return (
+      <main className="creation-shell">
+        <CreationDragHandle />
+        <button className="creation-close-btn" onClick={handleClose} title="Close">
+          &#x2715;
+        </button>
+        <CompanionEditPage
+          companion={editingCompanion}
+          onComplete={handleEditComplete}
+          onCancel={() => { setEditingCompanion(undefined); setView('select'); }}
+        />
+      </main>
+    );
+  }
+
+  if (view === 'create') {
     return (
       <main className="creation-shell">
         <CreationDragHandle />
@@ -854,9 +878,8 @@ function CreationShell() {
           &#x2715;
         </button>
         <CompanionCreationPage
-          editCompanion={editingCompanion}
           onComplete={handleComplete}
-          onCancel={() => { setEditingCompanion(undefined); setView('select'); }}
+          onCancel={() => setView('select')}
         />
       </main>
     );
@@ -1630,6 +1653,7 @@ function SettingsView({ state, behaviorSettings, onRefresh, onLangChange }: {
         <PaperCard title={t(lang, 'settings_appearance_title')} tape><p>{t(lang, 'settings_appearance_desc')}</p></PaperCard>
         <PaperCard title={t(lang, 'settings_privacy_title')} tape><p>{t(lang, 'settings_privacy_desc')}</p></PaperCard>
         <VoiceSettingsCard />
+        <OnlineModeCard />
         <ActionPermissionsCard />
         <PaperCard title={t(lang, 'settings_ai_title')} tape className="settings-panel">
           <h2>{t(lang, 'settings_ai_provider')}</h2>
@@ -1710,6 +1734,179 @@ function VoiceSettingsCard() {
       </div>
       {settingsMessage && <p>{settingsMessage}</p>}
       {!loading && !speechStatus?.ready && <p>{t(lang, 'voice_download_hint')}</p>}
+    </PaperCard>
+  );
+}
+
+function OnlineModeCard() {
+  const lang = useLang();
+  const [mode, setMode] = useState<OnlineMode>('offline');
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showRegister, setShowRegister] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
+  const [username, setUsername] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    void loadData();
+  }, []);
+
+  async function loadData() {
+    setLoading(true);
+    try {
+      const [currentMode, profile] = await Promise.all([
+        window.ourCompanion.user.getMode(),
+        window.ourCompanion.user.getProfile()
+      ]);
+      setMode(currentMode);
+      setUser(profile);
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleModeToggle() {
+    const newMode = mode === 'online' ? 'offline' : 'online';
+    if (newMode === 'online' && !user) {
+      setShowRegister(true);
+      return;
+    }
+    try {
+      const next = await window.ourCompanion.user.setMode(newMode);
+      setMode(next);
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Failed to update mode');
+    }
+  }
+
+  async function handleRegister() {
+    if (!username.trim() || !password.trim() || !displayName.trim()) return;
+    setSaving(true);
+    setAuthError('');
+    try {
+      const profile = await window.ourCompanion.user.register({
+        username: username.trim(),
+        displayName: displayName.trim(),
+        email: email.trim() || undefined,
+        password
+      });
+      setUser(profile);
+      await window.ourCompanion.user.setMode('online');
+      setMode('online');
+      setShowRegister(false);
+      resetForm();
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Registration failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleLogin() {
+    if (!username.trim() || !password.trim()) return;
+    setSaving(true);
+    setAuthError('');
+    try {
+      const profile = await window.ourCompanion.user.login({
+        username: username.trim(),
+        password
+      });
+      setUser(profile);
+      await window.ourCompanion.user.setMode('online');
+      setMode('online');
+      setShowLogin(false);
+      resetForm();
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Login failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleLogout() {
+    await window.ourCompanion.user.logout();
+    await window.ourCompanion.user.setMode('offline');
+    setUser(null);
+    setMode('offline');
+  }
+
+  function resetForm() {
+    setUsername('');
+    setDisplayName('');
+    setEmail('');
+    setPassword('');
+    setAuthError('');
+  }
+
+  if (loading) {
+    return (
+      <PaperCard title="Online Mode" tape className="settings-panel">
+        <p>Loading...</p>
+      </PaperCard>
+    );
+  }
+
+  return (
+    <PaperCard title="Online Mode" tape className="settings-panel">
+      <div className="online-mode-header">
+        <div className="online-mode-status">
+          <span className={`online-mode-dot ${mode === 'online' ? 'online-mode-dot-active' : ''}`} />
+          <span className="online-mode-label">{mode === 'online' ? 'Online' : 'Offline'}</span>
+        </div>
+        <button className="btn-secondary btn-sm" onClick={() => void handleModeToggle()}>
+          {mode === 'online' ? 'Go Offline' : 'Go Online'}
+        </button>
+      </div>
+
+      {user ? (
+        <div className="online-user-info">
+          <p><strong>{user.displayName}</strong> (@{user.username})</p>
+          {user.email && <p>{user.email}</p>}
+          <button className="btn-ghost btn-sm" onClick={() => void handleLogout()}>Log out</button>
+        </div>
+      ) : showRegister ? (
+        <div className="online-auth-form">
+          <h3>Create Account</h3>
+          <label><span>Username</span><input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="username" autoFocus /></label>
+          <label><span>Display Name</span><input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Your name" /></label>
+          <label><span>Email (optional)</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" /></label>
+          <label><span>Password</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" /></label>
+          {authError && <p className="creation-error">{authError}</p>}
+          <div className="action-row">
+            <button className="btn-secondary btn-sm" onClick={() => { setShowRegister(false); resetForm(); }}>Cancel</button>
+            <button className="btn-primary btn-sm" disabled={saving || !username.trim() || !password.trim() || !displayName.trim()} onClick={() => void handleRegister()}>
+              {saving ? 'Creating...' : 'Create Account'}
+            </button>
+          </div>
+          <p className="online-auth-switch">Already have an account? <button className="btn-ghost btn-sm" onClick={() => { setShowRegister(false); setShowLogin(true); resetForm(); }}>Log in</button></p>
+        </div>
+      ) : showLogin ? (
+        <div className="online-auth-form">
+          <h3>Log In</h3>
+          <label><span>Username</span><input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="username" autoFocus /></label>
+          <label><span>Password</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" /></label>
+          {authError && <p className="creation-error">{authError}</p>}
+          <div className="action-row">
+            <button className="btn-secondary btn-sm" onClick={() => { setShowLogin(false); resetForm(); }}>Cancel</button>
+            <button className="btn-primary btn-sm" disabled={saving || !username.trim() || !password.trim()} onClick={() => void handleLogin()}>
+              {saving ? 'Logging in...' : 'Log In'}
+            </button>
+          </div>
+          <p className="online-auth-switch">Don&apos;t have an account? <button className="btn-ghost btn-sm" onClick={() => { setShowLogin(false); setShowRegister(true); resetForm(); }}>Create one</button></p>
+        </div>
+      ) : (
+        <div className="online-auth-buttons">
+          <button className="btn-secondary btn-sm" onClick={() => setShowLogin(true)}>Log In</button>
+          <button className="btn-primary btn-sm" onClick={() => setShowRegister(true)}>Create Account</button>
+        </div>
+      )}
     </PaperCard>
   );
 }

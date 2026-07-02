@@ -21,8 +21,7 @@ CREATE TABLE IF NOT EXISTS character_profiles (
   core_personality_json TEXT NOT NULL,
   expertise_json TEXT NOT NULL,
   speaking_style_json TEXT NOT NULL,
-  behavior_rules_json TEXT NOT NULL,
-  FOREIGN KEY(character_id) REFERENCES characters(id)
+  behavior_rules_json TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS character_state (
@@ -32,8 +31,7 @@ CREATE TABLE IF NOT EXISTS character_state (
   intent TEXT NOT NULL,
   position_json TEXT,
   last_activity_at TEXT,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY(character_id) REFERENCES characters(id)
+  updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS journeys (
@@ -264,8 +262,7 @@ CREATE TABLE IF NOT EXISTS diary_entries (
   title TEXT,
   content TEXT NOT NULL,
   related_journey_id TEXT,
-  created_at TEXT NOT NULL,
-  FOREIGN KEY(character_id) REFERENCES characters(id)
+  created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS task_history (
@@ -293,8 +290,7 @@ CREATE TABLE IF NOT EXISTS companion_messages (
   source TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'ok',
   metadata_json TEXT,
-  created_at TEXT NOT NULL,
-  FOREIGN KEY(character_id) REFERENCES characters(id)
+  created_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_memory_nodes_type ON memory_nodes(type);

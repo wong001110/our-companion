@@ -12,6 +12,7 @@
   "scripts": {
     "dev": "npm run dev -w @our-companion/desktop",
     "build": "npm run build -w @our-companion/desktop",
+    "build:clean": "rm -rf apps/desktop/dist && rm -rf node_modules/.vite && npm run build",
     "start": "npm run start -w @our-companion/desktop",
     "typecheck": "tsc -b",
     "test": "vitest run",

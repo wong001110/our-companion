@@ -1116,6 +1116,40 @@ export interface WorkspaceStatusSnapshot {
   unavailableMetrics: string[];
 }
 
+// ============================================================================
+// USER & ONLINE MODE
+// ============================================================================
+
+export type OnlineMode = 'online' | 'offline';
+
+export interface UserProfile {
+  id: string;
+  username: string;
+  displayName: string;
+  email?: string;
+  avatarUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RegisterUserInput {
+  username: string;
+  displayName: string;
+  email?: string;
+  password: string;
+}
+
+export interface LoginUserInput {
+  username: string;
+  password: string;
+}
+
+export interface AuthState {
+  mode: OnlineMode;
+  user: UserProfile | null;
+  token: string | null;
+}
+
 export interface OurCompanionApi {
   character: {
     getState(characterId?: string): Promise<CharacterRuntimeState>;
@@ -1219,6 +1253,15 @@ export interface OurCompanionApi {
     getEngineSnapshot(input?: EngineSnapshotInput): Promise<EngineSnapshot>;
     onFoundationEvent(listener: (event: BaseEvent) => void): () => void;
   };
+  user: {
+    getProfile(): Promise<UserProfile | null>;
+    register(input: RegisterUserInput): Promise<UserProfile>;
+    login(input: LoginUserInput): Promise<UserProfile>;
+    logout(): Promise<void>;
+    getMode(): Promise<OnlineMode>;
+    setMode(mode: OnlineMode): Promise<OnlineMode>;
+    onModeChange(listener: (mode: OnlineMode) => void): () => void;
+  };
   window: {
     openPanel(input?: { annX?: number; annY?: number }): Promise<boolean>;
     openPanelForSwitch(): Promise<boolean>;
@@ -1228,6 +1271,7 @@ export interface OurCompanionApi {
     setMousePassthrough(input: WindowMousePassthroughInput): Promise<boolean>;
   };
   creation: {
+    completed(companion: CompanionProfile): Promise<boolean>;
     onCompleted(listener: (companion: CompanionProfile) => void): () => void;
     openWindow(): Promise<boolean>;
     closeWindow(): Promise<boolean>;
@@ -1240,6 +1284,9 @@ export interface OurCompanionApi {
     quit(): Promise<boolean>;
     exitWithAnimation(): Promise<boolean>;
     onExitAnimation(listener: () => void): () => void;
+  };
+  dialog: {
+    openFiles(): Promise<Array<{ name: string; dataUrl: string }>>;
   };
   companionNew: CompanionApi;
 }
@@ -1618,6 +1665,10 @@ export interface CompanionApi {
   setPrimary(id: string): Promise<CompanionProfile>;
   getPrimary(): Promise<CompanionProfile | null>;
   getAssetRoot(id: string): Promise<string>;
+  uploadAsset(input: { companionId: string; fileName: string; buffer: ArrayBuffer | Uint8Array }): Promise<{ name: string; path: string }>;
+  listAssets(companionId: string): Promise<Array<{ name: string; size: number; subfolder: string }>>;
+  deleteAsset(input: { companionId: string; subfolder: string; fileName: string }): Promise<{ deleted: true }>;
+  readAsset(input: { companionId: string; subfolder: string; fileName: string }): Promise<{ dataUrl: string } | null>;
 }
 
 export type OutsidePanelMode = 'closed' | 'peek' | 'compact' | 'expanded' | 'discussion' | 'history';

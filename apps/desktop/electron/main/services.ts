@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app } from 'electron';
+import { app, dialog } from 'electron';
 import {
   DeepSeekClient,
   DeepSeekRequestError,
@@ -83,6 +83,7 @@ import type {
   UpdateSpeechSettingsInput,
   UpdateMemoryNodeInput
 } from '@our-companion/shared';
+import type { UserProfile, OnlineMode, RegisterUserInput, LoginUserInput } from '@our-companion/shared';
 import { COMPANION_CHAT_CONTEXT_LIMIT, DEFAULT_CHARACTER_ID, createId, nowIso, type BaseEvent } from '@our-companion/shared';
 import { detectPatterns } from '@our-companion/pattern-engine';
 import { executeActionStep, executeTool, previewTool } from '@our-companion/tool-engine';
@@ -195,10 +196,58 @@ export class AppServices {
     getAssetRoot: async (id: string): Promise<string> => {
       const companion = this.db.getCompanion(id);
       if (!companion) throw new Error(`Companion not found: ${id}`);
-      if (companion.isBuiltIn) return companion.assetRoot;
       const companionsDir = path.join(app.getPath('userData'), 'companions', id, 'assets');
       fs.mkdirSync(companionsDir, { recursive: true });
       return companionsDir;
+    },
+    uploadAsset: async (input: { companionId: string; fileName: string; buffer: ArrayBuffer | Uint8Array }): Promise<{ name: string; path: string }> => {
+      const companion = this.db.getCompanion(input.companionId);
+      if (!companion) throw new Error(`Companion not found: ${input.companionId}`);
+      const animationsDir = path.join(app.getPath('userData'), 'companions', input.companionId, 'assets', 'animations');
+      fs.mkdirSync(animationsDir, { recursive: true });
+      const safeName = path.basename(input.fileName).replace(/[^a-zA-Z0-9_.-]/g, '_');
+      const filePath = path.join(animationsDir, safeName);
+      const buf = input.buffer instanceof Uint8Array ? Buffer.from(input.buffer.buffer, input.buffer.byteOffset, input.buffer.byteLength) : Buffer.from(input.buffer);
+      fs.writeFileSync(filePath, buf);
+      return { name: safeName, path: filePath };
+    },
+    listAssets: async (companionId: string): Promise<Array<{ name: string; size: number; subfolder: string }>> => {
+      const companion = this.db.getCompanion(companionId);
+      if (!companion) throw new Error(`Companion not found: ${companionId}`);
+      const assetsDir = path.join(app.getPath('userData'), 'companions', companionId, 'assets');
+      if (!fs.existsSync(assetsDir)) return [];
+      const results: Array<{ name: string; size: number; subfolder: string }> = [];
+      for (const subfolder of ['animations', 'portraits', 'icons', 'voices']) {
+        const dir = path.join(assetsDir, subfolder);
+        if (!fs.existsSync(dir)) continue;
+        for (const file of fs.readdirSync(dir)) {
+          const stat = fs.statSync(path.join(dir, file));
+          if (stat.isFile()) {
+            results.push({ name: file, size: stat.size, subfolder });
+          }
+        }
+      }
+      return results;
+    },
+    deleteAsset: async (input: { companionId: string; subfolder: string; fileName: string }): Promise<{ deleted: true }> => {
+      const companion = this.db.getCompanion(input.companionId);
+      if (!companion) throw new Error(`Companion not found: ${input.companionId}`);
+      const filePath = path.join(app.getPath('userData'), 'companions', input.companionId, 'assets', input.subfolder, input.fileName);
+      if (!fs.existsSync(filePath)) throw new Error('Asset not found');
+      fs.unlinkSync(filePath);
+      return { deleted: true };
+    },
+    readAsset: async (input: { companionId: string; subfolder: string; fileName: string }): Promise<{ dataUrl: string } | null> => {
+      const companion = this.db.getCompanion(input.companionId);
+      if (!companion) return null;
+      const assetsDir = path.join(app.getPath('userData'), 'companions', input.companionId, 'assets');
+      const filePath = path.join(assetsDir, input.subfolder, input.fileName);
+      if (!fs.existsSync(filePath)) return null;
+      const buffer = fs.readFileSync(filePath);
+      const ext = path.extname(input.fileName).toLowerCase();
+      const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : ext === '.gif' ? 'image/gif' : 'image/png';
+      const base64 = buffer.toString('base64');
+      return { dataUrl: `data:${mime};base64,${base64}` };
     }
   };
 
@@ -754,6 +803,35 @@ export class AppServices {
   workspace = {
     getStatus: async (): Promise<WorkspaceStatusSnapshot> => collectWorkspaceStatus(),
     getSummary: async (): Promise<WorkspaceStatusSnapshot['summary']> => collectWorkspaceStatus().summary,
+  };
+
+  user = {
+    getProfile: async (): Promise<UserProfile | null> => {
+      return this.db.getUser();
+    },
+    register: async (input: RegisterUserInput): Promise<UserProfile> => {
+      return this.db.createUser(input);
+    },
+    login: async (input: LoginUserInput): Promise<UserProfile> => {
+      const user = this.db.getUserByUsername(input.username);
+      if (!user || user.passwordHash !== input.password) {
+        throw new Error('Invalid username or password');
+      }
+      return { id: user.id, username: user.username, displayName: user.displayName, email: user.email, createdAt: user.createdAt, updatedAt: user.updatedAt };
+    },
+    logout: async (): Promise<void> => {
+      // Clear any session tokens if needed
+    },
+    getMode: async (): Promise<OnlineMode> => {
+      return (this.db.getAppSetting<OnlineMode>('online_mode')) ?? 'offline';
+    },
+    setMode: async (mode: OnlineMode): Promise<OnlineMode> => {
+      this.db.setAppSetting('online_mode', mode);
+      return mode;
+    },
+    onModeChange: (_listener: (mode: OnlineMode) => void): (() => void) => {
+      return () => {};
+    }
   };
 
   attachShareOrchestrator(orchestrator: DiscoveryShareOrchestrator): void {

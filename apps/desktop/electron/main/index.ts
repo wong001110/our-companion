@@ -1,6 +1,8 @@
+import fs from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow, globalShortcut, ipcMain, nativeImage, screen, session } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeImage, screen, session } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
+import { loadEnv } from './env';
 import { AppServices } from './services';
 import { DiscoveryScheduler } from './discoveryScheduler';
 import { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
@@ -58,10 +60,6 @@ function createCompanionWindow(): BrowserWindow {
   window.on('focus', () => keepCompanionOnTop(window));
   window.on('blur', () => keepCompanionOnTop(window));
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  window.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-    const prefix = `[renderer:${level}]`;
-    console.log(`${prefix} ${message} (${sourceId}:${line})`);
-  });
   window.loadURL(rendererUrl('companion'));
   companionWindow = window;
   return window;
@@ -93,10 +91,6 @@ function createPanelWindow(): BrowserWindow {
     window.hide();
   });
 
-  window.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-    const prefix = `[renderer:${level}]`;
-    console.log(`${prefix} ${message} (${sourceId}:${line})`);
-  });
   window.loadURL(rendererUrl('panel'));
   panelWindow = window;
   return window;
@@ -111,7 +105,7 @@ function createCreationWindow(): BrowserWindow {
   const primaryDisplay = screen.getPrimaryDisplay();
   const workArea = primaryDisplay.workArea;
   const windowWidth = 560;
-  const windowHeight = 580;
+  const windowHeight = 680;
 
   const window = new BrowserWindow({
     width: windowWidth,
@@ -130,10 +124,6 @@ function createCreationWindow(): BrowserWindow {
     }
   });
 
-  window.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-    const prefix = `[renderer:${level}]`;
-    console.log(`${prefix} ${message} (${sourceId}:${line})`);
-  });
   window.loadURL(rendererUrl('creation'));
   window.once('ready-to-show', () => window.show());
   creationWindow = window;
@@ -259,6 +249,12 @@ function registerIpc(): void {
     'debug:getEngineSnapshot': services.debug.getEngineSnapshot,
     'workspace:getStatus': services.workspace.getStatus,
     'workspace:getSummary': services.workspace.getSummary,
+    'user:getProfile': services.user.getProfile,
+    'user:register': services.user.register,
+    'user:login': services.user.login,
+    'user:logout': services.user.logout,
+    'user:getMode': services.user.getMode,
+    'user:setMode': services.user.setMode,
     'companionNew:create': services.companionNew.create,
     'companionNew:list': services.companionNew.list,
     'companionNew:get': services.companionNew.get,
@@ -266,7 +262,11 @@ function registerIpc(): void {
     'companionNew:delete': services.companionNew.delete,
     'companionNew:setPrimary': services.companionNew.setPrimary,
     'companionNew:getPrimary': services.companionNew.getPrimary,
-    'companionNew:getAssetRoot': services.companionNew.getAssetRoot
+    'companionNew:getAssetRoot': services.companionNew.getAssetRoot,
+    'companionNew:uploadAsset': services.companionNew.uploadAsset,
+    'companionNew:listAssets': services.companionNew.listAssets,
+    'companionNew:deleteAsset': services.companionNew.deleteAsset,
+    'companionNew:readAsset': services.companionNew.readAsset
   } as const;
 
   for (const [channel, handler] of Object.entries(routes)) {
@@ -366,6 +366,19 @@ function registerIpc(): void {
       companionWindow.webContents.send('companion:exitAnimation');
     }
     return true;
+  });
+
+  ipcMain.handle('dialog:openFiles', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'PNG Images', extensions: ['png'] }]
+    });
+    if (result.canceled || result.filePaths.length === 0) return [];
+    return result.filePaths.map((filePath) => {
+      const buffer = fs.readFileSync(filePath);
+      const base64 = buffer.toString('base64');
+      return { name: path.basename(filePath), dataUrl: `data:image/png;base64,${base64}` };
+    });
   });
 
   ipcMain.handle('window:getBounds', (event) => getSenderWindow(event).getBounds());
@@ -512,8 +525,24 @@ function registerDisplayListeners(): void {
   screen.on('display-metrics-changed', handleDisplayChange);
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   try {
+    await session.defaultSession.clearCache();
+    const env = loadEnv(path.join(app.getAppPath(), '..', '..', '.env'));
+    Object.assign(process.env, env);
+
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    const isHttpCacheDisabled = process.env.HTTP_CACHE_DISABLED === 'true';
+
+    if (isDevelopment && isHttpCacheDisabled) {
+      session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+        details.requestHeaders['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+        details.requestHeaders['Pragma'] = 'no-cache';
+        details.requestHeaders['Expires'] = '0';
+        callback({ requestHeaders: details.requestHeaders });
+      });
+    }
+
     services = new AppServices();
     registerIpc();
     session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
@@ -544,16 +573,42 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    unregisterCompanionHotkey();
-    stopDiscoveryAutomation();
-    services?.db.close();
-    app.quit();
+let isQuitting = false;
+
+function forceCleanup(): void {
+  if (isQuitting) return;
+  isQuitting = true;
+  unregisterCompanionHotkey();
+  stopDiscoveryAutomation();
+  for (const win of [companionWindow, panelWindow, creationWindow]) {
+    if (win && !win.isDestroyed()) {
+      win.destroy();
+    }
   }
+  try { services?.db.close(); } catch { /* ignore */ }
+}
+
+app.on('window-all-closed', () => {
+  forceCleanup();
+  app.quit();
 });
 
 app.on('will-quit', () => {
-  unregisterCompanionHotkey();
-  stopDiscoveryAutomation();
+  forceCleanup();
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[our-companion] Uncaught exception:', err);
+  forceCleanup();
+  process.exit(1);
+});
+
+process.on('SIGTERM', () => {
+  forceCleanup();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  forceCleanup();
+  process.exit(0);
 });

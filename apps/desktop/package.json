@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist/electron/main/index.js",
   "scripts": {
-    "dev": "concurrently -k \"vite --config vite.renderer.config.ts --host 127.0.0.1 --port 5173 --strictPort\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "dev:main": "vite build --config vite.main.config.ts && vite build --config vite.preload.config.ts",
+    "dev": "npm run dev:main && concurrently -k \"cross-env NODE_ENV=development vite --config vite.renderer.config.ts --host 127.0.0.1 --port 5173 --strictPort\" \"wait-on http://127.0.0.1:5173 && cross-env NODE_ENV=development HTTP_CACHE_DISABLED=true VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "vite build --config vite.renderer.config.ts && vite build --config vite.main.config.ts && vite build --config vite.preload.config.ts",
     "start": "electron .",
     "postinstall": "node ../../scripts/patch-whisper-addon.mjs && electron-rebuild -f -w @kutalia/whisper-node-addon",

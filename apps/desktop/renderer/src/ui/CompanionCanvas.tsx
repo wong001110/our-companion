@@ -214,7 +214,7 @@ export function CompanionCanvas({
     const rect = canvas.getBoundingClientRect();
     if (!isInsideRect(event.clientX, event.clientY, rect)) return false;
 
-    const context = canvas.getContext('2d');
+    const context = canvas.getContext('2d', { willReadFrequently: true });
     if (!context) return false;
 
     const visualX = event.clientX - rect.left;

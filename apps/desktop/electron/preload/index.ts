@@ -22,13 +22,17 @@ import type {
   DiscoverySource,
   EngineSnapshotInput,
   FoundationEventLogInput,
+  LoginUserInput,
+  OnlineMode,
   OurCompanionApi,
   PerformanceScript,
+  RegisterUserInput,
   StartExplorationInput,
   SubmitDiscoveryFeedbackInput,
   ToolExecuteInput,
   UpdateCompanionInput,
-  UpdateMemoryNodeInput
+  UpdateMemoryNodeInput,
+  UserProfile
 } from '@our-companion/shared';
 
 function invoke<T>(channel: string, input?: unknown): Promise<T> {
@@ -181,6 +185,7 @@ const api: OurCompanionApi = {
     setMousePassthrough: (input) => invoke('window:setMousePassthrough', input)
   },
   creation: {
+    completed: (companion: CompanionProfile) => invoke<boolean>('creation:completed', companion),
     onCompleted: (listener: (companion: CompanionProfile) => void) => {
       const channel = 'creation:completed';
       const handler = (_event: Electron.IpcRendererEvent, companion: CompanionProfile) => listener(companion);
@@ -194,6 +199,18 @@ const api: OurCompanionApi = {
     getStatus: () => invoke('workspace:getStatus'),
     getSummary: () => invoke('workspace:getSummary'),
   },
+  user: {
+    getProfile: () => invoke<UserProfile | null>('user:getProfile'),
+    register: (input: RegisterUserInput) => invoke<UserProfile>('user:register', input),
+    login: (input: LoginUserInput) => invoke<UserProfile>('user:login', input),
+    logout: () => invoke<void>('user:logout'),
+    getMode: () => invoke<OnlineMode>('user:getMode'),
+    setMode: (mode: OnlineMode) => invoke<OnlineMode>('user:setMode', mode),
+    onModeChange: (listener: (mode: OnlineMode) => void) => {
+      ipcRenderer.on('user:modeChanged', (_event, mode) => listener(mode));
+      return () => { ipcRenderer.removeAllListeners('user:modeChanged'); };
+    }
+  },
   app: {
     quit: () => invoke<boolean>('app:quit'),
     exitWithAnimation: () => invoke<boolean>('app:exitWithAnimation'),
@@ -204,6 +221,9 @@ const api: OurCompanionApi = {
       return () => ipcRenderer.removeListener(channel, handler);
     }
   },
+  dialog: {
+    openFiles: () => invoke<Array<{ name: string; dataUrl: string }>>('dialog:openFiles')
+  },
   companionNew: {
     create: (input: CreateCompanionInput) => invoke<CompanionProfile>('companionNew:create', input),
     list: () => invoke<CompanionProfile[]>('companionNew:list'),
@@ -212,7 +232,11 @@ const api: OurCompanionApi = {
     delete: (id: string) => invoke<{ id: string; deleted: true }>('companionNew:delete', id),
     setPrimary: (id: string) => invoke<CompanionProfile>('companionNew:setPrimary', id),
     getPrimary: () => invoke<CompanionProfile | null>('companionNew:getPrimary'),
-    getAssetRoot: (id: string) => invoke<string>('companionNew:getAssetRoot', id)
+    getAssetRoot: (id: string) => invoke<string>('companionNew:getAssetRoot', id),
+    uploadAsset: (input: { companionId: string; fileName: string; buffer: ArrayBuffer }) => invoke<{ name: string; path: string }>('companionNew:uploadAsset', input),
+    listAssets: (companionId: string) => invoke<Array<{ name: string; size: number; subfolder: string }>>('companionNew:listAssets', companionId),
+    deleteAsset: (input: { companionId: string; subfolder: string; fileName: string }) => invoke<{ deleted: true }>('companionNew:deleteAsset', input),
+    readAsset: (input: { companionId: string; subfolder: string; fileName: string }) => invoke<{ dataUrl: string } | null>('companionNew:readAsset', input)
   }
 };
 
