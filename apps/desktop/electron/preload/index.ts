@@ -35,6 +35,8 @@ import type {
   UserProfile
 } from '@our-companion/shared';
 
+let pendingCreationCompanion: CompanionProfile | null = null;
+
 function invoke<T>(channel: string, input?: unknown): Promise<T> {
   return ipcRenderer.invoke(channel, input) as Promise<T>;
 }
@@ -188,8 +190,15 @@ const api: OurCompanionApi = {
     completed: (companion: CompanionProfile) => invoke<boolean>('creation:completed', companion),
     onCompleted: (listener: (companion: CompanionProfile) => void) => {
       const channel = 'creation:completed';
-      const handler = (_event: Electron.IpcRendererEvent, companion: CompanionProfile) => listener(companion);
+      const handler = (_event: Electron.IpcRendererEvent, companion: CompanionProfile) => {
+        pendingCreationCompanion = companion;
+        listener(companion);
+      };
       ipcRenderer.on(channel, handler);
+      if (pendingCreationCompanion) {
+        listener(pendingCreationCompanion);
+        pendingCreationCompanion = null;
+      }
       return () => ipcRenderer.removeListener(channel, handler);
     },
     openWindow: () => invoke<boolean>('creation:openWindow'),
