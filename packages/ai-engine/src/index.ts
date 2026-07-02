@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type {
+  ActionPlanV2,
   CompanionDecision,
   CompanionInsight,
   CuriosityAssessment,
@@ -7,6 +8,7 @@ import type {
   DiscoveryReason,
   DiscoveryUnderstanding,
   Insight,
+  InsightV2,
   MemorySummary,
   ToolIntent
 } from '@our-companion/shared';
@@ -61,24 +63,46 @@ export const toolIntentSchema = z.object({
 });
 
 export const actionStepSchema = z.object({
-  tool_name: z.enum(['open_url', 'open_app', 'search_web', 'browser_navigation', 'none']),
+  id: z.string().optional(),
+  toolName: z.enum(['open_url', 'open_app', 'search_web', 'browser_navigation', 'none']),
   args: z.record(z.unknown()),
-  required_scopes: z.array(z.string()).optional()
+  waitMs: z.number().optional(),
+  requiredScopes: z.array(z.string()).optional()
 });
 
 export const actionPlanSchema = z.object({
-  summary: z.string(),
+  id: z.string().optional(),
+  intentId: z.string().optional(),
   steps: z.array(actionStepSchema),
-  requires_confirmation: z.boolean().optional()
+  requiredPermissions: z.array(z.string()).optional(),
+  riskLevel: z.enum(['low', 'medium', 'high']).optional(),
+  confirmationRequired: z.boolean(),
+  status: z.enum(['draft', 'pending_confirmation', 'approved', 'running', 'completed', 'failed', 'cancelled']).optional()
 });
 
 export type ActionPlanLlmResult = z.infer<typeof actionPlanSchema>;
 
-export function validateActionPlan(raw: string): ActionPlanLlmResult | undefined {
+export function validateActionPlan(raw: string): ActionPlanV2 | undefined {
   try {
     const parsed: unknown = JSON.parse(raw);
     const result = actionPlanSchema.safeParse(parsed);
-    return result.success ? result.data : undefined;
+    if (!result.success) return undefined;
+    const data = result.data;
+    return {
+      id: data.id ?? '',
+      intentId: data.intentId ?? '',
+      steps: data.steps.map(s => ({
+        id: s.id ?? '',
+        toolName: s.toolName,
+        args: s.args,
+        waitMs: s.waitMs,
+        requiredScopes: (s.requiredScopes ?? []) as any[]
+      })),
+      requiredPermissions: data.requiredPermissions ?? [],
+      riskLevel: data.riskLevel ?? 'low',
+      confirmationRequired: data.confirmationRequired,
+      status: data.status ?? 'draft'
+    };
   } catch {
     return undefined;
   }
@@ -121,11 +145,18 @@ export const discoveryUnderstandingSchema = z.object({
 });
 
 export const cognitiveInsightSchema = z.object({
+  id: z.string().optional(),
+  userId: z.string().optional(),
+  category: z.enum(['interest', 'learning', 'productivity', 'project', 'behaviour', 'relationship', 'discovery', 'risk']),
   title: z.string(),
+  summary: z.string(),
   explanation: z.string(),
-  related_concepts: z.array(z.string()),
-  growth_value: z.number().min(0).max(100),
-  confidence: z.number().min(0).max(1)
+  supportingPatternIds: z.array(z.string()).optional(),
+  supportingMemoryIds: z.array(z.string()).optional(),
+  confidence: z.number().min(0).max(1),
+  importance: z.number().min(0).max(100),
+  novelty: z.number().min(0).max(1),
+  evidenceCount: z.number().min(0).optional()
 });
 
 export const curiosityAssessmentSchema = z.object({
@@ -214,15 +245,22 @@ export function validateDiscoveryUnderstanding(text: string): DiscoveryUnderstan
   return discoveryUnderstandingSchema.parse(parseJsonObject(text));
 }
 
-export function validateCognitiveInsight(text: string): Pick<Insight, 'title' | 'explanation' | 'growthValue' | 'confidence'> & { relatedConcepts: string[] } {
+export function validateCognitiveInsight(text: string): Pick<InsightV2, 'title' | 'explanation' | 'confidence' | 'importance' | 'novelty' | 'category' | 'summary'> & { supportingPatternIds: string[]; supportingMemoryIds: string[] } {
   const parsed = cognitiveInsightSchema.parse(parseJsonObject(text));
   return {
+    id: parsed.id ?? '',
+    userId: parsed.userId ?? '',
+    category: parsed.category as InsightV2['category'],
     title: parsed.title,
+    summary: parsed.summary,
     explanation: parsed.explanation,
-    relatedConcepts: parsed.related_concepts,
-    growthValue: parsed.growth_value,
-    confidence: parsed.confidence
-  };
+    supportingPatternIds: parsed.supportingPatternIds ?? [],
+    supportingMemoryIds: parsed.supportingMemoryIds ?? [],
+    confidence: parsed.confidence,
+    importance: parsed.importance,
+    novelty: parsed.novelty,
+    evidenceCount: parsed.evidenceCount ?? 0
+  } as Pick<InsightV2, 'title' | 'explanation' | 'confidence' | 'importance' | 'novelty' | 'category' | 'summary'> & { supportingPatternIds: string[]; supportingMemoryIds: string[] };
 }
 
 export function validateCuriosityAssessment(text: string): Pick<CuriosityAssessment, 'targetId' | 'targetType' | 'growthValue' | 'budgetCost' | 'reason'> & { gapMatch?: CuriosityAssessment['gapMatch'] } {

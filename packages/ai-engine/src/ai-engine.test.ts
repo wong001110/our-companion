@@ -69,9 +69,9 @@ describe('ai engine', () => {
     ).toBe(82);
     expect(
       validateCognitiveInsight(
-        '{"title":"Memory direction","explanation":"It matters","related_concepts":["memory"],"growth_value":88,"confidence":0.82}'
-      ).relatedConcepts
-    ).toContain('memory');
+        '{"category":"learning","title":"Memory direction","summary":"A summary","explanation":"It matters","supportingPatternIds":["p1"],"confidence":0.82,"importance":88,"novelty":0.7}'
+      ).supportingPatternIds
+    ).toContain('p1');
     expect(
       validateCuriosityAssessment(
         '{"target_id":"disc_1","target_type":"discovery","growth_value":77,"budget_cost":7,"reason":"Good fit"}'
