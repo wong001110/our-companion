@@ -1,14 +1,12 @@
 import type {
   ActionPermissionState,
-  ActionPlan,
-  ActionRunResult,
   CaptureSignalInput,
   Concept,
   NormalizedSignal,
-  PerformanceScript,
   PermissionScope,
   Signal,
 } from '../models';
+import type { ActionPlanV2, ActionResult, PerformanceScriptV2 } from '../index';
 
 export interface SignalEngine {
   capture(input: CaptureSignalInput): Promise<Signal>;
@@ -116,21 +114,21 @@ export interface CommandExecutor {
 // Volume 05 — Desktop Action & Automation
 
 export interface ActionPlanner {
-  plan(text: string): ActionPlan | undefined;
+  plan(text: string): ActionPlanV2 | undefined;
 }
 
 export interface PermissionManager {
-  resolve(plan: ActionPlan, stored: ActionPermissionState): PermissionScope[] | 'ok' | 'denied';
+  resolve(plan: ActionPlanV2, stored: ActionPermissionState): PermissionScope[] | 'ok' | 'denied';
 }
 
 export interface ActionOrchestratorDeps {
   executeStep(toolName: string, args: Record<string, unknown>): Promise<{ status: string; errorMessage?: string; blockedReason?: string }>;
   emitEvent(type: string, payload?: Record<string, unknown>, correlationId?: string): void;
   getPermissions(): ActionPermissionState;
-  directPerformance(actionId: string, outcome: 'success' | 'failure'): PerformanceScript;
-  broadcastPerformance(script: PerformanceScript): void;
+  directPerformance(actionId: string, outcome: 'success' | 'failure'): PerformanceScriptV2;
+  broadcastPerformance(script: PerformanceScriptV2): void;
 }
 
 export interface ActionOrchestrator {
-  run(plan: ActionPlan, deps: ActionOrchestratorDeps): Promise<ActionRunResult>;
+  run(plan: ActionPlanV2, deps: ActionOrchestratorDeps): Promise<ActionResult>;
 }

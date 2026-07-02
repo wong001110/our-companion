@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ActionPermissionState,
-  ActionPlan,
-  ActionRunResult,
+  ActionPlanV2,
+  ActionResult,
   AiDebugEntry,
   AiSettings,
   CharacterBehaviorSettings,
@@ -23,7 +23,7 @@ import type {
   KnowledgeGraphNode,
   OnlineMode,
   PermissionScope,
-  PerformanceScript,
+  PerformanceScriptV2,
   SpeechSettings,
   SpeechStatus,
   ToolExecutionResult,
@@ -344,14 +344,16 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       };
       discovery.enqueue(pc);
     });
-    const unsubscribePerformance = window.ourCompanion.action.onPerformance((script: PerformanceScript) => {
+    const unsubscribePerformance = window.ourCompanion.action.onPerformance((script: PerformanceScriptV2) => {
       let delay = 0;
-      for (const step of script.steps) {
-        const animKey = step.animationKey as AnimationName;
+      for (const cue of script.animationSequence) {
+        const animKey = cue.payload && typeof cue.payload === 'object' && 'animationKey' in cue.payload
+          ? (cue.payload as { animationKey: string }).animationKey as AnimationName
+          : cue.id as AnimationName;
         window.setTimeout(() => {
           setIdleAnimation(animKey);
         }, delay);
-        delay += step.durationMs;
+        delay += cue.durationMs ?? 0;
       }
     });
     return () => {
@@ -1365,8 +1367,8 @@ function MemoryView({ graph, onRefresh }: { graph: KnowledgeGraph; onRefresh: ()
 function AskView({ onRefresh }: { onRefresh: () => Promise<void> }) {
   const lang = useLang();
   const [input, setInput] = useState('Search web for PixiJS desktop pet tutorials');
-  const [result, setResult] = useState<ToolExecutionResult | ToolPreview | { message: string } | ActionRunResult>();
-  const [plan, setPlan] = useState<ActionPlan | undefined>();
+  const [result, setResult] = useState<ToolExecutionResult | ToolPreview | { message: string } | ActionResult>();
+  const [plan, setPlan] = useState<ActionPlanV2 | undefined>();
   const [permissionsNeeded, setPermissionsNeeded] = useState<PermissionScope[]>([]);
   const [alwaysAllow, setAlwaysAllow] = useState(false);
 
@@ -1378,12 +1380,8 @@ function AskView({ onRefresh }: { onRefresh: () => Promise<void> }) {
     if (actionPlan) {
       setPlan(actionPlan);
       const output = await window.ourCompanion.action.executePlan(actionPlan);
-      if (output.status === 'await_permission') {
-        setPermissionsNeeded(output.requiredScopes);
-      } else {
-        setResult(output);
-        setPlan(undefined);
-      }
+      setResult(output);
+      setPlan(undefined);
     } else if (parsedTool) {
       const output = await window.ourCompanion.tool.execute(parsedTool);
       setResult(output);

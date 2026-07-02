@@ -18,7 +18,7 @@ describe('planActionFromRules', () => {
     expect(plan).toBeDefined();
     expect(plan?.steps[0].toolName).toBe('open_url');
     expect(plan?.steps[0].args.url).toBe('https://example.com');
-    expect(plan?.source).toBe('rule');
+    expect(plan?.status).toBe('draft');
   });
 
   it('parses bare https url shorthand', () => {
@@ -85,7 +85,7 @@ describe('planAction', () => {
     };
     const plan = await planAction('please navigate to example.com', llm);
     expect(llm.completeJson).toHaveBeenCalledOnce();
-    expect(plan?.source).toBe('llm');
+    expect(plan?.status).toBe('draft');
   });
 
   it('returns undefined when no rules match and no llm provided', async () => {
@@ -119,7 +119,7 @@ describe('resolvePermissions', () => {
 
   it('returns ok for empty steps', () => {
     const perms: ActionPermissionState = defaultPermissions();
-    const plan = { id: 'p1', summary: 'noop', steps: [], source: 'rule' as const, createdAt: '' };
+    const plan = { id: 'p1', intentId: 'i1', steps: [], requiredPermissions: [], riskLevel: 'low' as const, confirmationRequired: false, status: 'draft' as const };
     expect(resolvePermissions(plan, perms)).toBe('ok');
   });
 });
@@ -131,7 +131,7 @@ function makeDeps(overrides: Partial<ActionOrchestratorDeps> = {}): ActionOrches
     executeStep: vi.fn().mockResolvedValue({ status: 'executed' }),
     emitEvent: vi.fn(),
     getPermissions: vi.fn().mockReturnValue({ browser: 'granted', automation: 'granted', files: 'ask', clipboard: 'ask', calendar: 'ask' }),
-    directPerformance: vi.fn().mockReturnValue({ id: 'perf_1', actionId: 'a', steps: [], createdAt: '' }),
+    directPerformance: vi.fn().mockReturnValue({ id: 'perf_1', name: 'action', behaviourType: 'perform_action', animationSequence: [], interruptible: true }),
     broadcastPerformance: vi.fn(),
     ...overrides,
   };
@@ -142,7 +142,7 @@ describe('runActionPlan', () => {
     const plan = planActionFromRules('open url https://example.com')!;
     const deps = makeDeps();
     const result = await runActionPlan(plan, deps);
-    expect(result.status).toBe('completed');
+    expect(result.status).toBe('success');
   });
 
   it('emits ActionPlanned, PermissionGranted, CommandStarted, CommandCompleted, PerformanceStarted, PerformanceCompleted', async () => {
@@ -158,31 +158,34 @@ describe('runActionPlan', () => {
     expect(types).toContain('PerformanceCompleted');
   });
 
-  it('returns await_permission when scope is ask', async () => {
+  it('returns cancelled when scope is ask', async () => {
     const plan = planActionFromRules('open url https://example.com')!;
     const deps = makeDeps({
       getPermissions: vi.fn().mockReturnValue(defaultPermissions()),
     });
     const result = await runActionPlan(plan, deps);
-    expect(result.status).toBe('await_permission');
+    expect(result.status).toBe('cancelled');
+    expect(result.errors).toBeDefined();
+    expect(result.errors!.length).toBeGreaterThan(0);
   });
 
-  it('returns blocked when scope is denied', async () => {
+  it('returns cancelled when scope is denied', async () => {
     const plan = planActionFromRules('open url https://example.com')!;
     const deps = makeDeps({
       getPermissions: vi.fn().mockReturnValue({ ...defaultPermissions(), browser: 'denied' }),
     });
     const result = await runActionPlan(plan, deps);
-    expect(result.status).toBe('blocked');
+    expect(result.status).toBe('cancelled');
+    expect(result.errors).toContain('Permission denied for this action.');
   });
 
-  it('returns failed and emits ActionFailed when a step fails after retry', async () => {
+  it('returns failure and emits ActionFailed when a step fails after retry', async () => {
     const plan = planActionFromRules('open url https://example.com')!;
     const deps = makeDeps({
       executeStep: vi.fn().mockResolvedValue({ status: 'failed', errorMessage: 'network error' }),
     });
     const result = await runActionPlan(plan, deps);
-    expect(result.status).toBe('failed');
+    expect(result.status).toBe('failure');
     const types = (deps.emitEvent as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0]);
     expect(types).toContain('ActionFailed');
   });
@@ -191,17 +194,21 @@ describe('runActionPlan', () => {
 // ─── Performance director ─────────────────────────────────────────────────
 
 describe('directPerformance', () => {
-  it('returns a PerformanceScript with steps for success', () => {
+  it('returns a PerformanceScriptV2 with animationSequence for success', () => {
     const script = directPerformance('action_1', 'success');
-    expect(script.actionId).toBe('action_1');
-    expect(script.steps.length).toBeGreaterThan(0);
-    const keys = script.steps.map((s) => s.animationKey);
+    expect(script.name).toBe('action_1');
+    expect(script.animationSequence.length).toBeGreaterThan(0);
+    const keys = script.animationSequence.map((s) => s.payload && typeof s.payload === 'object' && 'animationKey' in s.payload
+      ? (s.payload as { animationKey: string }).animationKey
+      : s.id);
     expect(keys).toContain('task_success');
   });
 
-  it('returns a PerformanceScript with steps for failure', () => {
+  it('returns a PerformanceScriptV2 with animationSequence for failure', () => {
     const script = directPerformance('action_2', 'failure');
-    const keys = script.steps.map((s) => s.animationKey);
+    const keys = script.animationSequence.map((s) => s.payload && typeof s.payload === 'object' && 'animationKey' in s.payload
+      ? (s.payload as { animationKey: string }).animationKey
+      : s.id);
     expect(keys).toContain('task_failed');
   });
 });

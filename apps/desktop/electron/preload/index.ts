@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   ActionPermissionState,
-  ActionPlan,
+  ActionPlanV2,
   AddDiscoveryToJourneyInput,
   AddJourneyMilestoneInput,
   BaseEvent,
@@ -25,7 +25,7 @@ import type {
   LoginUserInput,
   OnlineMode,
   OurCompanionApi,
-  PerformanceScript,
+  PerformanceScriptV2,
   RegisterUserInput,
   StartExplorationInput,
   SubmitDiscoveryFeedbackInput,
@@ -114,12 +114,12 @@ const api: OurCompanionApi = {
   },
   action: {
     plan: (text: string) => invoke('action:plan', text),
-    executePlan: (plan: ActionPlan) => invoke('action:executePlan', plan),
+    executePlan: (plan: ActionPlanV2) => invoke('action:executePlan', plan),
     getPermissions: () => invoke('action:getPermissions'),
     updatePermissions: (state: ActionPermissionState) => invoke('action:updatePermissions', state),
-    onPerformance: (listener: (script: PerformanceScript) => void) => {
+    onPerformance: (listener: (script: PerformanceScriptV2) => void) => {
       const channel = 'action:performanceStarted';
-      const handler = (_event: Electron.IpcRendererEvent, script: PerformanceScript) => listener(script);
+      const handler = (_event: Electron.IpcRendererEvent, script: PerformanceScriptV2) => listener(script);
       ipcRenderer.on(channel, handler);
       return () => ipcRenderer.removeListener(channel, handler);
     }

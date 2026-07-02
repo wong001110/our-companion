@@ -1,5 +1,5 @@
 import type { AppContext } from './appContext';
-import type { ActionPlan, ActionPermissionState, PerformanceScript } from '@our-companion/shared';
+import type { ActionPlanV2, ActionPermissionState, PerformanceScriptV2 } from '@our-companion/shared';
 import { createId } from '@our-companion/shared';
 import { directPerformance, planAction, runActionPlan, type ActionOrchestratorDeps } from '@our-companion/action-engine';
 import { executeActionStep } from '@our-companion/tool-engine';
@@ -8,7 +8,7 @@ import { createElectronToolAdapters } from '../platform/electronCommandAdapter';
 import type { AiApplicationService } from './aiApplicationService';
 
 export class ActionApplicationService {
-  private onPerformanceListeners: Array<(script: PerformanceScript) => void> = [];
+  private onPerformanceListeners: Array<(script: PerformanceScriptV2) => void> = [];
 
   constructor(
     private readonly ctx: AppContext,
@@ -32,7 +32,7 @@ export class ActionApplicationService {
     return planAction(text, llmDeps);
   };
 
-  executePlan = async (plan: ActionPlan) => {
+  executePlan = async (plan: ActionPlanV2) => {
     const correlationId = createId('corr');
     const adapters = createElectronToolAdapters();
     const orchDeps: ActionOrchestratorDeps = {
@@ -42,7 +42,7 @@ export class ActionApplicationService {
       },
       getPermissions: () => this.ctx.db.getActionPermissions(),
       directPerformance: (actionId: string, outcome: 'success' | 'failure') => directPerformance(actionId, outcome),
-      broadcastPerformance: (script: PerformanceScript) => {
+      broadcastPerformance: (script: PerformanceScriptV2) => {
         for (const listener of this.onPerformanceListeners) listener(script);
       },
     };
@@ -52,7 +52,7 @@ export class ActionApplicationService {
   getPermissions = async (): Promise<ActionPermissionState> => this.ctx.db.getActionPermissions();
   updatePermissions = async (state: ActionPermissionState): Promise<ActionPermissionState> => this.ctx.db.setActionPermissions(state);
 
-  onPerformance = (listener: (script: PerformanceScript) => void) => {
+  onPerformance = (listener: (script: PerformanceScriptV2) => void) => {
     this.onPerformanceListeners.push(listener);
     return () => {
       const idx = this.onPerformanceListeners.indexOf(listener);

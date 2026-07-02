@@ -1211,11 +1211,11 @@ export interface OurCompanionApi {
     execute(input: ToolExecuteInput): Promise<ToolExecutionResult>;
   };
   action: {
-    plan(text: string): Promise<ActionPlan | undefined>;
-    executePlan(plan: ActionPlan): Promise<ActionRunResult>;
+    plan(text: string): Promise<ActionPlanV2 | undefined>;
+    executePlan(plan: ActionPlanV2): Promise<ActionResult>;
     getPermissions(): Promise<ActionPermissionState>;
     updatePermissions(state: ActionPermissionState): Promise<ActionPermissionState>;
-    onPerformance(listener: (script: PerformanceScript) => void): () => void;
+    onPerformance(listener: (script: PerformanceScriptV2) => void): () => void;
   };
   ai: {
     getSettings(): Promise<AiSettings>;

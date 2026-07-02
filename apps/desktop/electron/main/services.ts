@@ -37,7 +37,8 @@ import {
 } from '@our-companion/memory-engine';
 import type {
   ActionPermissionState,
-  ActionPlan,
+  ActionPlanV2,
+  ActionResult,
   AddDiscoveryToJourneyInput,
   AddJourneyMilestoneInput,
   AiDebugEntry,
@@ -70,7 +71,7 @@ import type {
   ExplorationState,
   FoundationEventLogInput,
   NormalizedDiscovery,
-  PerformanceScript,
+  PerformanceScriptV2,
   SpeechSettings,
   StartExplorationInput,
   SubmitDiscoveryFeedbackInput,
@@ -430,7 +431,7 @@ export class AppServices {
     }
   };
 
-  onPerformanceListeners: Array<(script: PerformanceScript) => void> = [];
+  onPerformanceListeners: Array<(script: PerformanceScriptV2) => void> = [];
 
   tool = {
     preview: async (input: ToolExecuteInput) => previewTool(input),
@@ -469,16 +470,16 @@ export class AppServices {
       }
       return planAction(text, llmDeps);
     },
-    executePlan: async (plan: ActionPlan) => {
+    executePlan: async (plan: ActionPlanV2) => {
       const correlationId = createId('corr');
-      this.emitFoundationEvent('ActionRequested', 'action', { planId: plan.id, summary: plan.summary }, correlationId);
+      this.emitFoundationEvent('ActionRequested', 'action', { planId: plan.id, intentId: plan.intentId }, correlationId);
       const adapters = createElectronToolAdapters();
       const orchDeps: ActionOrchestratorDeps = {
         executeStep: (toolName: string, args: Record<string, unknown>) => executeActionStep(toolName, args, adapters),
         emitEvent: (type: string, payload?: Record<string, unknown>, cid?: string) => this.emitFoundationEvent(type, 'action', payload, cid ?? correlationId),
         getPermissions: () => this.db.getActionPermissions(),
         directPerformance: (actionId: string, outcome: 'success' | 'failure') => directPerformance(actionId, outcome),
-        broadcastPerformance: (script: PerformanceScript) => {
+        broadcastPerformance: (script: PerformanceScriptV2) => {
           for (const listener of this.onPerformanceListeners) listener(script);
         },
       };

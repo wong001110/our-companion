@@ -1,4 +1,4 @@
-import type { ActionPlan, ActionRunResult, AiDebugEntry, CharacterRuntimeState, CompanionReplyLanguage, DebugDataResetTarget, Discovery, PermissionScope, ToolExecutionResult, ToolPreview, UiLang, UpdateAiSettingsInput, UpdateSpeechSettingsInput } from '@our-companion/shared';
+import type { ActionResult, AiDebugEntry, CharacterRuntimeState, CompanionReplyLanguage, DebugDataResetTarget, Discovery, PermissionScope, ToolExecutionResult, ToolPreview, UiLang, UpdateAiSettingsInput, UpdateSpeechSettingsInput } from '@our-companion/shared';
 import { t, type Lang } from '../i18n';
 import type { AnimationName } from './CompanionCanvas';
 import type { CompanionAnimationName } from '../companion/runtime/animationRegistry';
@@ -59,13 +59,14 @@ export function formatShortDate(value: string): string {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export function formatAskResult(result: ToolExecutionResult | ToolPreview | { message: string } | ActionRunResult): string {
+export function formatAskResult(result: ToolExecutionResult | ToolPreview | { message: string } | ActionResult): string {
   if ('message' in result) return result.message;
-  if ('planId' in result) {
-    if (result.status === 'completed') return `Done — completed ${result.performedSteps} step(s).`;
-    if (result.status === 'blocked') return `I can't do that: ${result.reason}`;
-    if (result.status === 'failed') return `Something went wrong: ${result.errorMessage}`;
-    if (result.status === 'await_permission') return `Permission needed for: ${result.requiredScopes.join(', ')}`;
+  if ('planId' in result && 'outputs' in result) {
+    const r = result as ActionResult;
+    if (r.status === 'success') return `Done — action completed successfully.`;
+    if (r.status === 'failure') return `Something went wrong: ${r.errors?.join(', ') ?? 'unknown error'}`;
+    if (r.status === 'partial') return `Partially completed.`;
+    if (r.status === 'cancelled') return `Action cancelled: ${r.errors?.join(', ') ?? 'unknown reason'}`;
   }
   if ('errorMessage' in result && result.errorMessage) return result.errorMessage;
   if ('userFacingSummary' in result) return result.userFacingSummary;

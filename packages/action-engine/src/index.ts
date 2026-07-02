@@ -1,12 +1,13 @@
 import { planPerformanceScript } from '@our-companion/character-engine';
 import type {
   ActionPermissionState,
-  ActionPlan,
-  ActionRunResult,
+  ActionPlanV2,
+  ActionResult,
   ActionStep,
   PermissionDecision,
   PermissionScope,
   PerformanceScript,
+  PerformanceScriptV2,
 } from '@our-companion/shared';
 import { createId, nowIso } from '@our-companion/shared';
 
@@ -42,21 +43,23 @@ function makeStep(toolName: string, args: Record<string, unknown>): ActionStep {
   };
 }
 
-function makePlan(summary: string, steps: ActionStep[]): ActionPlan {
+function makePlanV2(steps: ActionStep[], opts?: { riskLevel?: 'low' | 'medium' | 'high'; confirmationRequired?: boolean }): ActionPlanV2 {
   return {
     id: createId('plan'),
-    summary,
+    intentId: createId('intent'),
     steps,
-    source: 'rule',
-    createdAt: nowIso(),
+    requiredPermissions: [...new Set(steps.flatMap((s) => s.requiredScopes))],
+    riskLevel: opts?.riskLevel ?? 'low',
+    confirmationRequired: opts?.confirmationRequired ?? false,
+    status: 'draft',
   };
 }
 
 /**
- * Converts a plain-text command into an ActionPlan using deterministic rules.
+ * Converts a plain-text command into an ActionPlanV2 using deterministic rules.
  * Returns undefined when no rule matches (fall through to LLM planner).
  */
-export function planActionFromRules(text: string): ActionPlan | undefined {
+export function planActionFromRules(text: string): ActionPlanV2 | undefined {
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
 
@@ -64,7 +67,7 @@ export function planActionFromRules(text: string): ActionPlan | undefined {
   const compositeAppSearch = lower.match(/^open\s+(\w+)\s+and\s+search\s+(.+)$/);
   if (compositeAppSearch) {
     const [, appName, query] = compositeAppSearch;
-    return makePlan(`Open ${appName} and search for ${query}`, [
+    return makePlanV2([
       makeStep('open_app', { appName }),
       makeStep('search_web', { query, target: 'google' }),
     ]);
@@ -74,7 +77,7 @@ export function planActionFromRules(text: string): ActionPlan | undefined {
   const compositeUrlSearch = lower.match(/^open\s+(https?:\/\/\S+)\s+and\s+search\s+(.+)$/i);
   if (compositeUrlSearch) {
     const [, url, query] = compositeUrlSearch;
-    return makePlan(`Open ${url} and search for ${query}`, [
+    return makePlanV2([
       makeStep('open_url', { url }),
       makeStep('search_web', { query, target: 'google' }),
     ]);
@@ -83,37 +86,33 @@ export function planActionFromRules(text: string): ActionPlan | undefined {
   // "open url <url>"
   if (lower.startsWith('open url ')) {
     const url = trimmed.slice('open url '.length).trim();
-    return makePlan(`Open ${url}`, [makeStep('open_url', { url })]);
+    return makePlanV2([makeStep('open_url', { url })]);
   }
 
   // "open <http(s)://...>" — bare URL shorthand
   const bareUrl = trimmed.match(/^open\s+(https?:\/\/\S+)$/i);
   if (bareUrl) {
     const url = bareUrl[1];
-    return makePlan(`Open ${url}`, [makeStep('open_url', { url })]);
+    return makePlanV2([makeStep('open_url', { url })]);
   }
 
   // "open app <name>"
   if (lower.startsWith('open app ')) {
     const appName = trimmed.slice('open app '.length).trim();
-    return makePlan(`Open ${appName}`, [makeStep('open_app', { appName })]);
+    return makePlanV2([makeStep('open_app', { appName })]);
   }
 
   // "search web for <query>"
   if (lower.startsWith('search web for ')) {
     const query = trimmed.slice('search web for '.length).trim();
-    return makePlan(`Search the web for "${query}"`, [
-      makeStep('search_web', { query, target: 'google' }),
-    ]);
+    return makePlanV2([makeStep('search_web', { query, target: 'google' })]);
   }
 
   // "search <target> for <query>" (e.g. "search youtube for PixiJS")
   const searchTarget = lower.match(/^search\s+(\w+)\s+for\s+(.+)$/);
   if (searchTarget) {
     const [, target, query] = searchTarget;
-    return makePlan(`Search ${target} for "${query}"`, [
-      makeStep('search_web', { query, target }),
-    ]);
+    return makePlanV2([makeStep('search_web', { query, target })]);
   }
 
   return undefined;
@@ -135,7 +134,7 @@ export interface LlmActionPlanResult {
 export async function planActionFromLlm(
   text: string,
   deps: LlmPlannerDeps,
-): Promise<ActionPlan | undefined> {
+): Promise<ActionPlanV2 | undefined> {
   try {
     const raw = await deps.completeJson<string>([
       {
@@ -151,18 +150,13 @@ export async function planActionFromLlm(
     const json = typeof raw === 'string' ? raw : JSON.stringify(raw);
     const parsed = deps.validateActionPlan(json);
     if (!parsed || parsed.steps.length === 0 || parsed.steps[0].tool_name === 'none') return undefined;
-    return {
-      id: createId('plan'),
-      summary: parsed.summary,
-      steps: parsed.steps.map((s) => ({
-        id: createId('step'),
-        toolName: s.tool_name,
-        args: s.args,
-        requiredScopes: (s.required_scopes ?? scopesForTool(s.tool_name)) as PermissionScope[],
-      })),
-      source: 'llm',
-      createdAt: nowIso(),
-    };
+    const steps = parsed.steps.map((s) => ({
+      id: createId('step'),
+      toolName: s.tool_name,
+      args: s.args,
+      requiredScopes: (s.required_scopes ?? scopesForTool(s.tool_name)) as PermissionScope[],
+    }));
+    return makePlanV2(steps, { confirmationRequired: parsed.requires_confirmation ?? false });
   } catch {
     return undefined;
   }
@@ -174,7 +168,7 @@ export async function planActionFromLlm(
 export async function planAction(
   text: string,
   llm?: LlmPlannerDeps,
-): Promise<ActionPlan | undefined> {
+): Promise<ActionPlanV2 | undefined> {
   const fromRules = planActionFromRules(text);
   if (fromRules) return fromRules;
   if (llm) return planActionFromLlm(text, llm);
@@ -185,7 +179,7 @@ export async function planAction(
 
 /** Returns 'ok', 'denied', or the list of scopes needing the user to confirm. */
 export function resolvePermissions(
-  plan: ActionPlan,
+  plan: ActionPlanV2,
   stored: ActionPermissionState,
 ): 'ok' | 'denied' | PermissionScope[] {
   const needed = new Set<PermissionScope>();
@@ -206,32 +200,48 @@ export interface ActionOrchestratorDeps {
   executeStep(toolName: string, args: Record<string, unknown>): Promise<{ status: string; errorMessage?: string; blockedReason?: string }>;
   emitEvent(type: string, payload?: Record<string, unknown>, correlationId?: string): void;
   getPermissions(): ActionPermissionState;
-  directPerformance(actionId: string, outcome: 'success' | 'failure'): PerformanceScript;
-  broadcastPerformance(script: PerformanceScript): void;
+  directPerformance(actionId: string, outcome: 'success' | 'failure'): PerformanceScriptV2;
+  broadcastPerformance(script: PerformanceScriptV2): void;
 }
 
 export async function runActionPlan(
-  plan: ActionPlan,
+  plan: ActionPlanV2,
   deps: ActionOrchestratorDeps,
   correlationId?: string,
-): Promise<ActionRunResult> {
-  deps.emitEvent('ActionPlanned', { planId: plan.id, summary: plan.summary, source: plan.source }, correlationId);
+): Promise<ActionResult> {
+  deps.emitEvent('ActionPlanned', { planId: plan.id, intentId: plan.intentId, riskLevel: plan.riskLevel }, correlationId);
 
   // Permission check
   const permissions = deps.getPermissions();
   const permResult = resolvePermissions(plan, permissions);
   if (permResult === 'denied') {
     deps.emitEvent('ActionFailed', { planId: plan.id, reason: 'permission_denied' }, correlationId);
-    return { status: 'blocked', planId: plan.id, reason: 'Permission denied for this action.' };
+    return {
+      id: createId('action_result'),
+      planId: plan.id,
+      status: 'cancelled',
+      outputs: {},
+      errors: ['Permission denied for this action.'],
+      completedAt: nowIso(),
+    };
   }
   if (Array.isArray(permResult)) {
-    return { status: 'await_permission', planId: plan.id, requiredScopes: permResult };
+    deps.emitEvent('ActionFailed', { planId: plan.id, reason: 'await_permission', requiredScopes: permResult }, correlationId);
+    return {
+      id: createId('action_result'),
+      planId: plan.id,
+      status: 'cancelled',
+      outputs: {},
+      errors: [`Permission needed for: ${permResult.join(', ')}`],
+      completedAt: nowIso(),
+    };
   }
 
   deps.emitEvent('PermissionGranted', { planId: plan.id }, correlationId);
 
   // Execute steps
   let performedSteps = 0;
+  const errors: string[] = [];
   for (const step of plan.steps) {
     deps.emitEvent('CommandStarted', { planId: plan.id, stepId: step.id, toolName: step.toolName }, correlationId);
     const result = await deps.executeStep(step.toolName, step.args);
@@ -258,7 +268,14 @@ export async function runActionPlan(
       deps.emitEvent('PerformanceStarted', { planId: plan.id, scriptId: script.id }, correlationId);
       deps.broadcastPerformance(script);
       deps.emitEvent('PerformanceCompleted', { planId: plan.id, scriptId: script.id }, correlationId);
-      return { status: 'failed', planId: plan.id, step: plan.steps.indexOf(step), errorMessage };
+      return {
+        id: createId('action_result'),
+        planId: plan.id,
+        status: 'failure',
+        outputs: { performedSteps },
+        errors: [errorMessage],
+        completedAt: nowIso(),
+      };
     }
   }
 
@@ -268,20 +285,43 @@ export async function runActionPlan(
   deps.broadcastPerformance(script);
   deps.emitEvent('PerformanceCompleted', { planId: plan.id, scriptId: script.id }, correlationId);
 
-  return { status: 'completed', planId: plan.id, performedSteps };
+  return {
+    id: createId('action_result'),
+    planId: plan.id,
+    status: performedSteps === plan.steps.length ? 'success' : 'partial',
+    outputs: { performedSteps },
+    completedAt: nowIso(),
+  };
 }
 
 // ─── 3e. Performance director ─────────────────────────────────────────────
 
+function toPerformanceScriptV2(script: PerformanceScript): PerformanceScriptV2 {
+  return {
+    id: script.id,
+    name: script.actionId,
+    behaviourType: 'perform_action',
+    animationSequence: script.steps.map((s) => ({
+      id: s.animationKey,
+      type: 'animation' as const,
+      startMs: 0,
+      durationMs: s.durationMs,
+      payload: { label: s.label, animationKey: s.animationKey },
+    })),
+    interruptible: true,
+  };
+}
+
 /**
- * Builds a PerformanceScript for an action outcome.
+ * Builds a PerformanceScriptV2 for an action outcome.
  * Delegates to character-engine's planPerformanceScript — never executes commands.
  */
 export function directPerformance(
   actionId: string,
   outcome: 'success' | 'failure',
-): PerformanceScript {
-  return planPerformanceScript(actionId, outcome);
+): PerformanceScriptV2 {
+  const v1Script = planPerformanceScript(actionId, outcome);
+  return toPerformanceScriptV2(v1Script);
 }
 
 // ============================================================================
