@@ -6,35 +6,37 @@ export interface CompanionAnimationConfig extends SpriteSheetConfig {
   name: CompanionAnimationName;
 }
 
-function anim(name: CompanionAnimationName, frames: number, frameMs: number, assetRoot: string): CompanionAnimationConfig {
+const DEFAULT_FRAME_WIDTH = 300;
+const DEFAULT_FRAME_HEIGHT = 300;
+
+function anim(name: CompanionAnimationName, frameMs: number, assetRoot: string, frameWidth = DEFAULT_FRAME_WIDTH, frameHeight = DEFAULT_FRAME_HEIGHT): CompanionAnimationConfig {
   const resolver = new AssetResolver(assetRoot);
   return {
     name,
     sheet: resolver.animation(name),
-    frames,
+    frameWidth,
+    frameHeight,
     frameMs,
-    columns: frames,
-    rows: 1
   };
 }
 
 export function createCompanionAnimations(assetRoot: string = DEFAULT_ASSET_ROOT) {
   return {
-    Idle_Neutral: anim('Idle_Neutral', 6, 520, assetRoot),
-    Idle_Breathe: anim('Idle_Breathe', 4, 620, assetRoot),
-    Idle_Sleepy: anim('Idle_Sleepy', 3, 520, assetRoot),
-    Idle_Sleeping: anim('Idle_Sleeping', 4, 560, assetRoot),
-    Walk_Right: anim('Walk_Right', 8, 180, assetRoot),
-    Walk_Left: anim('Walk_Left', 8, 180, assetRoot),
-    Expedition_Return: anim('Expedition_Return', 4, 220, assetRoot),
-    Think: anim('Think', 6, 420, assetRoot),
-    Work_Focus: anim('Work_Focus', 4, 220, assetRoot),
-    Expedition_Present: anim('Expedition_Present', 8, 260, assetRoot),
-    Talk_Neutral: anim('Talk_Neutral', 6, 280, assetRoot),
-    Talk_Happy: anim('Talk_Happy', 4, 300, assetRoot),
-    Expedition_Prepare: anim('Expedition_Prepare', 4, 300, assetRoot),
-    Expedition_Leave: anim('Expedition_Leave', 4, 320, assetRoot),
-    Listening: anim('Listening', 4, 360, assetRoot),
+    Idle_Neutral: anim('Idle_Neutral', 520, assetRoot),
+    Idle_Breathe: anim('Idle_Breathe', 620, assetRoot),
+    Idle_Sleepy: anim('Idle_Sleepy', 520, assetRoot),
+    Idle_Sleeping: anim('Idle_Sleeping', 560, assetRoot),
+    Walk_Right: anim('Walk_Right', 180, assetRoot),
+    Walk_Left: anim('Walk_Left', 180, assetRoot),
+    Expedition_Return: anim('Expedition_Return', 220, assetRoot),
+    Think: anim('Think', 420, assetRoot),
+    Work_Focus: anim('Work_Focus', 220, assetRoot),
+    Expedition_Present: anim('Expedition_Present', 260, assetRoot),
+    Talk_Neutral: anim('Talk_Neutral', 280, assetRoot),
+    Talk_Happy: anim('Talk_Happy', 300, assetRoot),
+    Expedition_Prepare: anim('Expedition_Prepare', 300, assetRoot),
+    Expedition_Leave: anim('Expedition_Leave', 320, assetRoot),
+    Listening: anim('Listening', 360, assetRoot),
   } as const satisfies Record<string, CompanionAnimationConfig>;
 }
 

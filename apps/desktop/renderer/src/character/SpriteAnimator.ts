@@ -1,8 +1,7 @@
 export interface SpriteSheetConfig {
   sheet: string;
-  frameWidth?: number;
-  frameHeight?: number;
-  frames: number;
+  frameWidth: number;
+  frameHeight: number;
   frameMs: number;
   columns?: number;
   rows?: number;
@@ -24,6 +23,7 @@ export class SpriteAnimator {
   private rows: number;
   private frameWidth: number;
   private frameHeight: number;
+  private totalFrames: number;
   private readonly onError?: () => void;
   private readonly cacheKey: string;
 
@@ -36,10 +36,11 @@ export class SpriteAnimator {
 
   constructor(config: SpriteSheetConfig, options: SpriteAnimatorOptions = {}) {
     this.config = config;
-    this.columns = config.columns ?? config.frames;
+    this.frameWidth = config.frameWidth;
+    this.frameHeight = config.frameHeight;
+    this.columns = config.columns ?? 0;
     this.rows = config.rows ?? 1;
-    this.frameWidth = config.frameWidth ?? 0;
-    this.frameHeight = config.frameHeight ?? 0;
+    this.totalFrames = 0;
     this.onError = options.onError;
     this.cacheKey = options.cacheKey ?? config.sheet;
   }
@@ -55,10 +56,8 @@ export class SpriteAnimator {
         }
         this.image = image;
 
-        if (!this.frameWidth || !this.frameHeight) {
-          this.frameWidth = Math.floor(image.naturalWidth / this.columns);
-          this.frameHeight = Math.floor(image.naturalHeight / this.rows);
-        }
+        this.columns = this.columns || Math.floor(image.naturalWidth / this.frameWidth);
+        this.totalFrames = this.columns * this.rows;
 
         resolve();
       };
@@ -140,6 +139,6 @@ export class SpriteAnimator {
       sx, sy, this.frameWidth - 1, this.frameHeight - 1,
       dx, dy, dw, dh
     );
-    this.frameIndex = (this.frameIndex + 1) % this.config.frames;
+    this.frameIndex = (this.frameIndex + 1) % this.totalFrames;
   }
 }
