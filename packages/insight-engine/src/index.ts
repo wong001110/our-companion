@@ -6,6 +6,8 @@ import type {
   DiscoveryCandidate,
   InterestGraph,
   Insight,
+  InsightV2,
+  InsightCategory,
   MemoryNode,
   Pattern
 } from '@our-companion/shared';
@@ -69,7 +71,7 @@ function average(values: number[], fallback: number): number {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-export function generateInsights(input: GenerateInsightsInput): CompanionInsight[] {
+export function generateInsights(input: GenerateInsightsInput): InsightV2[] {
   const candidates = input.discoveryCandidates;
   const primaryCandidate = [...candidates].sort(
     (left, right) =>
@@ -84,55 +86,46 @@ export function generateInsights(input: GenerateInsightsInput): CompanionInsight
   const confidence = average(candidates.map((candidate) => candidate.evidenceScore), input.curiosityTarget.confidence);
   const novelty = average(candidates.map((candidate) => candidate.noveltyScore), 0.55);
   const practicalRelevance = average(candidates.map((candidate) => candidate.usefulnessScore), 0.5);
-  const emotionalRelevance = Math.max(input.curiosityTarget.priority, relatedPattern?.strength ?? 0.55);
 
-  const insight: CompanionInsight = {
+  const category: InsightCategory = input.curiosityTarget.explorationType === 'practical' ? 'project' : 'discovery';
+
+  const insight: InsightV2 = {
     id: createId('insight'),
     userId: input.userId,
-    companionId: input.companionId,
+    category,
     title: primaryCandidate ? `A signal around ${input.curiosityTarget.topic}` : `A question about ${input.curiosityTarget.topic}`,
-    type: input.curiosityTarget.explorationType === 'practical' ? 'practical_next_step' : relatedPattern ? 'pattern' : 'observation',
     summary: primaryCandidate?.summary ?? input.curiosityTarget.description,
-    insight: primaryCandidate
+    explanation: primaryCandidate
       ? `${primaryCandidate.title} points toward ${input.curiosityTarget.topic} being worth a closer look.`
       : `Ann could not find strong outside evidence yet, but ${input.curiosityTarget.topic} still looks meaningful from memory and patterns.`,
-    whyItMatters:
-      input.curiosityTarget.explorationType === 'challenge'
-        ? 'This matters because a challenging signal can protect the project from becoming too comfortable with one assumption.'
-        : input.curiosityTarget.expectedValue,
-    whyAnnFoundIt: input.curiosityTarget.reason,
+    supportingPatternIds: relatedPattern ? [relatedPattern.id] : [],
+    supportingMemoryIds: relatedMemoryIds,
     confidence,
+    importance: practicalRelevance,
     novelty,
-    emotionalRelevance,
-    practicalRelevance,
-    supportingCandidateIds,
-    relatedMemoryIds,
-    relatedPatternIds: relatedPattern ? [relatedPattern.id] : undefined,
-    suggestedQuestion: `Should we explore ${input.curiosityTarget.topic} together?`,
-    suggestedAction:
-      input.curiosityTarget.explorationType === 'practical'
-        ? 'Turn this into one small implementation reference.'
-        : 'Save this as an exploration thread if it feels alive.',
-    createdAt: timestamp
+    evidenceCount: supportingCandidateIds.length,
+    status: 'active',
+    createdAt: timestamp,
+    updatedAt: timestamp
   };
 
-  return [{ ...insight, narration: narrateInsight(insight) }];
+  return [insight];
 }
 
-export function selectPrimaryInsight(insights: CompanionInsight[]): CompanionInsight | undefined {
+export function selectPrimaryInsight(insights: InsightV2[]): InsightV2 | undefined {
   return [...insights].sort((left, right) => {
     const leftScore = scoreInsight({
       confidence: left.confidence,
       novelty: left.novelty,
-      emotionalRelevance: left.emotionalRelevance,
-      practicalRelevance: left.practicalRelevance,
+      emotionalRelevance: 0.5,
+      practicalRelevance: left.importance,
       relationshipFit: 0.7
     }).finalScore;
     const rightScore = scoreInsight({
       confidence: right.confidence,
       novelty: right.novelty,
-      emotionalRelevance: right.emotionalRelevance,
-      practicalRelevance: right.practicalRelevance,
+      emotionalRelevance: 0.5,
+      practicalRelevance: right.importance,
       relationshipFit: 0.7
     }).finalScore;
     return rightScore - leftScore;

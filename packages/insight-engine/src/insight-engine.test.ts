@@ -77,7 +77,7 @@ describe('insight engine', () => {
       ]
     });
 
-    expect(selectPrimaryInsight(insights)?.narration).toContain('I found something');
+    expect(selectPrimaryInsight(insights)?.summary).toContain('I found something');
   });
 
   it('generates a cognitive insight candidate from concepts and patterns', () => {

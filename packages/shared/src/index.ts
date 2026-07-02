@@ -750,8 +750,8 @@ export interface ExplorationCycleResult {
   selectedCuriosityTarget?: CuriosityTarget;
   explorationPlan?: ExplorationPlan;
   discoveryCandidates: DiscoveryCandidate[];
-  insights: CompanionInsight[];
-  selectedInsight?: CompanionInsight;
+  insights: InsightV2[];
+  selectedInsight?: InsightV2;
   diaryEntryId?: string;
 }
 

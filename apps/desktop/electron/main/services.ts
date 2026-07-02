@@ -70,6 +70,7 @@ import type {
   ExplorationLoopEvent,
   ExplorationState,
   FoundationEventLogInput,
+  InsightV2,
   NormalizedDiscovery,
   PerformanceScriptV2,
   SpeechSettings,
@@ -926,7 +927,7 @@ export class AppServices {
       discoveryCandidates
     });
     for (const insight of insights) {
-      this.db.insertCompanionInsight(insight);
+      this.db.insertCompanionInsight(insight as unknown as CompanionInsight);
     }
     const selectedInsight = selectPrimaryInsight(insights);
     cycle = this.saveCycleState(cycle, 'returning', {
@@ -941,14 +942,14 @@ export class AppServices {
       this.discoveryAnnounceBroadcaster?.({
         discoveryId: selectedInsight.id,
         title: selectedInsight.title,
-        message: selectedInsight.narration ?? selectedInsight.summary,
+        message: selectedInsight.summary,
         cycleId: cycle.id,
         insightId: selectedInsight.id
       });
       this.emitFoundationEvent('CompanionMessageQueued', 'speech', {
         discoveryId: selectedInsight.id,
         cycleId: cycle.id,
-        message: selectedInsight.narration ?? selectedInsight.summary
+        message: selectedInsight.summary
       });
     }
 
@@ -979,7 +980,7 @@ export class AppServices {
       createdAt: nowIso()
     });
 
-    const insight = feedback.insightId ? this.db.getCompanionInsight(feedback.insightId) : undefined;
+    const insight = feedback.insightId ? (this.db.getCompanionInsight(feedback.insightId) as unknown as InsightV2 | undefined) : undefined;
     const reflected = this.db.insertExplorationCycle({
       ...cycle,
       state: 'reflecting',
@@ -995,7 +996,7 @@ export class AppServices {
           type: 'discovery',
           title: insight.title,
           summary: insight.summary,
-          content: `${insight.insight}\n\n${insight.whyItMatters}`,
+          content: insight.explanation,
           source: 'autonomous_exploration'
         })
       );
@@ -1006,7 +1007,7 @@ export class AppServices {
         createJourneyMilestone({
           journeyId: activeJourney.id,
           title: `Ann saved an insight: ${insight.title}`,
-          summary: insight.suggestedAction ?? insight.whyItMatters,
+          summary: insight.summary,
           type: 'discovery_saved'
         })
       );
@@ -1026,7 +1027,7 @@ export class AppServices {
       this.db.insertCompanionMessage({
         characterId: cycle.companionId,
         role: 'assistant',
-        content: insight.narration ?? insight.summary,
+        content: insight.summary,
         source: 'companion_text',
         metadata: { cycleId: cycle.id, insightId: insight.id }
       });
