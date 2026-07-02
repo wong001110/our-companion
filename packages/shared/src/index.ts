@@ -1037,12 +1037,12 @@ export interface EngineSnapshot {
   characterState?: CharacterRuntimeState;
   currentCycle?: ExplorationCycle;
   recentCycles: ExplorationCycle[];
-  patterns: Pattern[];
+  patterns: PatternV2[];
   interestGraph: InterestGraph;
   curiosityTargets: CuriosityTarget[];
   explorationPlan?: ExplorationPlan;
   discoveryCandidates: DiscoveryCandidate[];
-  insights: CompanionInsight[];
+  insights: InsightV2[];
   explorationEvents: ExplorationLoopEvent[];
   recentDiscoveries: Discovery[];
   actionPermissions: ActionPermissionState;

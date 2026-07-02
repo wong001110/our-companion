@@ -1,7 +1,45 @@
 import type { DatabaseService } from '@our-companion/database';
-import type { DiscoverySchedulingDebug, EngineSnapshot, EngineSnapshotInput } from '@our-companion/shared';
+import type { CompanionInsight, DiscoverySchedulingDebug, EngineSnapshot, EngineSnapshotInput, InsightV2, Pattern, PatternV2 } from '@our-companion/shared';
 import { DEFAULT_CHARACTER_ID, nowIso } from '@our-companion/shared';
 import type { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
+
+function mapPatternToV2(p: Pattern): PatternV2 {
+  return {
+    id: p.id,
+    userId: p.userId,
+    category: 'interest',
+    type: p.type,
+    title: p.title,
+    summary: p.summary,
+    confidence: p.confidence,
+    strength: p.strength,
+    supportingMemoryIds: p.relatedConceptIds ?? [],
+    firstDetectedAt: p.detectedAt ?? p.createdAt,
+    lastUpdatedAt: p.updatedAt,
+    reinforcementCount: 1,
+    evidence: p.evidence
+  };
+}
+
+function mapInsightToV2(i: CompanionInsight): InsightV2 {
+  return {
+    id: i.id,
+    userId: i.userId,
+    category: 'interest',
+    title: i.title,
+    summary: i.summary,
+    explanation: i.insight,
+    supportingPatternIds: i.relatedPatternIds ?? [],
+    supportingMemoryIds: i.relatedMemoryIds ?? [],
+    confidence: i.confidence,
+    importance: i.practicalRelevance,
+    novelty: i.novelty,
+    evidenceCount: i.supportingCandidateIds.length,
+    status: 'active',
+    createdAt: i.createdAt,
+    updatedAt: i.createdAt
+  };
+}
 
 export function buildEngineSnapshot(
   db: DatabaseService,
@@ -46,14 +84,14 @@ export function buildEngineSnapshot(
     characterState: db.getCharacterState(characterId),
     currentCycle: focusCycle,
     recentCycles: db.listExplorationCycles(10),
-    patterns: db.listPatterns(userId, 20),
+    patterns: db.listPatterns(userId, 20).map(mapPatternToV2),
     interestGraph: db.getInterestGraph(userId),
     curiosityTargets: db.listCuriosityTargets(userId, 20),
     explorationPlan: focusCycle?.explorationPlanId
       ? db.getExplorationPlan(focusCycle.explorationPlanId)
       : undefined,
     discoveryCandidates: db.listDiscoveryCandidates(userId, 20),
-    insights: db.listCompanionInsights(userId, 20),
+    insights: db.listCompanionInsights(userId, 20).map(mapInsightToV2),
     explorationEvents: focusCycle ? db.listExplorationEventsForCycle(focusCycle.id) : [],
     recentDiscoveries: db.listDiscoveries({ limit: 10 }),
     actionPermissions: db.getActionPermissions(),
