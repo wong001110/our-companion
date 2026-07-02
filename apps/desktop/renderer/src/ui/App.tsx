@@ -159,6 +159,12 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
 
   const interactive = useInteractiveRegion();
 
+  useEffect(() => {
+    if (!quickActionsVisible) {
+      interactive.leave('quick-actions');
+    }
+  }, [quickActionsVisible, interactive]);
+
   const COMPANION_SPRITE = { width: 220, height: 230 };
   const [companionPosition, setCompanionPosition] = useState<{ x: number; y: number }>(() => {
     try {
@@ -836,10 +842,9 @@ function CreationShell() {
     return () => document.documentElement.classList.remove('creation-mode');
   }, []);
 
-  function handleComplete(companion: CompanionProfile) {
-    void window.ourCompanion.companionNew.setPrimary(companion.id).then(() => {
-      void window.ourCompanion.creation.completed(companion);
-    });
+  async function handleComplete(companion: CompanionProfile) {
+    await window.ourCompanion.companionNew.setPrimary(companion.id);
+    void window.ourCompanion.creation.completed(companion);
   }
 
   function handleEdit(companion: CompanionProfile) {

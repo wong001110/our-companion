@@ -339,7 +339,14 @@ function registerIpc(): void {
     if (companionWindow && !companionWindow.isDestroyed()) {
       companionWindow.show();
       keepCompanionOnTop(companionWindow);
-      companionWindow.webContents.send('creation:completed', companion);
+      const sendCreationEvent = () => {
+        companionWindow?.webContents.send('creation:completed', companion);
+      };
+      if (companionWindow.webContents.isLoading()) {
+        companionWindow.webContents.once('did-finish-load', sendCreationEvent);
+      } else {
+        sendCreationEvent();
+      }
     }
   });
 
