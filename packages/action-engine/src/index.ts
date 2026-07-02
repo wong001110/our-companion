@@ -122,7 +122,7 @@ export function planActionFromRules(text: string): ActionPlanV2 | undefined {
 
 export interface LlmPlannerDeps {
   completeJson<T>(messages: Array<{ role: 'system' | 'user'; content: string }>): Promise<T>;
-  validateActionPlan(raw: string): LlmActionPlanResult | undefined;
+  validateActionPlan(raw: string): LlmActionPlanResult | ActionPlanV2 | undefined;
 }
 
 export interface LlmActionPlanResult {
@@ -149,14 +149,24 @@ export async function planActionFromLlm(
     ]);
     const json = typeof raw === 'string' ? raw : JSON.stringify(raw);
     const parsed = deps.validateActionPlan(json);
-    if (!parsed || parsed.steps.length === 0 || parsed.steps[0].tool_name === 'none') return undefined;
-    const steps = parsed.steps.map((s) => ({
+    if (!parsed) return undefined;
+
+    // Handle ActionPlanV2 directly (from ai-engine validateActionPlan)
+    if ('intentId' in parsed) {
+      if (parsed.steps.length === 0) return undefined;
+      return parsed as ActionPlanV2;
+    }
+
+    // Handle LlmActionPlanResult (snake_case format)
+    const result = parsed as LlmActionPlanResult;
+    if (result.steps.length === 0 || result.steps[0].tool_name === 'none') return undefined;
+    const steps = result.steps.map((s) => ({
       id: createId('step'),
       toolName: s.tool_name,
       args: s.args,
       requiredScopes: (s.required_scopes ?? scopesForTool(s.tool_name)) as PermissionScope[],
     }));
-    return makePlanV2(steps, { confirmationRequired: parsed.requires_confirmation ?? false });
+    return makePlanV2(steps, { confirmationRequired: result.requires_confirmation ?? false });
   } catch {
     return undefined;
   }

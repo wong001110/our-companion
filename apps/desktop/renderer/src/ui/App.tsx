@@ -1100,7 +1100,7 @@ function HomeView({
         {exploration?.selectedInsight && (
           <PaperCard title="Ann returned" tape className="wide-card insight-return-card">
             <p className="focus-title">{exploration.selectedInsight.title}</p>
-            <p>{exploration.selectedInsight.narration ?? exploration.selectedInsight.summary}</p>
+            <p>{exploration.selectedInsight.summary}</p>
             <div className="tag-row">
               <span>{exploration.selectedCuriosityTarget?.explorationType ?? 'insight'}</span>
               <span>{exploration.cycle.state}</span>
@@ -1205,8 +1205,7 @@ function DiscoveryView({ discoveries, exploration, exploring, onStartExploration
           <div>
             <p className="eyebrow">Returned insight</p>
             <h2>{exploration.selectedInsight.title}</h2>
-            <p>{exploration.selectedInsight.narration ?? exploration.selectedInsight.summary}</p>
-            <p>{exploration.selectedInsight.suggestedQuestion}</p>
+            <p>{exploration.selectedInsight.summary}</p>
           </div>
           <div className="action-row">
             <button onClick={() => void onSubmitFeedback('opened_evidence')}>Explore evidence</button>

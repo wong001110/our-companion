@@ -352,6 +352,14 @@ function fallbackItems(source: DiscoverySource): RawDiscoveryItem[] {
   };
 
   const pools: Record<DiscoverySource, RawDiscoveryItem[]> = {
+    internet: [],
+    rss: [],
+    user: [],
+    local_file: [],
+    calendar: [],
+    companion: [],
+    community: [],
+    system: [],
     github: [
       { ...common, id: 'github-pixijs-desktop-pet', title: 'Building expressive desktop companions with PixiJS', summary: 'A small renderer pattern for animated companion characters.', url: 'https://github.com/pixijs/pixijs', tags: ['frontend', 'pixijs', 'web', 'ux'] },
       { ...common, id: 'github-tldraw', title: 'tldraw — a canvas for thinking', summary: 'Infinite canvas toolkit for collaborative whiteboarding.', url: 'https://github.com/tldraw/tldraw', tags: ['canvas', 'collaboration', 'tool'] },
@@ -431,6 +439,14 @@ export async function runDiscoveryPipeline(
 
 function sourceTypeFor(source: DiscoverySource): DiscoveryCandidate['sourceType'] {
   const map: Record<DiscoverySource, DiscoveryCandidate['sourceType']> = {
+    internet: 'article',
+    rss: 'article',
+    user: 'generated_idea',
+    local_file: 'article',
+    calendar: 'article',
+    companion: 'generated_idea',
+    community: 'community_discussion',
+    system: 'generated_idea',
     github: 'github',
     hackernews: 'community_discussion',
     reddit: 'community_discussion',

@@ -496,9 +496,9 @@ export function EngineObservatory() {
                 <li key={insight.id}>
                   <strong>{insight.title}</strong>
                   <span>
-                    {insight.type} · confidence {insight.confidence.toFixed(2)}
+                    {insight.category} · confidence {insight.confidence.toFixed(2)}
                   </span>
-                  <p>{insight.narration ?? insight.summary}</p>
+                  <p>{insight.summary}</p>
                 </li>
               ))}
             </ul>

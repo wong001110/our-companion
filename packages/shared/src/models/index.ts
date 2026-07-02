@@ -3,6 +3,8 @@ export type SignalSourceType =
   | 'github'
   | 'rss'
   | 'youtube'
+  | 'reddit'
+  | 'hackernews'
   | 'user'
   | 'local_file'
   | 'calendar'
