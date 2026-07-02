@@ -26,7 +26,7 @@ import {
   runDiscoveryPipeline
 } from '@our-companion/discovery-engine';
 import { generateInsights, selectPrimaryInsight } from '@our-companion/insight-engine';
-import { createJourney, createJourneyMilestone } from '@our-companion/journey-engine';
+import { createCompanionJourney, createJourney, createJourneyMilestone, createJourneyMilestoneV2 } from '@our-companion/journey-engine';
 import {
   buildInterestGraph,
   createMemoryEdge,
@@ -84,7 +84,7 @@ import type {
   UpdateMemoryNodeInput
 } from '@our-companion/shared';
 import type { UserProfile, OnlineMode, RegisterUserInput, LoginUserInput } from '@our-companion/shared';
-import { COMPANION_CHAT_CONTEXT_LIMIT, DEFAULT_CHARACTER_ID, createId, nowIso, type BaseEvent } from '@our-companion/shared';
+import { COMPANION_CHAT_CONTEXT_LIMIT, DEFAULT_CHARACTER_ID, createId, nowIso, clampScore, type BaseEvent } from '@our-companion/shared';
 import { detectPatterns } from '@our-companion/pattern-engine';
 import { executeActionStep, executeTool, previewTool } from '@our-companion/tool-engine';
 import { createElectronToolAdapters } from './platform/electronCommandAdapter';
@@ -175,7 +175,14 @@ export class AppServices {
       return this.db.createCompanion(input);
     },
     list: async (): Promise<CompanionProfile[]> => {
-      return this.db.listCompanions();
+      const companions = this.db.listCompanions();
+      return companions.map((c) => {
+        if (!c.assetRoot.startsWith('companion://')) {
+          const correctRoot = `companion://${c.id}/assets`;
+          return this.db.updateCompanion(c.id, { assetRoot: correctRoot });
+        }
+        return c;
+      });
     },
     get: async (id: string): Promise<CompanionProfile | null> => {
       return this.db.getCompanion(id);
@@ -191,14 +198,19 @@ export class AppServices {
       return this.db.setPrimaryCompanion(id);
     },
     getPrimary: async (): Promise<CompanionProfile | null> => {
-      return this.db.getPrimaryCompanion();
+      const companion = this.db.getPrimaryCompanion();
+      if (companion && !companion.assetRoot.startsWith('companion://')) {
+        const correctRoot = `companion://${companion.id}/assets`;
+        return this.db.updateCompanion(companion.id, { assetRoot: correctRoot });
+      }
+      return companion;
     },
     getAssetRoot: async (id: string): Promise<string> => {
       const companion = this.db.getCompanion(id);
       if (!companion) throw new Error(`Companion not found: ${id}`);
       const companionsDir = path.join(app.getPath('userData'), 'companions', id, 'assets');
       fs.mkdirSync(companionsDir, { recursive: true });
-      return companionsDir;
+      return `companion://${id}/assets`;
     },
     uploadAsset: async (input: { companionId: string; fileName: string; buffer: ArrayBuffer | Uint8Array }): Promise<{ name: string; path: string }> => {
       const companion = this.db.getCompanion(input.companionId);
@@ -259,22 +271,12 @@ export class AppServices {
     },
     markInterested: async (discoveryId: string) => {
       const discovery = this.db.updateDiscoveryStatus(discoveryId, 'saved');
-      const state = this.db.getCharacterState();
-      const nextState = this.db.saveCharacterState({ ...state, emotion: applyEmotionEvent(state.emotion, 'user_accepts_discovery') });
-      this.emitFoundationEvent('EmotionChanged', 'character', {
-        characterId: nextState.characterId,
-        reason: 'user_accepts_discovery'
-      });
+      this.applyCharacterEmotion(undefined, 'user_accepts_discovery');
       return discovery;
     },
     markNotInterested: async (discoveryId: string) => {
       const discovery = this.db.updateDiscoveryStatus(discoveryId, 'rejected');
-      const state = this.db.getCharacterState();
-      const nextState = this.db.saveCharacterState({ ...state, emotion: applyEmotionEvent(state.emotion, 'user_rejects_discovery') });
-      this.emitFoundationEvent('EmotionChanged', 'character', {
-        characterId: nextState.characterId,
-        reason: 'user_rejects_discovery'
-      });
+      this.applyCharacterEmotion(undefined, 'user_rejects_discovery');
       return discovery;
     },
     addToJourney: async (input: AddDiscoveryToJourneyInput) => {
@@ -396,10 +398,10 @@ export class AppServices {
   };
 
   journey = {
-    create: async (input: CreateJourneyInput) => this.db.insertJourney(createJourney(input)),
+    create: async (input: CreateJourneyInput) => this.db.insertJourney(createCompanionJourney({ title: input.title, description: input.description, origin: 'user' })),
     getActive: async () => this.db.listActiveJourneys(),
     getTimeline: async (input: { journeyId?: string } = {}) => this.db.listMilestones(input.journeyId),
-    addMilestone: async (input: AddJourneyMilestoneInput) => this.db.insertMilestone(createJourneyMilestone(input))
+    addMilestone: async (input: AddJourneyMilestoneInput) => this.db.insertMilestone(createJourneyMilestoneV2({ title: input.title, description: input.summary }))
   };
 
   diary = {
@@ -525,50 +527,15 @@ export class AppServices {
       const builtMessages = this.buildChatMessages(characterId, input.message);
       this.db.insertCompanionMessage({ role: 'user', content: input.message, source: 'panel', characterId });
       try {
-        const { content: message, raw, requestBody } = await this.createDeepSeekClient().chatDebug(builtMessages);
-        this.pushDebugEntry({
-          channel: 'chat',
-          source: 'panel',
-          status: 'success',
-          requestMessages: builtMessages,
-          requestBody,
-          rawResponse: raw,
-          content: message
-        });
+        const { content: message } = await this.sendToAi({ messages: builtMessages, channel: 'chat', source: 'panel' });
         this.db.insertCompanionMessage({ role: 'assistant', content: message, source: 'panel', characterId });
-        this.emitFoundationEvent('CompanionMessageQueued', 'speech', {
-          characterId,
-          source: 'panel',
-          message
-        });
+        this.emitFoundationEvent('CompanionMessageQueued', 'speech', { characterId, source: 'panel', message });
         return { message };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.pushDebugEntry({
-          channel: 'chat',
-          source: 'panel',
-          status: 'error',
-          requestMessages: builtMessages,
-          requestBody: getDebugRequestBody(error),
-          rawResponse: getDebugResponseBody(error),
-          content: '',
-          error: message
-        });
-        const reply = `DeepSeek request failed. Check Settings > model, endpoint, and API key. Details: ${message}`;
-        this.db.insertCompanionMessage({
-          role: 'assistant',
-          content: reply,
-          source: 'panel',
-          characterId,
-          status: 'error',
-          metadata: { error: message }
-        });
-        this.emitFoundationEvent('CompanionMessageQueued', 'speech', {
-          characterId,
-          source: 'panel',
-          status: 'error',
-          message: reply
-        });
+        const errMsg = error instanceof Error ? error.message : String(error);
+        const reply = `DeepSeek request failed. Check Settings > model, endpoint, and API key. Details: ${errMsg}`;
+        this.db.insertCompanionMessage({ role: 'assistant', content: reply, source: 'panel', characterId, status: 'error', metadata: { error: errMsg } });
+        this.emitFoundationEvent('CompanionMessageQueued', 'speech', { characterId, source: 'panel', status: 'error', message: reply });
         return { message: reply };
       }
     },
@@ -630,37 +597,10 @@ export class AppServices {
           })
         }
       ] satisfies Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
-      let debugRequestBody: unknown;
-      let debugRawResponse: unknown;
-      let raw = '';
       try {
-        const result = await this.createDeepSeekClient().chatDebug(builtMessages);
-        raw = result.content;
-        debugRequestBody = result.requestBody;
-        debugRawResponse = result.raw;
-        const parsed = validateDiscoveryReason(raw);
-        this.pushDebugEntry({
-          channel: 'discovery_reason',
-          source: input.discovery.source,
-          status: 'success',
-          requestMessages: builtMessages,
-          requestBody: debugRequestBody,
-          rawResponse: debugRawResponse,
-          content: raw
-        });
-        return parsed;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.pushDebugEntry({
-          channel: 'discovery_reason',
-          source: input.discovery.source,
-          status: 'error',
-          requestMessages: builtMessages,
-          requestBody: debugRequestBody ?? getDebugRequestBody(error),
-          rawResponse: debugRawResponse ?? getDebugResponseBody(error),
-          content: raw,
-          error: message
-        });
+        const { content } = await this.sendToAi({ messages: builtMessages, channel: 'discovery_reason', source: input.discovery.source });
+        return validateDiscoveryReason(content);
+      } catch {
         return fallback;
       }
     },
@@ -719,61 +659,18 @@ export class AppServices {
       const builtMessages = this.buildChatMessages(characterId, input.message);
       this.db.insertCompanionMessage({ role: 'user', content: input.message, source, characterId });
       try {
-        const { content: message, raw, requestBody } = await this.createDeepSeekClient().chatDebug(builtMessages);
-        this.pushDebugEntry({
-          channel: 'turn',
-          source,
-          status: 'success',
-          requestMessages: builtMessages,
-          requestBody,
-          rawResponse: raw,
-          content: message
-        });
+        const { content: message } = await this.sendToAi({ messages: builtMessages, channel: 'turn', source });
         this.db.insertCompanionMessage({ role: 'assistant', content: message, source, characterId });
         if (input.source === 'voice') {
-          const state = this.db.getCharacterState(characterId);
-          const nextState = this.db.saveCharacterState({
-            ...state,
-            emotion: applyEmotionEvent(state.emotion, 'expertise_topic_match')
-          });
-          this.emitFoundationEvent('EmotionChanged', 'character', {
-            characterId: nextState.characterId,
-            reason: 'expertise_topic_match'
-          });
+          this.applyCharacterEmotion(characterId, 'expertise_topic_match');
         }
-        this.emitFoundationEvent('CompanionMessageQueued', 'speech', {
-          characterId,
-          source,
-          message
-        });
+        this.emitFoundationEvent('CompanionMessageQueued', 'speech', { characterId, source, message });
         return { message };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
-        this.pushDebugEntry({
-          channel: 'turn',
-          source,
-          status: 'error',
-          requestMessages: builtMessages,
-          requestBody: getDebugRequestBody(error),
-          rawResponse: getDebugResponseBody(error),
-          content: '',
-          error: errMsg
-        });
         const reply = `DeepSeek request failed. Check Settings > model, endpoint, and API key. Details: ${errMsg}`;
-        this.db.insertCompanionMessage({
-          role: 'assistant',
-          content: reply,
-          source,
-          characterId,
-          status: 'error',
-          metadata: { error: errMsg }
-        });
-        this.emitFoundationEvent('CompanionMessageQueued', 'speech', {
-          characterId,
-          source,
-          status: 'error',
-          message: reply
-        });
+        this.db.insertCompanionMessage({ role: 'assistant', content: reply, source, characterId, status: 'error', metadata: { error: errMsg } });
+        this.emitFoundationEvent('CompanionMessageQueued', 'speech', { characterId, source, status: 'error', message: reply });
         return { message: reply };
       }
     },
@@ -1121,19 +1018,9 @@ export class AppServices {
         relatedJourneyId: activeJourney.id,
         createdAt: nowIso()
       });
-      const state = this.db.getCharacterState(cycle.companionId);
-      const nextState = this.db.saveCharacterState({ ...state, emotion: applyEmotionEvent(state.emotion, 'user_accepts_discovery') });
-      this.emitFoundationEvent('EmotionChanged', 'character', {
-        characterId: nextState.characterId,
-        reason: 'user_accepts_discovery'
-      });
+      this.applyCharacterEmotion(cycle.companionId, 'user_accepts_discovery');
     } else if (input.value === 'not_interested') {
-      const state = this.db.getCharacterState(cycle.companionId);
-      const nextState = this.db.saveCharacterState({ ...state, emotion: applyEmotionEvent(state.emotion, 'user_rejects_discovery') });
-      this.emitFoundationEvent('EmotionChanged', 'character', {
-        characterId: nextState.characterId,
-        reason: 'user_rejects_discovery'
-      });
+      this.applyCharacterEmotion(cycle.companionId, 'user_rejects_discovery');
     } else if (input.value === 'talk_about_this' && insight) {
       this.db.insertCompanionMessage({
         characterId: cycle.companionId,
@@ -1386,6 +1273,52 @@ export class AppServices {
     return this.getSpeechSettings();
   }
 
+  private async sendToAi(input: {
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+    channel: 'chat' | 'turn' | 'discovery_reason';
+    source: string;
+  }): Promise<{ content: string; raw: unknown; requestBody: unknown }> {
+    try {
+      const result = await this.createDeepSeekClient().chatDebug(input.messages);
+      this.pushDebugEntry({
+        channel: input.channel,
+        source: input.source,
+        status: 'success',
+        requestMessages: input.messages,
+        requestBody: result.requestBody,
+        rawResponse: result.raw,
+        content: result.content
+      });
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.pushDebugEntry({
+        channel: input.channel,
+        source: input.source,
+        status: 'error',
+        requestMessages: input.messages,
+        requestBody: getDebugRequestBody(error),
+        rawResponse: getDebugResponseBody(error),
+        content: '',
+        error: message
+      });
+      throw error;
+    }
+  }
+
+  private applyCharacterEmotion(characterId: string | undefined, eventType: Parameters<typeof applyEmotionEvent>[1]): void {
+    const id = characterId ?? DEFAULT_CHARACTER_ID;
+    const state = this.db.getCharacterState(id);
+    const nextState = this.db.saveCharacterState({
+      ...state,
+      emotion: applyEmotionEvent(state.emotion, eventType)
+    });
+    this.emitFoundationEvent('EmotionChanged', 'character', {
+      characterId: nextState.characterId,
+      reason: eventType
+    });
+  }
+
   private createDeepSeekClient(): DeepSeekClient {
     const stored = this.getStoredAiSettings();
     return new DeepSeekClient({
@@ -1437,11 +1370,6 @@ interface StoredSpeechSettings {
 
 interface StoredCharacterBehaviorSettings {
   movementOverride?: number;
-}
-
-function clampScore(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(100, Math.max(0, Math.round(value)));
 }
 
 function shouldFallbackToMemory(error: unknown): boolean {

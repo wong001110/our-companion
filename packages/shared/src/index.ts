@@ -1,8 +1,11 @@
 export * from './models';
 export * from './interfaces';
 export * from './domain-events';
+export { clamp01, clampScore, clamp } from './utils';
 
-import type { ActionPermissionState, ActionPlan, ActionRunResult, ActionStep, BaseEvent, PerformanceScript } from './models';
+import type { ActionPermissionState, ActionPlan, ActionRunResult, ActionStep, BaseEvent, KnowledgeGraph, PerformanceScript, SignalSourceType } from './models';
+
+export type DiscoverySource = SignalSourceType;
 
 export type CoreState =
   | 'idle'
@@ -210,7 +213,6 @@ export interface MemoryEvent {
   metadata?: Record<string, unknown>;
 }
 
-export type DiscoverySource = 'github' | 'reddit' | 'hackernews' | 'youtube';
 export type DiscoveryStatus =
   | 'new'
   | 'candidate'
@@ -1166,7 +1168,7 @@ export interface OurCompanionApi {
     refresh(input?: { sources?: DiscoverySource[] }): Promise<Discovery[]>;
     markInterested(discoveryId: string): Promise<Discovery>;
     markNotInterested(discoveryId: string): Promise<Discovery>;
-    addToJourney(input: AddDiscoveryToJourneyInput): Promise<{ journey: Journey; milestone: JourneyMilestone; memory: MemoryNode }>;
+    addToJourney(input: AddDiscoveryToJourneyInput): Promise<{ journey: CompanionJourney; milestone: JourneyMilestoneV2; memory: MemoryRecord }>;
     onAnnounce(listener: (payload: DiscoveryAnnouncePayload) => void): () => void;
     generateNow(): Promise<Discovery[]>;
     shareNext(): Promise<boolean>;
@@ -1187,18 +1189,18 @@ export interface OurCompanionApi {
     onExplorationEvent(listener: (event: ExplorationLoopEvent) => void): () => void;
   };
   memory: {
-    createNode(input: CreateMemoryNodeInput): Promise<MemoryNode>;
-    updateNode(input: UpdateMemoryNodeInput): Promise<MemoryNode>;
+    createNode(input: CreateMemoryNodeInput): Promise<MemoryRecord>;
+    updateNode(input: UpdateMemoryNodeInput): Promise<MemoryRecord>;
     deleteNode(id: string): Promise<{ id: string; deleted: true }>;
     createEdge(input: CreateMemoryEdgeInput): Promise<MemoryEdge>;
-    getGraph(input?: { query?: string }): Promise<MemoryGraph>;
-    search(query: string): Promise<MemoryNode[]>;
+    getGraph(input?: { query?: string }): Promise<KnowledgeGraph>;
+    search(query: string): Promise<MemoryRecord[]>;
   };
   journey: {
-    create(input: CreateJourneyInput): Promise<Journey>;
-    getActive(): Promise<Journey[]>;
-    getTimeline(input?: { journeyId?: string }): Promise<JourneyMilestone[]>;
-    addMilestone(input: AddJourneyMilestoneInput): Promise<JourneyMilestone>;
+    create(input: CreateJourneyInput): Promise<CompanionJourney>;
+    getActive(): Promise<CompanionJourney[]>;
+    getTimeline(input?: { journeyId?: string }): Promise<JourneyMilestoneV2[]>;
+    addMilestone(input: AddJourneyMilestoneInput): Promise<JourneyMilestoneV2>;
   };
   diary: {
     getEntries(input?: { type?: DiaryEntry['type']; limit?: number }): Promise<DiaryEntry[]>;

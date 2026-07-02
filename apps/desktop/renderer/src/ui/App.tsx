@@ -17,10 +17,10 @@ import type {
   DiscoveryAnnouncePayload,
   ExplorationCycleResult,
   ExplorationLoopEvent,
-  Journey,
-  JourneyMilestone,
-  MemoryGraph,
-  MemoryNode,
+  CompanionJourney,
+  JourneyMilestoneV2,
+  KnowledgeGraph,
+  KnowledgeGraphNode,
   OnlineMode,
   PermissionScope,
   PerformanceScript,
@@ -919,9 +919,9 @@ function PanelDashboard() {
   const [behaviorSettings, setBehaviorSettings] = useState<CharacterBehaviorSettings>();
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [discoveries, setDiscoveries] = useState<Discovery[]>([]);
-  const [journeys, setJourneys] = useState<Journey[]>([]);
-  const [timeline, setTimeline] = useState<JourneyMilestone[]>([]);
-  const [memoryGraph, setMemoryGraph] = useState<MemoryGraph>({ nodes: [], edges: [] });
+  const [journeys, setJourneys] = useState<CompanionJourney[]>([]);
+  const [timeline, setTimeline] = useState<JourneyMilestoneV2[]>([]);
+  const [memoryGraph, setMemoryGraph] = useState<KnowledgeGraph>({ nodes: [], edges: [] });
   const [diary, setDiary] = useState<DiaryEntry[]>([]);
   const [exploration, setExploration] = useState<ExplorationCycleResult>();
   const [explorationEvents, setExplorationEvents] = useState<ExplorationLoopEvent[]>([]);
@@ -1062,7 +1062,7 @@ function HomeView({
   state?: CharacterRuntimeState;
   character?: CharacterProfile;
   discoveries: Discovery[];
-  journeys: Journey[];
+  journeys: CompanionJourney[];
   diary: DiaryEntry[];
   exploration?: ExplorationCycleResult;
   explorationEvents: ExplorationLoopEvent[];
@@ -1267,7 +1267,7 @@ function DiscoveryView({ discoveries, exploration, exploring, onStartExploration
   );
 }
 
-function JourneyView({ journeys, timeline, onRefresh }: { journeys: Journey[]; timeline: JourneyMilestone[]; onRefresh: () => Promise<void> }) {
+function JourneyView({ journeys, timeline, onRefresh }: { journeys: CompanionJourney[]; timeline: JourneyMilestoneV2[]; onRefresh: () => Promise<void> }) {
   const lang = useLang();
 
   async function createNewJourney() {
@@ -1296,7 +1296,7 @@ function JourneyView({ journeys, timeline, onRefresh }: { journeys: Journey[]; t
               </div>
             </div>
             <StickyNote title={t(lang, 'journey_next_step')} compact>
-              <p>{timeline[index]?.summary ?? timeline[index]?.title ?? t(lang, 'journey_default_next_step')}</p>
+              <p>{timeline[index]?.description ?? timeline[index]?.title ?? t(lang, 'journey_default_next_step')}</p>
             </StickyNote>
           </PaperCard>
         ))}
@@ -1310,10 +1310,10 @@ function JourneyView({ journeys, timeline, onRefresh }: { journeys: Journey[]; t
   );
 }
 
-function MemoryView({ graph, onRefresh }: { graph: MemoryGraph; onRefresh: () => Promise<void> }) {
+function MemoryView({ graph, onRefresh }: { graph: KnowledgeGraph; onRefresh: () => Promise<void> }) {
   const lang = useLang();
   const [draft, setDraft] = useState('');
-  const [editing, setEditing] = useState<MemoryNode | undefined>();
+  const [editing, setEditing] = useState<KnowledgeGraphNode | undefined>();
 
   async function saveMemory() {
     if (!draft.trim()) return;
@@ -1341,19 +1341,13 @@ function MemoryView({ graph, onRefresh }: { graph: MemoryGraph; onRefresh: () =>
           {graph.nodes.map((node) => (
             <article className="memory-card paper-card" key={node.id}>
               <h3>{node.title}</h3>
-              <p>{node.summary ?? node.content}</p>
               <div className="tag-row">
-                <span>{node.type}</span>
-                {node.isPinned && <span>{t(lang, 'memory_favorite')}</span>}
+                <span>{node.kind}</span>
               </div>
               <div className="action-row">
-                <button onClick={() => { setEditing(node); setDraft(node.content ?? node.summary ?? node.title); }}>
+                <button onClick={() => { setEditing(node); setDraft(node.title); }}>
                   {t(lang, 'memory_edit')}
                 </button>
-                <button onClick={() => window.ourCompanion.memory.updateNode({ id: node.id, isMarkedWrong: true }).then(onRefresh)}>
-                  {t(lang, 'memory_mark_wrong')}
-                </button>
-                <button onClick={() => window.ourCompanion.memory.deleteNode(node.id).then(onRefresh)}>{t(lang, 'memory_delete')}</button>
               </div>
             </article>
           ))}
