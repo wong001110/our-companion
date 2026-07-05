@@ -201,7 +201,7 @@ describe('directPerformance', () => {
     const keys = script.animationSequence.map((s) => s.payload && typeof s.payload === 'object' && 'animationKey' in s.payload
       ? (s.payload as { animationKey: string }).animationKey
       : s.id);
-    expect(keys).toContain('task_success');
+    expect(keys).toContain('Expedition_Return');
   });
 
   it('returns a PerformanceScriptV2 with animationSequence for failure', () => {
@@ -209,6 +209,6 @@ describe('directPerformance', () => {
     const keys = script.animationSequence.map((s) => s.payload && typeof s.payload === 'object' && 'animationKey' in s.payload
       ? (s.payload as { animationKey: string }).animationKey
       : s.id);
-    expect(keys).toContain('task_failed');
+    expect(keys).toContain('Expedition_Return');
   });
 });

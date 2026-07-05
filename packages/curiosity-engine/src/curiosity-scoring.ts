@@ -1,8 +1,5 @@
 import type { CuriosityCandidate } from '@our-companion/shared';
-
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value));
-}
+import { clamp01 } from '@our-companion/shared';
 
 export function scoreCandidatePriority(candidate: CuriosityCandidate): number {
   return clamp01(

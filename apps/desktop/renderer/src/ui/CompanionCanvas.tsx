@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import type { CharacterRuntimeState } from '@our-companion/shared';
-import { createCompanionAnimations, type AnimationName, type CompanionAnimationConfig } from '../character/ann/animationConfig';
+import { createCompanionAnimations, type AnimationName, type CompanionAnimationConfig } from '../character/animationConfig';
 import { SpriteAnimator } from '../character/SpriteAnimator';
 import { DEFAULT_ASSET_ROOT } from '../character/AssetResolver';
 import { resolveAnimation, getAvailableClipNames } from '../character/AnimationResolver';
@@ -22,6 +22,8 @@ interface CompanionCanvasProps {
   assetRoot?: string;
   facing?: 'left' | 'right';
   isListening?: boolean;
+  userIsTyping?: boolean;
+  isMusicPlaying?: boolean;
   onPointerHitChange?: (isHit: boolean) => void;
   onOpenPanel?: () => void;
   onToggleListen?: () => void;
@@ -42,6 +44,8 @@ export function CompanionCanvas({
   assetRoot = DEFAULT_ASSET_ROOT,
   facing = 'right',
   isListening = false,
+  userIsTyping = false,
+  isMusicPlaying = false,
   onPointerHitChange,
   onOpenPanel,
   onToggleListen,
@@ -58,15 +62,19 @@ export function CompanionCanvas({
   const suppressClickTimeoutRef = useRef<number | undefined>(undefined);
   const singleClickTimeoutRef = useRef<number | undefined>(undefined);
   const [assetFailed, setAssetFailed] = useState(false);
+  const [dragState, setDragState] = useState<'idle' | 'dragging' | 'releasing'>('idle');
+  const dragReleaseTimerRef = useRef<number | undefined>(undefined);
   const intent = state?.intent ?? 'waiting';
   const animations = useMemo(() => createCompanionAnimations(assetRoot), [assetRoot]);
   const availableClips = useMemo(() => getAvailableClipNames(animations), [animations]);
   const animation = useMemo(() => {
     if (animationOverride) return animations[animationOverride];
-    const intent = stateToIntent(state);
+    if (dragState === 'dragging') return animations.Drag_Hold;
+    if (dragState === 'releasing') return animations.Drag_Release;
+    const intent = stateToIntent(state, { userIsTyping, isMusicPlaying });
     const resolution = resolveAnimation({ intent }, availableClips);
     return animations[resolution.clip as AnimationName] ?? animations.Idle_Neutral;
-  }, [animationOverride, state?.coreState, state?.intent, animations, availableClips]);
+  }, [animationOverride, dragState, state?.coreState, state?.intent, state?.emotion, userIsTyping, isMusicPlaying, animations, availableClips]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -106,6 +114,9 @@ export function CompanionCanvas({
       if (singleClickTimeoutRef.current !== undefined) {
         window.clearTimeout(singleClickTimeoutRef.current);
       }
+      if (dragReleaseTimerRef.current !== undefined) {
+        window.clearTimeout(dragReleaseTimerRef.current);
+      }
     };
   }, []);
 
@@ -133,6 +144,7 @@ export function CompanionCanvas({
       if (!isDraggingRef.current && distance >= 5) {
         isDraggingRef.current = true;
         suppressClickRef.current = true;
+        setDragState('dragging');
         onDragStart?.(eventPoint(event));
       }
       if (isDraggingRef.current) {
@@ -152,6 +164,14 @@ export function CompanionCanvas({
     if (isDraggingRef.current) {
       onDragEnd?.(eventPoint(event));
       isDraggingRef.current = false;
+      setDragState('releasing');
+      if (dragReleaseTimerRef.current !== undefined) {
+        window.clearTimeout(dragReleaseTimerRef.current);
+      }
+      dragReleaseTimerRef.current = window.setTimeout(() => {
+        setDragState('idle');
+        dragReleaseTimerRef.current = undefined;
+      }, 600);
       if (suppressClickTimeoutRef.current !== undefined) {
         window.clearTimeout(suppressClickTimeoutRef.current);
       }
@@ -171,6 +191,7 @@ export function CompanionCanvas({
   function handlePointerCancel(event: PointerEvent<HTMLDivElement>) {
     if (isDraggingRef.current) onDragEnd?.(eventPoint(event));
     isDraggingRef.current = false;
+    setDragState('idle');
     dragCandidateRef.current = undefined;
     updatePointerHit(false);
   }
@@ -279,12 +300,22 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function stateToIntent(state?: CharacterRuntimeState): CompanionAnimationName {
+interface StateToIntentContext {
+  userIsTyping?: boolean;
+  isMusicPlaying?: boolean;
+}
+
+function stateToIntent(state?: CharacterRuntimeState, ctx: StateToIntentContext = {}): CompanionAnimationName {
   if (!state) return 'Idle_Neutral';
-  if (state.coreState === 'listening') return 'Think';
+  if (state.coreState === 'listening') return 'Listening';
   if (state.coreState === 'executing') return 'Work_Focus';
   if (state.coreState === 'returning') return 'Expedition_Return';
-  if (state.coreState === 'talking') return 'Talk_Neutral';
+  if (state.coreState === 'talking') {
+    const mood = state.emotion;
+    if (mood && mood.concerned > 60) return 'Talk_Concerned';
+    if (mood && (mood.focused > 60 || mood.confused > 50)) return 'Talk_Thinking';
+    return 'Talk_Neutral';
+  }
   if (state.intent === 'sharing_discovery' || state.coreState === 'discovering') return 'Expedition_Present';
   if (
     state.intent === 'reviewing_memory' ||
@@ -294,6 +325,8 @@ function stateToIntent(state?: CharacterRuntimeState): CompanionAnimationName {
     state.coreState === 'observing'
   ) return 'Think';
   if (state.intent === 'wandering' || state.coreState === 'walking') return 'Walk_Right';
+  if (ctx.userIsTyping) return 'Waiting_Response';
+  if (ctx.isMusicPlaying) return 'Music_Idle';
   return 'Idle_Neutral';
 }
 

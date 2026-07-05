@@ -71,7 +71,7 @@ export const defaultPerformanceScripts: PerformanceScriptV2[] = [
     name: 'Idle',
     behaviourType: 'idle',
     animationSequence: [
-      { id: 'cue_1', type: 'animation', startMs: 0, durationMs: 2000, payload: 'idle_laptop' },
+      { id: 'cue_1', type: 'animation', startMs: 0, durationMs: 2000, payload: 'Idle_Neutral' },
     ],
     durationMs: 2000,
     interruptible: true,
@@ -83,7 +83,7 @@ export const defaultPerformanceScripts: PerformanceScriptV2[] = [
     behaviourType: 'think',
     emotion: 'curious',
     animationSequence: [
-      { id: 'cue_1', type: 'animation', startMs: 0, durationMs: 1500, payload: 'think' },
+      { id: 'cue_1', type: 'animation', startMs: 0, durationMs: 1500, payload: 'Think' },
     ],
     durationMs: 1500,
     interruptible: true,
@@ -94,7 +94,7 @@ export const defaultPerformanceScripts: PerformanceScriptV2[] = [
     name: 'Speaking',
     behaviourType: 'speak',
     animationSequence: [
-      { id: 'cue_1', type: 'animation', startMs: 0, durationMs: 2000, payload: 'talk' },
+      { id: 'cue_1', type: 'animation', startMs: 0, durationMs: 2000, payload: 'Talk_Neutral' },
     ],
     durationMs: 2000,
     interruptible: true,
@@ -106,7 +106,7 @@ export const defaultPerformanceScripts: PerformanceScriptV2[] = [
     behaviourType: 'share_discovery',
     emotion: 'excited',
     animationSequence: [
-      { id: 'cue_1', type: 'animation', startMs: 0, durationMs: 1000, payload: 'discovery' },
+      { id: 'cue_1', type: 'animation', startMs: 0, durationMs: 1000, payload: 'Expedition_Present' },
     ],
     durationMs: 1000,
     interruptible: true,
@@ -117,7 +117,7 @@ export const defaultPerformanceScripts: PerformanceScriptV2[] = [
     name: 'Sleeping',
     behaviourType: 'sleep',
     animationSequence: [
-      { id: 'cue_1', type: 'animation', startMs: 0, durationMs: 3000, payload: 'idle_tired' },
+      { id: 'cue_1', type: 'animation', startMs: 0, durationMs: 3000, payload: 'Idle_Sleepy' },
     ],
     durationMs: 3000,
     interruptible: false,

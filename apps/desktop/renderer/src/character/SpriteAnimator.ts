@@ -55,8 +55,11 @@ export class SpriteAnimator {
           return;
         }
         this.image = image;
+        this.frameHeight = image.naturalHeight;
+        this.frameWidth = image.naturalHeight;
 
-        this.columns = this.columns || Math.floor(image.naturalWidth / this.frameWidth);
+        this.columns = this.columns || Math.floor(image.naturalWidth / image.naturalHeight);
+        this.rows = this.rows || 1;
         this.totalFrames = this.columns * this.rows;
 
         resolve();

@@ -1,5 +1,6 @@
 import { planPerformanceScript } from '@our-companion/character-engine';
 import type {
+  ActionOrchestratorDeps,
   ActionPermissionState,
   ActionPlanV2,
   ActionResult,
@@ -10,6 +11,8 @@ import type {
   PerformanceScriptV2,
 } from '@our-companion/shared';
 import { createId, nowIso } from '@our-companion/shared';
+
+export type { ActionOrchestratorDeps } from '@our-companion/shared';
 
 // ─── Permission scope helpers ──────────────────────────────────────────────
 
@@ -205,14 +208,6 @@ export function resolvePermissions(
 }
 
 // ─── 3d. Action orchestrator + state machine ──────────────────────────────
-
-export interface ActionOrchestratorDeps {
-  executeStep(toolName: string, args: Record<string, unknown>): Promise<{ status: string; errorMessage?: string; blockedReason?: string }>;
-  emitEvent(type: string, payload?: Record<string, unknown>, correlationId?: string): void;
-  getPermissions(): ActionPermissionState;
-  directPerformance(actionId: string, outcome: 'success' | 'failure'): PerformanceScriptV2;
-  broadcastPerformance(script: PerformanceScriptV2): void;
-}
 
 export async function runActionPlan(
   plan: ActionPlanV2,

@@ -62,7 +62,7 @@ describe('character engine', () => {
   });
 
   it('falls back to base animation when emotional variant is missing', () => {
-    expect(animationFor('sharing_discovery', 'discovering', 'excited', ['idle', 'discover'])).toBe('discover');
+    expect(animationFor('sharing_discovery', 'discovering', 'excited', ['Idle_Neutral', 'Expedition_Present'])).toBe('Expedition_Present');
   });
 
   it('applies discovery acceptance emotion modifiers', () => {
@@ -81,18 +81,18 @@ describe('character engine', () => {
 
     expect(state.mood).toBe('curious');
     expect(state.intent).toBe('present_discovery');
-    expect(request.animationKey).toBe('discovery_present');
+    expect(request.animationKey).toBe('Expedition_Present');
   });
 
   it('plans task performance without executing commands', () => {
     const script = planPerformanceScript('action_1', 'success');
 
     expect(script.actionId).toBe('action_1');
-    expect(script.steps.map((step) => step.animationKey)).toEqual(['task_start', 'typing', 'task_success', 'return']);
+    expect(script.steps.map((step) => step.animationKey)).toEqual(['Expedition_Prepare', 'Work_Focus', 'Expedition_Return', 'Expedition_Return']);
   });
 
   it('keeps idle animation loops interrupt-safe', () => {
-    expect(nextAnimationState('idle')).toBe('curious');
+    expect(nextAnimationState('Idle_Neutral')).toBe('curious');
     expect(planAnimationRequest({ behaviour: 'idle', mood: 'neutral', reason: 'Idle loop.' }).interruptSafe).toBe(true);
   });
 
@@ -101,7 +101,7 @@ describe('character engine', () => {
     const runtime = createRuntimeDescriptor(registry.active());
 
     expect(runtime.packageId).toBe('ann');
-    expect(runtime.defaultAnimation).toBe('idle_laptop');
+    expect(runtime.defaultAnimation).toBe('Idle_Neutral');
   });
 
   it('validates custom packages and catches missing required assets', () => {
@@ -111,7 +111,7 @@ describe('character engine', () => {
       name: 'Custom',
       animationManifest: {
         required: defaultAnnPackage.animationManifest.required,
-        mappings: { ...defaultAnnPackage.animationManifest.mappings, idle: '' }
+        mappings: { ...defaultAnnPackage.animationManifest.mappings, Idle_Neutral: '' }
       }
     };
     const validation = validateCharacterPackage(invalid);

@@ -1,5 +1,5 @@
 import type { Concept, Discovery, DiscoveryFeedback, JourneyMilestone, MemoryNode, Pattern, PatternEvidence, PatternType } from '@our-companion/shared';
-import { createId, nowIso } from '@our-companion/shared';
+import { clamp01, createId, nowIso } from '@our-companion/shared';
 
 export interface DetectPatternsInput {
   userId: string;
@@ -22,11 +22,6 @@ export interface DetectCognitivePatternsInput {
   userId: string;
   concepts: Concept[];
   discoveries: Discovery[];
-}
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(1, Math.max(0, value));
 }
 
 export function scorePattern(input: Omit<PatternScore, 'finalScore'>): PatternScore {

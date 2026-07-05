@@ -1,3 +1,4 @@
+import { clamp01 } from '@our-companion/shared';
 import { CONFIDENCE_WEIGHTS } from './types';
 
 export interface ConfidenceInput {
@@ -6,10 +7,6 @@ export interface ConfidenceInput {
   reinforcementCount: number;
   consistency: number;
   avgMemoryImportance: number;
-}
-
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value));
 }
 
 export function calculatePatternConfidence(input: ConfidenceInput): number {

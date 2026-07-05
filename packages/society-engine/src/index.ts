@@ -11,12 +11,7 @@ import type {
   TrustProfile,
   VersionVector
 } from '@our-companion/shared';
-import { createId, nowIso } from '@our-companion/shared';
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(1, Math.max(0, value));
-}
+import { clamp01, createId, nowIso } from '@our-companion/shared';
 
 export function scoreTrust(profile: TrustProfile): number {
   if (!profile.userPermission) return 0;

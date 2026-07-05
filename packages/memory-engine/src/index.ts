@@ -19,7 +19,7 @@ import type {
   Pattern,
   UpdateMemoryNodeInput
 } from '@our-companion/shared';
-import { createId, nowIso } from '@our-companion/shared';
+import { clamp01, createId, nowIso } from '@our-companion/shared';
 
 export function createMemoryNode(input: CreateMemoryNodeInput): MemoryNode {
   const timestamp = nowIso();
@@ -83,11 +83,6 @@ export interface BuildInterestGraphInput {
   patterns: Pattern[];
   discoveries: Discovery[];
   feedback: DiscoveryFeedback[];
-}
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(1, Math.max(0, value));
 }
 
 function interestTypeFromMemory(type: MemoryNode['type']): InterestNodeType {

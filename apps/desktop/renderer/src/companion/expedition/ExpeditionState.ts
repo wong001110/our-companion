@@ -43,11 +43,11 @@ export function returnFromExpedition(state: ExpeditionState, result?: unknown): 
 
 export function expeditionPhaseToAnimation(phase: ExpeditionPhase): string {
   switch (phase) {
-    case 'preparing': return 'task_start';
-    case 'leaving': return 'walk';
-    case 'away': return 'walk';
-    case 'returning': return 'return';
-    case 'presenting': return 'discovery';
-    default: return 'idle_laptop';
+    case 'preparing': return 'Expedition_Prepare';
+    case 'leaving': return 'Walk_Right';
+    case 'away': return 'Walk_Right';
+    case 'returning': return 'Expedition_Return';
+    case 'presenting': return 'Expedition_Present';
+    default: return 'Idle_Neutral';
   }
 }

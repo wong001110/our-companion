@@ -59,7 +59,6 @@ our-companion/
 │   ├── sdk/                   # Developer SDK
 │   ├── validation-kit/        # Validation utilities
 │   └── platform/event-bus/    # Global pub/sub
-├── assets/characters/ann/     # Built-in character sprites
 ├── docs/                      # Architecture decision records
 ├── tasks/                     # Active development tasks
 └── scripts/                   # Build/setup scripts

@@ -101,15 +101,13 @@ export type BehaviourState =
   | 'return_home';
 
 export type AnimationKey =
-  | 'idle'
+  | 'Idle_Neutral'
   | 'curious'
-  | 'thinking'
-  | 'discovery_present'
-  | 'task_start'
-  | 'typing'
-  | 'task_success'
-  | 'task_failed'
-  | 'return';
+  | 'Think'
+  | 'Expedition_Present'
+  | 'Expedition_Prepare'
+  | 'Work_Focus'
+  | 'Expedition_Return';
 
 export interface AnimationRequest {
   id: string;

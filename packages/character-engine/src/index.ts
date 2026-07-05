@@ -16,7 +16,7 @@ import type {
   PerformanceScript,
   ValidationResult
 } from '@our-companion/shared';
-import { DEFAULT_CHARACTER_ID, createId, nowIso } from '@our-companion/shared';
+import { clampScore, DEFAULT_CHARACTER_ID, createId, nowIso } from '@our-companion/shared';
 
 export const neutralEmotion: EmotionState = {
   neutral: 70,
@@ -32,17 +32,17 @@ export const neutralEmotion: EmotionState = {
 };
 
 export const requiredCreatorAnimations = [
-  'idle',
-  'walk',
-  'run',
-  'thinking',
-  'talk',
-  'present_discovery',
-  'task_start',
-  'task_success',
-  'task_failed',
-  'return',
-  'sleep'
+  'Idle_Neutral',
+  'Walk_Right',
+  'Think',
+  'Talk_Neutral',
+  'Expedition_Prepare',
+  'Expedition_Return',
+  'Expedition_Present',
+  'Work_Focus',
+  'Music_Idle',
+  'Listening',
+  'Idle_Sleepy'
 ];
 
 export const defaultAnnPackage: CharacterPackage = {
@@ -60,36 +60,26 @@ export const defaultAnnPackage: CharacterPackage = {
     }
   },
   assetManifest: {
-    assets: [
-      {
-        id: 'ann-spritesheets',
-        type: 'spritesheet',
-        path: 'assets/characters/ann/animations',
-        version: '1.0.0',
-        frameWidth: 300,
-        frameHeight: 300
-      }
-    ]
+    assets: []
   },
   animationManifest: {
     required: requiredCreatorAnimations,
     mappings: {
-      idle: 'idle_laptop',
-      walk: 'walk',
-      run: 'walk',
-      thinking: 'think',
-      talk: 'talk',
-      present_discovery: 'discovery',
-      task_start: 'task_start',
-      task_success: 'task_success',
-      task_failed: 'task_failed',
-      return: 'return',
-      sleep: 'idle_tired'
+      Idle_Neutral: 'Idle_Neutral',
+      Walk_Right: 'Walk_Right',
+      Think: 'Think',
+      Talk_Neutral: 'Talk_Neutral',
+      Expedition_Prepare: 'Expedition_Prepare',
+      Expedition_Return: 'Expedition_Return',
+      Expedition_Present: 'Expedition_Present',
+      Work_Focus: 'Work_Focus',
+      Music_Idle: 'Music_Idle',
+      Listening: 'Listening',
+      Idle_Sleepy: 'Idle_Sleepy'
     }
   },
   metadata: {
     description: 'Default Our Companion character package.',
-    thumbnail: 'assets/characters/ann/demo.png',
     tags: ['default', 'ann']
   },
   futureVoice: {},
@@ -115,14 +105,14 @@ export function validateCharacterPackage(pkg: CharacterPackage): ValidationResul
     issues.push({ severity: 'error', code: 'invalid_version', message: 'Character package version must be semantic.' });
   }
   if (pkg.assetManifest.assets.length === 0) {
-    issues.push({ severity: 'error', code: 'missing_assets', message: 'At least one character asset is required.' });
+    issues.push({ severity: 'warning', code: 'missing_assets', message: 'No character assets defined. Assets should be uploaded by the user.' });
   }
-  if (!pkg.animationManifest.mappings.idle) {
-    issues.push({ severity: 'error', code: 'missing_idle', message: 'The idle animation mapping is required.' });
+  if (!pkg.animationManifest.mappings.Idle_Neutral) {
+    issues.push({ severity: 'error', code: 'missing_idle', message: 'The Idle_Neutral animation mapping is required.' });
   }
   for (const animation of requiredCreatorAnimations) {
     if (!pkg.animationManifest.mappings[animation]) {
-      issues.push({ severity: animation === 'idle' ? 'error' : 'warning', code: 'missing_animation', message: `Missing animation mapping: ${animation}.` });
+      issues.push({ severity: animation === 'Idle_Neutral' ? 'error' : 'warning', code: 'missing_animation', message: `Missing animation mapping: ${animation}.` });
     }
   }
   const frameSizes = new Set(
@@ -183,7 +173,7 @@ export function createRuntimeDescriptor(pkg: CharacterPackage): CharacterRuntime
     packageId: safePackage.id,
     characterId: safePackage.id,
     displayName: safePackage.name,
-    defaultAnimation: safePackage.animationManifest.mappings.idle,
+    defaultAnimation: safePackage.animationManifest.mappings.Idle_Neutral,
     animations: safePackage.animationManifest.mappings,
     personalityPreset: safePackage.personalityPreset
   };
@@ -216,23 +206,19 @@ export function dominantEmotion(emotion: EmotionState): EmotionName {
   )[0];
 }
 
-function clamp(value: number): number {
-  return Math.min(100, Math.max(0, Math.round(value)));
-}
-
 export function decayEmotion(emotion: EmotionState, date = new Date()): EmotionState {
   const lateHour = date.getHours() >= 23 || date.getHours() < 5;
   return {
-    neutral: clamp(emotion.neutral),
-    excited: clamp(emotion.excited * 0.9),
-    happy: clamp(emotion.happy * 0.95),
-    proud: clamp(emotion.proud * 0.95),
-    curious: clamp(emotion.curious * 0.97),
-    shy: clamp(emotion.shy * 0.98),
-    confused: clamp(emotion.confused * 0.94),
-    focused: clamp(emotion.focused * 0.96),
-    tired: clamp(lateHour ? emotion.tired + 10 : emotion.tired * 0.99),
-    concerned: clamp(emotion.concerned * 0.9)
+    neutral: clampScore(emotion.neutral),
+    excited: clampScore(emotion.excited * 0.9),
+    happy: clampScore(emotion.happy * 0.95),
+    proud: clampScore(emotion.proud * 0.95),
+    curious: clampScore(emotion.curious * 0.97),
+    shy: clampScore(emotion.shy * 0.98),
+    confused: clampScore(emotion.confused * 0.94),
+    focused: clampScore(emotion.focused * 0.96),
+    tired: clampScore(lateHour ? emotion.tired + 10 : emotion.tired * 0.99),
+    concerned: clampScore(emotion.concerned * 0.9)
   };
 }
 
@@ -249,7 +235,7 @@ export type EmotionEvent =
 export function applyEmotionEvent(emotion: EmotionState, event: EmotionEvent): EmotionState {
   const next = { ...emotion };
   const add = (name: EmotionName, amount: number) => {
-    next[name] = clamp(next[name] + amount);
+    next[name] = clampScore(next[name] + amount);
   };
 
   switch (event) {
@@ -338,32 +324,32 @@ export function transitionState(current: CoreState, intent: Intent, emotion: Emo
 export function animationFor(intent: Intent, state: CoreState, emotion: EmotionName, availableAnimations: string[]): string {
   const variants: string[] = [];
 
-  if (intent === 'wandering' && emotion === 'tired') variants.push('walk_tired', 'sleep');
-  if (intent === 'wandering' && emotion === 'excited') variants.push('walk_excited');
-  if (intent === 'sharing_discovery' && emotion === 'shy') variants.push('discover_shy');
-  if (intent === 'sharing_discovery' && emotion === 'excited') variants.push('discover_excited');
-  if (state === 'talking' && emotion === 'happy') variants.push('talk_happy');
-  if (state === 'talking' && emotion === 'confused') variants.push('talk_confused');
-  if (state === 'executing' && emotion === 'focused') variants.push('task_start');
-  if (state === 'returning' && emotion === 'proud') variants.push('task_success');
-  if (state === 'returning' && emotion === 'confused') variants.push('task_fail');
+  if (intent === 'wandering' && emotion === 'tired') variants.push('Walk_Right', 'Idle_Sleepy');
+  if (intent === 'wandering' && emotion === 'excited') variants.push('Walk_Right');
+  if (intent === 'sharing_discovery' && emotion === 'shy') variants.push('Expedition_Present');
+  if (intent === 'sharing_discovery' && emotion === 'excited') variants.push('Expedition_Present');
+  if (state === 'talking' && emotion === 'happy') variants.push('Talk_Neutral');
+  if (state === 'talking' && emotion === 'confused') variants.push('Talk_Neutral');
+  if (state === 'executing' && emotion === 'focused') variants.push('Expedition_Prepare');
+  if (state === 'returning' && emotion === 'proud') variants.push('Expedition_Return');
+  if (state === 'returning' && emotion === 'confused') variants.push('Expedition_Return');
 
   const baseByState: Record<CoreState, string> = {
-    idle: 'idle',
-    walking: 'walk',
-    sleeping: 'sleep',
-    observing: 'observe',
-    thinking: 'think',
-    discovering: 'discover',
-    talking: 'talk',
-    listening: 'think',
-    executing: 'task_start',
-    returning: 'return',
-    organizing_backpack: 'organize_backpack'
+    idle: 'Idle_Neutral',
+    walking: 'Walk_Right',
+    sleeping: 'Idle_Sleepy',
+    observing: 'Idle_Neutral',
+    thinking: 'Think',
+    discovering: 'Expedition_Present',
+    talking: 'Talk_Neutral',
+    listening: 'Listening',
+    executing: 'Expedition_Prepare',
+    returning: 'Expedition_Return',
+    organizing_backpack: 'Work_Focus'
   };
 
-  variants.push(baseByState[state], 'idle');
-  return variants.find((name) => availableAnimations.includes(name)) ?? 'idle';
+  variants.push(baseByState[state], 'Idle_Neutral');
+  return variants.find((name) => availableAnimations.includes(name)) ?? 'Idle_Neutral';
 }
 
 export function advanceCharacter(state: CharacterRuntimeState, context: IntentContext): CharacterRuntimeState {
@@ -430,26 +416,24 @@ export function resolveCharacterState(
 export function nextAnimationState(current: AnimationKey, requested?: AnimationKey): AnimationKey {
   if (requested && requested !== current) return requested;
   const transitions: Record<AnimationKey, AnimationKey> = {
-    idle: 'curious',
-    curious: 'thinking',
-    thinking: 'discovery_present',
-    discovery_present: 'return',
-    task_start: 'typing',
-    typing: 'task_success',
-    task_success: 'return',
-    task_failed: 'return',
-    return: 'idle'
+    Idle_Neutral: 'curious',
+    curious: 'Think',
+    Think: 'Expedition_Present',
+    Expedition_Present: 'Expedition_Return',
+    Expedition_Prepare: 'Work_Focus',
+    Work_Focus: 'Expedition_Return',
+    Expedition_Return: 'Idle_Neutral'
   };
-  return transitions[current] ?? 'idle';
+  return transitions[current] ?? 'Idle_Neutral';
 }
 
 export function animationKeyForBehaviour(behaviour: BehaviourState, mood: AnnMood): AnimationKey {
-  if (behaviour === 'present_discovery') return 'discovery_present';
-  if (behaviour === 'perform_task') return 'task_start';
-  if (behaviour === 'reflect' || mood === 'thinking') return 'thinking';
-  if (behaviour === 'return_home') return 'return';
+  if (behaviour === 'present_discovery') return 'Expedition_Present';
+  if (behaviour === 'perform_task') return 'Expedition_Prepare';
+  if (behaviour === 'reflect' || mood === 'thinking') return 'Think';
+  if (behaviour === 'return_home') return 'Expedition_Return';
   if (mood === 'curious') return 'curious';
-  return 'idle';
+  return 'Idle_Neutral';
 }
 
 export function planAnimationRequest(input: {
@@ -473,14 +457,14 @@ export function planPerformanceScript(actionId: string, outcome: 'success' | 'fa
     id: createId('performance'),
     actionId,
     steps: [
-      { animationKey: 'task_start', label: 'start task performance', durationMs: 450 },
-      { animationKey: 'typing', label: 'show focused work', durationMs: 700 },
+      { animationKey: 'Expedition_Prepare', label: 'start task performance', durationMs: 450 },
+      { animationKey: 'Work_Focus', label: 'show focused work', durationMs: 700 },
       {
-        animationKey: outcome === 'success' ? 'task_success' : 'task_failed',
+        animationKey: outcome === 'success' ? 'Expedition_Return' : 'Expedition_Return',
         label: outcome === 'success' ? 'confirm result' : 'show recoverable failure',
         durationMs: 600
       },
-      { animationKey: 'return', label: 'return home', durationMs: 450 }
+      { animationKey: 'Expedition_Return', label: 'return home', durationMs: 450 }
     ],
     createdAt: nowIso()
   };

@@ -3,7 +3,7 @@ import type { CompanionPersonality } from '@our-companion/shared';
 import type { CompanionAnimationName } from '../../companion/runtime/animationRegistry';
 import { ANIMATION_REGISTRY } from '../../companion/runtime/animationRegistry';
 import { resolveAnimation, getAvailableClipNames } from '../../character/AnimationResolver';
-import { createCompanionAnimations } from '../../character/ann/animationConfig';
+import { createCompanionAnimations } from '../../character/animationConfig';
 
 interface AnimationDebugPanelProps {
   currentAnimation?: string;

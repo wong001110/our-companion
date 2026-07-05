@@ -11,7 +11,7 @@ import type {
   MemoryNode,
   Pattern
 } from '@our-companion/shared';
-import { createId, nowIso } from '@our-companion/shared';
+import { clamp01, createId, nowIso } from '@our-companion/shared';
 
 export interface GenerateInsightsInput {
   userId: string;
@@ -38,11 +38,6 @@ export interface GenerateCognitiveInsightInput {
   concepts: Array<{ id: string; name: string; summary: string }>;
   patterns: Pattern[];
   discoveryCandidates: DiscoveryCandidate[];
-}
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(1, Math.max(0, value));
 }
 
 export function scoreInsight(input: Omit<InsightSelectionScore, 'finalScore'>): InsightSelectionScore {

@@ -1,9 +1,6 @@
 import type { PatternV2, MemoryRecord } from '@our-companion/shared';
+import { clamp01 } from '@our-companion/shared';
 import { CONFIDENCE_WEIGHTS } from './types';
-
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value));
-}
 
 export function calculateInsightConfidence(patterns: PatternV2[]): number {
   if (patterns.length === 0) return 0;

@@ -13,7 +13,7 @@ import type {
   MemoryNode,
   Pattern
 } from '@our-companion/shared';
-import { DEFAULT_CHARACTER_ID, createId, nowIso } from '@our-companion/shared';
+import { clamp01, DEFAULT_CHARACTER_ID, createId, nowIso } from '@our-companion/shared';
 
 export interface GenerateCuriosityTargetsInput {
   userId: string;
@@ -51,11 +51,6 @@ export interface CuriosityMomentumInput {
   savedCount: number;
   ignoredCount: number;
   followUpCount?: number;
-}
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(1, Math.max(0, value));
 }
 
 export function scoreCuriosity(parts: Omit<CuriosityScoreParts, 'finalScore'>): CuriosityScoreParts {

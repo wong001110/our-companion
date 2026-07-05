@@ -682,6 +682,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           state={state}
           facing={facing}
           isListening={phase === 'listening'}
+          userIsTyping={textOpen}
           assetRoot={companion.assetRoot}
           animationOverride={isIdleState(state) && !isSessionActive && state?.intent !== 'sharing_discovery' ? idleAnimation : undefined}
           onPointerHitChange={handlePointerHitChange}

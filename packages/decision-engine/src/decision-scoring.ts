@@ -2,10 +2,7 @@ import type {
   CompanionDecisionCandidate,
   CompanionDecisionContext,
 } from '@our-companion/shared';
-
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value));
-}
+import { clamp01 } from '@our-companion/shared';
 
 export function scoreCandidate(
   candidate: CompanionDecisionCandidate,
