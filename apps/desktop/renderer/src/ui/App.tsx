@@ -15,6 +15,7 @@ import type {
   DiaryEntry,
   Discovery,
   DiscoveryAnnouncePayload,
+  EngineSnapshot,
   ExplorationCycleResult,
   ExplorationLoopEvent,
   CompanionJourney,
@@ -46,6 +47,8 @@ import type { PresentationCandidate } from '../companion/PresentationCandidate';
 import { CompanionCanvas, type AnimationName, type CompanionDragPoint } from './CompanionCanvas';
 import { LangContext, useLang, NotebookPage, PaperCard, StickyNote, MiniCompanionSticker, ProgressBar, NotebookChatBubble } from './NotebookPrimitives';
 import { EngineObservatory } from '../features/developer/EngineObservatory';
+import { EngineObservatoryToolbar, loadObservatoryState, type EnginePanelKey } from '../features/developer/EngineObservatoryToolbar';
+import { EngineSnapshotCard } from '../features/developer/EngineSnapshotCard';
 import { useAudioCapture } from '../companion/useAudioCapture';
 import {
   type Tab, type DevAnimation, devAnimations, formatJson, formatDuration,
@@ -127,6 +130,10 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const [state, setState] = useState<CharacterRuntimeState>();
   const [facing, setFacing] = useState<'left' | 'right'>('right');
   const [idleAnimation, setIdleAnimation] = useState<AnimationName>('Idle_Neutral');
+
+  const [developerEnabled, setDeveloperEnabled] = useState(() => localStorage.getItem('companion:developer:enabled') === 'true');
+  const [observatoryState, setObservatoryState] = useState(loadObservatoryState);
+  const [engineSnapshot, setEngineSnapshot] = useState<EngineSnapshot>();
 
   const speech = useSpeech();
 
@@ -283,6 +290,30 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     document.documentElement.classList.add('companion-mode');
     return () => document.documentElement.classList.remove('companion-mode');
   }, []);
+
+  useEffect(() => {
+    function onStorage(e: StorageEvent) {
+      if (e.key === 'companion:developer:enabled') {
+        setDeveloperEnabled(e.newValue === 'true');
+      }
+    }
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  useEffect(() => {
+    if (!developerEnabled || observatoryState.enabledPanels.length === 0) return;
+    let cancelled = false;
+    async function refresh() {
+      try {
+        const snap = await window.ourCompanion.debug.getEngineSnapshot();
+        if (!cancelled) setEngineSnapshot(snap);
+      } catch { /* ignore */ }
+    }
+    void refresh();
+    const interval = window.setInterval(refresh, observatoryState.refreshRateSeconds * 1000);
+    return () => { cancelled = true; window.clearInterval(interval); };
+  }, [developerEnabled, observatoryState.enabledPanels.length, observatoryState.refreshRateSeconds]);
 
   useEffect(() => {
     setIdleAnimation('Idle_Neutral');
@@ -662,6 +693,22 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
         }
       }}
     >
+      {developerEnabled && (
+        <>
+          <EngineObservatoryToolbar
+            enabledPanels={observatoryState.enabledPanels}
+            refreshRateSeconds={observatoryState.refreshRateSeconds}
+            onChange={setObservatoryState}
+          />
+          {observatoryState.enabledPanels.length > 0 && (
+            <div className="observatory-snapshot-row">
+              {observatoryState.enabledPanels.map((panel) => (
+                <EngineSnapshotCard key={panel} engineKey={panel} snapshot={engineSnapshot} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
       <div
         style={{
           position: 'absolute',
@@ -926,6 +973,7 @@ function PanelDashboard() {
   const [state, setState] = useState<CharacterRuntimeState>();
   const [behaviorSettings, setBehaviorSettings] = useState<CharacterBehaviorSettings>();
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
+  const [primaryCompanion, setPrimaryCompanion] = useState<CompanionProfile | null>(null);
   const [discoveries, setDiscoveries] = useState<Discovery[]>([]);
   const [journeys, setJourneys] = useState<CompanionJourney[]>([]);
   const [timeline, setTimeline] = useState<JourneyMilestoneV2[]>([]);
@@ -936,7 +984,7 @@ function PanelDashboard() {
   const [exploring, setExploring] = useState(false);
 
   async function refreshAll() {
-    const [nextState, nextBehavior, nextCharacters, feed, activeJourneys, milestones, graph, entries] = await Promise.all([
+    const [nextState, nextBehavior, nextCharacters, feed, activeJourneys, milestones, graph, entries, companion] = await Promise.all([
       window.ourCompanion.character.getState(),
       window.ourCompanion.character.getBehaviorSettings(),
       window.ourCompanion.character.getActive(),
@@ -944,7 +992,8 @@ function PanelDashboard() {
       window.ourCompanion.journey.getActive(),
       window.ourCompanion.journey.getTimeline(),
       window.ourCompanion.memory.getGraph(),
-      window.ourCompanion.diary.getEntries({ limit: 6 })
+      window.ourCompanion.diary.getEntries({ limit: 6 }),
+      window.ourCompanion.companionNew.getPrimary()
     ]);
     setState(nextState);
     setBehaviorSettings(nextBehavior);
@@ -954,6 +1003,7 @@ function PanelDashboard() {
     setTimeline(milestones);
     setMemoryGraph(graph);
     setDiary(entries);
+    setPrimaryCompanion(companion);
   }
 
   useEffect(() => {
@@ -1055,7 +1105,7 @@ function PanelDashboard() {
           {tab === 'memory' && <MemoryView graph={memoryGraph} onRefresh={refreshAll} />}
           {tab === 'chat' && <ChatView />}
           {tab === 'ask' && <AskView onRefresh={refreshAll} />}
-          {tab === 'settings' && <SettingsView state={state} behaviorSettings={behaviorSettings} onRefresh={refreshAll} onLangChange={setLang} />}
+          {tab === 'settings' && <SettingsView state={state} behaviorSettings={behaviorSettings} onRefresh={refreshAll} onLangChange={setLang} assetRoot={primaryCompanion?.assetRoot} />}
         </section>
       </main>
     </LangContext.Provider>
@@ -1593,11 +1643,12 @@ function ChatView() {
   );
 }
 
-function SettingsView({ state, behaviorSettings, onRefresh, onLangChange }: {
+function SettingsView({ state, behaviorSettings, onRefresh, onLangChange, assetRoot }: {
   state?: CharacterRuntimeState;
   behaviorSettings?: CharacterBehaviorSettings;
   onRefresh: () => Promise<void>;
   onLangChange: (lang: Lang) => void;
+  assetRoot?: string;
 }) {
   const lang = useLang();
   const [settings, setSettings] = useState<AiSettings>();
@@ -1608,7 +1659,7 @@ function SettingsView({ state, behaviorSettings, onRefresh, onLangChange }: {
   const [uiLang, setUiLang] = useState<UiLang>('en');
   const [status, setStatus] = useState('Loading settings...');
   const [saving, setSaving] = useState(false);
-  const [developerOpen, setDeveloperOpen] = useState(false);
+  const [developerOpen, setDeveloperOpen] = useState(() => localStorage.getItem('companion:developer:enabled') === 'true');
   const [devAnimation, setDevAnimation] = useState<DevAnimation>('live');
   const previewState = devAnimation === 'live' ? state : createDevAnimationState(devAnimation);
   const animationOverride = devAnimation === 'live' ? undefined : devAnimation;
@@ -1666,10 +1717,10 @@ function SettingsView({ state, behaviorSettings, onRefresh, onLangChange }: {
           <p>{status}</p>
         </PaperCard>
         <PaperCard title={t(lang, 'settings_developer_title')} tape className="developer-card">
-          <button onClick={() => setDeveloperOpen((open) => !open)}>
+          <button onClick={() => setDeveloperOpen((open) => { const next = !open; localStorage.setItem('companion:developer:enabled', String(next)); return next; })}>
             {developerOpen ? t(lang, 'settings_developer_hide') : t(lang, 'settings_developer_show')}
           </button>
-          {developerOpen && <DeveloperPreview state={previewState} devAnimation={devAnimation} animationOverride={animationOverride} onAnimationChange={setDevAnimation} settings={behaviorSettings} onRefresh={onRefresh} />}
+          {developerOpen && <DeveloperPreview state={previewState} devAnimation={devAnimation} animationOverride={animationOverride} onAnimationChange={setDevAnimation} settings={behaviorSettings} onRefresh={onRefresh} assetRoot={assetRoot} />}
         </PaperCard>
       </div>
     </NotebookPage>
@@ -1981,18 +2032,19 @@ function BehaviorPanel({ settings, onRefresh }: { settings?: CharacterBehaviorSe
   );
 }
 
-function DeveloperPreview({ state, devAnimation, animationOverride, onAnimationChange, settings, onRefresh }: {
+function DeveloperPreview({ state, devAnimation, animationOverride, onAnimationChange, settings, onRefresh, assetRoot }: {
   state?: CharacterRuntimeState;
   devAnimation: DevAnimation;
   animationOverride?: AnimationName;
   onAnimationChange: (animation: DevAnimation) => void;
   settings?: CharacterBehaviorSettings;
   onRefresh: () => Promise<void>;
+  assetRoot?: string;
 }) {
   return (
     <div className="developer-tools">
       <div className="developer-preview-canvas">
-        <CompanionCanvas state={state} compact animationOverride={animationOverride} />
+        <CompanionCanvas state={state} compact animationOverride={animationOverride} assetRoot={assetRoot} />
       </div>
       <div className="dev-animation-panel">
         <p className="eyebrow">Developer use</p>
