@@ -17,14 +17,14 @@ export function shouldInterrupt(
     }
   }
 
-  if (context.user.fatigueScore > 80) {
+  if (context.user.fatigueScore !== undefined && context.user.fatigueScore > 80) {
     if (candidate.interruptionCost > 0.2) {
       return false;
     }
   }
 
   const recentIgnores = context.user.recentActions.filter(
-    (action) => action === 'ignored_discovery' || action === 'not_interested'
+    (action) => action === 'ignored' || action === 'dismissed'
   ).length;
 
   if (recentIgnores >= 3 && candidate.interruptionCost > 0.3) {

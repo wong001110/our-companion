@@ -30,7 +30,7 @@ export interface AssessAttentionInput {
 }
 
 export function assessAttention(input: AssessAttentionInput): AttentionAssessment {
-  const fatiguePenalty = input.userContext.fatigueScore * 0.25;
+  const fatiguePenalty = (input.userContext.fatigueScore ?? 0) * 0.25;
   const timingPenalty = input.userContext.mode === 'focused' || input.userContext.mode === 'working' ? 20 : 0;
   const latePenalty = isLateNight(input.userContext.localTime) ? 15 : 0;
   const attentionValue = clamp100(
@@ -75,7 +75,7 @@ function baseDecision(action: CompanionDecision['action'], input: {
 }
 
 function recentIgnores(userContext: UserContext): number {
-  return userContext.recentActions.filter((action) => action === 'ignored_discovery' || action === 'not_interested').length;
+  return userContext.recentActions.filter((action) => action === 'ignored' || action === 'dismissed').length;
 }
 
 export function decideCompanionAction(input: DecisionInput): CompanionDecision {
@@ -116,7 +116,7 @@ export function decideCompanionAction(input: DecisionInput): CompanionDecision {
     });
   }
 
-  if (isLateNight(input.userContext.localTime) || input.userContext.fatigueScore >= 75) {
+  if (isLateNight(input.userContext.localTime) || (input.userContext.fatigueScore ?? 0) >= 75) {
     return baseDecision(growth >= 85 ? 'queue_for_later' : 'stay_silent', {
       timing: 'later',
       priority: growth >= 85 ? 'normal' : 'low',

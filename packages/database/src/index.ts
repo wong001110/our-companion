@@ -32,7 +32,10 @@ import type {
   MemoryEdge,
   MemoryNode,
   Pattern,
-  UserCompanionRelationship
+  UserCompanionRelationship,
+  PendingCompanionAction,
+  SessionCloseReason,
+  CompanionDecision
 } from '@our-companion/shared';
 import type { ActionPermissionState } from '@our-companion/shared';
 import { COMPANION_CHAT_RETENTION_DAYS, createId, nowIso } from '@our-companion/shared';
@@ -67,7 +70,10 @@ export class DatabaseService {
       { column: 'memory_type', sql: 'ALTER TABLE memory_nodes ADD COLUMN memory_type TEXT' },
       { column: 'metadata_json', sql: 'ALTER TABLE memory_nodes ADD COLUMN metadata_json TEXT' },
       { column: 'session_id', sql: 'ALTER TABLE companion_messages ADD COLUMN session_id TEXT' },
-      { column: 'is_builtin', sql: 'ALTER TABLE companions ADD COLUMN is_builtin INTEGER NOT NULL DEFAULT 0' }
+      { column: 'is_builtin', sql: 'ALTER TABLE companions ADD COLUMN is_builtin INTEGER NOT NULL DEFAULT 0' },
+      { column: 'close_reason', sql: 'ALTER TABLE conversation_sessions ADD COLUMN close_reason TEXT' },
+      { column: 'unfinished_topic', sql: 'ALTER TABLE conversation_sessions ADD COLUMN unfinished_topic TEXT' },
+      { column: 'feedback_domain', sql: 'ALTER TABLE discovery_feedback ADD COLUMN feedback_domain TEXT' }
     ];
     for (const migration of migrations) {
       try {
@@ -81,7 +87,29 @@ export class DatabaseService {
         // Column may already exist in fresh schema
       }
     }
+    this.ensurePendingActionsTable();
     this.ensureBuiltinAnn();
+  }
+
+  private ensurePendingActionsTable(): void {
+    const row = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='pending_companion_actions'")
+      .get();
+    if (row) return;
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS pending_companion_actions (
+        id TEXT PRIMARY KEY,
+        companion_id TEXT NOT NULL,
+        user_id TEXT NOT NULL DEFAULT 'local',
+        decision_json TEXT NOT NULL,
+        discovery_id TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        defer_reason TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_pending_actions_companion ON pending_companion_actions(companion_id, status);
+    `);
   }
 
   private ensureBuiltinAnn(): void {
@@ -776,8 +804,8 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT INTO discovery_feedback
-         (id, user_id, companion_id, cycle_id, insight_id, discovery_candidate_id, value, note, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, user_id, companion_id, cycle_id, insight_id, discovery_candidate_id, value, note, feedback_domain, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         feedback.id,
@@ -788,15 +816,27 @@ export class DatabaseService {
         feedback.discoveryCandidateId ?? null,
         feedback.value,
         feedback.note ?? null,
+        feedback.feedbackDomain ?? null,
         feedback.createdAt
       );
     return feedback;
   }
 
-  listDiscoveryFeedback(limit = 100): DiscoveryFeedback[] {
+  listDiscoveryFeedback(limit = 100, domain?: DiscoveryFeedback['feedbackDomain']): DiscoveryFeedback[] {
+    if (domain) {
+      return (this.db.prepare(
+        'SELECT * FROM discovery_feedback WHERE feedback_domain = ? ORDER BY created_at DESC LIMIT ?'
+      ).all(domain, limit) as Array<Record<string, unknown>>).map(mapDiscoveryFeedback);
+    }
     return (this.db.prepare('SELECT * FROM discovery_feedback ORDER BY created_at DESC LIMIT ?').all(limit) as Array<
       Record<string, unknown>
     >).map(mapDiscoveryFeedback);
+  }
+
+  listInteractionFeedbackActions(limit = 20): string[] {
+    return (this.db.prepare(
+      `SELECT value FROM discovery_feedback WHERE feedback_domain = 'interaction' ORDER BY created_at DESC LIMIT ?`
+    ).all(limit) as Array<{ value: string }>).map((r) => r.value);
   }
 
   insertJourney(journey: Journey): Journey {
@@ -1177,11 +1217,65 @@ export class DatabaseService {
     return session;
   }
 
-  getActiveConversationSession(companionId: string): ConversationSessionRecord | null {
+  getActiveConversationSession(companionId: string, userId = 'local'): ConversationSessionRecord | null {
     const row = this.db.prepare(
-      `SELECT * FROM conversation_sessions WHERE companion_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`
-    ).get(companionId) as Record<string, unknown> | undefined;
+      `SELECT * FROM conversation_sessions WHERE companion_id = ? AND user_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`
+    ).get(companionId, userId) as Record<string, unknown> | undefined;
     return row ? mapConversationSession(row) : null;
+  }
+
+  listActiveConversationSessions(userId = 'local'): ConversationSessionRecord[] {
+    return (this.db.prepare(
+      `SELECT * FROM conversation_sessions WHERE user_id = ? AND ended_at IS NULL ORDER BY started_at DESC`
+    ).all(userId) as Array<Record<string, unknown>>).map(mapConversationSession);
+  }
+
+  closeConversationSession(
+    sessionId: string,
+    closeReason: SessionCloseReason,
+    unfinishedTopic?: string
+  ): ConversationSessionRecord {
+    const now = nowIso();
+    this.db.prepare(
+      `UPDATE conversation_sessions SET phase = 'inactive', updated_at = ?, ended_at = ?, close_reason = ?, unfinished_topic = ? WHERE id = ?`
+    ).run(now, now, closeReason, unfinishedTopic ?? null, sessionId);
+    const row = this.db.prepare('SELECT * FROM conversation_sessions WHERE id = ?').get(sessionId) as Record<string, unknown>;
+    return mapConversationSession(row);
+  }
+
+  insertPendingAction(action: PendingCompanionAction, userId = 'local'): PendingCompanionAction {
+    this.db.prepare(
+      `INSERT INTO pending_companion_actions
+       (id, companion_id, user_id, decision_json, discovery_id, created_at, expires_at, status, defer_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      action.id,
+      action.companionId,
+      userId,
+      JSON.stringify(action.decision),
+      action.discoveryId ?? null,
+      action.createdAt,
+      action.expiresAt,
+      action.status,
+      action.deferReason ?? null
+    );
+    return action;
+  }
+
+  updatePendingActionStatus(id: string, status: PendingCompanionAction['status']): void {
+    this.db.prepare('UPDATE pending_companion_actions SET status = ? WHERE id = ?').run(status, id);
+  }
+
+  listPendingActions(companionId: string, userId = 'local'): PendingCompanionAction[] {
+    return (this.db.prepare(
+      `SELECT * FROM pending_companion_actions WHERE companion_id = ? AND user_id = ? AND status IN ('pending', 'ready') ORDER BY created_at ASC`
+    ).all(companionId, userId) as Array<Record<string, unknown>>).map(mapPendingAction);
+  }
+
+  listAllPendingActions(userId = 'local'): PendingCompanionAction[] {
+    return (this.db.prepare(
+      `SELECT * FROM pending_companion_actions WHERE user_id = ? AND status IN ('pending', 'ready') ORDER BY created_at ASC`
+    ).all(userId) as Array<Record<string, unknown>>).map(mapPendingAction);
   }
 
   updateConversationSessionPhase(sessionId: string, phase: ConversationPhase): ConversationSessionRecord {
@@ -1257,7 +1351,22 @@ function mapConversationSession(row: Record<string, unknown>): ConversationSessi
     startedAt: String(row.started_at),
     endedAt: row.ended_at ? String(row.ended_at) : undefined,
     lastMessageAt: row.last_message_at ? String(row.last_message_at) : undefined,
-    updatedAt: String(row.updated_at)
+    updatedAt: String(row.updated_at),
+    closeReason: row.close_reason ? (row.close_reason as ConversationSessionRecord['closeReason']) : undefined,
+    unfinishedTopic: row.unfinished_topic ? String(row.unfinished_topic) : undefined
+  };
+}
+
+function mapPendingAction(row: Record<string, unknown>): PendingCompanionAction {
+  return {
+    id: String(row.id),
+    companionId: String(row.companion_id),
+    decision: JSON.parse(String(row.decision_json)) as CompanionDecision,
+    discoveryId: row.discovery_id ? String(row.discovery_id) : undefined,
+    createdAt: String(row.created_at),
+    expiresAt: String(row.expires_at),
+    status: row.status as PendingCompanionAction['status'],
+    deferReason: row.defer_reason ? String(row.defer_reason) : undefined
   };
 }
 
@@ -1451,6 +1560,7 @@ function mapDiscoveryFeedback(row: Record<string, unknown>): DiscoveryFeedback {
     discoveryCandidateId: row.discovery_candidate_id ? String(row.discovery_candidate_id) : undefined,
     value: row.value as DiscoveryFeedback['value'],
     note: row.note ? String(row.note) : undefined,
+    feedbackDomain: row.feedback_domain ? (row.feedback_domain as DiscoveryFeedback['feedbackDomain']) : undefined,
     createdAt: String(row.created_at)
   };
 }

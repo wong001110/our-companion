@@ -88,8 +88,14 @@ export function useCompanionBehavior(opts: UseCompanionBehaviorOptions) {
   }, [displayHint]);
 
   useEffect(() => {
-    const unsubscribe = window.ourCompanion.companion.onBehaviorHint?.((decision) => {
-      setDisplayHint(decision.displayHint);
+    const unsubscribe = window.ourCompanion.companion.onBehaviorHint?.((command) => {
+      setDisplayHint(command.decision.displayHint);
+      void window.ourCompanion.companion.reportCommandAck?.({
+        commandId: command.id,
+        companionId: command.companionId,
+        status: 'started',
+        reportedAt: new Date().toISOString()
+      });
     });
     return () => unsubscribe?.();
   }, []);
@@ -113,15 +119,15 @@ export function useCompanionBehavior(opts: UseCompanionBehaviorOptions) {
   }, [hasDiscoveryCandidate, userIsTyping, panelOpen, activeConversation, onDecision]);
 
   useEffect(() => {
-    void window.ourCompanion.companion.getBehaviorHint?.().then((hint) => {
-      if (hint?.displayHint) setDisplayHint(hint.displayHint);
+    void window.ourCompanion.companion.getBehaviorHint?.().then((command) => {
+      if (command?.decision.displayHint) setDisplayHint(command.decision.displayHint);
     });
   }, [companionId]);
 
   useEffect(() => {
     decisionTimerRef.current = window.setInterval(() => {
-      void window.ourCompanion.companion.getBehaviorHint?.().then((hint) => {
-        if (hint?.displayHint) setDisplayHint(hint.displayHint);
+      void window.ourCompanion.companion.getBehaviorHint?.().then((command) => {
+        if (command?.decision.displayHint) setDisplayHint(command.decision.displayHint);
       });
       evaluate();
     }, 30_000);

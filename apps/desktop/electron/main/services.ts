@@ -17,7 +17,7 @@ import { collectWorkspaceStatus, type WorkspaceStatusSnapshot } from './workspac
 import { generateCuriosityTargets } from '@our-companion/curiosity-engine';
 import { assessCuriosity } from '@our-companion/curiosity-engine';
 import { DatabaseService } from '@our-companion/database';
-import type { CompanionDecision } from '@our-companion/shared';
+import type { CompanionDecision, CompanionCommand, CompanionCommandAck } from '@our-companion/shared';
 import { generateDailyDiary } from '@our-companion/diary-engine';
 import {
   createFallbackConnector,
@@ -108,7 +108,7 @@ export class AppServices {
   private shareOrchestrator?: DiscoveryShareOrchestrator;
   private readonly companionRuntime: CompanionRuntime;
   private explorationBroadcaster?: (event: ExplorationLoopEvent) => void;
-  private behaviorHintBroadcaster?: (decision: CompanionDecision) => void;
+  private behaviorHintBroadcaster?: (command: CompanionCommand) => void;
   private foundationEventBroadcaster?: (event: BaseEvent) => void;
   private debugLog: AiDebugEntry[] = [];
   private foundationEventLog: BaseEvent[] = [];
@@ -156,7 +156,10 @@ export class AppServices {
           reason: decision.reason,
           displayHint: decision.displayHint,
         });
-        this.behaviorHintBroadcaster?.(decision);
+      },
+      (command) => {
+        this.behaviorHintBroadcaster?.(command);
+        this.tryPresentPendingDiscovery(command);
       }
     );
     this.companionRuntime.startLifeScheduler();
@@ -426,10 +429,19 @@ export class AppServices {
   };
 
   journey = {
-    create: async (input: CreateJourneyInput) => this.db.insertJourney(createCompanionJourney({ title: input.title, description: input.description, origin: 'user' })),
+    create: async (input: CreateJourneyInput) =>
+      this.db.insertJourney(createJourney({ title: input.title, description: input.description })),
     getActive: async () => this.db.listActiveJourneys(),
     getTimeline: async (input: { journeyId?: string } = {}) => this.db.listMilestones(input.journeyId),
-    addMilestone: async (input: AddJourneyMilestoneInput) => this.db.insertMilestone(createJourneyMilestoneV2({ title: input.title, description: input.summary }))
+    addMilestone: async (input: AddJourneyMilestoneInput) =>
+      this.db.insertMilestone(
+        createJourneyMilestone({
+          journeyId: input.journeyId,
+          title: input.title,
+          summary: input.summary,
+          type: input.type
+        })
+      )
   };
 
   diary = {
@@ -690,8 +702,7 @@ export class AppServices {
       try {
         const { content: message } = await this.sendToAi({ messages: builtMessages, channel: 'turn', source });
         this.db.insertCompanionMessage({ role: 'assistant', content: message, source, characterId, sessionId });
-        this.companionRuntime.extractMemoryFromTurn(characterId, input.message, message, sessionId);
-        this.companionRuntime.recordInteraction('positive');
+        this.companionRuntime.processMemoryFromTurn(characterId, input.message, message, sessionId);
         if (input.source === 'voice') {
           this.applyCharacterEmotion(characterId, 'expertise_topic_match');
         }
@@ -720,8 +731,26 @@ export class AppServices {
     },
     reportDragging: async (input: { dragging: boolean }) => {
       this.companionDragging = input.dragging;
+      this.companionRuntime.setDragging(input.dragging);
     },
-    getBehaviorHint: async () => this.companionRuntime.getLastDecision()
+    getBehaviorHint: async (): Promise<CompanionCommand | null> => {
+      const decision = this.companionRuntime.getLastDecision();
+      if (!decision) return null;
+      return {
+        id: createId('cmd'),
+        companionId: this.db.resolveActiveCompanionId(),
+        decision,
+        issuedAt: nowIso()
+      };
+    },
+    reportCommandAck: async (ack: CompanionCommandAck) => {
+      this.emitFoundationEvent('CompanionCommandAck', 'companion', {
+        commandId: ack.commandId,
+        companionId: ack.companionId,
+        status: ack.status,
+        reason: ack.reason
+      });
+    }
   };
 
   debug = {
@@ -768,9 +797,20 @@ export class AppServices {
     this.shareOrchestrator = orchestrator;
   }
 
+  private tryPresentPendingDiscovery(command: CompanionCommand): void {
+    if (!this.shareOrchestrator || !this.companionRuntime.shouldPresentNow(command.decision)) return;
+    const pending = this.db.listPendingActions(command.companionId).find(
+      (a) => a.decision.id === command.decision.id || a.status === 'pending' || a.status === 'ready'
+    );
+    const discoveryId = pending?.discoveryId;
+    if (!discoveryId) return;
+    const discovery = this.db.getDiscovery(discoveryId);
+    if (discovery) this.shareOrchestrator.enqueue(discovery);
+  }
+
   attachAutonomyBroadcasters(callbacks: {
     explorationEvent: (event: ExplorationLoopEvent) => void;
-    behaviorHint?: (decision: CompanionDecision) => void;
+    behaviorHint?: (command: CompanionCommand) => void;
     foundationEvent?: (event: BaseEvent) => void;
   }): void {
     this.explorationBroadcaster = callbacks.explorationEvent;
@@ -960,7 +1000,7 @@ export class AppServices {
     if (selectedInsight && this.shareOrchestrator) {
       const discoveryPayload: Discovery = {
         id: selectedInsight.id,
-        source: 'curiosity',
+        source: 'companion',
         title: selectedInsight.title,
         summary: selectedInsight.summary,
         tags: [],
@@ -1014,6 +1054,7 @@ export class AppServices {
       discoveryCandidateId: input.discoveryCandidateId,
       value: input.value,
       note: input.note,
+      feedbackDomain: this.companionRuntime.feedbackDomainForValue(input.value),
       createdAt: nowIso()
     });
 
@@ -1058,11 +1099,6 @@ export class AppServices {
         createdAt: nowIso()
       });
       this.applyCharacterEmotion(cycle.companionId, 'user_accepts_discovery');
-    } else if (input.value === 'not_interested') {
-      this.companionRuntime.recordInteraction('not_interested');
-      this.applyCharacterEmotion(cycle.companionId, 'user_rejects_discovery');
-    } else if (input.value === 'not_now') {
-      this.companionRuntime.recordInteraction('not_now');
     } else if (input.value === 'talk_about_this' && insight) {
       this.db.insertCompanionMessage({
         characterId: cycle.companionId,
@@ -1071,6 +1107,14 @@ export class AppServices {
         source: 'companion_text',
         metadata: { cycleId: cycle.id, insightId: insight.id }
       });
+    }
+
+    const relationshipSignal = this.companionRuntime.relationshipSignalForFeedback(input.value);
+    if (relationshipSignal) {
+      this.companionRuntime.applyRelationshipSignal(relationshipSignal);
+    }
+    if (input.value === 'not_interested') {
+      this.applyCharacterEmotion(cycle.companionId, 'user_rejects_discovery');
     }
 
     const settled = this.companionRuntime.advanceWithIntent(cycle.companionId, 'idle', 'waiting', 'Idle_Neutral');
@@ -1140,6 +1184,8 @@ export class AppServices {
   }
 
   canAnnounceDiscovery(): boolean {
+    this.companionRuntime.reevaluatePendingActions();
+
     if (this.companionSessionPhase !== 'idle' && this.companionSessionPhase !== 'inactive') return false;
     if (this.companionDragging) return false;
 

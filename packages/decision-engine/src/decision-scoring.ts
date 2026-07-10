@@ -14,7 +14,7 @@ export function scoreCandidate(
     score -= candidate.interruptionCost * 0.5;
   }
 
-  if (context.user.fatigueScore > 70) {
+  if (context.user.fatigueScore !== undefined && context.user.fatigueScore > 70) {
     score -= 0.15;
   }
 

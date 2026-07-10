@@ -38,3 +38,31 @@
 ## Phase 5 — Cleanup
 
 Pending: remove deprecated IPC, stale tests update, full validation run.
+
+## Behavioral Correction Pass
+
+| Issue | Current behavior | Expected behavior | Files involved | Legacy/placeholder removed | Tests added | Verification |
+|-------|------------------|-------------------|----------------|----------------------------|-------------|--------------|
+| 1 next_idle | `shouldPresentDiscovery` treats `next_idle` same as `now` | Defer to `PendingCompanionAction`; present only on re-eval | `runtime/DecisionCoordinator.ts`, `CompanionRuntime.ts`, `services.ts` | Immediate `next_idle` presentation | `decisionCoordinator.test.ts` | Pass |
+| 2 Sessions | Global `activeSessionId` | Per `userId+companionId` via DB + cache | `runtime/ConversationCoordinator.ts`, `database` | Global session field | `conversationCoordinator.test.ts` | Pass |
+| 3 Memory | `userMessage.length >= 20` auto-capture | Candidate pipeline with safety checks | `runtime/MemoryPolicy.ts` | Length gate, assistant-only summary | `memoryPolicy.test.ts` | Pass |
+| 4 Relationship | Every turn → `positive` + trust | Separate `RelationshipSignal` effects | `runtime/RelationshipPolicy.ts`, `services.ts` | `recordInteraction('positive')` on turn | `relationshipPolicy.test.ts` | Pass |
+| 5 Feedback | `not_interested` → `ignored_discovery` | Topic/timing/interaction domains | `RelationshipPolicy.ts`, `database`, `decision-engine` | Cross-domain mapping | `relationshipPolicy.test.ts` | Pass |
+| 6 Context | Fabricated fatigue 60/15, mode from session | `UserAttentionContext` real signals only | `CompanionRuntime.ts`, `decision-engine` | Hardcoded fatigue/mode | `attentionContext.test.ts` | Pass |
+| 7 Animation | Raw `Sleep`, `Talk`, `Think` keys | `AnimationIntent` → resolver → asset key | `runtime/AnimationResolver.ts` | Raw semantic keys in runtime | `animationResolver.test.ts` | Pass |
+| 8 Commands | `behaviorHint` advisory IPC | `CompanionCommand` + lifecycle acks | `index.ts`, `preload`, renderer hooks | Hint-as-decision ambiguity | behavior controller tests | Pass |
+| 9 Daily life | Random activity every 60–180s | Duration-aware `LifeCoordinator` | `runtime/LifeCoordinator.ts` | `Math.random()` activity pick | `lifeCoordinator.test.ts` | Pass |
+| 10 Boundaries | Monolithic `companionRuntime.ts` | Internal coordinators under `runtime/` | `runtime/*` | Single-file runtime | runtime test suite | Pass |
+
+### Caller audit (pre-change)
+
+| Symbol | Callers |
+|--------|---------|
+| `shouldPresentDiscovery` | `services.ts` (autonomy share, refresh, canAnnounce) |
+| `setSessionPhase` | `services.companion.reportSessionPhase` ← renderer `useCompanionSession` |
+| `getActiveSessionId` | `services.companion.turn` |
+| `extractMemoryFromTurn` | `services.companion.turn` |
+| `recordInteraction` | `services.companion.turn`, `submitDiscoveryFeedback` |
+| `decideForDiscovery` | `services.ts` autonomy + refresh |
+| `advanceWithIntent` | `services.ts` character + feedback |
+| `behaviorHint` IPC | `index.ts`, `services.attachAutonomyBroadcasters`, preload `onBehaviorHint` |

@@ -357,7 +357,7 @@ export interface UserContext {
   mode: 'idle' | 'focused' | 'chatting' | 'working' | 'away';
   localTime: string;
   recentActions: string[];
-  fatigueScore: number;
+  fatigueScore?: number;
 }
 
 export interface CompanionContext {
@@ -422,7 +422,7 @@ export interface UserContextSnapshot {
   mode: 'idle' | 'focused' | 'chatting' | 'working' | 'away';
   localTime: string;
   recentActions: string[];
-  fatigueScore: number;
+  fatigueScore?: number;
   lastInteractionAt?: string;
 }
 

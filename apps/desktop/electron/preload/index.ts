@@ -148,9 +148,12 @@ const api: OurCompanionApi = {
     reportSessionPhase: (phase: CompanionSessionPhase) => invoke('companion:reportSessionPhase', phase),
     reportDragging: (input: { dragging: boolean }) => invoke('companion:reportDragging', input),
     getBehaviorHint: () => invoke('companion:getBehaviorHint'),
-    onBehaviorHint: (listener: (decision: import('@our-companion/shared').CompanionDecision) => void) => {
+    reportCommandAck: (ack: import('@our-companion/shared').CompanionCommandAck) =>
+      invoke('companion:reportCommandAck', ack),
+    onBehaviorHint: (listener: (command: import('@our-companion/shared').CompanionCommand) => void) => {
       const channel = 'companion:behaviorHint';
-      const handler = (_event: Electron.IpcRendererEvent, decision: import('@our-companion/shared').CompanionDecision) => listener(decision);
+      const handler = (_event: Electron.IpcRendererEvent, command: import('@our-companion/shared').CompanionCommand) =>
+        listener(command);
       ipcRenderer.on(channel, handler);
       return () => ipcRenderer.removeListener(channel, handler);
     },

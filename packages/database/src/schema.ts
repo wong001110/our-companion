@@ -258,6 +258,7 @@ CREATE TABLE IF NOT EXISTS discovery_feedback (
   discovery_candidate_id TEXT,
   value TEXT NOT NULL,
   note TEXT,
+  feedback_domain TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -308,7 +309,21 @@ CREATE TABLE IF NOT EXISTS conversation_sessions (
   started_at TEXT NOT NULL,
   ended_at TEXT,
   last_message_at TEXT,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  close_reason TEXT,
+  unfinished_topic TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pending_companion_actions (
+  id TEXT PRIMARY KEY,
+  companion_id TEXT NOT NULL,
+  user_id TEXT NOT NULL DEFAULT 'local',
+  decision_json TEXT NOT NULL,
+  discovery_id TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  defer_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS companion_relationships (
@@ -345,6 +360,7 @@ CREATE INDEX IF NOT EXISTS idx_companion_messages_character_created ON companion
 CREATE INDEX IF NOT EXISTS idx_companion_messages_session ON companion_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_memory_nodes_companion ON memory_nodes(companion_id);
 CREATE INDEX IF NOT EXISTS idx_conversation_sessions_companion ON conversation_sessions(companion_id);
+CREATE INDEX IF NOT EXISTS idx_pending_actions_companion ON pending_companion_actions(companion_id, status);
 
 CREATE TABLE IF NOT EXISTS companions (
   id TEXT PRIMARY KEY,

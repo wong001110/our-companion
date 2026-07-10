@@ -44,13 +44,22 @@ One `CompanionDecision` per cycle:
 
 ```
 decision
-→ activity/state transition
-→ animationIntent (main runtime)
+→ semantic AnimationIntent (main runtime)
+→ AnimationResolver → production asset key
 → animation start (renderer player)
 → optional speech/card
 → animation completion
 → next state
 ```
+
+## Behavioral Correction (2026)
+
+- `next_idle` discoveries queue in `pending_companion_actions` and re-evaluate on idle/drag/session end — not immediate presentation.
+- Conversation sessions are scoped per `userId + companionId`.
+- Memory uses candidate → classify → safety → retention pipeline (no message-length heuristic).
+- Relationship signals are separate (`conversation_completed` ≠ `positive_feedback`; `not_interested` ≠ `ignored`).
+- User attention context uses real signals only — no fabricated fatigue.
+- Renderer receives authoritative `CompanionCommand` payloads (channel `companion:behaviorHint` retained for compatibility).
 
 ## Initiative Budget (replaces fixed 3/day)
 

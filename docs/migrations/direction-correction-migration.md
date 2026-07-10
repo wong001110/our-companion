@@ -36,3 +36,13 @@
 ## Compatibility Window
 
 Deprecated IPC routes remain until Phase 5 cleanup. `character:*` routes delegate to `companions` where applicable.
+
+## Behavioral Correction Pass
+
+| Table/Column | Change |
+|--------------|--------|
+| `conversation_sessions.close_reason`, `unfinished_topic` | Session lifecycle metadata |
+| `pending_companion_actions` | Deferred `next_idle` decisions |
+| `discovery_feedback.feedback_domain` | Separates topic / timing / interaction feedback |
+
+Existing relationship and message data preserved. Ambiguous memories are not promoted to stronger facts.

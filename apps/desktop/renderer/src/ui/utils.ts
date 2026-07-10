@@ -129,7 +129,7 @@ export function debugPreview(entry: AiDebugEntry): string {
 }
 
 export function createDevAnimationState(animation: AnimationName): CharacterRuntimeState {
-  const stateByAnimation: Record<AnimationName, Pick<CharacterRuntimeState, 'coreState' | 'intent'>> = {
+  const stateByAnimation: Partial<Record<AnimationName, Pick<CharacterRuntimeState, 'coreState' | 'intent'>>> = {
     Idle_Neutral: { coreState: 'idle', intent: 'waiting' },
     Idle_Breathe: { coreState: 'idle', intent: 'waiting' },
     Idle_Sleepy: { coreState: 'idle', intent: 'waiting' },
@@ -149,7 +149,7 @@ export function createDevAnimationState(animation: AnimationName): CharacterRunt
 
   return {
     characterId: 'companion-dev-preview',
-    ...stateByAnimation[animation],
+    ...(stateByAnimation[animation] ?? { coreState: 'idle', intent: 'waiting' }),
     emotion: {
       neutral: 0.4,
       curious: animation === 'Expedition_Present' ? 0.8 : 0.3,

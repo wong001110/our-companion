@@ -79,6 +79,149 @@ export type CompanionLifeActivity =
   | 'waiting'
   | 'interacting';
 
+export type PendingActionStatus = 'pending' | 'ready' | 'cancelled' | 'expired' | 'completed';
+
+export interface PendingCompanionAction {
+  id: string;
+  companionId: string;
+  decision: import('./models').CompanionDecision;
+  discoveryId?: string;
+  createdAt: string;
+  expiresAt: string;
+  status: PendingActionStatus;
+  deferReason?: string;
+}
+
+export type MemoryRetention =
+  | 'discard'
+  | 'session_only'
+  | 'temporary'
+  | 'long_term'
+  | 'requires_confirmation';
+
+export interface MemoryCandidate {
+  id: string;
+  userId: string;
+  companionId: string;
+  sessionId?: string;
+  proposedType: TypedMemoryType;
+  sourceText?: string;
+  summary: string;
+  confidence: number;
+  sensitivity: 'normal' | 'personal' | 'sensitive';
+  retention: MemoryRetention;
+  reason: string;
+  createdAt: string;
+}
+
+export interface CommittedMemoryEvidence {
+  userEvidence?: string;
+  assistantInterpretation?: string;
+  sourceMessageIds?: string[];
+}
+
+export type RelationshipSignal =
+  | 'conversation_completed'
+  | 'positive_feedback'
+  | 'user_reengaged'
+  | 'user_correction'
+  | 'user_rejected'
+  | 'user_ended_conversation'
+  | 'ignored'
+  | 'not_now'
+  | 'not_interested';
+
+export type SessionCloseReason =
+  | 'completed'
+  | 'timeout'
+  | 'user_closed'
+  | 'companion_switched'
+  | 'app_shutdown'
+  | 'interrupted';
+
+export type FeedbackDomain = 'topic' | 'timing' | 'interaction';
+
+export interface TopicFeedback {
+  userId: string;
+  companionId: string;
+  discoveryId: string;
+  topicKeys: string[];
+  value: 'interested' | 'not_interested';
+}
+
+export interface TimingFeedback {
+  userId: string;
+  companionId: string;
+  actionId?: string;
+  value: 'not_now' | 'snooze';
+  retryAfter?: string;
+}
+
+export interface InteractionFeedback {
+  userId: string;
+  companionId: string;
+  actionId?: string;
+  value: 'ignored' | 'dismissed' | 'engaged';
+}
+
+export interface UserAttentionContext {
+  explicitMode?: 'available' | 'focused' | 'do_not_disturb';
+  conversationActive: boolean;
+  companionDragging: boolean;
+  fullscreenActive?: boolean;
+  recentInputActivity?: 'active' | 'inactive' | 'unknown';
+  quietHoursActive: boolean;
+  lastInteractionAt?: string;
+}
+
+export interface AnimationIntent {
+  category:
+    | 'idle'
+    | 'talk'
+    | 'walk'
+    | 'listen'
+    | 'think'
+    | 'drag'
+    | 'expedition'
+    | 'work'
+    | 'music'
+    | 'enter'
+    | 'leave';
+  variant?: string;
+  emotion?: string;
+}
+
+export type LifeInterruptibility = 'free' | 'soft' | 'restricted';
+
+export interface CompanionLifeState {
+  companionId: string;
+  activity: CompanionLifeActivity;
+  startedAt: string;
+  minimumEndAt: string;
+  preferredEndAt: string;
+  interruptibility: LifeInterruptibility;
+  previousActivity?: CompanionLifeActivity;
+  reason: string;
+}
+
+export interface CompanionCommand {
+  id: string;
+  companionId: string;
+  decision: import('./models').CompanionDecision;
+  issuedAt: string;
+  expiresAt?: string;
+}
+
+export type CommandAckStatus = 'started' | 'completed' | 'cancelled' | 'failed';
+
+export interface CompanionCommandAck {
+  commandId: string;
+  companionId: string;
+  status: CommandAckStatus;
+  reportedAt: string;
+  reason?: string;
+}
+
 export type TypedMemoryType =
   | 'user_fact'
   | 'user_preference'
@@ -138,6 +281,8 @@ export interface ConversationSessionRecord {
   endedAt?: string;
   lastMessageAt?: string;
   updatedAt: string;
+  closeReason?: SessionCloseReason;
+  unfinishedTopic?: string;
 }
 
 export type ConversationPhase =
@@ -817,6 +962,7 @@ export interface DiscoveryFeedback {
   value: DiscoveryFeedbackValue;
   note?: string;
   createdAt: string;
+  feedbackDomain?: FeedbackDomain;
 }
 
 export interface StartExplorationInput {
@@ -1344,8 +1490,9 @@ export interface OurCompanionApi {
     onRefresh(listener: () => void): () => void;
     reportSessionPhase(phase: CompanionSessionPhase): Promise<void>;
     reportDragging(input: { dragging: boolean }): Promise<void>;
-    getBehaviorHint(): Promise<import('./models').CompanionDecision | null>;
-    onBehaviorHint(listener: (decision: import('./models').CompanionDecision) => void): () => void;
+    getBehaviorHint(): Promise<CompanionCommand | null>;
+    onBehaviorHint(listener: (command: CompanionCommand) => void): () => void;
+    reportCommandAck(ack: CompanionCommandAck): Promise<void>;
     getHistory(input?: CompanionHistoryInput): Promise<CompanionMessage[]>;
     appendMessage(input: CompanionAppendMessageInput): Promise<CompanionMessage>;
     clearHistory(input?: { characterId?: string }): Promise<void>;

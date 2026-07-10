@@ -14,39 +14,41 @@ Each state field has exactly one owner. Renderers display; they do not invent pa
 
 | Field | Owner | Storage | Consumers |
 |-------|-------|---------|-----------|
-| familiarity, trust, comfort | Main `CompanionRuntime` relationship service | `companion_relationships` | Decision engine, initiative budget |
+| familiarity, trust, comfort | Main `RelationshipPolicy` | `companion_relationships` | Decision engine, initiative budget |
 | preferredInteractionFrequency | Main + settings UI | `companion_relationships` + `app_settings` | Initiative evaluator |
-| recentPositive/Ignored/Corrections | Main relationship service | `companion_relationships` | Decision policy gates |
+| recentPositive/Ignored/Corrections | Main `RelationshipPolicy` | `companion_relationships` | Decision policy gates |
 
 ## Memory
 
 | Field | Owner | Storage | Consumers |
 |-------|-------|---------|-----------|
-| Memory content + type | Main memory service | `memory_nodes` (scoped) | Chat extraction, panel, retrieval |
-| Memory metadata | Main memory service | `memory_nodes.metadata_json` | AI context builder (filtered) |
-| Corrections/supersedes | Main memory service | metadata fields | Retrieval excludes superseded |
+| Memory content + type | Main `MemoryPolicy` | `memory_nodes` (scoped) | Chat extraction, panel, retrieval |
+| Memory metadata | Main `MemoryPolicy` | `memory_nodes.metadata_json` | AI context builder (filtered) |
+| Corrections/supersedes | Main `MemoryPolicy` | metadata fields | Retrieval excludes superseded |
 
 ## Conversation
 
 | Field | Owner | Storage | Consumers |
 |-------|-------|---------|-----------|
-| Session phase | Main `ConversationRuntime` | `conversation_sessions.phase` | Renderer display, discovery gate |
+| Session phase | Main `ConversationCoordinator` | `conversation_sessions` (per companion) | Renderer display, discovery gate |
+| Pending discovery actions | Main `DecisionCoordinator` | `pending_companion_actions` | Re-eval on idle |
 | Messages | Main `companion.turn` | `companion_messages` + `session_id` | History, LLM context |
-| Topic continuity | Main `TopicManager` | session metadata | Turn handler |
 
 ## Character Runtime
 
 | Field | Owner | Storage | Consumers |
 |-------|-------|---------|-----------|
-| coreState, intent, emotion | Main character service | `character_state` | Animation, discovery gate |
-| animationIntent | Main character service | `character_state` (animation_intent) | Renderer `CompanionCanvas` player |
+| coreState, intent, emotion | Main `CompanionRuntime` | `character_state` | Animation, discovery gate |
+| animationIntent (asset key) | Main `AnimationResolver` | `character_state.animation_intent` | Renderer `CompanionCanvas` player |
+| Life activity | Main `LifeCoordinator` | `character_state.life_activity` | Daily life scheduler |
 | position | Renderer reports, main persists | `character_state.position_json` | Window placement |
 
 ## Decision
 
 | Field | Owner | Storage | Consumers |
 |-------|-------|---------|-----------|
-| Final action per cycle | Main `decideUnifiedCompanionAction` | Ephemeral + foundation log | Orchestrator, renderer hints |
+| Final action per cycle | Main `decideUnifiedCompanionAction` | Ephemeral + foundation log | Orchestrator, renderer commands |
+| Companion command | Main `CompanionRuntime` | IPC `companion:behaviorHint` | Renderer execution + acks |
 | Initiative budget | Main `InitiativeBudget` | `app_settings` + relationship | Share timing |
 
 ## Discovery
