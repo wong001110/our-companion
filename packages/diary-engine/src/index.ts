@@ -27,10 +27,16 @@ export function generateDailyDiary(context: DiaryContext): DiaryEntry {
   return {
     id: createId('diary'),
     characterId: context.characterId ?? DEFAULT_CHARACTER_ID,
+    userId: 'local',
     type: 'daily',
+    perspective: 'companion_reflection',
     title: 'Quiet progress',
+    summary: lines[0],
     content: lines.join('\n'),
-    createdAt: nowIso()
+    referencedMemoryIds: context.memoryChanges.map((m) => m.id),
+    confidence: 0.7,
+    createdAt: nowIso(),
+    generatedAt: nowIso(),
   };
 }
 

@@ -58,12 +58,35 @@ export interface Experience {
 }
 
 export type CompanionDecisionAction =
+  | 'stay_silent'
+  | 'idle_activity'
+  | 'respond'
+  | 'approach'
+  | 'share_discovery'
+  | 'start_exploration'
+  | 'continue_conversation'
+  | 'end_conversation'
+  | 'suggest_action'
+  | 'execute_approved_action'
+  // Legacy aliases — mapped during migration, do not use in new code
   | 'speak'
   | 'queue_for_later'
   | 'remember_only'
   | 'ignore'
-  | 'perform_action'
-  | 'stay_silent';
+  | 'perform_action';
+
+export interface MemoryEffect {
+  type: string;
+  memoryId?: string;
+  content?: string;
+}
+
+export interface RelationshipEffect {
+  familiarity?: number;
+  trust?: number;
+  comfort?: number;
+  reason: string;
+}
 
 export interface CompanionDecision {
   id: string;
@@ -72,6 +95,13 @@ export interface CompanionDecision {
   timing: 'now' | 'next_idle' | 'later';
   reason: string;
   createdAt: string;
+  expression?: string;
+  animationIntent?: string;
+  speechIntent?: string;
+  memoryEffects?: MemoryEffect[];
+  relationshipEffects?: RelationshipEffect[];
+  /** Renderer display hint derived from decision — not a second decision path */
+  displayHint?: 'stay_silent' | 'ambient_reaction' | 'show_soft_hint' | 'present_discovery' | 'start_conversation' | 'suggest_next_action';
 }
 
 export type AnnMood = 'neutral' | 'curious' | 'happy' | 'thinking' | 'focused' | 'tired' | 'concerned';

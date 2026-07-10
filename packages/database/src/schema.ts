@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS character_state (
   emotion_json TEXT NOT NULL,
   intent TEXT NOT NULL,
   position_json TEXT,
+  animation_intent TEXT,
+  life_activity TEXT NOT NULL DEFAULT 'idle',
   last_activity_at TEXT,
   updated_at TEXT NOT NULL
 );
@@ -67,6 +69,10 @@ CREATE TABLE IF NOT EXISTS memory_nodes (
   source_url TEXT,
   is_pinned INTEGER NOT NULL DEFAULT 0,
   is_marked_wrong INTEGER NOT NULL DEFAULT 0,
+  companion_id TEXT,
+  user_id TEXT DEFAULT 'local',
+  memory_type TEXT,
+  metadata_json TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   compressed_at TEXT
@@ -285,12 +291,42 @@ CREATE TABLE IF NOT EXISTS app_settings (
 CREATE TABLE IF NOT EXISTS companion_messages (
   id TEXT PRIMARY KEY,
   character_id TEXT NOT NULL,
+  session_id TEXT,
   role TEXT NOT NULL,
   content TEXT NOT NULL,
   source TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'ok',
   metadata_json TEXT,
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversation_sessions (
+  id TEXT PRIMARY KEY,
+  companion_id TEXT NOT NULL,
+  user_id TEXT NOT NULL DEFAULT 'local',
+  phase TEXT NOT NULL DEFAULT 'inactive',
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  last_message_at TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS companion_relationships (
+  user_id TEXT NOT NULL DEFAULT 'local',
+  companion_id TEXT NOT NULL,
+  familiarity REAL NOT NULL DEFAULT 0,
+  trust REAL NOT NULL DEFAULT 0,
+  comfort REAL NOT NULL DEFAULT 0,
+  preferred_interaction_frequency TEXT NOT NULL DEFAULT 'normal',
+  preferred_interaction_style TEXT NOT NULL DEFAULT 'balanced',
+  recent_positive_interactions INTEGER NOT NULL DEFAULT 0,
+  recent_ignored_interactions INTEGER NOT NULL DEFAULT 0,
+  recent_corrections INTEGER NOT NULL DEFAULT 0,
+  shared_experience_ids_json TEXT NOT NULL DEFAULT '[]',
+  known_boundaries_json TEXT NOT NULL DEFAULT '[]',
+  last_meaningful_interaction_at TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, companion_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_memory_nodes_type ON memory_nodes(type);
@@ -306,6 +342,9 @@ CREATE INDEX IF NOT EXISTS idx_exploration_events_cycle ON exploration_loop_even
 CREATE INDEX IF NOT EXISTS idx_discovery_feedback_cycle ON discovery_feedback(cycle_id);
 CREATE INDEX IF NOT EXISTS idx_companion_messages_created ON companion_messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_companion_messages_character_created ON companion_messages(character_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_companion_messages_session ON companion_messages(session_id);
+CREATE INDEX IF NOT EXISTS idx_memory_nodes_companion ON memory_nodes(companion_id);
+CREATE INDEX IF NOT EXISTS idx_conversation_sessions_companion ON conversation_sessions(companion_id);
 
 CREATE TABLE IF NOT EXISTS companions (
   id TEXT PRIMARY KEY,

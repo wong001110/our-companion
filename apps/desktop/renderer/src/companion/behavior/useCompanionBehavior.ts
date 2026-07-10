@@ -10,7 +10,7 @@ import type {
 } from './CompanionBehaviorTypes';
 import { createDefaultBehaviorState } from './CompanionBehaviorTypes';
 import {
-  decideCompanionBehavior,
+  applyBehaviorHint,
   type CompanionBehaviorDecision,
 } from './CompanionBehaviorController';
 import {
@@ -80,9 +80,23 @@ export function useCompanionBehavior(opts: UseCompanionBehaviorOptions) {
     persistState(companionId, state);
   }, [companionId, state]);
 
+  const [displayHint, setDisplayHint] = useState<string | undefined>(undefined);
+  const displayHintRef = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    displayHintRef.current = displayHint;
+  }, [displayHint]);
+
+  useEffect(() => {
+    const unsubscribe = window.ourCompanion.companion.onBehaviorHint?.((decision) => {
+      setDisplayHint(decision.displayHint);
+    });
+    return () => unsubscribe?.();
+  }, []);
+
   const evaluate = useCallback(() => {
     const now = Date.now();
-    const decision = decideCompanionBehavior({
+    const decision = applyBehaviorHint({
       now,
       hasDiscoveryCandidate,
       userIsTyping,
@@ -91,6 +105,7 @@ export function useCompanionBehavior(opts: UseCompanionBehaviorOptions) {
       recentDismissCount: dismissCountRef.current,
       recentIgnoreCount: ignoreCountRef.current,
       state: stateRef.current,
+      displayHint: displayHintRef.current,
     });
     setLastDecision(decision);
     onDecision?.(decision);
@@ -98,12 +113,23 @@ export function useCompanionBehavior(opts: UseCompanionBehaviorOptions) {
   }, [hasDiscoveryCandidate, userIsTyping, panelOpen, activeConversation, onDecision]);
 
   useEffect(() => {
-    decisionTimerRef.current = window.setInterval(evaluate, 30_000);
+    void window.ourCompanion.companion.getBehaviorHint?.().then((hint) => {
+      if (hint?.displayHint) setDisplayHint(hint.displayHint);
+    });
+  }, [companionId]);
+
+  useEffect(() => {
+    decisionTimerRef.current = window.setInterval(() => {
+      void window.ourCompanion.companion.getBehaviorHint?.().then((hint) => {
+        if (hint?.displayHint) setDisplayHint(hint.displayHint);
+      });
+      evaluate();
+    }, 30_000);
     evaluate();
     return () => {
       if (decisionTimerRef.current !== undefined) window.clearInterval(decisionTimerRef.current);
     };
-  }, [evaluate]);
+  }, [evaluate, displayHint]);
 
   const recordInteraction = useCallback(() => {
     setState((prev) => ({ ...prev, lastUserInteractionAt: Date.now() }));

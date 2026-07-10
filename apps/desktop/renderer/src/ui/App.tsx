@@ -131,7 +131,9 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const [facing, setFacing] = useState<'left' | 'right'>('right');
   const [idleAnimation, setIdleAnimation] = useState<AnimationName>('Idle_Neutral');
 
-  const [developerEnabled, setDeveloperEnabled] = useState(() => localStorage.getItem('companion:developer:enabled') === 'true');
+  const [developerEnabled, setDeveloperEnabled] = useState(() =>
+    import.meta.env.DEV && localStorage.getItem('companion:developer:enabled') === 'true'
+  );
   const [observatoryState, setObservatoryState] = useState(loadObservatoryState);
   const [engineSnapshot, setEngineSnapshot] = useState<EngineSnapshot>();
 
@@ -561,7 +563,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
         if (isHorizontalDominant) {
           setFacing(dx < 0 ? 'left' : 'right');
         }
-        setIdleAnimation(dx < 0 ? 'Walk_Left' : 'Walk_Right');
+        setIdleAnimation('Walk_Right');
 
         speech.showTypewriter(selectSpeechLine('walk_start', Math.random, langRef.current));
         previewState('walking', 'wandering');
@@ -1061,7 +1063,7 @@ function PanelDashboard() {
             <small>{t(lang, 'brand_subtitle')}</small>
           </div>
           <nav>
-            {(['home', 'discovery', 'journey', 'memory', 'chat', 'ask', 'settings'] as Tab[]).map((item) => (
+            {(['home', 'discovery', 'journey', 'memory', 'chat', 'settings'] as Tab[]).map((item) => (
               <button key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>
                 {tabLabel(item, lang)}
               </button>
@@ -1104,7 +1106,6 @@ function PanelDashboard() {
           {tab === 'journey' && <JourneyView journeys={journeys} timeline={timeline} onRefresh={refreshAll} />}
           {tab === 'memory' && <MemoryView graph={memoryGraph} onRefresh={refreshAll} />}
           {tab === 'chat' && <ChatView />}
-          {tab === 'ask' && <AskView onRefresh={refreshAll} />}
           {tab === 'settings' && <SettingsView state={state} behaviorSettings={behaviorSettings} onRefresh={refreshAll} onLangChange={setLang} assetRoot={primaryCompanion?.assetRoot} />}
         </section>
       </main>

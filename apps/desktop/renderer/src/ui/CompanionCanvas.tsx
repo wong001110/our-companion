@@ -71,10 +71,13 @@ export function CompanionCanvas({
     if (animationOverride) return animations[animationOverride];
     if (dragState === 'dragging') return animations.Drag_Hold;
     if (dragState === 'releasing') return animations.Drag_Release;
-    const intent = stateToIntent(state, { userIsTyping, isMusicPlaying });
-    const resolution = resolveAnimation({ intent }, availableClips);
+    if (state?.animationIntent && animations[state.animationIntent as AnimationName]) {
+      return animations[state.animationIntent as AnimationName];
+    }
+    const resolvedIntent = stateToIntent(state, { userIsTyping, isMusicPlaying });
+    const resolution = resolveAnimation({ intent: resolvedIntent }, availableClips);
     return animations[resolution.clip as AnimationName] ?? animations.Idle_Neutral;
-  }, [animationOverride, dragState, state?.coreState, state?.intent, state?.emotion, userIsTyping, isMusicPlaying, animations, availableClips]);
+  }, [animationOverride, dragState, state?.animationIntent, state?.coreState, state?.intent, state?.emotion, userIsTyping, isMusicPlaying, animations, availableClips]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

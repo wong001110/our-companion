@@ -1,6 +1,8 @@
 # Our Companion
 
-A desktop AI companion application built with Electron, React, and TypeScript. A virtual character lives on your screen as a transparent overlay, autonomously explores the web, discovers interesting content, and shares findings with you.
+A long-term desktop AI companion designed to develop a continuous, character-driven relationship with you through presence, conversation, memory, shared experiences, and restrained initiative.
+
+Ann may explore, learn, reflect, and help — but these abilities support the companion relationship rather than replace it.
 
 ## Tech Stack
 

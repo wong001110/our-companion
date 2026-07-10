@@ -15,7 +15,13 @@ export class ElectronIpcBroadcaster {
     const { eventBus, getCompanionWindow, getPanelWindow } = this.deps;
 
     eventBus.subscribe(DOMAIN_EVENT_TYPES.CharacterStateChanged, (event) => {
-      const payload = event.payload as { characterId: string; coreState: string; intent: string } | undefined;
+      const payload = event.payload as {
+        characterId: string;
+        coreState: string;
+        intent: string;
+        animationIntent?: string;
+        lifeActivity?: string;
+      } | undefined;
       getCompanionWindow()?.webContents.send('character:stateChanged', payload);
       getPanelWindow()?.webContents.send('character:stateChanged', payload);
     });

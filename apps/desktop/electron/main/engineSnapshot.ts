@@ -44,7 +44,7 @@ function mapInsightToV2(i: CompanionInsight): InsightV2 {
 export function buildEngineSnapshot(
   db: DatabaseService,
   input: EngineSnapshotInput = {},
-  characterId = DEFAULT_CHARACTER_ID,
+  characterId = db.resolveActiveCompanionId(),
   orchestrator?: DiscoveryShareOrchestrator
 ): EngineSnapshot {
   const userId = input.userId ?? 'default';

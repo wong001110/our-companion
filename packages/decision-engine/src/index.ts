@@ -173,3 +173,5 @@ export type {
   CharacterContextProvider,
 } from './types';
 export { MIN_SCORE_FOR_ACTION, MAX_CANDIDATES, DEFAULT_CONFIDENCE } from './types';
+export { decideUnifiedCompanionAction, computeInitiativeBudget } from './unified-decision';
+export type { InitiativeBudgetState, UnifiedDecisionInput } from './unified-decision';

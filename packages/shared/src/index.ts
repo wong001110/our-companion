@@ -61,9 +61,94 @@ export interface CharacterRuntimeState {
   emotion: EmotionState;
   intent: Intent;
   position?: { x: number; y: number };
+  animationIntent?: string;
+  lifeActivity?: CompanionLifeActivity;
   lastActivityAt?: string;
   updatedAt?: string;
 }
+
+export type CompanionLifeActivity =
+  | 'idle'
+  | 'resting'
+  | 'sleeping'
+  | 'working'
+  | 'listening_music'
+  | 'thinking'
+  | 'exploring'
+  | 'returning'
+  | 'waiting'
+  | 'interacting';
+
+export type TypedMemoryType =
+  | 'user_fact'
+  | 'user_preference'
+  | 'user_boundary'
+  | 'shared_experience'
+  | 'relationship_memory'
+  | 'companion_experience'
+  | 'conversation_episode'
+  | 'inferred_pattern'
+  | 'external_knowledge'
+  | 'temporary_context';
+
+export interface MemoryMetadata {
+  ownerUserId?: string;
+  ownerCompanionId?: string;
+  sourceType:
+    | 'user_explicit'
+    | 'user_correction'
+    | 'conversation'
+    | 'companion_observation'
+    | 'system'
+    | 'discovery'
+    | 'imported';
+  confidence: number;
+  sensitivity: 'normal' | 'personal' | 'sensitive';
+  scope: 'session' | 'companion' | 'user' | 'shared';
+  createdAt: string;
+  lastConfirmedAt?: string;
+  expiresAt?: string;
+  supersedesMemoryId?: string;
+  correctedByMemoryId?: string;
+}
+
+export interface UserCompanionRelationship {
+  userId: string;
+  companionId: string;
+  familiarity: number;
+  trust: number;
+  comfort: number;
+  preferredInteractionFrequency: 'low' | 'normal' | 'high';
+  preferredInteractionStyle: 'quiet' | 'balanced' | 'expressive';
+  recentPositiveInteractions: number;
+  recentIgnoredInteractions: number;
+  recentCorrections: number;
+  sharedExperienceIds: string[];
+  knownBoundaries: string[];
+  lastMeaningfulInteractionAt?: string;
+  updatedAt: string;
+}
+
+export interface ConversationSessionRecord {
+  id: string;
+  companionId: string;
+  userId: string;
+  phase: ConversationPhase;
+  startedAt: string;
+  endedAt?: string;
+  lastMessageAt?: string;
+  updatedAt: string;
+}
+
+export type ConversationPhase =
+  | 'inactive'
+  | 'opening'
+  | 'listening'
+  | 'thinking'
+  | 'responding'
+  | 'waiting_for_user'
+  | 'paused'
+  | 'closing';
 
 export interface CharacterProfile {
   id: string;
@@ -106,6 +191,10 @@ export interface MemoryNode {
   sourceUrl?: string;
   isPinned?: boolean;
   isMarkedWrong?: boolean;
+  companionId?: string;
+  userId?: string;
+  memoryType?: TypedMemoryType;
+  metadata?: MemoryMetadata;
   createdAt: string;
   updatedAt: string;
   compressedAt?: string;
@@ -716,7 +805,7 @@ export interface ExplorationLoopEvent {
   createdAt: string;
 }
 
-export type DiscoveryFeedbackValue = 'saved' | 'not_interested' | 'later' | 'talk_about_this' | 'opened_evidence';
+export type DiscoveryFeedbackValue = 'saved' | 'not_interested' | 'not_now' | 'later' | 'talk_about_this' | 'opened_evidence';
 
 export interface DiscoveryFeedback {
   id: string;
@@ -782,11 +871,17 @@ export interface JourneyMilestone {
 export interface DiaryEntry {
   id: string;
   characterId: string;
+  userId?: string;
   type: 'daily' | 'weekly' | 'milestone';
+  perspective?: 'companion_reflection';
   title?: string;
   content: string;
+  summary?: string;
+  referencedMemoryIds?: string[];
+  confidence?: number;
   relatedJourneyId?: string;
   createdAt: string;
+  generatedAt?: string;
 }
 
 export type ToolName = 'open_url' | 'open_app' | 'search_web' | 'browser_navigation';
@@ -860,7 +955,17 @@ export interface ChatInput {
   characterId?: string;
 }
 
-export type CompanionSessionPhase = 'idle' | 'listening' | 'thinking' | 'talking';
+export type CompanionSessionPhase =
+  | 'inactive'
+  | 'opening'
+  | 'idle'
+  | 'listening'
+  | 'thinking'
+  | 'talking'
+  | 'responding'
+  | 'waiting_for_user'
+  | 'paused'
+  | 'closing';
 
 export interface TranscribeAudioInput {
   audio: ArrayBuffer;
@@ -884,6 +989,7 @@ export type CompanionMessageStatus = 'ok' | 'error' | 'empty_transcript';
 export interface CompanionMessage {
   id: string;
   characterId: string;
+  sessionId?: string;
   role: CompanionMessageRole;
   content: string;
   source: CompanionMessageSource;
@@ -902,6 +1008,7 @@ export interface CompanionHistoryInput {
 
 export interface CompanionAppendMessageInput {
   characterId?: string;
+  sessionId?: string;
   role: CompanionMessageRole;
   content: string;
   source: CompanionMessageSource;
@@ -1237,6 +1344,8 @@ export interface OurCompanionApi {
     onRefresh(listener: () => void): () => void;
     reportSessionPhase(phase: CompanionSessionPhase): Promise<void>;
     reportDragging(input: { dragging: boolean }): Promise<void>;
+    getBehaviorHint(): Promise<import('./models').CompanionDecision | null>;
+    onBehaviorHint(listener: (decision: import('./models').CompanionDecision) => void): () => void;
     getHistory(input?: CompanionHistoryInput): Promise<CompanionMessage[]>;
     appendMessage(input: CompanionAppendMessageInput): Promise<CompanionMessage>;
     clearHistory(input?: { characterId?: string }): Promise<void>;

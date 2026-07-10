@@ -8,6 +8,8 @@ import type {
   CompanionMessage,
   CompanionPersonality,
   CompanionProfile,
+  ConversationPhase,
+  ConversationSessionRecord,
   CreateCompanionInput,
   UpdateCompanionInput,
   CuriosityTarget,
@@ -29,7 +31,8 @@ import type {
   JourneyMilestone,
   MemoryEdge,
   MemoryNode,
-  Pattern
+  Pattern,
+  UserCompanionRelationship
 } from '@our-companion/shared';
 import type { ActionPermissionState } from '@our-companion/shared';
 import { COMPANION_CHAT_RETENTION_DAYS, createId, nowIso } from '@our-companion/shared';
@@ -52,6 +55,49 @@ export class DatabaseService {
     this.db = new DatabaseSync(options.path ?? ':memory:');
     this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec(sqliteSchema);
+    this.runMigrations();
+  }
+
+  private runMigrations(): void {
+    const migrations: Array<{ column: string; sql: string }> = [
+      { column: 'animation_intent', sql: 'ALTER TABLE character_state ADD COLUMN animation_intent TEXT' },
+      { column: 'life_activity', sql: "ALTER TABLE character_state ADD COLUMN life_activity TEXT NOT NULL DEFAULT 'idle'" },
+      { column: 'companion_id', sql: 'ALTER TABLE memory_nodes ADD COLUMN companion_id TEXT' },
+      { column: 'user_id', sql: "ALTER TABLE memory_nodes ADD COLUMN user_id TEXT DEFAULT 'local'" },
+      { column: 'memory_type', sql: 'ALTER TABLE memory_nodes ADD COLUMN memory_type TEXT' },
+      { column: 'metadata_json', sql: 'ALTER TABLE memory_nodes ADD COLUMN metadata_json TEXT' },
+      { column: 'session_id', sql: 'ALTER TABLE companion_messages ADD COLUMN session_id TEXT' },
+      { column: 'is_builtin', sql: 'ALTER TABLE companions ADD COLUMN is_builtin INTEGER NOT NULL DEFAULT 0' }
+    ];
+    for (const migration of migrations) {
+      try {
+        const table = migration.sql.match(/ALTER TABLE (\w+)/)?.[1];
+        if (!table) continue;
+        const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (!cols.some((c) => c.name === migration.column)) {
+          this.db.exec(migration.sql);
+        }
+      } catch {
+        // Column may already exist in fresh schema
+      }
+    }
+    this.ensureBuiltinAnn();
+  }
+
+  private ensureBuiltinAnn(): void {
+    const existing = this.db.prepare('SELECT id FROM companions WHERE id = ?').get('ann');
+    if (existing) return;
+    const now = nowIso();
+    this.db.prepare(
+      `INSERT INTO companions (id, name, personality_description, personality_json, asset_root, is_primary, is_builtin, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?)`
+    ).run('ann', 'Ann', 'A curious, warm desktop companion.', '{}', 'assets/companions/ann', now, now);
+  }
+
+  /** Single source of truth for active companion ID in production paths */
+  resolveActiveCompanionId(characterId?: string): string {
+    if (characterId) return characterId;
+    return this.getPrimaryCompanion()?.id ?? 'ann';
   }
 
   close(): void {
@@ -59,8 +105,7 @@ export class DatabaseService {
   }
 
   getCharacterState(characterId?: string): CharacterRuntimeState {
-    const id = characterId ?? this.getPrimaryCompanion()?.id;
-    if (!id) return createInitialCharacterStateLocal('default');
+    const id = this.resolveActiveCompanionId(characterId);
     const row = this.db
       .prepare('SELECT * FROM character_state WHERE character_id = ?')
       .get(id) as Record<string, unknown> | undefined;
@@ -71,6 +116,8 @@ export class DatabaseService {
       emotion: JSON.parse(String(row.emotion_json)),
       intent: row.intent as CharacterRuntimeState['intent'],
       position: row.position_json ? JSON.parse(String(row.position_json)) : undefined,
+      animationIntent: row.animation_intent ? String(row.animation_intent) : undefined,
+      lifeActivity: (row.life_activity as CharacterRuntimeState['lifeActivity']) ?? 'idle',
       lastActivityAt: row.last_activity_at ? String(row.last_activity_at) : undefined,
       updatedAt: String(row.updated_at)
     };
@@ -80,13 +127,15 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT INTO character_state
-         (character_id, core_state, emotion_json, intent, position_json, last_activity_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+         (character_id, core_state, emotion_json, intent, position_json, animation_intent, life_activity, last_activity_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(character_id) DO UPDATE SET
            core_state = excluded.core_state,
            emotion_json = excluded.emotion_json,
            intent = excluded.intent,
            position_json = excluded.position_json,
+           animation_intent = excluded.animation_intent,
+           life_activity = excluded.life_activity,
            last_activity_at = excluded.last_activity_at,
            updated_at = excluded.updated_at`
       )
@@ -96,6 +145,8 @@ export class DatabaseService {
         JSON.stringify(state.emotion),
         state.intent,
         state.position ? JSON.stringify(state.position) : null,
+        state.animationIntent ?? null,
+        state.lifeActivity ?? 'idle',
         state.lastActivityAt ?? null,
         state.updatedAt ?? nowIso()
       );
@@ -103,44 +154,35 @@ export class DatabaseService {
   }
 
   getActiveCharacters(): CharacterProfile[] {
-    const rows = this.db
-      .prepare(
-        `SELECT c.*, p.core_personality_json, p.expertise_json, p.speaking_style_json
-         FROM characters c
-         JOIN character_profiles p ON p.character_id = c.id
-         WHERE c.is_active = 1
-         ORDER BY c.is_primary DESC, c.created_at ASC
-         LIMIT 3`
-      )
-      .all() as Array<Record<string, unknown>>;
-
-    return rows.map((row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      packageId: String(row.package_id),
-      isPrimary: Number(row.is_primary) === 1,
-      isActive: Number(row.is_active) === 1,
-      corePersonality: JSON.parse(String(row.core_personality_json)),
-      expertise: JSON.parse(String(row.expertise_json)),
-      speakingStyle: JSON.parse(String(row.speaking_style_json))
+    return this.listCompanions().slice(0, 3).map((companion) => ({
+      id: companion.id,
+      name: companion.name,
+      packageId: companion.assetRoot,
+      isPrimary: companion.isPrimary,
+      isActive: true,
+      corePersonality: companion.personalityDescription ? [companion.personalityDescription] : [],
+      expertise: [],
+      speakingStyle: { tone: 'warm', length: 'concise', avoid: [] }
     }));
   }
 
   getCharacterBehaviorRules(characterId?: string): Record<string, unknown> {
-    const id = characterId ?? this.getPrimaryCompanion()?.id;
-    if (!id) return {};
-    const row = this.db
-      .prepare('SELECT behavior_rules_json FROM character_profiles WHERE character_id = ?')
-      .get(id) as { behavior_rules_json: string } | undefined;
-    return row ? (JSON.parse(row.behavior_rules_json) as Record<string, unknown>) : {};
+    const stored = this.getAppSetting<Record<string, unknown>>(`companion.behavior.${this.resolveActiveCompanionId(characterId)}`);
+    return stored ?? { discovery: 35, movement: 'normal' };
   }
 
   setPrimaryCharacter(characterId: string): CharacterProfile {
-    this.db.prepare('UPDATE characters SET is_primary = 0').run();
-    this.db.prepare('UPDATE characters SET is_primary = 1 WHERE id = ?').run(characterId);
-    const character = this.getActiveCharacters().find((item) => item.id === characterId);
-    if (!character) throw new Error(`Character not found: ${characterId}`);
-    return character;
+    const companion = this.setPrimaryCompanion(characterId);
+    return {
+      id: companion.id,
+      name: companion.name,
+      packageId: companion.assetRoot,
+      isPrimary: true,
+      isActive: true,
+      corePersonality: companion.personalityDescription ? [companion.personalityDescription] : [],
+      expertise: [],
+      speakingStyle: { tone: 'warm', length: 'concise', avoid: [] }
+    };
   }
 
   // ─── Companion CRUD ──────────────────────────────────────────────────────
@@ -211,8 +253,9 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT INTO memory_nodes
-         (id, type, title, summary, content, importance_score, source, source_url, is_pinned, is_marked_wrong, created_at, updated_at, compressed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, type, title, summary, content, importance_score, source, source_url, is_pinned, is_marked_wrong,
+          companion_id, user_id, memory_type, metadata_json, created_at, updated_at, compressed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         node.id,
@@ -225,6 +268,10 @@ export class DatabaseService {
         node.sourceUrl ?? null,
         node.isPinned ? 1 : 0,
         node.isMarkedWrong ? 1 : 0,
+        node.companionId ?? null,
+        node.userId ?? 'local',
+        node.memoryType ?? null,
+        node.metadata ? JSON.stringify(node.metadata) : null,
         node.createdAt,
         node.updatedAt,
         node.compressedAt ?? null
@@ -237,7 +284,8 @@ export class DatabaseService {
       .prepare(
         `UPDATE memory_nodes SET
           type = ?, title = ?, summary = ?, content = ?, importance_score = ?, source = ?, source_url = ?,
-          is_pinned = ?, is_marked_wrong = ?, updated_at = ?, compressed_at = ?
+          is_pinned = ?, is_marked_wrong = ?, companion_id = ?, user_id = ?, memory_type = ?, metadata_json = ?,
+          updated_at = ?, compressed_at = ?
          WHERE id = ?`
       )
       .run(
@@ -250,6 +298,10 @@ export class DatabaseService {
         node.sourceUrl ?? null,
         node.isPinned ? 1 : 0,
         node.isMarkedWrong ? 1 : 0,
+        node.companionId ?? null,
+        node.userId ?? 'local',
+        node.memoryType ?? null,
+        node.metadata ? JSON.stringify(node.metadata) : null,
         node.updatedAt,
         node.compressedAt ?? null,
         node.id
@@ -267,7 +319,10 @@ export class DatabaseService {
     return row ? mapMemoryNode(row) : undefined;
   }
 
-  listMemoryNodes(): MemoryNode[] {
+  listMemoryNodes(companionId?: string): MemoryNode[] {
+    if (companionId) {
+      return (this.db.prepare('SELECT * FROM memory_nodes WHERE companion_id = ? OR companion_id IS NULL ORDER BY updated_at DESC').all(companionId) as Array<Record<string, unknown>>).map(mapMemoryNode);
+    }
     return (this.db.prepare('SELECT * FROM memory_nodes ORDER BY updated_at DESC').all() as Array<Record<string, unknown>>).map(
       mapMemoryNode
     );
@@ -906,15 +961,16 @@ export class DatabaseService {
   insertCompanionMessage(input: CompanionAppendMessageInput): CompanionMessage {
     const id = createId('msg');
     const now = nowIso();
-    const characterId = input.characterId ?? this.getPrimaryCompanion()?.id ?? 'default';
+    const characterId = this.resolveActiveCompanionId(input.characterId);
     this.db
       .prepare(
-        `INSERT INTO companion_messages (id, character_id, role, content, source, status, metadata_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO companion_messages (id, character_id, session_id, role, content, source, status, metadata_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
         characterId,
+        input.sessionId ?? null,
         input.role,
         input.content,
         input.source,
@@ -926,6 +982,7 @@ export class DatabaseService {
     return {
       id,
       characterId,
+      sessionId: input.sessionId,
       role: input.role,
       content: input.content,
       source: input.source,
@@ -1040,6 +1097,102 @@ export class DatabaseService {
       completedAt: nowIso()
     };
   }
+
+  // ─── Relationship ────────────────────────────────────────────────────────
+
+  getRelationship(userId: string, companionId: string): UserCompanionRelationship {
+    const row = this.db
+      .prepare('SELECT * FROM companion_relationships WHERE user_id = ? AND companion_id = ?')
+      .get(userId, companionId) as Record<string, unknown> | undefined;
+    if (!row) {
+      const now = nowIso();
+      const defaultRel: UserCompanionRelationship = {
+        userId,
+        companionId,
+        familiarity: 10,
+        trust: 10,
+        comfort: 10,
+        preferredInteractionFrequency: 'normal',
+        preferredInteractionStyle: 'balanced',
+        recentPositiveInteractions: 0,
+        recentIgnoredInteractions: 0,
+        recentCorrections: 0,
+        sharedExperienceIds: [],
+        knownBoundaries: [],
+        updatedAt: now
+      };
+      this.saveRelationship(defaultRel);
+      return defaultRel;
+    }
+    return mapRelationship(row);
+  }
+
+  saveRelationship(rel: UserCompanionRelationship): UserCompanionRelationship {
+    this.db.prepare(
+      `INSERT INTO companion_relationships
+       (user_id, companion_id, familiarity, trust, comfort, preferred_interaction_frequency,
+        preferred_interaction_style, recent_positive_interactions, recent_ignored_interactions,
+        recent_corrections, shared_experience_ids_json, known_boundaries_json,
+        last_meaningful_interaction_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, companion_id) DO UPDATE SET
+         familiarity = excluded.familiarity, trust = excluded.trust, comfort = excluded.comfort,
+         preferred_interaction_frequency = excluded.preferred_interaction_frequency,
+         preferred_interaction_style = excluded.preferred_interaction_style,
+         recent_positive_interactions = excluded.recent_positive_interactions,
+         recent_ignored_interactions = excluded.recent_ignored_interactions,
+         recent_corrections = excluded.recent_corrections,
+         shared_experience_ids_json = excluded.shared_experience_ids_json,
+         known_boundaries_json = excluded.known_boundaries_json,
+         last_meaningful_interaction_at = excluded.last_meaningful_interaction_at,
+         updated_at = excluded.updated_at`
+    ).run(
+      rel.userId, rel.companionId, rel.familiarity, rel.trust, rel.comfort,
+      rel.preferredInteractionFrequency, rel.preferredInteractionStyle,
+      rel.recentPositiveInteractions, rel.recentIgnoredInteractions, rel.recentCorrections,
+      JSON.stringify(rel.sharedExperienceIds), JSON.stringify(rel.knownBoundaries),
+      rel.lastMeaningfulInteractionAt ?? null, rel.updatedAt
+    );
+    return rel;
+  }
+
+  // ─── Conversation Sessions ───────────────────────────────────────────────
+
+  createConversationSession(companionId: string, userId = 'local'): ConversationSessionRecord {
+    const id = createId('session');
+    const now = nowIso();
+    const session: ConversationSessionRecord = {
+      id,
+      companionId,
+      userId,
+      phase: 'opening',
+      startedAt: now,
+      lastMessageAt: now,
+      updatedAt: now
+    };
+    this.db.prepare(
+      `INSERT INTO conversation_sessions (id, companion_id, user_id, phase, started_at, last_message_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, companionId, userId, session.phase, now, now, now);
+    return session;
+  }
+
+  getActiveConversationSession(companionId: string): ConversationSessionRecord | null {
+    const row = this.db.prepare(
+      `SELECT * FROM conversation_sessions WHERE companion_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`
+    ).get(companionId) as Record<string, unknown> | undefined;
+    return row ? mapConversationSession(row) : null;
+  }
+
+  updateConversationSessionPhase(sessionId: string, phase: ConversationPhase): ConversationSessionRecord {
+    const now = nowIso();
+    const endedAt = phase === 'inactive' || phase === 'closing' ? now : null;
+    this.db.prepare(
+      `UPDATE conversation_sessions SET phase = ?, updated_at = ?, ended_at = COALESCE(ended_at, ?) WHERE id = ?`
+    ).run(phase, now, endedAt, sessionId);
+    const row = this.db.prepare('SELECT * FROM conversation_sessions WHERE id = ?').get(sessionId) as Record<string, unknown>;
+    return mapConversationSession(row);
+  }
 }
 
 function expandResetTargets(targets: DebugDataResetTarget[]): DebugDataResetTarget[] {
@@ -1066,9 +1219,45 @@ function mapMemoryNode(row: Record<string, unknown>): MemoryNode {
     sourceUrl: row.source_url ? String(row.source_url) : undefined,
     isPinned: Number(row.is_pinned) === 1,
     isMarkedWrong: Number(row.is_marked_wrong) === 1,
+    companionId: row.companion_id ? String(row.companion_id) : undefined,
+    userId: row.user_id ? String(row.user_id) : undefined,
+    memoryType: row.memory_type ? (row.memory_type as MemoryNode['memoryType']) : undefined,
+    metadata: row.metadata_json ? JSON.parse(String(row.metadata_json)) : undefined,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     compressedAt: row.compressed_at ? String(row.compressed_at) : undefined
+  };
+}
+
+function mapRelationship(row: Record<string, unknown>): UserCompanionRelationship {
+  return {
+    userId: String(row.user_id),
+    companionId: String(row.companion_id),
+    familiarity: Number(row.familiarity),
+    trust: Number(row.trust),
+    comfort: Number(row.comfort),
+    preferredInteractionFrequency: row.preferred_interaction_frequency as UserCompanionRelationship['preferredInteractionFrequency'],
+    preferredInteractionStyle: row.preferred_interaction_style as UserCompanionRelationship['preferredInteractionStyle'],
+    recentPositiveInteractions: Number(row.recent_positive_interactions),
+    recentIgnoredInteractions: Number(row.recent_ignored_interactions),
+    recentCorrections: Number(row.recent_corrections),
+    sharedExperienceIds: JSON.parse(String(row.shared_experience_ids_json ?? '[]')),
+    knownBoundaries: JSON.parse(String(row.known_boundaries_json ?? '[]')),
+    lastMeaningfulInteractionAt: row.last_meaningful_interaction_at ? String(row.last_meaningful_interaction_at) : undefined,
+    updatedAt: String(row.updated_at)
+  };
+}
+
+function mapConversationSession(row: Record<string, unknown>): ConversationSessionRecord {
+  return {
+    id: String(row.id),
+    companionId: String(row.companion_id),
+    userId: String(row.user_id),
+    phase: row.phase as ConversationSessionRecord['phase'],
+    startedAt: String(row.started_at),
+    endedAt: row.ended_at ? String(row.ended_at) : undefined,
+    lastMessageAt: row.last_message_at ? String(row.last_message_at) : undefined,
+    updatedAt: String(row.updated_at)
   };
 }
 

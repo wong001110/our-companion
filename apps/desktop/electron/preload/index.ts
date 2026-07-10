@@ -147,6 +147,13 @@ const api: OurCompanionApi = {
     clearHistory: (input?: { characterId?: string }) => invoke('companion:clearHistory', input),
     reportSessionPhase: (phase: CompanionSessionPhase) => invoke('companion:reportSessionPhase', phase),
     reportDragging: (input: { dragging: boolean }) => invoke('companion:reportDragging', input),
+    getBehaviorHint: () => invoke('companion:getBehaviorHint'),
+    onBehaviorHint: (listener: (decision: import('@our-companion/shared').CompanionDecision) => void) => {
+      const channel = 'companion:behaviorHint';
+      const handler = (_event: Electron.IpcRendererEvent, decision: import('@our-companion/shared').CompanionDecision) => listener(decision);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    },
     getOverlayDebug: () => invoke('companion:getOverlayDebug'),
     onDisplayChanged: (listener: (info: { workArea: { x: number; y: number; width: number; height: number }; display: { id: number; label: string; size: { width: number; height: number } } }) => void) => {
       const channel = 'companion:displayChanged';

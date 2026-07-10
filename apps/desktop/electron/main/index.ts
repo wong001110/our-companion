@@ -281,6 +281,7 @@ function registerIpc(): void {
     'companion:clearHistory': services.companion.clearHistory,
     'companion:reportSessionPhase': services.companion.reportSessionPhase,
     'companion:reportDragging': services.companion.reportDragging,
+    'companion:getBehaviorHint': services.companion.getBehaviorHint,
     'debug:resetData': services.debug.resetData,
     'debug:getFoundationLog': services.debug.getFoundationLog,
     'debug:getEngineSnapshot': services.debug.getEngineSnapshot,
@@ -492,13 +493,9 @@ function startDiscoveryAutomation(): void {
       companionWindow?.webContents.send('autonomy:explorationEvent', event);
       panelWindow?.webContents.send('autonomy:explorationEvent', event);
     },
-    characterState: (state) => {
-      companionWindow?.webContents.send('character:stateChanged', state);
-      panelWindow?.webContents.send('character:stateChanged', state);
-    },
-    discoveryAnnounce: (payload) => {
-      companionWindow?.webContents.send('discovery:announce', payload);
-      panelWindow?.webContents.send('discovery:announce', payload);
+    behaviorHint: (decision) => {
+      companionWindow?.webContents.send('companion:behaviorHint', decision);
+      panelWindow?.webContents.send('companion:behaviorHint', decision);
     },
     foundationEvent: (event) => {
       companionWindow?.webContents.send('debug:foundationEvent', event);

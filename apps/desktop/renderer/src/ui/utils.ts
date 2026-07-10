@@ -3,7 +3,7 @@ import { t, type Lang } from '../i18n';
 import type { AnimationName } from './CompanionCanvas';
 import type { CompanionAnimationName } from '../companion/runtime/animationRegistry';
 
-export type Tab = 'home' | 'discovery' | 'journey' | 'memory' | 'chat' | 'ask' | 'settings';
+export type Tab = 'home' | 'discovery' | 'journey' | 'memory' | 'chat' | 'settings';
 export type DevAnimation = 'live' | AnimationName;
 
 export const devAnimations: DevAnimation[] = [
@@ -118,7 +118,6 @@ export function tabLabel(tab: Tab, lang: Lang): string {
     journey: t(lang, 'tab_journey'),
     memory: t(lang, 'tab_memory'),
     chat: t(lang, 'tab_chat'),
-    ask: t(lang, 'tab_ask'),
     settings: t(lang, 'tab_settings')
   };
   return map[tab];

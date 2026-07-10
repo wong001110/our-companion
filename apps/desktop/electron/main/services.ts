@@ -17,7 +17,7 @@ import { collectWorkspaceStatus, type WorkspaceStatusSnapshot } from './workspac
 import { generateCuriosityTargets } from '@our-companion/curiosity-engine';
 import { assessCuriosity } from '@our-companion/curiosity-engine';
 import { DatabaseService } from '@our-companion/database';
-import { assessAttention, decideCompanionAction } from '@our-companion/decision-engine';
+import type { CompanionDecision } from '@our-companion/shared';
 import { generateDailyDiary } from '@our-companion/diary-engine';
 import {
   createFallbackConnector,
@@ -95,6 +95,7 @@ import { createEvent, globalEventBus, type EventBus } from '@our-companion/event
 import type { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 import type { DiscoveryRefreshResult } from './discoveryScheduler';
 import { buildEngineSnapshot } from './engineSnapshot';
+import { CompanionRuntime } from './companionRuntime';
 
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
@@ -102,12 +103,12 @@ const FOUNDATION_EVENT_LOG_MAX = 200;
 export class AppServices {
   readonly db: DatabaseService;
   readonly databaseMode: 'persistent' | 'memory';
-  companionSessionPhase: CompanionSessionPhase = 'idle';
+  companionSessionPhase: CompanionSessionPhase = 'inactive';
   companionDragging = false;
   private shareOrchestrator?: DiscoveryShareOrchestrator;
+  private readonly companionRuntime: CompanionRuntime;
   private explorationBroadcaster?: (event: ExplorationLoopEvent) => void;
-  private characterBroadcaster?: (state: CharacterRuntimeState) => void;
-  private discoveryAnnounceBroadcaster?: (payload: DiscoveryAnnouncePayload) => void;
+  private behaviorHintBroadcaster?: (decision: CompanionDecision) => void;
   private foundationEventBroadcaster?: (event: BaseEvent) => void;
   private debugLog: AiDebugEntry[] = [];
   private foundationEventLog: BaseEvent[] = [];
@@ -134,6 +135,31 @@ export class AppServices {
       this.db = new DatabaseService({ path: ':memory:' });
       this.databaseMode = 'memory';
     }
+
+    this.companionRuntime = new CompanionRuntime(
+      this.db,
+      (state) => {
+        this.emitFoundationEvent('CharacterStateChanged', 'character', {
+          characterId: state.characterId,
+          coreState: state.coreState,
+          intent: state.intent,
+          animationIntent: state.animationIntent,
+          lifeActivity: state.lifeActivity,
+        });
+      },
+      (decision) => {
+        this.emitFoundationEvent('CompanionDecisionMade', 'decision', {
+          decisionId: decision.id,
+          action: decision.action,
+          timing: decision.timing,
+          priority: decision.priority,
+          reason: decision.reason,
+          displayHint: decision.displayHint,
+        });
+        this.behaviorHintBroadcaster?.(decision);
+      }
+    );
+    this.companionRuntime.startLifeScheduler();
   }
 
   character = {
@@ -656,13 +682,16 @@ export class AppServices {
 
   companion = {
     turn: async (input: CompanionTurnInput) => {
-      const characterId = input.characterId ?? DEFAULT_CHARACTER_ID;
+      const characterId = this.db.resolveActiveCompanionId(input.characterId);
       const source = input.source === 'voice' ? 'voice' : 'companion_text';
+      const sessionId = this.companionRuntime.getActiveSessionId() ?? undefined;
       const builtMessages = this.buildChatMessages(characterId, input.message);
-      this.db.insertCompanionMessage({ role: 'user', content: input.message, source, characterId });
+      this.db.insertCompanionMessage({ role: 'user', content: input.message, source, characterId, sessionId });
       try {
         const { content: message } = await this.sendToAi({ messages: builtMessages, channel: 'turn', source });
-        this.db.insertCompanionMessage({ role: 'assistant', content: message, source, characterId });
+        this.db.insertCompanionMessage({ role: 'assistant', content: message, source, characterId, sessionId });
+        this.companionRuntime.extractMemoryFromTurn(characterId, input.message, message, sessionId);
+        this.companionRuntime.recordInteraction('positive');
         if (input.source === 'voice') {
           this.applyCharacterEmotion(characterId, 'expertise_topic_match');
         }
@@ -687,10 +716,12 @@ export class AppServices {
     },
     reportSessionPhase: async (phase: CompanionSessionPhase) => {
       this.companionSessionPhase = phase;
+      this.companionRuntime.setSessionPhase(phase);
     },
     reportDragging: async (input: { dragging: boolean }) => {
       this.companionDragging = input.dragging;
-    }
+    },
+    getBehaviorHint: async () => this.companionRuntime.getLastDecision()
   };
 
   debug = {
@@ -739,33 +770,21 @@ export class AppServices {
 
   attachAutonomyBroadcasters(callbacks: {
     explorationEvent: (event: ExplorationLoopEvent) => void;
-    characterState: (state: CharacterRuntimeState) => void;
-    discoveryAnnounce: (payload: DiscoveryAnnouncePayload) => void;
+    behaviorHint?: (decision: CompanionDecision) => void;
     foundationEvent?: (event: BaseEvent) => void;
   }): void {
     this.explorationBroadcaster = callbacks.explorationEvent;
-    this.characterBroadcaster = callbacks.characterState;
-    this.discoveryAnnounceBroadcaster = callbacks.discoveryAnnounce;
+    this.behaviorHintBroadcaster = callbacks.behaviorHint;
     this.foundationEventBroadcaster = callbacks.foundationEvent;
   }
 
-  private setAutonomyCharacterState(coreState: CharacterRuntimeState['coreState'], intent: CharacterRuntimeState['intent']): CharacterRuntimeState {
-    const primary = this.db.getPrimaryCompanion();
-    const characterId = primary?.id ?? DEFAULT_CHARACTER_ID;
-    const state = this.db.getCharacterState(characterId);
-    const next = this.db.saveCharacterState({
-      ...state,
-      coreState,
-      intent,
-      updatedAt: nowIso()
-    });
-    this.characterBroadcaster?.(next);
-    this.emitFoundationEvent('CharacterStateChanged', 'character', {
-      characterId: next.characterId,
-      coreState: next.coreState,
-      intent: next.intent
-    });
-    return next;
+  private setAutonomyCharacterState(
+    coreState: CharacterRuntimeState['coreState'],
+    intent: CharacterRuntimeState['intent'],
+    animationIntent?: string
+  ): CharacterRuntimeState {
+    const characterId = this.db.resolveActiveCompanionId();
+    return this.companionRuntime.advanceWithIntent(characterId, coreState, intent, animationIntent);
   }
 
   private recordExplorationEvent(
@@ -937,19 +956,37 @@ export class AppServices {
     this.setAutonomyCharacterState('returning', 'sharing_discovery');
 
     cycle = this.saveCycleState(cycle, 'sharing');
-    this.setAutonomyCharacterState('talking', 'sharing_discovery');
-    if (selectedInsight) {
-      this.discoveryAnnounceBroadcaster?.({
-        discoveryId: selectedInsight.id,
+    this.setAutonomyCharacterState('talking', 'sharing_discovery', 'Expedition_Present');
+    if (selectedInsight && this.shareOrchestrator) {
+      const discoveryPayload: Discovery = {
+        id: selectedInsight.id,
+        source: 'curiosity',
         title: selectedInsight.title,
-        message: selectedInsight.summary,
-        cycleId: cycle.id,
-        insightId: selectedInsight.id
-      });
+        summary: selectedInsight.summary,
+        tags: [],
+        raw: {},
+        userInterestScore: 50,
+        userHistoryScore: 50,
+        characterExpertiseScore: 50,
+        noveltyScore: selectedInsight.novelty * 100,
+        usefulnessScore: selectedInsight.importance * 100,
+        finalScore: selectedInsight.confidence * 100,
+        status: 'shared',
+        createdAt: nowIso(),
+      };
+      const decision = this.companionRuntime.decideForDiscovery(
+        discoveryPayload,
+        this.companionSessionPhase !== 'inactive' && this.companionSessionPhase !== 'idle',
+        this.companionDragging
+      );
+      if (this.companionRuntime.shouldPresentDiscovery(decision)) {
+        this.shareOrchestrator.enqueue(discoveryPayload);
+      }
       this.emitFoundationEvent('CompanionMessageQueued', 'speech', {
         discoveryId: selectedInsight.id,
         cycleId: cycle.id,
-        message: selectedInsight.summary
+        message: selectedInsight.summary,
+        gated: !this.companionRuntime.shouldPresentDiscovery(decision),
       });
     }
 
@@ -1022,7 +1059,10 @@ export class AppServices {
       });
       this.applyCharacterEmotion(cycle.companionId, 'user_accepts_discovery');
     } else if (input.value === 'not_interested') {
+      this.companionRuntime.recordInteraction('not_interested');
       this.applyCharacterEmotion(cycle.companionId, 'user_rejects_discovery');
+    } else if (input.value === 'not_now') {
+      this.companionRuntime.recordInteraction('not_now');
     } else if (input.value === 'talk_about_this' && insight) {
       this.db.insertCompanionMessage({
         characterId: cycle.companionId,
@@ -1033,18 +1073,7 @@ export class AppServices {
       });
     }
 
-    const settled = this.db.saveCharacterState({
-      ...this.db.getCharacterState(cycle.companionId),
-      coreState: 'idle',
-      intent: 'waiting',
-      updatedAt: nowIso()
-    });
-    this.characterBroadcaster?.(settled);
-    this.emitFoundationEvent('CharacterStateChanged', 'character', {
-      characterId: settled.characterId,
-      coreState: settled.coreState,
-      intent: settled.intent
-    });
+    const settled = this.companionRuntime.advanceWithIntent(cycle.companionId, 'idle', 'waiting', 'Idle_Neutral');
     return feedback;
   }
 
@@ -1086,7 +1115,17 @@ export class AppServices {
           status: discovery.status,
           url: discovery.url
         }, correlationId);
-        this.emitDecisionEventsForDiscovery(discovery, correlationId);
+        const decision = this.companionRuntime.decideForDiscovery(
+          discovery,
+          this.companionSessionPhase !== 'inactive' && this.companionSessionPhase !== 'idle',
+          this.companionDragging
+        );
+        if (!this.companionRuntime.shouldPresentDiscovery(decision) && discovery.status === 'shared') {
+          this.db.updateDiscoveryStatus(discovery.id, 'candidate');
+        }
+        if (decision.action === 'stay_silent') {
+          this.emitFoundationEvent('SilenceChosen', 'decision', { decisionId: decision.id, targetId: discovery.id }, correlationId);
+        }
       }
     }
 
@@ -1101,7 +1140,7 @@ export class AppServices {
   }
 
   canAnnounceDiscovery(): boolean {
-    if (this.companionSessionPhase !== 'idle') return false;
+    if (this.companionSessionPhase !== 'idle' && this.companionSessionPhase !== 'inactive') return false;
     if (this.companionDragging) return false;
 
     const primary = this.db.getPrimaryCompanion();
@@ -1109,11 +1148,14 @@ export class AppServices {
     if (state.intent === 'helping_task' || state.intent === 'asking_permission') return false;
     if (state.intent === 'sharing_discovery') return true;
     if (['listening', 'executing'].includes(state.coreState)) return false;
+
+    const lastDecision = this.companionRuntime.getLastDecision();
+    if (lastDecision && !this.companionRuntime.shouldPresentDiscovery(lastDecision)) return false;
     return true;
   }
 
   shouldInterruptShare(): boolean {
-    return this.companionSessionPhase !== 'idle' || this.companionDragging;
+    return (this.companionSessionPhase !== 'idle' && this.companionSessionPhase !== 'inactive') || this.companionDragging;
   }
 
   countAutonomousCyclesToday(): number {
@@ -1144,77 +1186,6 @@ export class AppServices {
       .filter((event) => (input.source ? event.source === input.source : true))
       .filter((event) => (input.type ? event.type === input.type : true))
       .slice(0, limit);
-  }
-
-  private emitDecisionEventsForDiscovery(discovery: Discovery, correlationId: string): void {
-    const recentActions = this.db
-      .listDiscoveryFeedback(20)
-      .map((feedback) => (feedback.value === 'not_interested' ? 'ignored_discovery' : feedback.value));
-    const userContext = {
-      mode: this.canAnnounceDiscovery() ? ('idle' as const) : ('focused' as const),
-      localTime: nowIso(),
-      recentActions,
-      fatigueScore: this.companionSessionPhase === 'idle' ? 15 : 60
-    };
-    const companionContext = {
-      dailySharedCount: this.db.countSharedToday(),
-      attentionBudgetRemaining: 100,
-      curiosityBudgetRemaining: 100,
-      trustScore: 0.75
-    };
-    const curiosity = assessCuriosity({
-      targetId: discovery.id,
-      targetType: 'discovery',
-      growthValue: discovery.growthValue ?? discovery.finalScore,
-      novelty: discovery.noveltyScore / 100,
-      reason: `Discovery scored ${discovery.finalScore} for current interests.`
-    });
-    const attention = assessAttention({
-      targetId: discovery.id,
-      targetType: 'discovery',
-      noveltyScore: discovery.noveltyScore,
-      growthValue: curiosity.growthValue,
-      sourceQuality: discovery.confidenceScore ?? discovery.usefulnessScore,
-      userContext,
-      companionContext
-    });
-    this.emitFoundationEvent('CuriosityAssessmentCreated', 'curiosity', {
-      assessmentId: curiosity.id,
-      targetId: curiosity.targetId,
-      growthValue: curiosity.growthValue,
-      budgetCost: curiosity.budgetCost
-    }, correlationId);
-    this.emitFoundationEvent('AttentionAssessmentCreated', 'decision', {
-      assessmentId: attention.id,
-      targetId: attention.targetId,
-      deservesAttention: attention.deservesAttention,
-      attentionValue: attention.attentionValue,
-      attentionCost: attention.attentionCost
-    }, correlationId);
-    this.emitFoundationEvent('DecisionRequested', 'decision', {
-      eventType: 'DiscoveryCreated',
-      targetId: discovery.id
-    }, correlationId);
-    const decision = decideCompanionAction({
-      eventType: 'DiscoveryCreated',
-      targetId: discovery.id,
-      discovery,
-      curiosity,
-      attention,
-      userContext,
-      companionContext
-    });
-    this.emitFoundationEvent('CompanionDecisionMade', 'decision', {
-      decisionId: decision.id,
-      targetId: discovery.id,
-      action: decision.action,
-      timing: decision.timing,
-      priority: decision.priority,
-      reason: decision.reason
-    }, correlationId);
-    if (decision.action === 'stay_silent') {
-      this.emitFoundationEvent('SilenceChosen', 'decision', { decisionId: decision.id, targetId: discovery.id }, correlationId);
-    }
   }
 
   private getStoredAiSettings(): StoredAiSettings {
