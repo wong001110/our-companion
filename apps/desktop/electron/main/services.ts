@@ -108,7 +108,9 @@ export class AppServices {
   private shareOrchestrator?: DiscoveryShareOrchestrator;
   private readonly companionRuntime: CompanionRuntime;
   private explorationBroadcaster?: (event: ExplorationLoopEvent) => void;
-  private behaviorHintBroadcaster?: (command: CompanionCommand) => void;
+  private commandBroadcaster?: (command: CompanionCommand) => void;
+  private activeCommand: CompanionCommand | null = null;
+  private readonly acknowledgedCommandStatuses = new Set<string>();
   private foundationEventBroadcaster?: (event: BaseEvent) => void;
   private debugLog: AiDebugEntry[] = [];
   private foundationEventLog: BaseEvent[] = [];
@@ -158,9 +160,13 @@ export class AppServices {
         });
       },
       (command) => {
-        this.behaviorHintBroadcaster?.(command);
+        this.activeCommand = command;
+        this.commandBroadcaster?.(command);
         this.tryPresentPendingDiscovery(command);
       }
+    );
+    this.companionRuntime.setExplicitMode(
+      this.db.getAppSetting<'available' | 'focused' | 'do_not_disturb'>('attention_mode') ?? 'available'
     );
     this.companionRuntime.startLifeScheduler();
   }
@@ -733,22 +739,33 @@ export class AppServices {
       this.companionDragging = input.dragging;
       this.companionRuntime.setDragging(input.dragging);
     },
-    getBehaviorHint: async (): Promise<CompanionCommand | null> => {
-      const decision = this.companionRuntime.getLastDecision();
-      if (!decision) return null;
-      return {
-        id: createId('cmd'),
-        companionId: this.db.resolveActiveCompanionId(),
-        decision,
-        issuedAt: nowIso()
-      };
+    getAttentionMode: async (): Promise<'available' | 'focused' | 'do_not_disturb'> =>
+      this.db.getAppSetting<'available' | 'focused' | 'do_not_disturb'>('attention_mode') ?? 'available',
+    setAttentionMode: async (mode: 'available' | 'focused' | 'do_not_disturb'): Promise<void> => {
+      this.db.setAppSetting('attention_mode', mode);
+      this.companionRuntime.setExplicitMode(mode);
     },
+    listPendingActions: async () => {
+      const companionId = this.db.resolveActiveCompanionId();
+      return this.db.listPendingActions(companionId, 'local').filter((action) => action.status === 'pending' || action.status === 'ready');
+    },
+    cancelPendingAction: async (id: string): Promise<void> => {
+      this.db.updatePendingActionStatus(id, 'cancelled');
+    },
+    getActiveCommand: async (): Promise<CompanionCommand | null> => this.activeCommand,
     reportCommandAck: async (ack: CompanionCommandAck) => {
+      const acknowledgementKey = `${ack.commandId}:${ack.status}`;
+      if (this.acknowledgedCommandStatuses.has(acknowledgementKey)) return;
+      this.acknowledgedCommandStatuses.add(acknowledgementKey);
+      if (this.activeCommand?.id === ack.commandId && ['completed', 'cancelled', 'failed'].includes(ack.status)) {
+        this.activeCommand = null;
+      }
       this.emitFoundationEvent('CompanionCommandAck', 'companion', {
         commandId: ack.commandId,
         companionId: ack.companionId,
         status: ack.status,
-        reason: ack.reason
+        reason: ack.reason,
+        failedStep: ack.failedStep
       });
     }
   };
@@ -810,11 +827,11 @@ export class AppServices {
 
   attachAutonomyBroadcasters(callbacks: {
     explorationEvent: (event: ExplorationLoopEvent) => void;
-    behaviorHint?: (command: CompanionCommand) => void;
+    command?: (command: CompanionCommand) => void;
     foundationEvent?: (event: BaseEvent) => void;
   }): void {
     this.explorationBroadcaster = callbacks.explorationEvent;
-    this.behaviorHintBroadcaster = callbacks.behaviorHint;
+    this.commandBroadcaster = callbacks.command;
     this.foundationEventBroadcaster = callbacks.foundationEvent;
   }
 
@@ -1019,14 +1036,14 @@ export class AppServices {
         this.companionSessionPhase !== 'inactive' && this.companionSessionPhase !== 'idle',
         this.companionDragging
       );
-      if (this.companionRuntime.shouldPresentDiscovery(decision)) {
+      if (this.companionRuntime.shouldPresentNow(decision)) {
         this.shareOrchestrator.enqueue(discoveryPayload);
       }
       this.emitFoundationEvent('CompanionMessageQueued', 'speech', {
         discoveryId: selectedInsight.id,
         cycleId: cycle.id,
         message: selectedInsight.summary,
-        gated: !this.companionRuntime.shouldPresentDiscovery(decision),
+        gated: !this.companionRuntime.shouldPresentNow(decision),
       });
     }
 
@@ -1114,7 +1131,10 @@ export class AppServices {
       this.companionRuntime.applyRelationshipSignal(relationshipSignal);
     }
     if (input.value === 'not_interested') {
+      this.db.recordTopicPreference('local', (input.note ?? insight?.title ?? 'general').toLowerCase(), false);
       this.applyCharacterEmotion(cycle.companionId, 'user_rejects_discovery');
+    } else if (input.value === 'saved') {
+      this.db.recordTopicPreference('local', (input.note ?? insight?.title ?? 'general').toLowerCase(), true);
     }
 
     const settled = this.companionRuntime.advanceWithIntent(cycle.companionId, 'idle', 'waiting', 'Idle_Neutral');
@@ -1130,7 +1150,10 @@ export class AppServices {
     const discoveries = await runDiscoveryPipeline(
       connectors,
       {
-        userInterests: ['frontend', 'ux', 'pixijs', 'local-first'],
+        userInterests: [
+          ...this.db.listTopicPreferences('local').filter((preference) => preference.interestScore > 0).map((preference) => preference.topicKey),
+          'frontend', 'ux', 'pixijs', 'local-first'
+        ],
         recentMemoryTags: this.db.listMemoryNodes().flatMap((node) => [node.type, node.title.toLowerCase()]),
         activeCharacter,
         seenUrls: new Set(this.db.listDiscoveries({ limit: 200 }).map((item) => item.url).filter(Boolean) as string[])
@@ -1164,7 +1187,7 @@ export class AppServices {
           this.companionSessionPhase !== 'inactive' && this.companionSessionPhase !== 'idle',
           this.companionDragging
         );
-        if (!this.companionRuntime.shouldPresentDiscovery(decision) && discovery.status === 'shared') {
+        if (!this.companionRuntime.shouldPresentNow(decision) && discovery.status === 'shared') {
           this.db.updateDiscoveryStatus(discovery.id, 'candidate');
         }
         if (decision.action === 'stay_silent') {
@@ -1196,7 +1219,7 @@ export class AppServices {
     if (['listening', 'executing'].includes(state.coreState)) return false;
 
     const lastDecision = this.companionRuntime.getLastDecision();
-    if (lastDecision && !this.companionRuntime.shouldPresentDiscovery(lastDecision)) return false;
+    if (lastDecision && !this.companionRuntime.shouldPresentNow(lastDecision)) return false;
     return true;
   }
 

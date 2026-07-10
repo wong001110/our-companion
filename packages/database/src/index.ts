@@ -36,6 +36,7 @@ import type {
   PendingCompanionAction,
   SessionCloseReason,
   CompanionDecision
+  ,UserTopicPreference
 } from '@our-companion/shared';
 import type { ActionPermissionState } from '@our-companion/shared';
 import { COMPANION_CHAT_RETENTION_DAYS, createId, nowIso } from '@our-companion/shared';
@@ -88,7 +89,36 @@ export class DatabaseService {
       }
     }
     this.ensurePendingActionsTable();
+    this.ensureTopicPreferencesTable();
     this.ensureBuiltinAnn();
+  }
+
+  private ensureTopicPreferencesTable(): void {
+    this.db.exec(`CREATE TABLE IF NOT EXISTS user_topic_preferences (
+      user_id TEXT NOT NULL, topic_key TEXT NOT NULL, interest_score REAL NOT NULL DEFAULT 0,
+      positive_count INTEGER NOT NULL DEFAULT 0, negative_count INTEGER NOT NULL DEFAULT 0,
+      last_feedback_at TEXT NOT NULL, PRIMARY KEY (user_id, topic_key)
+    )`);
+  }
+
+  recordTopicPreference(userId: string, topicKey: string, positive: boolean): UserTopicPreference {
+    const current = this.db.prepare('SELECT * FROM user_topic_preferences WHERE user_id = ? AND topic_key = ?').get(userId, topicKey) as Record<string, unknown> | undefined;
+    const next = {
+      interestScore: Number(current?.interest_score ?? 0) + (positive ? 1 : -1),
+      positiveCount: Number(current?.positive_count ?? 0) + (positive ? 1 : 0),
+      negativeCount: Number(current?.negative_count ?? 0) + (positive ? 0 : 1),
+      lastFeedbackAt: nowIso()
+    };
+    this.db.prepare(`INSERT INTO user_topic_preferences (user_id, topic_key, interest_score, positive_count, negative_count, last_feedback_at)
+      VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, topic_key) DO UPDATE SET interest_score = excluded.interest_score, positive_count = excluded.positive_count, negative_count = excluded.negative_count, last_feedback_at = excluded.last_feedback_at`)
+      .run(userId, topicKey, next.interestScore, next.positiveCount, next.negativeCount, next.lastFeedbackAt);
+    return { userId, topicKey, ...next };
+  }
+
+  listTopicPreferences(userId = 'local'): UserTopicPreference[] {
+    return (this.db.prepare('SELECT * FROM user_topic_preferences WHERE user_id = ? ORDER BY last_feedback_at DESC').all(userId) as Array<Record<string, unknown>>).map((row) => ({
+      userId: String(row.user_id), topicKey: String(row.topic_key), interestScore: Number(row.interest_score), positiveCount: Number(row.positive_count), negativeCount: Number(row.negative_count), lastFeedbackAt: String(row.last_feedback_at)
+    }));
   }
 
   private ensurePendingActionsTable(): void {

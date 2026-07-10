@@ -188,6 +188,7 @@ export interface AnimationIntent {
     | 'enter'
     | 'leave';
   variant?: string;
+  direction?: 'left' | 'right' | 'up' | 'down' | 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right';
   emotion?: string;
 }
 
@@ -212,7 +213,7 @@ export interface CompanionCommand {
   expiresAt?: string;
 }
 
-export type CommandAckStatus = 'started' | 'completed' | 'cancelled' | 'failed';
+export type CommandAckStatus = 'received' | 'started' | 'completed' | 'cancelled' | 'failed';
 
 export interface CompanionCommandAck {
   commandId: string;
@@ -220,6 +221,16 @@ export interface CompanionCommandAck {
   status: CommandAckStatus;
   reportedAt: string;
   reason?: string;
+  failedStep?: string;
+}
+
+export interface UserTopicPreference {
+  userId: string;
+  topicKey: string;
+  interestScore: number;
+  positiveCount: number;
+  negativeCount: number;
+  lastFeedbackAt: string;
 }
 
 export type TypedMemoryType =
@@ -1490,8 +1501,12 @@ export interface OurCompanionApi {
     onRefresh(listener: () => void): () => void;
     reportSessionPhase(phase: CompanionSessionPhase): Promise<void>;
     reportDragging(input: { dragging: boolean }): Promise<void>;
-    getBehaviorHint(): Promise<CompanionCommand | null>;
-    onBehaviorHint(listener: (command: CompanionCommand) => void): () => void;
+    getAttentionMode(): Promise<'available' | 'focused' | 'do_not_disturb'>;
+    setAttentionMode(mode: 'available' | 'focused' | 'do_not_disturb'): Promise<void>;
+    listPendingActions(): Promise<PendingCompanionAction[]>;
+    cancelPendingAction(id: string): Promise<void>;
+    getActiveCommand(): Promise<CompanionCommand | null>;
+    onCommand(listener: (command: CompanionCommand) => void): () => void;
     reportCommandAck(ack: CompanionCommandAck): Promise<void>;
     getHistory(input?: CompanionHistoryInput): Promise<CompanionMessage[]>;
     appendMessage(input: CompanionAppendMessageInput): Promise<CompanionMessage>;

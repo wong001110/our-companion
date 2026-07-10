@@ -31,6 +31,10 @@ import { RelationshipPolicy } from './RelationshipPolicy';
 const LOCAL_USER_ID = 'local';
 const LIFE_TICK_BASE_MS = 90_000;
 
+export function shouldEmitCompanionCommand(decision: CompanionDecision): boolean {
+  return decision.action === 'share_discovery' && decision.timing === 'now';
+}
+
 export class CompanionRuntime {
   private lifeTimer: ReturnType<typeof setTimeout> | undefined;
   private lastDecision: CompanionDecision | null = null;
@@ -145,8 +149,9 @@ export class CompanionRuntime {
     } else if (phase === 'listening' || phase === 'opening' || phase === 'thinking' || phase === 'talking' || phase === 'responding') {
       this.life.interrupt(companionId, 'interacting', 'conversation active');
     }
-
-    this.conversation.handleSessionPhase(companionId, phase, LOCAL_USER_ID);
+    else {
+      this.conversation.handleSessionPhase(companionId, phase, LOCAL_USER_ID);
+    }
 
     const state = this.db.getCharacterState(companionId);
     const sessionIntent = animationIntentForSessionPhase(phase);
@@ -251,10 +256,11 @@ export class CompanionRuntime {
 
     this.lastDecision = decision;
     this.emitDecision(decision);
-    this.emitCompanionCommand(companionId, decision);
 
     if (shouldDeferDiscovery(decision)) {
       this.decisions.enqueueDeferred(decision, companionId, discovery.id, LOCAL_USER_ID);
+    } else if (shouldEmitCompanionCommand(decision)) {
+      this.emitCompanionCommand(companionId, decision);
     }
 
     return decision;
@@ -265,10 +271,6 @@ export class CompanionRuntime {
   }
 
   /** @deprecated Use shouldPresentNow — next_idle is deferred, not immediately presentable */
-  shouldPresentDiscovery(decision: CompanionDecision): boolean {
-    return shouldPresentNow(decision);
-  }
-
   applyRelationshipSignal(signal: RelationshipSignal): void {
     const companionId = this.resolveCompanionId();
     this.relationship.applySignal(LOCAL_USER_ID, companionId, signal);
@@ -325,7 +327,7 @@ export class CompanionRuntime {
     if (decision) {
       this.lastDecision = decision;
       this.emitDecision(decision);
-      this.emitCompanionCommand(id, decision);
+      if (shouldEmitCompanionCommand(decision)) this.emitCompanionCommand(id, decision);
     }
     return decision;
   }
@@ -352,7 +354,7 @@ export class CompanionRuntime {
   }
 
   private emitCompanionCommand(companionId: string, decision: CompanionDecision): void {
-    if (!this.emitCommand) return;
+    if (!this.emitCommand || !shouldEmitCompanionCommand(decision)) return;
     const command: CompanionCommand = {
       id: createId('cmd'),
       companionId,

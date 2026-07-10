@@ -45,4 +45,12 @@ describe('direction correction — companion registry', () => {
     expect(nodes.some((n) => n.id === 'm1')).toBe(true);
     db.close();
   });
+
+  it('aggregates topic feedback separately from relationship state', () => {
+    const db = new DatabaseService({ path: ':memory:' });
+    db.recordTopicPreference('local', 'pixijs', false);
+    db.recordTopicPreference('local', 'pixijs', true);
+    expect(db.listTopicPreferences('local')).toEqual([expect.objectContaining({ topicKey: 'pixijs', interestScore: 0, positiveCount: 1, negativeCount: 1 })]);
+    db.close();
+  });
 });

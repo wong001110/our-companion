@@ -58,4 +58,25 @@ describe('MemoryPolicy', () => {
     expect(db.listMemoryNodes('ann').length).toBe(before);
     db.close();
   });
+
+  it('does not invalidate an unrelated fact for an uncertain correction', () => {
+    const db = new DatabaseService();
+    const policy = new MemoryPolicy(db);
+    policy.processTurn({ userId: 'local', companionId: 'ann', userMessage: 'I prefer turn-based games.', assistantReply: 'Got it.' });
+    const existing = db.listMemoryNodes('ann')[0];
+    const candidate = policy.processTurn({ userId: 'local', companionId: 'ann', userMessage: 'Actually, I prefer tea instead of coffee.', assistantReply: 'Thanks for clarifying.' });
+    expect(candidate).toBeNull();
+    expect(db.getMemoryNode(existing.id)?.isMarkedWrong).toBe(false);
+    expect(db.listMemoryNodes('ann')).toHaveLength(1);
+    db.close();
+  });
+
+  it('discards ambiguous corrections instead of silently retaining them', () => {
+    const db = new DatabaseService();
+    const policy = new MemoryPolicy(db);
+    const candidate = policy.processTurn({ userId: 'local', companionId: 'ann', userMessage: 'Actually, that is not true.', assistantReply: 'Thanks.' });
+    expect(candidate).toBeNull();
+    expect(db.listMemoryNodes('ann')).toHaveLength(0);
+    db.close();
+  });
 });

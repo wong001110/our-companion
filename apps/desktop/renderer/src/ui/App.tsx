@@ -33,6 +33,7 @@ import type {
   UpdateAiSettingsInput,
   UpdateSpeechSettingsInput,
   UserProfile
+  ,PendingCompanionAction
 } from '@our-companion/shared';
 import { COMPANION_CHAT_RETENTION_DAYS } from '@our-companion/shared';
 import { t, type Lang } from '../i18n';
@@ -63,7 +64,6 @@ import { CompanionQuickActions } from '../companion/CompanionQuickActions';
 import { DragHandle } from '../companion/DragHandle';
 import { anchorFromBounds, type Rect } from '../companion/floatingPlacement';
 import { useCompanionBehavior } from '../companion/behavior/useCompanionBehavior';
-import type { CompanionBehaviorDecision } from '../companion/behavior/CompanionBehaviorController';
 import { useInteractiveRegion } from '../companion/useInteractiveRegion';
 import type { CompanionProfile } from '@our-companion/shared';
 import { CompanionCreationPage } from '../companion/creation/CompanionCreationPage';
@@ -219,28 +219,29 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       sessionActiveRef.current = paused;
     }
   });
+  const commandCompletionRef = useRef<(() => void) | null>(null);
 
   const behavior = useCompanionBehavior({
     companionId: companion.id,
-    hasDiscoveryCandidate: discovery.hasCandidate(),
-    userIsTyping: textOpen,
-    panelOpen: false,
-    activeConversation: phase !== 'idle',
-    onDecision: (decision) => handleBehaviorDecision(decision),
+    onCommand: (command) => handleCompanionCommand(command),
   });
 
   const [softHintVisible, setSoftHintVisible] = useState(false);
 
-  function handleBehaviorDecision(decision: CompanionBehaviorDecision) {
-    if (decision.type === 'show_soft_hint' && !discovery.popup && !softHintVisible) {
+  function handleCompanionCommand(command: import('@our-companion/shared').CompanionCommand): void | Promise<void> {
+    const displayHint = command.decision.displayHint;
+    if (displayHint === 'show_soft_hint' && !discovery.popup && !softHintVisible) {
       setSoftHintVisible(true);
       behavior.recordSpeech();
       speech.showInstant(`${companion.name} found something interesting. Want to see it?`);
-    } else if (decision.type === 'present_discovery' && !discovery.popup) {
+    } else if (displayHint === 'present_discovery' && !discovery.popup) {
       const next = discovery.presentNext();
       if (next) {
         speech.showTypewriter(next.shareMessage);
         behavior.recordDiscoveryPresented();
+        return new Promise<void>((resolve) => {
+          commandCompletionRef.current = resolve;
+        });
       }
     }
   }
@@ -256,6 +257,8 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const handleTypewriterComplete = useCallback(() => {
     speech.onTypewriterComplete();
     onTypewriterComplete();
+    commandCompletionRef.current?.();
+    commandCompletionRef.current = null;
   }, [speech.onTypewriterComplete, onTypewriterComplete]);
 
   const openTextInput = useCallback(() => {
@@ -1658,6 +1661,8 @@ function SettingsView({ state, behaviorSettings, onRefresh, onLangChange, assetR
   const [apiKey, setApiKey] = useState('');
   const [replyLang, setReplyLang] = useState<CompanionReplyLanguage>('en');
   const [uiLang, setUiLang] = useState<UiLang>('en');
+  const [attentionMode, setAttentionMode] = useState<'available' | 'focused' | 'do_not_disturb'>('available');
+  const [pendingActions, setPendingActions] = useState<PendingCompanionAction[]>([]);
   const [status, setStatus] = useState('Loading settings...');
   const [saving, setSaving] = useState(false);
   const [developerOpen, setDeveloperOpen] = useState(() => localStorage.getItem('companion:developer:enabled') === 'true');
@@ -1672,6 +1677,8 @@ function SettingsView({ state, behaviorSettings, onRefresh, onLangChange, assetR
     setEndpoint(next.endpoint);
     setReplyLang(next.replyLanguage ?? 'en');
     setUiLang(next.uiLang ?? 'en');
+    setAttentionMode(await window.ourCompanion.companion.getAttentionMode());
+    setPendingActions(await window.ourCompanion.companion.listPendingActions());
     setStatus(next.apiKeyConfigured ? 'API key saved.' : 'No API key saved.');
   }
 
@@ -1703,6 +1710,16 @@ function SettingsView({ state, behaviorSettings, onRefresh, onLangChange, assetR
         <PaperCard title={t(lang, 'settings_privacy_title')} tape><p>{t(lang, 'settings_privacy_desc')}</p></PaperCard>
         <VoiceSettingsCard />
         <OnlineModeCard />
+        <PaperCard title="Attention" tape>
+          <label><span>Companion initiative</span><select value={attentionMode} onChange={(event) => {
+            const mode = event.target.value as 'available' | 'focused' | 'do_not_disturb';
+            setAttentionMode(mode);
+            void window.ourCompanion.companion.setAttentionMode(mode);
+          }}><option value="available">Available</option><option value="focused">Focus</option><option value="do_not_disturb">Do Not Disturb</option></select></label>
+        </PaperCard>
+        <PaperCard title="Queued discoveries" tape>
+          {pendingActions.length === 0 ? <p>No discoveries are waiting.</p> : pendingActions.map((action) => <div key={action.id} className="action-row"><span>{action.deferReason ?? 'Deferred discovery'} — expires {new Date(action.expiresAt).toLocaleTimeString()}</span><button onClick={() => void window.ourCompanion.companion.cancelPendingAction(action.id).then(() => setPendingActions((items) => items.filter((item) => item.id !== action.id)))}>Cancel</button></div>)}
+        </PaperCard>
         <ActionPermissionsCard />
         <PaperCard title={t(lang, 'settings_ai_title')} tape className="settings-panel">
           <h2>{t(lang, 'settings_ai_provider')}</h2>

@@ -86,7 +86,7 @@
 | New behavior | `CompanionCommand` + `reportCommandAck`; renderer executes only |
 | Files changed | `shared`, `preload`, `services.ts`, `useCompanionBehavior.ts` |
 | Tests | `CompanionBehaviorController.test.ts` (existing) |
-| Known limitations | Channel name `companion:behaviorHint` retained for compatibility |
+| Known limitations | Replaced in Phase 1 by the authoritative `companion:command` channel. |
 
 ## Issue 9 — Daily life
 

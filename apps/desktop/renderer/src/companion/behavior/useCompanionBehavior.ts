@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { CompanionCommand } from '@our-companion/shared';
 import type {
   CompanionBehaviorState,
   CompanionMode,
@@ -9,30 +10,15 @@ import type {
   DiscoveryPresentationState,
 } from './CompanionBehaviorTypes';
 import { createDefaultBehaviorState } from './CompanionBehaviorTypes';
-import {
-  applyBehaviorHint,
-  type CompanionBehaviorDecision,
-} from './CompanionBehaviorController';
-import {
-  applyDismissSuppression,
-  applyIgnoreSuppression,
-} from './InterruptionPolicy';
+import { applyDismissSuppression, applyIgnoreSuppression } from './InterruptionPolicy';
+import { createCommandExecutor } from './commandLifecycle';
 
 const STORAGE_KEY_PREFIX = 'companion:behavior:';
 
 function loadPersistedState(companionId: string): Partial<CompanionBehaviorState> {
   try {
     const raw = localStorage.getItem(`${STORAGE_KEY_PREFIX}${companionId}`);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return {
-      mode: parsed.mode as CompanionMode | undefined,
-      mood: parsed.mood as CompanionMood | undefined,
-      energy: parsed.energy as CompanionEnergy | undefined,
-      initiativeLevel: parsed.initiativeLevel as InitiativeLevel | undefined,
-      lastUserDismissedAt: parsed.lastUserDismissedAt as number | null | undefined,
-      lastDiscoveryPresentedAt: parsed.lastDiscoveryPresentedAt as number | null | undefined,
-    };
+    return raw ? JSON.parse(raw) as Partial<CompanionBehaviorState> : {};
   } catch {
     return {};
   }
@@ -40,196 +26,71 @@ function loadPersistedState(companionId: string): Partial<CompanionBehaviorState
 
 function persistState(companionId: string, state: CompanionBehaviorState): void {
   try {
-    localStorage.setItem(`${STORAGE_KEY_PREFIX}${companionId}`, JSON.stringify({
-      mode: state.mode,
-      mood: state.mood,
-      energy: state.energy,
-      initiativeLevel: state.initiativeLevel,
-      lastUserDismissedAt: state.lastUserDismissedAt,
-      lastDiscoveryPresentedAt: state.lastDiscoveryPresentedAt,
-    }));
-  } catch { /* ignore */ }
+    localStorage.setItem(`${STORAGE_KEY_PREFIX}${companionId}`, JSON.stringify(state));
+  } catch { /* local display state is optional */ }
 }
 
 export interface UseCompanionBehaviorOptions {
   companionId: string;
-  hasDiscoveryCandidate: boolean;
-  userIsTyping: boolean;
-  panelOpen: boolean;
-  activeConversation: boolean;
-  onDecision?: (decision: CompanionBehaviorDecision) => void;
+  onCommand: (command: CompanionCommand) => void | Promise<void>;
 }
 
-export function useCompanionBehavior(opts: UseCompanionBehaviorOptions) {
-  const { companionId, hasDiscoveryCandidate, userIsTyping, panelOpen, activeConversation, onDecision } = opts;
-
-  const [state, setState] = useState<CompanionBehaviorState>(() => {
-    const persisted = loadPersistedState(companionId);
-    return { ...createDefaultBehaviorState(), ...persisted };
-  });
-  const stateRef = useRef(state);
-  const [lastDecision, setLastDecision] = useState<CompanionBehaviorDecision | null>(null);
-  const [recentDismissCount, setRecentDismissCount] = useState(0);
-  const [recentIgnoreCount, setRecentIgnoreCount] = useState(0);
-  const dismissCountRef = useRef(0);
-  const ignoreCountRef = useRef(0);
-  const decisionTimerRef = useRef<number | undefined>(undefined);
+/** Executes authoritative main-process commands; it makes no behavior decisions. */
+export function useCompanionBehavior({ companionId, onCommand }: UseCompanionBehaviorOptions) {
+  const [state, setState] = useState<CompanionBehaviorState>(() => ({
+    ...createDefaultBehaviorState(),
+    ...loadPersistedState(companionId),
+  }));
+  const [activeCommand, setActiveCommand] = useState<CompanionCommand | null>(null);
 
   useEffect(() => {
-    stateRef.current = state;
     persistState(companionId, state);
   }, [companionId, state]);
 
-  const [displayHint, setDisplayHint] = useState<string | undefined>(undefined);
-  const displayHintRef = useRef<string | undefined>(undefined);
+  const acknowledge = useCallback((command: CompanionCommand, status: 'received' | 'started' | 'completed' | 'cancelled' | 'failed', reason?: string, failedStep?: string) => {
+    void window.ourCompanion.companion.reportCommandAck?.({
+      commandId: command.id,
+      companionId: command.companionId,
+      status,
+      reportedAt: new Date().toISOString(),
+      reason,
+      failedStep,
+    });
+  }, []);
+
+  const execute = useCallback(createCommandExecutor({
+    companionId,
+    acknowledge,
+    execute: async (command) => {
+      setActiveCommand(command);
+      try {
+        await onCommand(command);
+      } finally {
+        setActiveCommand((current) => current?.id === command.id ? null : current);
+      }
+    },
+  }), [acknowledge, companionId, onCommand]);
 
   useEffect(() => {
-    displayHintRef.current = displayHint;
-  }, [displayHint]);
-
-  useEffect(() => {
-    const unsubscribe = window.ourCompanion.companion.onBehaviorHint?.((command) => {
-      setDisplayHint(command.decision.displayHint);
-      void window.ourCompanion.companion.reportCommandAck?.({
-        commandId: command.id,
-        companionId: command.companionId,
-        status: 'started',
-        reportedAt: new Date().toISOString()
-      });
+    const unsubscribe = window.ourCompanion.companion.onCommand?.((command) => { void execute(command); });
+    void window.ourCompanion.companion.getActiveCommand?.().then((command) => {
+      if (command) void execute(command);
     });
     return () => unsubscribe?.();
-  }, []);
+  }, [execute]);
 
-  const evaluate = useCallback(() => {
-    const now = Date.now();
-    const decision = applyBehaviorHint({
-      now,
-      hasDiscoveryCandidate,
-      userIsTyping,
-      panelOpen,
-      activeConversation,
-      recentDismissCount: dismissCountRef.current,
-      recentIgnoreCount: ignoreCountRef.current,
-      state: stateRef.current,
-      displayHint: displayHintRef.current,
-    });
-    setLastDecision(decision);
-    onDecision?.(decision);
-    return decision;
-  }, [hasDiscoveryCandidate, userIsTyping, panelOpen, activeConversation, onDecision]);
+  const recordInteraction = useCallback(() => setState((prev) => ({ ...prev, lastUserInteractionAt: Date.now() })), []);
+  const recordSpeech = useCallback(() => setState((prev) => ({ ...prev, lastCompanionSpokeAt: Date.now() })), []);
+  const recordDiscoveryPresented = useCallback(() => setState((prev) => ({ ...prev, lastDiscoveryPresentedAt: Date.now(), discoveryPresentationState: 'presented' })), []);
+  const recordDismiss = useCallback(() => setState((prev) => applyDismissSuppression(prev, Date.now())), []);
+  const recordIgnore = useCallback(() => setState((prev) => applyIgnoreSuppression(prev, Date.now(), 1)), []);
+  const setDiscoveryPresentationState = useCallback((discoveryPresentationState: DiscoveryPresentationState) => setState((prev) => ({ ...prev, discoveryPresentationState })), []);
+  const setMode = useCallback((mode: CompanionMode) => setState((prev) => ({ ...prev, mode })), []);
+  const setMood = useCallback((mood: CompanionMood) => setState((prev) => ({ ...prev, mood })), []);
+  const setEnergy = useCallback((energy: CompanionEnergy) => setState((prev) => ({ ...prev, energy })), []);
+  const setFocus = useCallback((focus: CompanionFocus) => setState((prev) => ({ ...prev, focus })), []);
+  const setInitiativeLevel = useCallback((initiativeLevel: InitiativeLevel) => setState((prev) => ({ ...prev, initiativeLevel })), []);
+  const setDebugOverride = useCallback((debugOverride: boolean) => setState((prev) => ({ ...prev, debugOverride })), []);
 
-  useEffect(() => {
-    void window.ourCompanion.companion.getBehaviorHint?.().then((command) => {
-      if (command?.decision.displayHint) setDisplayHint(command.decision.displayHint);
-    });
-  }, [companionId]);
-
-  useEffect(() => {
-    decisionTimerRef.current = window.setInterval(() => {
-      void window.ourCompanion.companion.getBehaviorHint?.().then((command) => {
-        if (command?.decision.displayHint) setDisplayHint(command.decision.displayHint);
-      });
-      evaluate();
-    }, 30_000);
-    evaluate();
-    return () => {
-      if (decisionTimerRef.current !== undefined) window.clearInterval(decisionTimerRef.current);
-    };
-  }, [evaluate, displayHint]);
-
-  const recordInteraction = useCallback(() => {
-    setState((prev) => ({ ...prev, lastUserInteractionAt: Date.now() }));
-  }, []);
-
-  const recordSpeech = useCallback(() => {
-    setState((prev) => ({ ...prev, lastCompanionSpokeAt: Date.now() }));
-  }, []);
-
-  const recordDiscoveryPresented = useCallback(() => {
-    setState((prev) => ({
-      ...prev,
-      lastDiscoveryPresentedAt: Date.now(),
-      discoveryPresentationState: 'presented',
-    }));
-  }, []);
-
-  const recordDismiss = useCallback(() => {
-    dismissCountRef.current += 1;
-    setRecentDismissCount(dismissCountRef.current);
-    setState((prev) => applyDismissSuppression(prev, Date.now()));
-  }, []);
-
-  const recordIgnore = useCallback(() => {
-    ignoreCountRef.current += 1;
-    setRecentIgnoreCount(ignoreCountRef.current);
-    setState((prev) => applyIgnoreSuppression(prev, Date.now(), ignoreCountRef.current));
-  }, []);
-
-  const setDiscoveryPresentationState = useCallback((s: DiscoveryPresentationState) => {
-    setState((prev) => ({ ...prev, discoveryPresentationState: s }));
-  }, []);
-
-  const setMode = useCallback((mode: CompanionMode) => {
-    setState((prev) => ({ ...prev, mode }));
-  }, []);
-
-  const setMood = useCallback((mood: CompanionMood) => {
-    setState((prev) => ({ ...prev, mood }));
-  }, []);
-
-  const setEnergy = useCallback((energy: CompanionEnergy) => {
-    setState((prev) => ({ ...prev, energy }));
-  }, []);
-
-  const setFocus = useCallback((focus: CompanionFocus) => {
-    setState((prev) => ({ ...prev, focus }));
-  }, []);
-
-  const setInitiativeLevel = useCallback((level: InitiativeLevel) => {
-    setState((prev) => ({ ...prev, initiativeLevel: level }));
-  }, []);
-
-  const setDebugOverride = useCallback((on: boolean) => {
-    setState((prev) => ({ ...prev, debugOverride: on }));
-  }, []);
-
-  const forceDecision = useCallback(() => {
-    return evaluate();
-  }, [evaluate]);
-
-  const resetTimers = useCallback(() => {
-    setState((prev) => ({
-      ...prev,
-      lastCompanionSpokeAt: null,
-      lastUserInteractionAt: null,
-      lastDiscoveryPresentedAt: null,
-      lastUserDismissedAt: null,
-      interruptionSuppressedUntil: null,
-    }));
-    dismissCountRef.current = 0;
-    ignoreCountRef.current = 0;
-    setRecentDismissCount(0);
-    setRecentIgnoreCount(0);
-  }, []);
-
-  return {
-    state,
-    lastDecision,
-    recentDismissCount,
-    recentIgnoreCount,
-    recordInteraction,
-    recordSpeech,
-    recordDiscoveryPresented,
-    recordDismiss,
-    recordIgnore,
-    setDiscoveryPresentationState,
-    setMode,
-    setMood,
-    setEnergy,
-    setFocus,
-    setInitiativeLevel,
-    setDebugOverride,
-    forceDecision,
-    resetTimers,
-  };
+  return { state, activeCommand, recordInteraction, recordSpeech, recordDiscoveryPresented, recordDismiss, recordIgnore, setDiscoveryPresentationState, setMode, setMood, setEnergy, setFocus, setInitiativeLevel, setDebugOverride };
 }

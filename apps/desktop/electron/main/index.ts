@@ -281,7 +281,11 @@ function registerIpc(): void {
     'companion:clearHistory': services.companion.clearHistory,
     'companion:reportSessionPhase': services.companion.reportSessionPhase,
     'companion:reportDragging': services.companion.reportDragging,
-    'companion:getBehaviorHint': services.companion.getBehaviorHint,
+    'companion:getAttentionMode': services.companion.getAttentionMode,
+    'companion:setAttentionMode': services.companion.setAttentionMode,
+    'companion:listPendingActions': services.companion.listPendingActions,
+    'companion:cancelPendingAction': services.companion.cancelPendingAction,
+    'companion:getActiveCommand': services.companion.getActiveCommand,
     'companion:reportCommandAck': services.companion.reportCommandAck,
     'debug:resetData': services.debug.resetData,
     'debug:getFoundationLog': services.debug.getFoundationLog,
@@ -494,9 +498,9 @@ function startDiscoveryAutomation(): void {
       companionWindow?.webContents.send('autonomy:explorationEvent', event);
       panelWindow?.webContents.send('autonomy:explorationEvent', event);
     },
-    behaviorHint: (command) => {
-      companionWindow?.webContents.send('companion:behaviorHint', command);
-      panelWindow?.webContents.send('companion:behaviorHint', command);
+    command: (command) => {
+      companionWindow?.webContents.send('companion:command', command);
+      panelWindow?.webContents.send('companion:command', command);
     },
     foundationEvent: (event) => {
       companionWindow?.webContents.send('debug:foundationEvent', event);

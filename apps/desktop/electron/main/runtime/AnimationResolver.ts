@@ -21,7 +21,7 @@ export function resolveAnimationIntent(intent: AnimationIntent): AnimationResolu
 }
 
 function mapIntentToAsset(intent: AnimationIntent): string | undefined {
-  const { category, variant, emotion } = intent;
+  const { category, variant, emotion, direction } = intent;
 
   if (category === 'idle') {
     if (variant === 'sleeping') return 'Idle_Sleeping';
@@ -36,8 +36,11 @@ function mapIntentToAsset(intent: AnimationIntent): string | undefined {
     return 'Talk_Neutral';
   }
   if (category === 'listen') return 'Listening';
-  if (category === 'think') return 'Talk_Thinking';
-  if (category === 'walk') return 'Walk_Right';
+  if (category === 'think') return 'Think';
+  if (category === 'walk') {
+    const walks = { left: 'Walk_Left', right: 'Walk_Right', up: 'Walk_Up', down: 'Walk_Down', top_left: 'Walk_TopLeft', top_right: 'Walk_TopRight', bottom_left: 'Walk_BottomLeft', bottom_right: 'Walk_BottomRight' };
+    return direction ? walks[direction] : undefined;
+  }
   if (category === 'expedition') {
     if (variant === 'return') return 'Expedition_Return';
     if (variant === 'prepare') return 'Expedition_Prepare';
@@ -53,8 +56,8 @@ function categoryFallback(category: AnimationIntent['category']): string {
     idle: 'Idle_Neutral',
     talk: 'Talk_Neutral',
     listen: 'Listening',
-    think: 'Talk_Thinking',
-    walk: 'Walk_Right',
+    think: 'Think',
+    walk: 'Idle_Neutral',
     expedition: 'Expedition_Present',
     work: 'Work_Focus',
     music: 'Music_Idle'

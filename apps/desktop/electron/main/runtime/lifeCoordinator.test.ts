@@ -36,4 +36,21 @@ describe('LifeCoordinator', () => {
     const restored = life.restoreAfterOverride('ann');
     expect(restored).toBe('thinking');
   });
+
+  it('keeps life state isolated per Companion', () => {
+    const life = new LifeCoordinator({ now: () => 1_000_000, random: () => 0 });
+    life.initialize('ann', 'thinking', 'ann state');
+    life.initialize('bea', 'resting', 'bea state');
+    expect(life.getState('ann')?.activity).toBe('thinking');
+    expect(life.getState('bea')?.activity).toBe('resting');
+  });
+
+  it('selects sleeping only during configured nighttime hours', () => {
+    const life = new LifeCoordinator({ now: () => 1_000_000, random: () => 0.5 });
+    life.initialize('ann', 'idle', 'start');
+    const day = life.selectNextActivity('ann', { conversationActive: false, companionDragging: false, hasPendingAction: false, localHour: 14 });
+    expect(day).not.toBe('sleeping');
+    const night = life.selectNextActivity('ann', { conversationActive: false, companionDragging: false, hasPendingAction: false, localHour: 1 });
+    expect(['idle', 'resting', 'sleeping', 'thinking']).toContain(night);
+  });
 });

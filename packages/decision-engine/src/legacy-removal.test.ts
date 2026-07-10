@@ -22,13 +22,16 @@ describe('legacy flow removal — negative tests', () => {
     expect(source).not.toContain('discoveryAnnounce:');
   });
 
-  it('CompanionBehaviorController does not contain initiative-based local decisions', () => {
+  it('renderer behavior hook has no secondary decision timer or behavior-hint flow', () => {
     const source = readFileSync(
-      resolve(__dirname, '../../../apps/desktop/renderer/src/companion/behavior/CompanionBehaviorController.ts'),
+      resolve(__dirname, '../../../apps/desktop/renderer/src/companion/behavior/useCompanionBehavior.ts'),
       'utf8'
     );
-    expect(source).not.toContain('adjustedInitiative');
-    expect(source).not.toContain('SOFT_HINT_GAP');
-    expect(source).toContain('applyBehaviorHint');
+    expect(source).not.toContain('setInterval');
+    expect(source).not.toContain('applyBehaviorHint');
+    expect(source).not.toContain('displayHint');
+    expect(source).toContain('onCommand');
+    expect(source).toContain("'received'");
+    expect(source).toContain("'completed'");
   });
 });

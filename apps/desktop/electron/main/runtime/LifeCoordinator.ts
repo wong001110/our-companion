@@ -32,11 +32,12 @@ const PREFERRED_DURATION_MS: Record<CompanionLifeActivity, number> = {
   interacting: 0
 };
 
-const SELECTABLE: CompanionLifeActivity[] = ['idle', 'resting', 'thinking', 'listening_music'];
+const DAYTIME: CompanionLifeActivity[] = ['idle', 'resting', 'thinking', 'listening_music'];
+const NIGHTTIME: CompanionLifeActivity[] = ['idle', 'resting', 'sleeping', 'thinking'];
 
 export class LifeCoordinator {
-  private state: CompanionLifeState | null = null;
-  private lastMusicAt = 0;
+  private readonly states = new Map<string, CompanionLifeState>();
+  private readonly lastMusicAt = new Map<string, number>();
   private readonly now: () => number;
   private readonly random: () => number;
 
@@ -45,18 +46,19 @@ export class LifeCoordinator {
     this.random = deps.random ?? Math.random;
   }
 
-  getState(): CompanionLifeState | null {
-    return this.state;
+  getState(companionId?: string): CompanionLifeState | null {
+    return companionId ? this.states.get(companionId) ?? null : this.states.values().next().value ?? null;
   }
 
   initialize(companionId: string, activity: CompanionLifeActivity = 'idle', reason = 'startup'): CompanionLifeState {
-    this.state = this.createState(companionId, activity, reason);
-    return this.state;
+    const state = this.createState(companionId, activity, reason);
+    this.states.set(companionId, state);
+    return state;
   }
 
   canTransition(companionId: string): boolean {
-    if (!this.state || this.state.companionId !== companionId) return true;
-    return this.now() >= new Date(this.state.minimumEndAt).getTime();
+    const state = this.states.get(companionId);
+    return !state || this.now() >= new Date(state.minimumEndAt).getTime();
   }
 
   selectNextActivity(companionId: string, input: {
@@ -72,44 +74,45 @@ export class LifeCoordinator {
       return 'waiting';
     }
 
-    const previous = this.state?.activity;
-    const candidates = SELECTABLE.filter((a) => a !== previous);
+    const previous = this.states.get(companionId)?.activity;
+    const allowSleep = input.localHour >= 23 || input.localHour < 6;
+    const candidates = (allowSleep ? NIGHTTIME : DAYTIME).filter((a) => a !== previous);
 
-    const hour = input.localHour;
-    const allowSleep = hour >= 23 || hour < 6;
     const pool = candidates.filter((a) => {
-      if (a === 'sleeping' && !allowSleep) return false;
-      if (a === 'listening_music' && this.now() - this.lastMusicAt < 600_000) return false;
+      if (a === 'listening_music' && this.now() - (this.lastMusicAt.get(companionId) ?? 0) < 600_000) return false;
       return true;
     });
 
     const chosen = pool[Math.floor(this.random() * pool.length)] ?? 'idle';
-    if (chosen === 'listening_music') this.lastMusicAt = this.now();
+    if (chosen === 'listening_music') this.lastMusicAt.set(companionId, this.now());
     return chosen;
   }
 
   transition(companionId: string, activity: CompanionLifeActivity, reason: string): CompanionLifeState {
-    const previous = this.state?.activity;
-    this.state = {
+    const previous = this.states.get(companionId)?.activity;
+    const state: CompanionLifeState = {
       ...this.createState(companionId, activity, reason),
       previousActivity: previous
     };
-    return this.state;
+    this.states.set(companionId, state);
+    return state;
   }
 
   interrupt(companionId: string, override: CompanionLifeActivity, reason: string): CompanionLifeState {
-    const previous = this.state?.companionId === companionId ? this.state.activity : undefined;
-    this.state = {
+    const previous = this.states.get(companionId)?.activity;
+    const state: CompanionLifeState = {
       ...this.createState(companionId, override, reason),
       previousActivity: previous,
       interruptibility: 'restricted'
     };
-    return this.state;
+    this.states.set(companionId, state);
+    return state;
   }
 
   restoreAfterOverride(companionId: string): CompanionLifeActivity {
-    if (!this.state || this.state.companionId !== companionId) return 'idle';
-    const prev = this.state.previousActivity;
+    const state = this.states.get(companionId);
+    if (!state) return 'idle';
+    const prev = state.previousActivity;
     if (prev && prev !== 'interacting') {
       this.transition(companionId, prev, 'restore after override');
       return prev;

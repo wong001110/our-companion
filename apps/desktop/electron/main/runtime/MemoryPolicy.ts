@@ -51,7 +51,8 @@ export class MemoryPolicy {
     if (retained.retention === 'discard') return null;
 
     if (retained.retention === 'requires_confirmation') {
-      return retained;
+      console.info(`[memory] Discarded confirmation-required candidate ${retained.id}: ${retained.reason}`);
+      return null;
     }
 
     this.commitMemory(retained, input);
@@ -96,14 +97,14 @@ export class MemoryPolicy {
   classify(candidate: MemoryCandidate): MemoryCandidate {
     const text = (candidate.sourceText ?? '').toLowerCase();
 
+    if (/\b(actually|that's wrong|not true|i meant)\b/.test(text)) {
+      return { ...candidate, proposedType: 'user_fact', confidence: 0.8, reason: 'user correction' };
+    }
     if (/\b(i prefer|i like|my favorite|i love|prefer)\b/.test(text)) {
       return { ...candidate, proposedType: 'user_preference', confidence: 0.85, reason: 'explicit preference' };
     }
     if (/\b(don't|do not|never|please don't)\b/.test(text) && /\b(ask|talk|mention|bring up)\b/.test(text)) {
       return { ...candidate, proposedType: 'user_boundary', confidence: 0.9, sensitivity: 'personal', reason: 'explicit boundary' };
-    }
-    if (/\b(actually|that's wrong|not true|i meant)\b/.test(text)) {
-      return { ...candidate, proposedType: 'user_fact', confidence: 0.8, reason: 'user correction' };
     }
     if (/\b(remember that|keep in mind|for future)\b/.test(text)) {
       return { ...candidate, proposedType: 'user_fact', confidence: 0.75, reason: 'explicit remember request' };
@@ -120,7 +121,11 @@ export class MemoryPolicy {
       return { ...candidate, retention: 'long_term' };
     }
     if (candidate.proposedType === 'user_fact' && candidate.reason === 'user correction') {
-      return { ...candidate, retention: 'long_term' };
+      return {
+        ...candidate,
+        retention: 'requires_confirmation',
+        reason: 'uncertain correction requires confirmation'
+      };
     }
     if (candidate.retention === 'discard') return candidate;
     if (candidate.proposedType === 'user_fact' && candidate.confidence >= 0.7) {
@@ -144,16 +149,6 @@ export class MemoryPolicy {
       userEvidence: input.userMessage.slice(0, 500),
       assistantInterpretation: input.assistantReply.slice(0, 300)
     };
-
-    let supersedesId: string | undefined;
-    if (candidate.reason === 'user correction') {
-      const existing = this.db.listMemoryNodes(input.companionId);
-      const match = existing.find((n) => n.memoryType === 'user_fact' && !n.isMarkedWrong);
-      if (match) {
-        supersedesId = match.id;
-        this.db.updateMemoryNode({ ...match, isMarkedWrong: true, updatedAt: nowIso() });
-      }
-    }
 
     const memoryType: TypedMemoryType = candidate.proposedType;
     const scope = candidate.retention === 'temporary' ? 'session' : 'companion';
@@ -184,7 +179,6 @@ export class MemoryPolicy {
         scope,
         createdAt: nowIso(),
         expiresAt,
-        supersedesMemoryId: supersedesId,
         ...evidence
       }
     });

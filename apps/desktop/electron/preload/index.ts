@@ -147,11 +147,15 @@ const api: OurCompanionApi = {
     clearHistory: (input?: { characterId?: string }) => invoke('companion:clearHistory', input),
     reportSessionPhase: (phase: CompanionSessionPhase) => invoke('companion:reportSessionPhase', phase),
     reportDragging: (input: { dragging: boolean }) => invoke('companion:reportDragging', input),
-    getBehaviorHint: () => invoke('companion:getBehaviorHint'),
+    getAttentionMode: () => invoke('companion:getAttentionMode'),
+    setAttentionMode: (mode: 'available' | 'focused' | 'do_not_disturb') => invoke('companion:setAttentionMode', mode),
+    listPendingActions: () => invoke('companion:listPendingActions'),
+    cancelPendingAction: (id: string) => invoke('companion:cancelPendingAction', id),
+    getActiveCommand: () => invoke('companion:getActiveCommand'),
     reportCommandAck: (ack: import('@our-companion/shared').CompanionCommandAck) =>
       invoke('companion:reportCommandAck', ack),
-    onBehaviorHint: (listener: (command: import('@our-companion/shared').CompanionCommand) => void) => {
-      const channel = 'companion:behaviorHint';
+    onCommand: (listener: (command: import('@our-companion/shared').CompanionCommand) => void) => {
+      const channel = 'companion:command';
       const handler = (_event: Electron.IpcRendererEvent, command: import('@our-companion/shared').CompanionCommand) =>
         listener(command);
       ipcRenderer.on(channel, handler);

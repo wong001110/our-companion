@@ -10,8 +10,20 @@ describe('AnimationResolver', () => {
     expect(resolveToAssetKey({ category: 'talk', emotion: 'neutral' })).toBe('Talk_Neutral');
   });
 
-  it('maps thinking to Talk_Thinking', () => {
-    expect(resolveToAssetKey({ category: 'think' })).toBe('Talk_Thinking');
+  it('maps silent thinking to Think', () => {
+    expect(resolveToAssetKey({ category: 'think' })).toBe('Think');
+  });
+
+  it('keeps thinking while speaking distinct', () => {
+    expect(resolveToAssetKey({ category: 'talk', emotion: 'thinking' })).toBe('Talk_Thinking');
+  });
+
+  it('maps all eight walk directions', () => {
+    const expected = { left: 'Walk_Left', right: 'Walk_Right', up: 'Walk_Up', down: 'Walk_Down', top_left: 'Walk_TopLeft', top_right: 'Walk_TopRight', bottom_left: 'Walk_BottomLeft', bottom_right: 'Walk_BottomRight' } as const;
+    for (const [direction, asset] of Object.entries(expected)) {
+      expect(resolveToAssetKey({ category: 'walk', direction: direction as keyof typeof expected })).toBe(asset);
+    }
+    expect(resolveAnimationIntent({ category: 'walk' }).assetKey).toBe('Idle_Neutral');
   });
 
   it('uses Idle_Neutral fallback for unknown mapping', () => {
