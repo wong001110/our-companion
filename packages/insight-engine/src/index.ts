@@ -92,7 +92,7 @@ export function generateInsights(input: GenerateInsightsInput): InsightV2[] {
     summary: primaryCandidate?.summary ?? input.curiosityTarget.description,
     explanation: primaryCandidate
       ? `${primaryCandidate.title} points toward ${input.curiosityTarget.topic} being worth a closer look.`
-      : `Ann could not find strong outside evidence yet, but ${input.curiosityTarget.topic} still looks meaningful from memory and patterns.`,
+      : `Companion could not find strong outside evidence yet, but ${input.curiosityTarget.topic} still looks meaningful from memory and patterns.`,
     supportingPatternIds: relatedPattern ? [relatedPattern.id] : [],
     supportingMemoryIds: relatedMemoryIds,
     confidence,
@@ -142,7 +142,7 @@ export function generateCognitiveInsight(input: GenerateCognitiveInsightInput): 
     pattern?.summary ??
     concept?.summary ??
     candidate?.summary ??
-    'Ann found a meaningful relationship worth considering later.';
+    'Companion found a meaningful relationship worth considering later.';
   const confidence = Math.min(1, Math.max(pattern?.confidence ?? 0, candidate?.evidenceScore ?? 0.55));
   const growthValue = Math.round(
     Math.min(100, ((pattern?.strength ?? 0.55) * 45 + (candidate?.usefulnessScore ?? 0.55) * 35 + confidence * 20))
@@ -162,7 +162,7 @@ export function generateCognitiveInsight(input: GenerateCognitiveInsightInput): 
 }
 
 // ============================================================================
-// Insight Engine V2 — Enhanced insight generation
+// Insight Engine V2 Ã¢â‚¬â€ Enhanced insight generation
 // ============================================================================
 
 export { InsightEngine } from './insight-engine';

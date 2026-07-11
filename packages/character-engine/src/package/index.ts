@@ -1,6 +1,5 @@
 export {
   requiredCreatorAnimations,
-  defaultAnnPackage,
   validateCharacterPackage,
   CharacterPackageRegistry,
   loadCharacterPackage,

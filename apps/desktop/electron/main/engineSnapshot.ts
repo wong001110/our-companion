@@ -1,6 +1,6 @@
 import type { DatabaseService } from '@our-companion/database';
 import type { CompanionInsight, DiscoverySchedulingDebug, EngineSnapshot, EngineSnapshotInput, InsightV2, Pattern, PatternV2 } from '@our-companion/shared';
-import { DEFAULT_CHARACTER_ID, nowIso } from '@our-companion/shared';
+import { nowIso } from '@our-companion/shared';
 import type { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 
 function mapPatternToV2(p: Pattern): PatternV2 {

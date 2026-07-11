@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { CharacterPackage } from '@our-companion/shared';
 import {
   animationFor,
   applyEmotionEvent,
@@ -6,7 +7,6 @@ import {
   createInitialCharacterState,
   createRuntimeDescriptor,
   decayEmotion,
-  defaultAnnPackage,
   exportCharacterPackage,
   importCharacterPackage,
   loadCharacterPackage,
@@ -30,6 +30,13 @@ import {
   defaultPerformanceScripts,
 } from './index';
 
+const testCharacterPackage: CharacterPackage = {
+  id: 'test-companion', name: 'Test Companion', version: '1.0.0',
+  personalityPreset: { traits: ['curious'], corePersonality: ['warm'], expertise: [], speakingStyle: { tone: 'warm', length: 'short', avoid: [] } },
+  assetManifest: { assets: [] },
+  animationManifest: { required: ['Idle_Neutral'], mappings: { Idle_Neutral: 'Idle_Neutral' } },
+};
+
 describe('character engine', () => {
   it('decays and clamps emotions', () => {
     const decayed = decayEmotion({
@@ -51,7 +58,7 @@ describe('character engine', () => {
   });
 
   it('prioritizes user commands as helping task intent', () => {
-    const state = createInitialCharacterState();
+    const state = createInitialCharacterState('test-companion');
     expect(selectIntent(state, { userCommand: 'open chrome', availableDiscoveries: [{} as never] })).toBe('helping_task');
   });
 
@@ -66,7 +73,7 @@ describe('character engine', () => {
   });
 
   it('applies discovery acceptance emotion modifiers', () => {
-    const next = applyEmotionEvent(createInitialCharacterState().emotion, 'user_accepts_discovery');
+    const next = applyEmotionEvent(createInitialCharacterState('test-companion').emotion, 'user_accepts_discovery');
     expect(next.happy).toBeGreaterThan(20);
     expect(next.proud).toBeGreaterThan(0);
   });
@@ -75,6 +82,7 @@ describe('character engine', () => {
     const state = resolveCharacterState({ action: 'speak', priority: 'high' });
     const request = planAnimationRequest({
       behaviour: 'present_discovery',
+      characterId: 'test-companion',
       mood: state.mood,
       reason: 'Decision selected speak.'
     });
@@ -93,25 +101,27 @@ describe('character engine', () => {
 
   it('keeps idle animation loops interrupt-safe', () => {
     expect(nextAnimationState('Idle_Neutral')).toBe('curious');
-    expect(planAnimationRequest({ behaviour: 'idle', mood: 'neutral', reason: 'Idle loop.' }).interruptSafe).toBe(true);
+    expect(planAnimationRequest({ characterId: 'test-companion', behaviour: 'idle', mood: 'neutral', reason: 'Idle loop.' }).interruptSafe).toBe(true);
   });
 
-  it('loads default Ann through the package registry', () => {
-    const registry = new CharacterPackageRegistry();
+  it('requires an explicitly registered package', () => {
+    expect(() => new CharacterPackageRegistry().active()).toThrow('No active Character package');
+    const registry = new CharacterPackageRegistry([testCharacterPackage]);
+    registry.activate(testCharacterPackage.id);
     const runtime = createRuntimeDescriptor(registry.active());
 
-    expect(runtime.packageId).toBe('ann');
+    expect(runtime.packageId).toBe(testCharacterPackage.id);
     expect(runtime.defaultAnimation).toBe('Idle_Neutral');
   });
 
   it('validates custom packages and catches missing required assets', () => {
     const invalid = {
-      ...defaultAnnPackage,
+      ...testCharacterPackage,
       id: 'custom',
       name: 'Custom',
       animationManifest: {
-        required: defaultAnnPackage.animationManifest.required,
-        mappings: { ...defaultAnnPackage.animationManifest.mappings, Idle_Neutral: '' }
+        required: testCharacterPackage.animationManifest.required,
+        mappings: { ...testCharacterPackage.animationManifest.mappings, Idle_Neutral: '' }
       }
     };
     const validation = validateCharacterPackage(invalid);
@@ -122,11 +132,11 @@ describe('character engine', () => {
 
   it('imports, exports, and loads a custom package without changing brain logic', () => {
     const custom = {
-      ...defaultAnnPackage,
+      ...testCharacterPackage,
       id: 'mira',
       name: 'Mira',
       personalityPreset: {
-        ...defaultAnnPackage.personalityPreset,
+        ...testCharacterPackage.personalityPreset,
         traits: ['playful', 'gentle']
       }
     };

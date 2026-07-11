@@ -89,13 +89,18 @@ function CompanionEntryShell() {
   }, []);
 
   async function initCompanion() {
+    let found = false;
     try {
       const companion = await window.ourCompanion.companionNew.getPrimary();
       if (companion) {
         setActiveCompanion(companion);
+        found = true;
       }
     } catch {
       // no companion
+    }
+    if (!found) {
+      void window.ourCompanion.creation.openWindow();
     }
     setLoaded(true);
   }
@@ -125,7 +130,7 @@ function CompanionEntryShell() {
     }} />;
   }
 
-  return null;
+  return <div className="companion-onboarding-required">Create your first Companion to begin.</div>;
 }
 
 function CompanionShell({ companion, onSwitchCompanion }: { companion: CompanionProfile; onSwitchCompanion: () => void }) {
@@ -414,13 +419,13 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       setLang(next);
       langRef.current = next;
     }
-    const stored = localStorage.getItem('ann_uiLang');
+    const stored = localStorage.getItem('companion_uiLang');
     if (stored) applyLang(stored);
     void window.ourCompanion.ai.getSettings().then((settings) => {
       if (settings.uiLang) applyLang(settings.uiLang);
     }).catch(() => undefined);
     function onStorage(e: StorageEvent) {
-      if (e.key === 'ann_uiLang' && e.newValue) applyLang(e.newValue);
+      if (e.key === 'companion_uiLang' && e.newValue) applyLang(e.newValue);
     }
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
@@ -900,7 +905,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
         }}
         onOpenPanel={() => {
           setQuickActionsVisible(false);
-          void window.ourCompanion.window.openPanel({ annX: companionPositionRef.current.x, annY: companionPositionRef.current.y });
+          void window.ourCompanion.window.openPanel({ companionX: companionPositionRef.current.x, companionY: companionPositionRef.current.y });
         }}
         onSwitchCompanion={() => {
           setQuickActionsVisible(false);
@@ -1045,6 +1050,7 @@ function PanelDashboard() {
   const [exploration, setExploration] = useState<ExplorationCycleResult>();
   const [explorationEvents, setExplorationEvents] = useState<ExplorationLoopEvent[]>([]);
   const [exploring, setExploring] = useState(false);
+  const [onboardingRequired, setOnboardingRequired] = useState<boolean | null>(null);
 
   async function refreshAll() {
     const [nextState, nextBehavior, nextCharacters, feed, activeJourneys, milestones, graph, entries, companion] = await Promise.all([
@@ -1070,7 +1076,10 @@ function PanelDashboard() {
   }
 
   useEffect(() => {
-    void refreshAll();
+    void window.ourCompanion.companionNew.getPrimary().then((companion) => {
+      setOnboardingRequired(!companion);
+      if (companion) void refreshAll();
+    });
     void window.ourCompanion.ai.getSettings().then((s) => {
       if (s.uiLang) setLang(s.uiLang as Lang);
     });
@@ -1112,6 +1121,20 @@ function PanelDashboard() {
             cycle: { ...current.cycle, state: 'reflecting', completedAt: new Date().toISOString() }
           }
         : current
+    );
+  }
+
+  if (onboardingRequired !== false) {
+    return (
+      <main className="panel-shell companion-onboarding-panel">
+        {onboardingRequired === null ? <p>Checking Companion setup…</p> : (
+          <>
+            <h1>No Companion Created</h1>
+            <p>Create your first AI-generated Companion before using the panel.</p>
+            <button onClick={() => void window.ourCompanion.creation.openWindow()}>Create Companion</button>
+          </>
+        )}
+      </main>
     );
   }
 
@@ -1196,9 +1219,9 @@ function HomeView({
   const diaryHighlight = diary[0]?.content ?? t(lang, 'home_diary_default');
 
   return (
-    <NotebookPage eyebrow={t(lang, 'home_eyebrow')} title={t(lang, 'home_title')} note={`${character?.name ?? 'Ann'} is keeping a soft page open for the things we are building together.`}>
+    <NotebookPage eyebrow={t(lang, 'home_eyebrow')} title={t(lang, 'home_title')} note={`${character?.name ?? 'Your Companion'} is keeping a soft page open for the things we are building together.`}>
       <div className="home-notebook-grid">
-        <PaperCard className="companion-status-card" title={t(lang, 'home_ann_status_card')} tape>
+        <PaperCard className="companion-status-card" title={t(lang, 'home_companion_status_card')} tape>
           <div className="companion-status-content">
             <MiniCompanionSticker />
             <div>
@@ -1208,15 +1231,15 @@ function HomeView({
           </div>
         </PaperCard>
 
-        <StickyNote title={t(lang, 'home_ann_message_title')} className="companion-message-note">
-          <p>{t(lang, 'home_ann_message_body')}</p>
+        <StickyNote title={t(lang, 'home_companion_message_title')} className="companion-message-note">
+          <p>{t(lang, 'home_companion_message_body')}</p>
           <button onClick={() => void onStartExploration()} disabled={exploring} className="primary-notebook-action">
             {exploring ? 'Exploring...' : 'Send companion exploring'}
           </button>
         </StickyNote>
 
         {exploration?.selectedInsight && (
-          <PaperCard title="Ann returned" tape className="wide-card insight-return-card">
+          <PaperCard title={`${character?.name ?? 'Your Companion'} returned`} tape className="wide-card insight-return-card">
             <p className="focus-title">{exploration.selectedInsight.title}</p>
             <p>{exploration.selectedInsight.summary}</p>
             <div className="tag-row">
@@ -1750,7 +1773,7 @@ function SettingsView({ state, behaviorSettings, onRefresh, onLangChange, assetR
       setModel(next.model);
       setEndpoint(next.endpoint);
       setApiKey('');
-      localStorage.setItem('ann_uiLang', uiLang);
+      localStorage.setItem('companion_uiLang', uiLang);
       onLangChange(uiLang as Lang);
       setStatus(next.apiKeyConfigured ? 'Saved. API key is configured.' : 'Saved. No API key configured.');
     } catch (error) {
@@ -1763,7 +1786,7 @@ function SettingsView({ state, behaviorSettings, onRefresh, onLangChange, assetR
   return (
     <NotebookPage eyebrow={t(lang, 'settings_eyebrow')} title={t(lang, 'settings_title')} note={t(lang, 'settings_note')}>
       <div className="settings-layout">
-        <PaperCard title={t(lang, 'settings_ann_behavior_title')} tape><p>{t(lang, 'settings_ann_behavior_desc')}</p></PaperCard>
+        <PaperCard title={t(lang, 'settings_companion_behavior_title')} tape><p>{t(lang, 'settings_companion_behavior_desc')}</p></PaperCard>
         <PaperCard title={t(lang, 'settings_appearance_title')} tape><p>{t(lang, 'settings_appearance_desc')}</p></PaperCard>
         <PaperCard title={t(lang, 'settings_privacy_title')} tape><p>{t(lang, 'settings_privacy_desc')}</p></PaperCard>
         <VoiceSettingsCard />
@@ -2120,7 +2143,7 @@ function DeveloperPreview({ state, devAnimation, animationOverride, onAnimationC
   return (
     <div className="developer-tools">
       <div className="developer-preview-canvas">
-        <CompanionCanvas state={state} compact animationOverride={animationOverride} assetRoot={assetRoot} />
+        {assetRoot ? <CompanionCanvas state={state} compact animationOverride={animationOverride} assetRoot={assetRoot} /> : <p>No Companion assets available.</p>}
       </div>
       <div className="dev-animation-panel">
         <p className="eyebrow">Developer use</p>

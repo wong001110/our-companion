@@ -362,11 +362,11 @@ function fallbackItems(source: DiscoverySource): RawDiscoveryItem[] {
     system: [],
     github: [
       { ...common, id: 'github-pixijs-desktop-pet', title: 'Building expressive desktop companions with PixiJS', summary: 'A small renderer pattern for animated companion characters.', url: 'https://github.com/pixijs/pixijs', tags: ['frontend', 'pixijs', 'web', 'ux'] },
-      { ...common, id: 'github-tldraw', title: 'tldraw — a canvas for thinking', summary: 'Infinite canvas toolkit for collaborative whiteboarding.', url: 'https://github.com/tldraw/tldraw', tags: ['canvas', 'collaboration', 'tool'] },
-      { ...common, id: 'github-excalidraw', title: 'Excalidraw — virtual whiteboard', summary: 'Hand-drawn style sketching tool for diagrams.', url: 'https://github.com/excalidraw/excalidraw', tags: ['sketch', 'diagram', 'canvas'] },
-      { ...common, id: 'github-affine', title: 'Affine — knowledge management', summary: 'Local-first knowledge base with docs and whiteboard.', url: 'https://github.com/toeverything/AFFiNE', tags: ['knowledge', 'local-first', 'docs'] },
-      { ...common, id: 'github-livekit', title: 'LiveKit — real-time audio/video', summary: 'Open-source WebRTC stack for voice and video.', url: 'https://github.com/livekit/livekit', tags: ['webrtc', 'voice', 'real-time'] },
-      { ...common, id: 'github-remotion', title: 'Remotion — programmatic video', summary: 'Create videos with React components.', url: 'https://github.com/remotion-dev/remotion', tags: ['video', 'react', 'animation'] }
+      { ...common, id: 'github-tldraw', title: 'tldraw Ã¢â‚¬â€ a canvas for thinking', summary: 'Infinite canvas toolkit for collaborative whiteboarding.', url: 'https://github.com/tldraw/tldraw', tags: ['canvas', 'collaboration', 'tool'] },
+      { ...common, id: 'github-excalidraw', title: 'Excalidraw Ã¢â‚¬â€ virtual whiteboard', summary: 'Hand-drawn style sketching tool for diagrams.', url: 'https://github.com/excalidraw/excalidraw', tags: ['sketch', 'diagram', 'canvas'] },
+      { ...common, id: 'github-affine', title: 'Affine Ã¢â‚¬â€ knowledge management', summary: 'Local-first knowledge base with docs and whiteboard.', url: 'https://github.com/toeverything/AFFiNE', tags: ['knowledge', 'local-first', 'docs'] },
+      { ...common, id: 'github-livekit', title: 'LiveKit Ã¢â‚¬â€ real-time audio/video', summary: 'Open-source WebRTC stack for voice and video.', url: 'https://github.com/livekit/livekit', tags: ['webrtc', 'voice', 'real-time'] },
+      { ...common, id: 'github-remotion', title: 'Remotion Ã¢â‚¬â€ programmatic video', summary: 'Create videos with React components.', url: 'https://github.com/remotion-dev/remotion', tags: ['video', 'react', 'animation'] }
     ],
     hackernews: [
       { ...common, id: 'hn-local-first-memory', title: 'Local-first app patterns for personal memory tools', summary: 'Discussion about SQLite-backed personal software.', url: 'https://news.ycombinator.com/', tags: ['sqlite', 'local-first', 'memory'] },
@@ -569,7 +569,7 @@ export async function runDiscoveryAgents(input: RunDiscoveryAgentsInput): Promis
           userId: input.userId,
           companionId: input.companionId,
           title: item.title,
-          summary: item.summary ?? `Ann found this in memory while exploring ${input.curiosityTarget.topic}.`,
+          summary: item.summary ?? `Companion found this in memory while exploring ${input.curiosityTarget.topic}.`,
           sourceType: 'internal_memory' as const,
           sourceUrl: item.url,
           sourceName: 'memory',
@@ -596,7 +596,7 @@ export async function runDiscoveryAgents(input: RunDiscoveryAgentsInput): Promis
 }
 
 // ============================================================================
-// Discovery Engine V2 — Enhanced discovery management
+// Discovery Engine V2 Ã¢â‚¬â€ Enhanced discovery management
 // ============================================================================
 
 export { DiscoveryEngine } from './discovery-engine';
@@ -618,7 +618,7 @@ export {
 } from './types';
 
 // ============================================================================
-// Discovery Engine V2 — Pool and Share Timing
+// Discovery Engine V2 Ã¢â‚¬â€ Pool and Share Timing
 // ============================================================================
 
 export {

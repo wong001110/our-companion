@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CompanionPersonality, CompanionProfile } from '@our-companion/shared';
+import { COMPANION_ANIMATION_MANIFEST, type CompanionPersonality, type CompanionProfile } from '@our-companion/shared';
 import { useAnalyzePersonality } from './useAnalyzePersonality';
 
 interface CompanionCreationPageProps {
@@ -18,12 +18,9 @@ const PERSONALITY_LABELS: Record<keyof CompanionPersonality, string> = {
   shyness: 'Shyness'
 };
 
-const REQUIRED_ANIMATIONS = [
-  'Idle_Neutral', 'Idle_Breathe', 'Idle_Sleepy', 'Idle_Sleeping',
-  'Walk_Right', 'Walk_Left', 'Expedition_Return', 'Think',
-  'Work_Focus', 'Expedition_Present', 'Talk_Neutral', 'Talk_Happy',
-  'Expedition_Prepare', 'Expedition_Leave', 'Listening'
-];
+const REQUIRED_ANIMATIONS = COMPANION_ANIMATION_MANIFEST
+  .filter((entry) => entry.requiredForCreation)
+  .map((entry) => entry.key);
 
 interface StagedAsset {
   file: File;
@@ -35,6 +32,7 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [personality, setPersonality] = useState<CompanionPersonality | null>(null);
+  const [personalityAnalysisId, setPersonalityAnalysisId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { analyze, analyzing, error: analyzeError } = useAnalyzePersonality();
@@ -42,7 +40,6 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
   const [stagedAssets, setStagedAssets] = useState<Record<string, StagedAsset>>({});
   const [assetVersion, setAssetVersion] = useState(0);
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const companionIdRef = useRef<string | null>(null);
 
   const missingCount = REQUIRED_ANIMATIONS.filter((a) => !stagedAssets[a]).length;
 
@@ -151,70 +148,30 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
     });
   }
 
-  async function ensureCompanionCreated(): Promise<string> {
-    if (companionIdRef.current) return companionIdRef.current;
-    const input = {
-      name: name.trim(),
-      personalityDescription: description,
-      personality: personality!,
-      assetRoot: 'assets/companions/default'
-    };
-    const companion = await window.ourCompanion.companionNew.create(input);
-    const assetRoot = await window.ourCompanion.companionNew.getAssetRoot(companion.id);
-    if (assetRoot !== companion.assetRoot) {
-      await window.ourCompanion.companionNew.update({ id: companion.id, assetRoot });
-    }
-    companionIdRef.current = companion.id;
-    return companion.id;
-  }
-
   async function handleAnalyze() {
     if (!description.trim()) return;
     const result = await analyze(description);
     if (result) {
-      setPersonality(result);
+      setPersonality(result.personality);
+      setPersonalityAnalysisId(result.analysisId);
       setStep(3);
     }
   }
 
-  async function commitStagedAssets(): Promise<boolean> {
-    const entries = Object.entries(stagedAssets);
-    if (entries.length === 0) return true;
-
-    const companionId = companionIdRef.current;
-    if (!companionId) return false;
-
-    for (const [animName, staged] of entries) {
-      try {
-        const arrayBuffer = await staged.file.arrayBuffer();
-        const uint8 = new Uint8Array(arrayBuffer);
-        await window.ourCompanion.companionNew.uploadAsset({
-          companionId,
-          fileName: staged.file.name,
-          buffer: uint8
-        });
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-        return false;
-      }
-    }
-
-    setStagedAssets({});
-    return true;
-  }
-
   async function handleCreate() {
-    if (!name.trim() || !personality) return;
+    if (!name.trim() || !personality || !personalityAnalysisId) return;
     setCreating(true);
     setError(null);
 
     try {
-      await ensureCompanionCreated();
-      const committed = await commitStagedAssets();
-      if (!committed) return;
-
-      const companion = await window.ourCompanion.companionNew.get(companionIdRef.current!);
-      if (!companion) throw new Error('Companion not found after creation');
+      const assets = await Promise.all(REQUIRED_ANIMATIONS.map(async (animationKey) => ({
+        animationKey,
+        buffer: new Uint8Array(await stagedAssets[animationKey].file.arrayBuffer()),
+      })));
+      const companion = await window.ourCompanion.companionNew.create({
+        name: name.trim(), personalityDescription: description.trim(), personalityAnalysisId,
+        assetRoot: '', assets,
+      });
       await window.ourCompanion.companionNew.setPrimary(companion.id);
       onComplete(companion);
     } catch (err) {
@@ -259,7 +216,7 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
               className="creation-input"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Ann"
+              placeholder="e.g. Nova"
               autoFocus
               onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) setStep(2); }}
             />
@@ -277,7 +234,7 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
               className="creation-textarea"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="e.g. Ann is quiet, curious, slightly lazy and enjoys exploring new things."
+              placeholder="e.g. Quiet, curious, slightly lazy, and enjoys exploring new things."
               rows={5}
               autoFocus
             />
@@ -307,18 +264,7 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
             </div>
             <div className="creation-actions">
               <button className="btn-secondary" onClick={() => setStep(2)}>Re-analyze</button>
-              <button className="btn-primary" disabled={creating} onClick={() => void (async () => {
-                setCreating(true);
-                setError(null);
-                try {
-                  await ensureCompanionCreated();
-                  setStep(4);
-                } catch (err) {
-                  setError(err instanceof Error ? err.message : String(err));
-                } finally {
-                  setCreating(false);
-                }
-              })()}>{creating ? 'Saving...' : 'Next'}</button>
+              <button className="btn-primary" onClick={() => { setError(null); setStep(4); }}>Next</button>
             </div>
             {error && <p className="creation-error">{error}</p>}
           </div>

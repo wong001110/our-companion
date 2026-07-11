@@ -14,7 +14,7 @@ import { createId, nowIso } from '@our-companion/shared';
 
 export type { ActionOrchestratorDeps } from '@our-companion/shared';
 
-// ─── Permission scope helpers ──────────────────────────────────────────────
+// â”€â”€â”€ Permission scope helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const BROWSER_TOOLS = new Set(['open_url', 'search_web', 'browser_navigation']);
 const AUTOMATION_TOOLS = new Set(['open_app']);
@@ -35,7 +35,7 @@ export function defaultPermissions(): ActionPermissionState {
   };
 }
 
-// ─── 3a. Rule-based planner ────────────────────────────────────────────────
+// â”€â”€â”€ 3a. Rule-based planner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function makeStep(toolName: string, args: Record<string, unknown>): ActionStep {
   return {
@@ -92,7 +92,7 @@ export function planActionFromRules(text: string): ActionPlanV2 | undefined {
     return makePlanV2([makeStep('open_url', { url })]);
   }
 
-  // "open <http(s)://...>" — bare URL shorthand
+  // "open <http(s)://...>" â€” bare URL shorthand
   const bareUrl = trimmed.match(/^open\s+(https?:\/\/\S+)$/i);
   if (bareUrl) {
     const url = bareUrl[1];
@@ -121,7 +121,7 @@ export function planActionFromRules(text: string): ActionPlanV2 | undefined {
   return undefined;
 }
 
-// ─── 3b. LLM-assisted planner ─────────────────────────────────────────────
+// â”€â”€â”€ 3b. LLM-assisted planner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface LlmPlannerDeps {
   completeJson<T>(messages: Array<{ role: 'system' | 'user'; content: string }>): Promise<T>;
@@ -143,7 +143,7 @@ export async function planActionFromLlm(
       {
         role: 'system',
         content:
-          'You are Ann, a desktop companion. Convert the user request into a JSON action plan. ' +
+          'You are Companion, a desktop companion. Convert the user request into a JSON action plan. ' +
           'Respond ONLY with JSON matching: ' +
           '{"summary":"...","steps":[{"tool_name":"open_url|open_app|search_web|browser_navigation","args":{...},"required_scopes":["browser"|"automation"]}],"requires_confirmation":false}. ' +
           'Use tool_name "none" with empty steps array if the request cannot be performed as a desktop action.',
@@ -188,7 +188,7 @@ export async function planAction(
   return undefined;
 }
 
-// ─── 3c. Permission manager ───────────────────────────────────────────────
+// â”€â”€â”€ 3c. Permission manager â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Returns 'ok', 'denied', or the list of scopes needing the user to confirm. */
 export function resolvePermissions(
@@ -207,7 +207,7 @@ export function resolvePermissions(
   return Array.from(needed);
 }
 
-// ─── 3d. Action orchestrator + state machine ──────────────────────────────
+// â”€â”€â”€ 3d. Action orchestrator + state machine â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function runActionPlan(
   plan: ActionPlanV2,
@@ -284,7 +284,7 @@ export async function runActionPlan(
     }
   }
 
-  // All steps succeeded — play performance
+  // All steps succeeded â€” play performance
   const script = deps.directPerformance(plan.id, 'success');
   deps.emitEvent('PerformanceStarted', { planId: plan.id, scriptId: script.id }, correlationId);
   deps.broadcastPerformance(script);
@@ -299,7 +299,7 @@ export async function runActionPlan(
   };
 }
 
-// ─── 3e. Performance director ─────────────────────────────────────────────
+// â”€â”€â”€ 3e. Performance director â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function toPerformanceScriptV2(script: PerformanceScript): PerformanceScriptV2 {
   return {
@@ -319,7 +319,7 @@ function toPerformanceScriptV2(script: PerformanceScript): PerformanceScriptV2 {
 
 /**
  * Builds a PerformanceScriptV2 for an action outcome.
- * Delegates to character-engine's planPerformanceScript — never executes commands.
+ * Delegates to character-engine's planPerformanceScript â€” never executes commands.
  */
 export function directPerformance(
   actionId: string,
@@ -330,7 +330,7 @@ export function directPerformance(
 }
 
 // ============================================================================
-// Action Engine V2 — Enhanced action planning
+// Action Engine V2 â€” Enhanced action planning
 // ============================================================================
 
 export { createActionPlan, approvePlan, cancelPlan } from './action-planner';

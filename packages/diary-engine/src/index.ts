@@ -1,5 +1,5 @@
 import type { DiaryEntry, Discovery, JourneyMilestone, Knowledge, MemoryNode, Reflection } from '@our-companion/shared';
-import { createId, DEFAULT_CHARACTER_ID, nowIso } from '@our-companion/shared';
+import { createId, nowIso } from '@our-companion/shared';
 
 export interface DiaryContext {
   characterId?: string;
@@ -26,7 +26,7 @@ export function generateDailyDiary(context: DiaryContext): DiaryEntry {
 
   return {
     id: createId('diary'),
-    characterId: context.characterId ?? DEFAULT_CHARACTER_ID,
+    characterId: context.characterId ?? (() => { throw new Error('Companion identity is required.'); })(),
     userId: 'local',
     type: 'daily',
     perspective: 'companion_reflection',
@@ -55,18 +55,18 @@ export function generateGrowthReflection(input: {
   return {
     id: createId('reflection'),
     title: input.period === 'weekly' ? 'Weekly growth reflection' : 'Daily growth reflection',
-    summary: `${activeKnowledge.length} active knowledge item${activeKnowledge.length === 1 ? '' : 's'} shaped Ann's understanding. ${milestoneSummary}`,
+    summary: `${activeKnowledge.length} active knowledge item${activeKnowledge.length === 1 ? '' : 's'} shaped Companion's understanding. ${milestoneSummary}`,
     changedUnderstanding,
     whyItMattered:
       changedUnderstanding.length > 0
-        ? 'These changes matter because Ann can connect future discoveries to persistent understanding instead of raw activity.'
-        : 'Quiet periods matter too; Ann preserved attention instead of inventing progress.',
+        ? 'These changes matter because Companion can connect future discoveries to persistent understanding instead of raw activity.'
+        : 'Quiet periods matter too; Companion preserved attention instead of inventing progress.',
     relatedKnowledgeIds: activeKnowledge.map((item) => item.id),
     createdAt: nowIso()
   };
 }
 
-export function diaryFromReflection(reflection: Reflection, characterId = DEFAULT_CHARACTER_ID): DiaryEntry {
+export function diaryFromReflection(reflection: Reflection, characterId: string): DiaryEntry {
   return {
     id: createId('diary'),
     characterId,

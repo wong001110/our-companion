@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import type { CharacterRuntimeState } from '@our-companion/shared';
 import { createCompanionAnimations, type AnimationName, type CompanionAnimationConfig } from '../character/animationConfig';
 import { SpriteAnimator } from '../character/SpriteAnimator';
-import { DEFAULT_ASSET_ROOT } from '../character/AssetResolver';
 import { resolveAnimation, getAvailableClipNames } from '../character/AnimationResolver';
 import type { CompanionAnimationName } from '../companion/runtime/animationRegistry';
 
@@ -19,7 +18,7 @@ interface CompanionCanvasProps {
   state?: CharacterRuntimeState;
   compact?: boolean;
   animationOverride?: AnimationName;
-  assetRoot?: string;
+  assetRoot: string;
   facing?: 'left' | 'right';
   isListening?: boolean;
   userIsTyping?: boolean;
@@ -41,7 +40,7 @@ export function CompanionCanvas({
   state,
   compact = false,
   animationOverride,
-  assetRoot = DEFAULT_ASSET_ROOT,
+  assetRoot,
   facing = 'right',
   isListening = false,
   userIsTyping = false,
@@ -219,7 +218,7 @@ export function CompanionCanvas({
   }
 
   function pointerHitTest(event: PointerEvent<HTMLDivElement>): boolean {
-    return assetFailed ? fallbackHitTest(event) : canvasAlphaHitTest(event);
+    return assetFailed ? false : canvasAlphaHitTest(event);
   }
 
   function eventPoint(event: PointerEvent<HTMLDivElement>): CompanionDragPoint {
@@ -254,20 +253,6 @@ export function CompanionCanvas({
     }
   }
 
-  function fallbackHitTest(event: PointerEvent<HTMLDivElement>): boolean {
-    const fallback = wrapperRef.current?.querySelector('.fallback-ann');
-    if (!(fallback instanceof HTMLElement)) return false;
-
-    const rect = fallback.getBoundingClientRect();
-    if (!isInsideRect(event.clientX, event.clientY, rect)) return false;
-
-    const x = (event.clientX - rect.left) / rect.width;
-    const y = (event.clientY - rect.top) / rect.height;
-    const head = Math.pow((x - 0.5) / 0.34, 2) + Math.pow((y - 0.38) / 0.24, 2) <= 1;
-    const body = x >= 0.3 && x <= 0.7 && y >= 0.48 && y <= 0.86;
-    return head || body;
-  }
-
   return (
     <div
       ref={wrapperRef}
@@ -284,13 +269,12 @@ export function CompanionCanvas({
       {isListening && <div className="companion-listening-indicator" aria-label="Listening" />}
       {!assetFailed && (
         <figure
-          className={`canvas-ann canvas-ann-${animation.name} canvas-ann-facing-${facing} ${compact ? 'canvas-ann-compact' : ''}`}
+          className={`canvas-companion canvas-companion-${animation.name} canvas-companion-facing-${facing} ${compact ? 'canvas-companion-compact' : ''}`}
         >
           <canvas ref={canvasRef} />
           <figcaption>{intentLabel(intent)}</figcaption>
         </figure>
       )}
-      {assetFailed && <FallbackCompanion intent={intent} compact={compact} facing={facing} />}
     </div>
   );
 }
@@ -331,27 +315,6 @@ function stateToIntent(state?: CharacterRuntimeState, ctx: StateToIntentContext 
   if (ctx.userIsTyping) return 'Waiting_Response';
   if (ctx.isMusicPlaying) return 'Music_Idle';
   return 'Idle_Neutral';
-}
-
-function FallbackCompanion({ intent, compact, facing }: { intent: string; compact: boolean; facing: 'left' | 'right' }) {
-  return (
-    <div className={`fallback-ann fallback-ann-facing-${facing} ${compact ? 'fallback-ann-compact' : ''}`}>
-      <div className="fallback-ann-shadow" />
-      <div className="fallback-ann-tail" />
-      <div className="fallback-ann-ear fallback-ann-ear-left" />
-      <div className="fallback-ann-ear fallback-ann-ear-right" />
-      <div className="fallback-ann-hair" />
-      <div className="fallback-ann-head">
-        <span className="fallback-ann-eye fallback-ann-eye-left" />
-        <span className="fallback-ann-eye fallback-ann-eye-right" />
-        <span className="fallback-ann-mouth" />
-      </div>
-      <div className="fallback-ann-body">
-        <span className="fallback-ann-laptop" />
-      </div>
-      <div className="fallback-ann-label">{intentLabel(intent)}</div>
-    </div>
-  );
 }
 
 function intentLabel(intent: string): string {

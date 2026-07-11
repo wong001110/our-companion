@@ -50,6 +50,8 @@ import type {
   CompanionAppendMessageInput,
   CompanionHistoryInput,
   CompanionMessage,
+  CompanionPersonality,
+  CompanionPersonalityAnalysis,
   CompanionProfile,
   CompanionReplyLanguage,
   CompanionSessionPhase,
@@ -86,7 +88,7 @@ import type {
   UpdateMemoryNodeInput
 } from '@our-companion/shared';
 import type { UserProfile, OnlineMode, RegisterUserInput, LoginUserInput } from '@our-companion/shared';
-import { COMPANION_CHAT_CONTEXT_LIMIT, DEFAULT_CHARACTER_ID, createId, nowIso, clampScore, type BaseEvent } from '@our-companion/shared';
+import { COMPANION_ANIMATION_MANIFEST, COMPANION_CHAT_CONTEXT_LIMIT, createId, nowIso, clampScore, type BaseEvent } from '@our-companion/shared';
 import { detectPatterns } from '@our-companion/pattern-engine';
 import { executeActionStep, executeTool, previewTool } from '@our-companion/tool-engine';
 import { createElectronToolAdapters } from './platform/electronCommandAdapter';
@@ -131,6 +133,8 @@ export class AppServices {
   private foundationEventBroadcaster?: (event: BaseEvent) => void;
   private debugLog: AiDebugEntry[] = [];
   private foundationEventLog: BaseEvent[] = [];
+  private runtimeStarted = false;
+  private readonly personalityAnalyses = new Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>();
 
   constructor(
     dbPath = path.join(app.getPath('userData'), 'our-companion.db'),
@@ -142,7 +146,13 @@ export class AppServices {
     }
 
     try {
-      this.db = new DatabaseService({ path: dbPath });
+      this.db = new DatabaseService({
+        path: dbPath,
+        legacyAnnHasCustomAssets: () => {
+          const directory = path.join(userDataDir, 'companions', 'ann');
+          return fs.existsSync(directory) && fs.readdirSync(directory, { recursive: true }).length > 0;
+        },
+      });
       this.databaseMode = 'persistent';
     } catch (error) {
       if (!shouldFallbackToMemory(error)) throw error;
@@ -186,7 +196,24 @@ export class AppServices {
     this.companionRuntime.setExplicitMode(
       this.db.getAppSetting<'available' | 'focused' | 'do_not_disturb'>('attention_mode') ?? 'available'
     );
+  }
+
+  hasActiveCompanion(): boolean {
+    return this.db.tryResolveActiveCompanionId() !== null;
+  }
+
+  private requireActiveCompanion(): CompanionProfile {
+    const companion = this.db.getPrimaryCompanion();
+    if (!companion) throw new Error('NO_ACTIVE_COMPANION: No active Companion. Complete Companion creation first.');
+    return companion;
+  }
+
+  /** Starts companion-owned schedulers only after onboarding has produced a primary Companion. */
+  startRuntimeIfReady(): boolean {
+    if (this.runtimeStarted || !this.hasActiveCompanion()) return false;
     this.companionRuntime.startLifeScheduler();
+    this.runtimeStarted = true;
+    return true;
   }
 
   character = {
@@ -226,8 +253,53 @@ export class AppServices {
   };
 
   companionNew = {
+    analyzePersonality: async (description: string): Promise<CompanionPersonalityAnalysis> => this.analyzeCompanionPersonality(description),
     create: async (input: CreateCompanionInput): Promise<CompanionProfile> => {
-      return this.db.createCompanion(input);
+      const name = input.name.trim();
+      const description = input.personalityDescription.trim();
+      if (!name || !description || !input.personalityAnalysisId) {
+        throw new Error('AI personality analysis is required before creating a Companion.');
+      }
+      const analysis = this.personalityAnalyses.get(input.personalityAnalysisId);
+      if (!analysis || analysis.used || analysis.expiresAt <= Date.now() || analysis.description !== description) {
+        throw new Error('AI personality analysis is invalid, expired, or already used. Analyze the description again.');
+      }
+      const assets = input.assets ?? [];
+      if (new Set(assets.map((asset) => asset.animationKey)).size !== assets.length) {
+        throw new Error('Duplicate Companion animation assets are not allowed.');
+      }
+      const assetsByKey = new Map(assets.map((asset) => [asset.animationKey, asset]));
+      const requiredAssets = COMPANION_ANIMATION_MANIFEST.filter((entry) => entry.requiredForCreation);
+      if (requiredAssets.some((entry) => !assetsByKey.has(entry.key))) {
+        throw new Error('All required Companion animation assets must be provided.');
+      }
+      if (assets.some((asset) => asset.buffer.byteLength === 0)) {
+        throw new Error('Companion animation assets cannot be empty.');
+      }
+      analysis.used = true;
+      let companion: CompanionProfile | undefined;
+      let companionDir: string | undefined;
+      try {
+        companion = this.db.createCompanion({ ...input, name, personalityDescription: description, personality: analysis.personality });
+        companionDir = path.join(app.getPath('userData'), 'companions', companion.id);
+        const animationsDir = path.join(companionDir, 'assets', 'animations');
+        fs.mkdirSync(animationsDir, { recursive: true });
+        for (const entry of requiredAssets) {
+          const asset = assetsByKey.get(entry.key)!;
+          const bytes = asset.buffer instanceof Uint8Array
+            ? Buffer.from(asset.buffer.buffer, asset.buffer.byteOffset, asset.buffer.byteLength)
+            : Buffer.from(asset.buffer);
+          fs.writeFileSync(path.join(animationsDir, entry.fileName), bytes);
+        }
+        companion = this.db.updateCompanion(companion.id, { assetRoot: `companion://${companion.id}/assets` });
+        if (!this.db.getPrimaryCompanion()) companion = this.db.setPrimaryCompanion(companion.id);
+        return companion;
+      } catch (error) {
+        analysis.used = false;
+        if (companion) this.db.rollbackCompanionCreation(companion.id);
+        if (companionDir && fs.existsSync(companionDir)) fs.rmSync(companionDir, { recursive: true, force: true });
+        throw error;
+      }
     },
     list: async (): Promise<CompanionProfile[]> => {
       const companions = this.db.listCompanions();
@@ -244,14 +316,44 @@ export class AppServices {
     },
     update: async (input: { id: string } & UpdateCompanionInput): Promise<CompanionProfile> => {
       const { id, ...rest } = input;
-      return this.db.updateCompanion(id, rest);
+      const current = this.db.getCompanion(id);
+      if (!current) throw new Error(`Companion not found: ${id}`);
+      const description = rest.personalityDescription?.trim() ?? current.personalityDescription;
+      const personalityChanged = rest.personality !== undefined || description !== current.personalityDescription;
+      let consumedAnalysis: { used: boolean } | undefined;
+      if (personalityChanged) {
+        const analysis = rest.personalityAnalysisId ? this.personalityAnalyses.get(rest.personalityAnalysisId) : undefined;
+        if (!analysis || analysis.used || analysis.expiresAt <= Date.now() || analysis.description !== description) {
+          throw new Error('A current AI personality analysis is required to update personality.');
+        }
+        analysis.used = true;
+        consumedAnalysis = analysis;
+        rest.personality = analysis.personality;
+        rest.personalityDescription = description;
+      }
+      const { personalityAnalysisId: _analysisId, ...trusted } = rest;
+      try {
+        return this.db.updateCompanion(id, trusted);
+      } catch (error) {
+        if (consumedAnalysis) consumedAnalysis.used = false;
+        throw error;
+      }
     },
     delete: async (id: string): Promise<{ id: string; deleted: true }> => {
-      return this.db.deleteCompanion(id);
+      const companion = this.db.getCompanion(id);
+      if (!companion) throw new Error(`Companion not found: ${id}`);
+      if (this.db.listCompanions().length <= 1) throw new Error('Create another Companion before deleting your only Companion.');
+      if (companion.isPrimary) throw new Error('Choose another primary Companion before deleting this Companion.');
+      const result = this.db.deleteCompanion(id);
+      const companionDir = path.join(app.getPath('userData'), 'companions', id);
+      if (fs.existsSync(companionDir)) fs.rmSync(companionDir, { recursive: true, force: true });
+      return result;
     },
     setPrimary: async (id: string): Promise<CompanionProfile> => {
       this.cancelCommandForCompanionSwitch(id);
-      return this.db.setPrimaryCompanion(id);
+      const companion = this.db.setPrimaryCompanion(id);
+      this.startRuntimeIfReady();
+      return companion;
     },
     getPrimary: async (): Promise<CompanionProfile | null> => {
       const companion = this.db.getPrimaryCompanion();
@@ -473,8 +575,7 @@ export class AppServices {
     getEntries: async (input: { type?: 'daily' | 'weekly' | 'milestone'; limit?: number } = {}) => this.db.listDiaryEntries(input),
     generateDaily: async (input: { characterId?: string } = {}) => {
       const correlationId = createId('corr');
-      const primary = this.db.getPrimaryCompanion();
-      const characterId = input.characterId ?? primary?.id ?? DEFAULT_CHARACTER_ID;
+      const characterId = this.db.resolveActiveCompanionId(input.characterId);
       this.emitFoundationEvent('ReflectionRequested', 'reflection', {
         characterId
       }, correlationId);
@@ -569,10 +670,9 @@ export class AppServices {
         ? '请始终用中文（简体）回复用户。'
         : 'Always reply in English.';
     const companion = this.db.getCompanion(characterId);
-    const name = companion?.name ?? 'Ann';
-    const personalityDesc = companion?.personalityDescription
-      ? `Personality: ${companion.personalityDescription}.`
-      : '';
+    if (!companion) throw new Error(`Companion not found: ${characterId}`);
+    const name = companion.name;
+    const personalityDesc = `Personality: ${companion.personalityDescription}.`;
     return [
       {
         role: 'system',
@@ -588,7 +688,7 @@ export class AppServices {
     getSettings: async () => this.getAiSettings(),
     updateSettings: async (input: UpdateAiSettingsInput) => this.updateAiSettings(input),
     chat: async (input: ChatInput) => {
-      const characterId = input.characterId ?? DEFAULT_CHARACTER_ID;
+      const characterId = this.db.resolveActiveCompanionId(input.characterId);
       const builtMessages = this.buildChatMessages(characterId, input.message);
       this.db.insertCompanionMessage({ role: 'user', content: input.message, source: 'panel', characterId });
       try {
@@ -605,11 +705,9 @@ export class AppServices {
       }
     },
     generateDiscoveryReason: async (input: { discovery: NormalizedDiscovery }) => {
-      const primary = this.db.getPrimaryCompanion();
-      const name = primary?.name ?? 'Ann';
-      const personalityDesc = primary?.personalityDescription
-        ? ` Personality: ${primary.personalityDescription}`
-        : '';
+      const primary = this.requireActiveCompanion();
+      const name = primary.name;
+      const personalityDesc = ` Personality: ${primary.personalityDescription}`;
       const fallback = {
         why_this_matters: `${input.discovery.title} matches ${name}'s curiosity around web, UX, and exploration.`,
         recommended_action: 'view' as const,
@@ -965,8 +1063,7 @@ export class AppServices {
   }
 
   private messageForExplorationState(state: ExplorationState): string {
-    const primary = this.db.getPrimaryCompanion();
-    const name = primary?.name ?? 'Ann';
+    const name = this.requireActiveCompanion().name;
     const messages: Record<ExplorationState, string> = {
       idle: `${name} is idle.`,
       curious: `${name} became curious.`,
@@ -983,8 +1080,7 @@ export class AppServices {
 
   private async runAutonomousExploration(input: StartExplorationInput = {}): Promise<ExplorationCycleResult> {
     const userId = input.userId ?? 'default';
-    const primary = this.db.getPrimaryCompanion();
-    const companionId = input.companionId ?? primary?.id ?? DEFAULT_CHARACTER_ID;
+    const companionId = this.db.resolveActiveCompanionId(input.companionId);
     const trigger = input.trigger ?? 'manual';
     const characterState = this.db.getCharacterState(companionId);
     const characterProfile = this.db.getActiveCharacters().find((character) => character.id === companionId);
@@ -1041,7 +1137,7 @@ export class AppServices {
       insightIds: [],
       startedAt: nowIso()
     });
-    this.recordExplorationEvent(cycle, 'curious', selectedCuriosityTarget?.reason ?? `${this.db.getPrimaryCompanion()?.name ?? 'Ann'} became curious.`);
+    this.recordExplorationEvent(cycle, 'curious', selectedCuriosityTarget?.reason ?? `${this.requireActiveCompanion().name} became curious.`);
     this.setAutonomyCharacterState('thinking', 'reviewing_memory');
 
     if (!selectedCuriosityTarget) {
@@ -1166,7 +1262,7 @@ export class AppServices {
       state: 'reflecting',
       completedAt: nowIso()
     });
-    this.recordExplorationEvent(reflected, 'reflecting', `${this.db.getPrimaryCompanion()?.name ?? 'Ann'} recorded what happened after sharing the insight.`, {
+    this.recordExplorationEvent(reflected, 'reflecting', `${this.requireActiveCompanion().name} recorded what happened after sharing the insight.`, {
       feedback: feedback.value
     });
 
@@ -1186,7 +1282,7 @@ export class AppServices {
       this.db.insertMilestone(
         createJourneyMilestone({
           journeyId: activeJourney.id,
-          title: `Ann saved an insight: ${insight.title}`,
+          title: `${this.requireActiveCompanion().name} saved an insight: ${insight.title}`,
           summary: insight.summary,
           type: 'discovery_saved'
         })
@@ -1195,7 +1291,7 @@ export class AppServices {
         id: createId('diary'),
         characterId: cycle.companionId,
         type: 'milestone',
-        title: `${this.db.getPrimaryCompanion()?.name ?? 'Ann'} brought something back`,
+        title: `${this.requireActiveCompanion().name} brought something back`,
         content: `I explored ${insight.title} and the user wanted to keep it. I added it to memory ${memory.id} so I can connect it to future curiosity.`,
         relatedJourneyId: activeJourney.id,
         createdAt: nowIso()
@@ -1285,8 +1381,7 @@ export class AppServices {
   }
 
   getEffectiveDiscoveryScore(): number {
-    const primary = this.db.getPrimaryCompanion();
-    const characterId = primary?.id ?? DEFAULT_CHARACTER_ID;
+    const characterId = this.db.resolveActiveCompanionId();
     const rules = this.db.getCharacterBehaviorRules(characterId);
     return clampScore(Number(rules.discovery ?? 35));
   }
@@ -1297,8 +1392,7 @@ export class AppServices {
     if (this.companionSessionPhase !== 'idle' && this.companionSessionPhase !== 'inactive') return false;
     if (this.companionDragging) return false;
 
-    const primary = this.db.getPrimaryCompanion();
-    const state = this.db.getCharacterState(primary?.id);
+    const state = this.db.getCharacterState(this.db.resolveActiveCompanionId());
     if (state.intent === 'helping_task' || state.intent === 'asking_permission') return false;
     if (state.intent === 'sharing_discovery') return true;
     if (['listening', 'executing'].includes(state.coreState)) return false;
@@ -1360,6 +1454,41 @@ export class AppServices {
     };
   }
 
+  private async analyzeCompanionPersonality(description: string): Promise<CompanionPersonalityAnalysis> {
+    const trimmed = description.trim();
+    if (!trimmed) throw new Error('A personality description is required.');
+    if (!this.getAiSettings().apiKeyConfigured) {
+      throw new Error('AI configuration is required before analyzing personality. Configure the API key, model, and endpoint, then retry.');
+    }
+    const { content } = await this.sendToAi({
+      channel: 'personality_analysis',
+      source: 'creation',
+      messages: [{
+        role: 'user',
+        content: `Analyze this Companion personality description. Return JSON only, with integer values from 0 to 100 for exactly: energy, curiosity, sociability, diligence, playfulness, confidence, calmness, shyness. Description: ${trimmed}`,
+      }],
+    });
+    const match = content.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('AI personality analysis did not return valid JSON.');
+    const raw = JSON.parse(match[0]) as Record<string, unknown>;
+    const keys: Array<keyof CompanionPersonality> = ['energy', 'curiosity', 'sociability', 'diligence', 'playfulness', 'confidence', 'calmness', 'shyness'];
+    if (Object.keys(raw).some((key) => !keys.includes(key as keyof CompanionPersonality))) {
+      throw new Error('AI personality analysis returned unexpected fields.');
+    }
+    const personality = {} as CompanionPersonality;
+    for (const key of keys) {
+      const value = raw[key];
+      if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value) || value < 0 || value > 100) {
+        throw new Error(`AI personality analysis returned an invalid ${key} value.`);
+      }
+      personality[key] = value;
+    }
+    const analysisId = createId('personality_analysis');
+    const expiresAt = Date.now() + 10 * 60 * 1000;
+    this.personalityAnalyses.set(analysisId, { personality, description: trimmed, expiresAt, used: false });
+    return { analysisId, personality, description: trimmed, expiresAt: new Date(expiresAt).toISOString() };
+  }
+
   private updateAiSettings(input: UpdateAiSettingsInput): AiSettings {
     const existing = this.getStoredAiSettings();
     const next: StoredAiSettings = { ...existing };
@@ -1402,7 +1531,7 @@ export class AppServices {
 
   private async sendToAi(input: {
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
-    channel: 'chat' | 'turn' | 'discovery_reason';
+    channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis';
     source: string;
   }): Promise<{ content: string; raw: unknown; requestBody: unknown }> {
     try {
@@ -1434,7 +1563,7 @@ export class AppServices {
   }
 
   private applyCharacterEmotion(characterId: string | undefined, eventType: Parameters<typeof applyEmotionEvent>[1]): void {
-    const id = characterId ?? DEFAULT_CHARACTER_ID;
+    const id = this.db.resolveActiveCompanionId(characterId);
     const state = this.db.getCharacterState(id);
     const nextState = this.db.saveCharacterState({
       ...state,
@@ -1456,7 +1585,7 @@ export class AppServices {
   }
 
   private getCharacterBehaviorSettings(characterId?: string): CharacterBehaviorSettings {
-    const id = characterId ?? DEFAULT_CHARACTER_ID;
+    const id = this.db.resolveActiveCompanionId(characterId);
     const rules = this.db.getCharacterBehaviorRules(id);
     const movementDefault = clampScore(Number(rules.movement ?? 25));
     const stored = this.db.getAppSetting<StoredCharacterBehaviorSettings>(CHARACTER_BEHAVIOR_SETTINGS_KEY) ?? {};

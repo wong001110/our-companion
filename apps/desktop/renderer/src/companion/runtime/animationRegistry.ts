@@ -1,33 +1,5 @@
-export type CompanionAnimationName =
-  | 'Idle_Neutral'
-  | 'Idle_Breathe'
-  | 'Idle_Sleepy'
-  | 'Idle_Sleeping'
-  | 'Listening'
-  | 'Waiting_Response'
-  | 'Drag_Hold'
-  | 'Drag_Release'
-  | 'Talk_Neutral'
-  | 'Talk_Happy'
-  | 'Talk_Thinking'
-  | 'Talk_Concerned'
-  | 'Think'
-  | 'Walk_Left'
-  | 'Walk_Right'
-  | 'Walk_Up'
-  | 'Walk_Down'
-  | 'Walk_UpLeft'
-  | 'Walk_UpRight'
-  | 'Walk_DownLeft'
-  | 'Walk_DownRight'
-  | 'Enter'
-  | 'Leave'
-  | 'Expedition_Prepare'
-  | 'Expedition_Leave'
-  | 'Expedition_Return'
-  | 'Expedition_Present'
-  | 'Work_Focus'
-  | 'Music_Idle';
+import type { CompanionAnimationName } from '@our-companion/shared';
+export type { CompanionAnimationName } from '@our-companion/shared';
 
 export type AnimationCategory =
   | 'presence'

@@ -32,7 +32,7 @@ export function scorePattern(input: Omit<PatternScore, 'finalScore'>): PatternSc
 }
 
 function tokenize(value: string): string[] {
-  const stop = new Set(['the', 'and', 'for', 'with', 'from', 'this', 'that', 'into', 'ann', 'our']);
+  const stop = new Set(['the', 'and', 'for', 'with', 'from', 'this', 'that', 'into', 'our']);
   return value
     .toLowerCase()
     .replace(/[^\w\s-]/g, ' ')
@@ -126,7 +126,7 @@ export function detectPatterns(input: DetectPatternsInput): Pattern[] {
         userId: input.userId,
         type: 'repeated_theme',
         title: `${token[0].toUpperCase()}${token.slice(1)} keeps appearing`,
-        summary: `Ann noticed "${token}" appearing across memory, journey, or discovery history.`,
+        summary: `Companion noticed "${token}" appearing across memory, journey, or discovery history.`,
         score,
         evidence: value.evidence.slice(0, 5)
       })
@@ -141,7 +141,7 @@ export function detectPatterns(input: DetectPatternsInput): Pattern[] {
         userId: input.userId,
         type: 'returning_topic',
         title: 'Saved discoveries are forming a direction',
-        summary: 'The user has saved multiple discoveries, so Ann should bias curiosity toward this cluster.',
+        summary: 'The user has saved multiple discoveries, so Companion should bias curiosity toward this cluster.',
         score: scorePattern({ frequency: 0.7, recency: 0.8, emotionalWeight: 0.65, feedbackWeight: 0.9 }),
         evidence: saved.slice(0, 5).map((item) => ({
           sourceType: 'saved_discovery',
@@ -242,7 +242,7 @@ export function detectCognitivePatterns(input: DetectCognitivePatternsInput): Pa
 }
 
 // ============================================================================
-// Pattern Engine V2 — Enhanced pattern detection
+// Pattern Engine V2 â€” Enhanced pattern detection
 // ============================================================================
 
 export { PatternEngine } from './pattern-engine';

@@ -96,6 +96,10 @@ function createCompanionWindow(): BrowserWindow {
   window.on('show', () => keepCompanionOnTop(window));
   window.on('focus', () => keepCompanionOnTop(window));
   window.on('blur', () => keepCompanionOnTop(window));
+  window.once('ready-to-show', () => {
+    window.show();
+    keepCompanionOnTop(window);
+  });
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   window.loadURL(rendererUrl('companion'));
   companionWindow = window;
@@ -299,6 +303,7 @@ function registerIpc(): void {
     'user:getMode': services.user.getMode,
     'user:setMode': services.user.setMode,
     'companionNew:create': services.companionNew.create,
+    'companionNew:analyzePersonality': services.companionNew.analyzePersonality,
     'companionNew:list': services.companionNew.list,
     'companionNew:get': services.companionNew.get,
     'companionNew:update': services.companionNew.update,
@@ -313,33 +318,44 @@ function registerIpc(): void {
   } as const;
 
   for (const [channel, handler] of Object.entries(routes)) {
-    ipcMain.handle(channel, async (_event, input) => (handler as (input: unknown) => Promise<unknown>)(input));
+    ipcMain.handle(channel, async (_event, input) => {
+      const onboardingAllowed = channel.startsWith('companionNew:') || channel === 'ai:getSettings' ||
+        channel === 'ai:updateSettings' || channel.startsWith('user:') || channel.startsWith('workspace:');
+      if (!onboardingAllowed && !services.hasActiveCompanion()) {
+        throw new Error('NO_ACTIVE_COMPANION: No active Companion. Complete Companion creation first.');
+      }
+      return (handler as (input: unknown) => Promise<unknown>)(input);
+    });
   }
 
-  ipcMain.handle('window:openPanel', (_event, input?: { annX?: number; annY?: number }) => {
+  ipcMain.handle('window:openPanel', (_event, input?: { companionX?: number; companionY?: number }) => {
+    if (!services.hasActiveCompanion()) {
+      createCreationWindow();
+      return false;
+    }
     if (!panelWindow || panelWindow.isDestroyed()) {
       panelWindow = createPanelWindow();
     }
 
-    if (input?.annX !== undefined && input?.annY !== undefined && companionWindow && !companionWindow.isDestroyed()) {
+    if (input?.companionX !== undefined && input?.companionY !== undefined && companionWindow && !companionWindow.isDestroyed()) {
       const compBounds = companionWindow.getBounds();
       const display = screen.getDisplayMatching(compBounds);
       const workArea = display.workArea;
       const panelWidth = Math.min(panelWindow.getBounds().width || 1180, workArea.width * 0.65);
       const panelHeight = Math.min(panelWindow.getBounds().height || 760, workArea.height * 0.85);
 
-      const annScreenX = compBounds.x + input.annX;
-      const spaceRight = workArea.x + workArea.width - annScreenX - 220 - 16;
+      const companionScreenX = compBounds.x + input.companionX;
+      const spaceRight = workArea.x + workArea.width - companionScreenX - 220 - 16;
 
       let x: number;
       if (spaceRight >= panelWidth) {
-        x = annScreenX + 220 + 16;
+        x = companionScreenX + 220 + 16;
       } else {
-        x = annScreenX - panelWidth - 16;
+        x = companionScreenX - panelWidth - 16;
       }
       x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - panelWidth));
 
-      const y = Math.max(workArea.y, Math.min(compBounds.y + input.annY - 40, workArea.y + workArea.height - panelHeight));
+      const y = Math.max(workArea.y, Math.min(compBounds.y + input.companionY - 40, workArea.y + workArea.height - panelHeight));
 
       panelWindow.setBounds({ x: Math.round(x), y: Math.round(y), width: Math.round(panelWidth), height: Math.round(panelHeight) });
     }
@@ -350,6 +366,10 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('window:showCompanion', () => {
+    if (!services.hasActiveCompanion()) {
+      createCreationWindow();
+      return false;
+    }
     if (panelWindow && !panelWindow.isDestroyed()) {
       panelWindow.hide();
     }
@@ -358,9 +378,14 @@ function registerIpc(): void {
       keepCompanionOnTop(companionWindow);
       companionWindow.webContents.send('companion:refresh');
     }
+    return true;
   });
 
   ipcMain.handle('window:openPanelForSwitch', () => {
+    if (!services.hasActiveCompanion()) {
+      createCreationWindow();
+      return false;
+    }
     if (companionWindow && !companionWindow.isDestroyed()) {
       companionWindow.hide();
     }
@@ -372,12 +397,17 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('creation:completed', (_event, companion) => {
+    const primary = services.db.getPrimaryCompanion();
+    if (!primary || !companion || companion.id !== primary.id) {
+      throw new Error('Creation completion requires the persisted primary Companion.');
+    }
     if (creationWindow && !creationWindow.isDestroyed()) {
       creationWindow.close();
       creationWindow = undefined;
     }
     createCompanionWindow();
     createPanelWindow();
+    services.startRuntimeIfReady();
     startDiscoveryAutomation();
     if (companionWindow && !companionWindow.isDestroyed()) {
       companionWindow.show();
@@ -394,7 +424,14 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('creation:openWindow', () => {
-    createCreationWindow();
+    if (services.hasActiveCompanion()) {
+      services.startRuntimeIfReady();
+      createCompanionWindow();
+      createPanelWindow();
+      startDiscoveryAutomation();
+    } else {
+      createCreationWindow();
+    }
     return true;
   });
 
@@ -474,6 +511,10 @@ function getWorkAreaForWindow(window: BrowserWindow): Electron.Rectangle {
 
 function registerCompanionHotkey(): void {
   const registered = globalShortcut.register(companionListenHotkey, () => {
+    if (!services.hasActiveCompanion()) {
+      createCreationWindow();
+      return;
+    }
     companionWindow?.webContents.send('companion:toggleListen');
   });
   if (!registered) {
@@ -486,6 +527,7 @@ function unregisterCompanionHotkey(): void {
 }
 
 function startDiscoveryAutomation(): void {
+  if (discoveryScheduler || !services.hasActiveCompanion()) return;
   const broadcaster = new ElectronIpcBroadcaster({
     eventBus: services.eventBus,
     getCompanionWindow: () => companionWindow,
@@ -596,7 +638,14 @@ app.whenReady().then(async () => {
       callback(permission === 'media');
     });
     registerCompanionHotkey();
-    createCreationWindow();
+    if (services.hasActiveCompanion()) {
+      services.startRuntimeIfReady();
+      createCompanionWindow();
+      createPanelWindow();
+      startDiscoveryAutomation();
+    } else {
+      createCreationWindow();
+    }
     registerDisplayListeners();
   } catch (error) {
     console.error('[our-companion] Fatal startup failure.', error);
@@ -606,7 +655,12 @@ app.whenReady().then(async () => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createCreationWindow();
+      if (services.hasActiveCompanion()) {
+        createCompanionWindow();
+        createPanelWindow();
+      } else {
+        createCreationWindow();
+      }
     }
   });
 });

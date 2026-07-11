@@ -845,7 +845,7 @@ export interface CompanionInsight {
   summary: string;
   insight: string;
   whyItMatters: string;
-  whyAnnFoundIt: string;
+  whyCompanionFoundIt: string;
   confidence: number;
   novelty: number;
   emotionalRelevance: number;
@@ -1192,7 +1192,7 @@ export type UiLang = 'en' | 'zh-CN';
 
 export interface AiDebugEntry {
   id: string;
-  channel: 'chat' | 'turn' | 'discovery_reason';
+  channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis';
   source: string;
   status: 'success' | 'error';
   requestMessages: Array<{ role: string; content: string }>;
@@ -1536,7 +1536,7 @@ export interface OurCompanionApi {
     onModeChange(listener: (mode: OnlineMode) => void): () => void;
   };
   window: {
-    openPanel(input?: { annX?: number; annY?: number }): Promise<boolean>;
+    openPanel(input?: { companionX?: number; companionY?: number }): Promise<boolean>;
     openPanelForSwitch(): Promise<boolean>;
     showCompanion(): Promise<void>;
     getBounds(): Promise<WindowBounds>;
@@ -1563,8 +1563,6 @@ export interface OurCompanionApi {
   };
   companionNew: CompanionApi;
 }
-
-export const DEFAULT_CHARACTER_ID = 'ann';
 
 export function nowIso(): string {
   return new Date().toISOString();
@@ -1908,17 +1906,59 @@ export interface CompanionProfile {
   updatedAt: string;
 }
 
+export interface CompanionPersonalityAnalysis {
+  analysisId: string;
+  personality: CompanionPersonality;
+  description: string;
+  expiresAt: string;
+}
+
+export const COMPANION_ANIMATION_NAMES = [
+  'Idle_Neutral', 'Idle_Breathe', 'Idle_Sleepy', 'Idle_Sleeping', 'Walk_Right', 'Walk_Left',
+  'Expedition_Return', 'Think', 'Work_Focus', 'Expedition_Present', 'Talk_Neutral', 'Talk_Happy',
+  'Expedition_Prepare', 'Expedition_Leave', 'Listening', 'Waiting_Response', 'Drag_Hold',
+  'Drag_Release', 'Talk_Thinking', 'Talk_Concerned', 'Walk_Up', 'Walk_Down', 'Walk_UpLeft',
+  'Walk_UpRight', 'Walk_DownLeft', 'Walk_DownRight', 'Enter', 'Leave', 'Music_Idle',
+] as const;
+export type CompanionAnimationName = typeof COMPANION_ANIMATION_NAMES[number];
+
+export interface CompanionAnimationManifestEntry {
+  key: CompanionAnimationName;
+  fileName: `${CompanionAnimationName}.png`;
+  requiredForCreation: boolean;
+  fallback: CompanionAnimationName;
+}
+
+const REQUIRED_COMPANION_ANIMATION_KEYS = new Set<CompanionAnimationName>(COMPANION_ANIMATION_NAMES.slice(0, 15));
+
+/** Shared source of truth for creation, editing, and runtime asset names. */
+export const COMPANION_ANIMATION_MANIFEST: readonly CompanionAnimationManifestEntry[] = COMPANION_ANIMATION_NAMES.map((key) => ({
+  key,
+  fileName: `${key}.png`,
+  requiredForCreation: REQUIRED_COMPANION_ANIMATION_KEYS.has(key),
+  fallback: 'Idle_Neutral',
+}));
+
+export interface CompanionCreationAsset {
+  animationKey: CompanionAnimationName;
+  buffer: ArrayBuffer | Uint8Array;
+}
+
 export interface CreateCompanionInput {
   name: string;
   personalityDescription: string;
-  personality: CompanionPersonality;
+  /** Ignored by Main Process; the stored analysis result is authoritative. */
+  personality?: CompanionPersonality;
+  personalityAnalysisId: string;
   assetRoot: string;
+  assets?: CompanionCreationAsset[];
 }
 
 export interface UpdateCompanionInput {
   name?: string;
   personalityDescription?: string;
   personality?: CompanionPersonality;
+  personalityAnalysisId?: string;
   assetRoot?: string;
 }
 
@@ -1930,6 +1970,7 @@ export type CompanionAssetPack = {
 };
 
 export interface CompanionApi {
+  analyzePersonality(description: string): Promise<CompanionPersonalityAnalysis>;
   create(input: CreateCompanionInput): Promise<CompanionProfile>;
   list(): Promise<CompanionProfile[]>;
   get(id: string): Promise<CompanionProfile | null>;

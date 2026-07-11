@@ -13,7 +13,7 @@ import type {
   MemoryNode,
   Pattern
 } from '@our-companion/shared';
-import { clamp01, DEFAULT_CHARACTER_ID, createId, nowIso } from '@our-companion/shared';
+import { clamp01, createId, nowIso } from '@our-companion/shared';
 
 export interface GenerateCuriosityTargetsInput {
   userId: string;
@@ -188,7 +188,7 @@ function createTarget(input: {
 }
 
 export function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): CuriosityTarget[] {
-  const companionId = input.companionId ?? input.characterState.characterId ?? DEFAULT_CHARACTER_ID;
+  const companionId = input.companionId ?? input.characterState.characterId;
   const dismissed = rejectedTopics(input.recentFeedback);
   const memories = input.memoryNodes.filter((memory) => !memory.isMarkedWrong).slice(0, 8);
   const strongPatterns = [...input.patterns].sort((left, right) => right.strength - left.strength).slice(0, 5);
@@ -217,7 +217,7 @@ export function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): 
         explorationType: 'adjacent',
         priority: score.finalScore,
         confidence: Math.max(0.52, score.memoryRelevance),
-        reason: `This came from an active memory Ann has been keeping: ${memory.summary ?? memory.title}.`,
+        reason: `This came from an active memory Companion has been keeping: ${memory.summary ?? memory.title}.`,
         expectedValue: 'May reveal a nearby idea or reference that feels specifically useful now.',
         relatedMemoryIds: [memory.id]
       })
@@ -231,7 +231,7 @@ export function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): 
         userId: input.userId,
         companionId,
         topic: pattern.title,
-        description: `Explore the pattern Ann noticed: ${pattern.summary}`,
+        description: `Explore the pattern Companion noticed: ${pattern.summary}`,
         source: pattern.type === 'contradiction' ? 'contradiction_trigger' : 'pattern_trigger',
         explorationType: mode,
         priority: scoreCuriosity({
@@ -246,8 +246,8 @@ export function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): 
         reason: pattern.summary,
         expectedValue:
           pattern.type === 'contradiction'
-            ? 'May help Ann challenge a hidden assumption before it becomes design debt.'
-            : 'May help Ann understand the user beyond one isolated note.',
+            ? 'May help Companion challenge a hidden assumption before it becomes design debt.'
+            : 'May help Companion understand the user beyond one isolated note.',
         relatedPatternIds: [pattern.id]
       })
     );
@@ -290,7 +290,7 @@ export function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): 
         explorationType: 'adjacent',
         priority: 0.72,
         confidence: 0.62,
-        reason: 'Ann is naturally curious, and the current product direction centers on companion presence.',
+        reason: 'Companion is naturally curious, and the current product direction centers on companion presence.',
         expectedValue: 'May help Our Companion feel alive rather than like a regular assistant.'
       })
     );
@@ -302,7 +302,7 @@ export function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): 
 }
 
 // ============================================================================
-// Curiosity Engine V2 — Enhanced curiosity management
+// Curiosity Engine V2 â€” Enhanced curiosity management
 // ============================================================================
 
 export { CuriosityEngine } from './curiosity-engine';

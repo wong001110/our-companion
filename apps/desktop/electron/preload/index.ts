@@ -193,7 +193,7 @@ const api: OurCompanionApi = {
     }
   },
   window: {
-    openPanel: (input?: { annX?: number; annY?: number }) => invoke('window:openPanel', input),
+    openPanel: (input?: { companionX?: number; companionY?: number }) => invoke('window:openPanel', input),
     openPanelForSwitch: () => invoke('window:openPanelForSwitch'),
     showCompanion: () => invoke('window:showCompanion'),
     getBounds: () => invoke('window:getBounds'),
@@ -248,6 +248,7 @@ const api: OurCompanionApi = {
     openFiles: () => invoke<Array<{ name: string; dataUrl: string }>>('dialog:openFiles')
   },
   companionNew: {
+    analyzePersonality: (description: string) => invoke<import('@our-companion/shared').CompanionPersonalityAnalysis>('companionNew:analyzePersonality', description),
     create: (input: CreateCompanionInput) => invoke<CompanionProfile>('companionNew:create', input),
     list: () => invoke<CompanionProfile[]>('companionNew:list'),
     get: (id: string) => invoke<CompanionProfile | null>('companionNew:get', id),

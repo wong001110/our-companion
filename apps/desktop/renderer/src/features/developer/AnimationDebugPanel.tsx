@@ -28,7 +28,7 @@ export function AnimationDebugPanel({
   onPersonalityChange
 }: AnimationDebugPanelProps) {
   const [selectedIntent, setSelectedIntent] = useState<CompanionAnimationName>('Idle_Neutral');
-  const animations = createCompanionAnimations();
+  const animations = createCompanionAnimations('');
   const availableClips = getAvailableClipNames(animations);
   const resolution = resolveAnimation({ intent: selectedIntent, personality }, availableClips);
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type {
+import { COMPANION_ANIMATION_MANIFEST, type
   CompanionPersonality,
   CompanionProfile,
 } from "@our-companion/shared";
@@ -22,37 +22,7 @@ const PERSONALITY_LABELS: Record<keyof CompanionPersonality, string> = {
   shyness: "Shyness",
 };
 
-const ALL_ANIMATIONS = [
-  "Idle_Neutral",
-  "Idle_Breathe",
-  "Idle_Sleepy",
-  "Idle_Sleeping",
-  "Listening",
-  "Waiting_Response",
-  "Drag_Hold",
-  "Drag_Release",
-  "Talk_Neutral",
-  "Talk_Happy",
-  "Talk_Thinking",
-  "Talk_Concerned",
-  "Think",
-  "Walk_Left",
-  "Walk_Right",
-  "Walk_Up",
-  "Walk_Down",
-  "Walk_UpLeft",
-  "Walk_UpRight",
-  "Walk_DownLeft",
-  "Walk_DownRight",
-  "Enter",
-  "Leave",
-  "Expedition_Prepare",
-  "Expedition_Leave",
-  "Expedition_Return",
-  "Expedition_Present",
-  "Work_Focus",
-  "Music_Idle",
-];
+const ALL_ANIMATIONS = COMPANION_ANIMATION_MANIFEST.map((entry) => entry.key);
 
 interface AssetFile {
   name: string;
@@ -163,6 +133,7 @@ export function CompanionEditPage({
   const [personality, setPersonality] = useState<CompanionPersonality>(
     companion.personality,
   );
+  const [personalityAnalysisId, setPersonalityAnalysisId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { analyze, analyzing, error: analyzeError } = useAnalyzePersonality();
@@ -203,7 +174,8 @@ export function CompanionEditPage({
     if (!description.trim()) return;
     const result = await analyze(description);
     if (result) {
-      setPersonality(result);
+      setPersonality(result.personality);
+      setPersonalityAnalysisId(result.analysisId);
     }
   }
 
@@ -339,7 +311,7 @@ export function CompanionEditPage({
         const uint8 = new Uint8Array(arrayBuffer);
         await window.ourCompanion.companionNew.uploadAsset({
           companionId: companion.id,
-          fileName: staged.file.name,
+          fileName: `${animName}.png`,
           buffer: uint8,
         });
       } catch (err) {
@@ -355,6 +327,11 @@ export function CompanionEditPage({
 
   async function handleSave() {
     if (!name.trim()) return;
+    const personalityChanged = description.trim() !== companion.personalityDescription;
+    if (personalityChanged && !personalityAnalysisId) {
+      setError('Analyze the updated personality description with AI before saving.');
+      return;
+    }
     setSaving(true);
     setError(null);
 
@@ -365,8 +342,9 @@ export function CompanionEditPage({
       const updated = await window.ourCompanion.companionNew.update({
         id: companion.id,
         name: name.trim(),
-        personalityDescription: description,
-        personality,
+        ...(personalityChanged ? {
+          personalityDescription: description.trim(), personality, personalityAnalysisId: personalityAnalysisId!,
+        } : {}),
       });
       onComplete(updated);
     } catch (err) {

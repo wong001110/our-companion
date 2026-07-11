@@ -1,5 +1,18 @@
 # Repair Execution Log
 
+## Mandatory First Companion Onboarding
+
+- Issue: fresh installs silently received a built-in Ann profile, and runtime/UI paths assumed a fallback identity and asset package before the user created a Companion.
+- Root cause: database bootstrap insertion, permissive identity resolution, eager scheduler startup, renderer-side personality parsing, and hardcoded character/asset fallbacks collectively bypassed onboarding ownership.
+- Old behavior: a fresh database contained Ann; missing identity resolved to a default; normal windows and automation could start before creation; renderer input could supply personality values; partial asset writes could leave a profile behind.
+- New behavior: fresh databases contain zero Companions; strict resolution throws `NO_ACTIVE_COMPANION` while the nullable resolver supports gates; startup exposes creation only until a primary profile exists; Main Process AI analysis produces a short-lived single-use proof; creation validates the shared required-animation manifest and atomically rolls back profile/assets on failure; the only Companion cannot be deleted; primary selection validates transactionally.
+- Files changed: database and shared contracts; character/AI/curiosity/diary/discovery/insight engines where default identity or Ann wording leaked; Electron main/preload services and startup; creation/edit/runtime renderer components; focused tests. This wider scope was required because the legacy default crossed package boundaries rather than existing only in onboarding UI.
+- Tests added: fresh-database zero state and strict resolution; untouched/customized/data-bearing/custom-asset legacy migration; invalid primary and only-Companion deletion; runtime gating; untrusted personality rejection; valid/malformed Main Process AI analysis; and atomic profile rollback on asset persistence failure. Existing engine fixtures now create or pass explicit identities.
+- Migration behavior: only the exact untouched legacy `id='ann'`, `is_builtin=1` profile with no related data and no custom asset files is removed. Customized, data-bearing, or asset-bearing profiles are preserved and converted to ordinary user-owned profiles (`is_builtin=0`). The `is_builtin` and `why_ann_found_it` database columns and legacy Ann path checks remain solely as historical migration/storage compatibility.
+- Verification result: `npm.cmd run typecheck` passed; `npm.cmd run test` passed (43 files, 335 tests); `npm.cmd run arch:check` passed; `npm.cmd run build` passed. `git diff --check` passed. The build retained the existing non-failing Vite warning about mixed dynamic/static `character-engine` imports.
+- Search review: no production default character constant/package, built-in creation, fallback character visual, Ann UI label, or Ann runtime identity remains. Exact Ann production matches are restricted to the safe legacy migration and historical asset filenames/schema columns; test fixtures intentionally continue to exercise legacy compatibility.
+- Remaining limitations: personality analysis requires configured AI access and fails closed when unavailable or malformed. Creation requires all manifest entries marked `requiredForCreation`; optional animation assets can be added later through editing.
+
 ## Command Deferral and Terminal Cleanup
 
 - Issue: a command deferred because another command was active was only logged, while recovery validation could silently discard an active record.
@@ -47,7 +60,7 @@
 - Verification result: passed in the final suite.
 - Remaining limitations: compatibility-only renderer fields (`mode`, `mood`, `energy`, `focus`, `initiativeLevel`, and `debugOverride`) remain non-decision UI state; broad cleanup is intentionally out of scope.
 
-- Final verification: `npm.cmd run typecheck` passed; `npm.cmd run test` passed (43 files, 322 tests); `npm.cmd run arch:check` passed; `npm.cmd run build` passed. The build retained its pre-existing Vite dynamic/static import warning for `character-engine`, with no build failure.
+- Final verification: `npm.cmd run typecheck` passed; `npm.cmd run test` passed (43 files, 335 tests); `npm.cmd run arch:check` passed; `npm.cmd run build` passed. The build retained its pre-existing Vite dynamic/static import warning for `character-engine`, with no build failure.
 - Search review: no production `latestStatus: 'received'` or legacy renderer behavior path remains. `getPrimaryCompanion()` matches are unrelated companion/profile, exploration, or presentation code; command recovery uses `resolveActiveCompanionId()`. Remaining `activeCommand` assignments are only activation and terminal discard/clear. `commandCompletionRef`, timeout, busy, unmount, and shutdown matches are intentional lifecycle code and tests. No reference to the removed command-reliability prompt remains; unrelated archived `tasks/temp-task` references in historical documentation were preserved.
 
 ## Command Execution Reliability Pass

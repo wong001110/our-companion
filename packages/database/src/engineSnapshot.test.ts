@@ -73,7 +73,7 @@ describe('engine snapshot list helpers', () => {
       summary: 'Summary',
       insight: 'Detail',
       whyItMatters: 'Matters',
-      whyAnnFoundIt: 'Found it',
+      whyCompanionFoundIt: 'Found it',
       confidence: 0.7,
       novelty: 0.6,
       emotionalRelevance: 0.5,

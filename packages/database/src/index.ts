@@ -50,12 +50,15 @@ type SqliteDatabase = DatabaseSync;
 
 export interface DatabaseServiceOptions {
   path?: string;
+  legacyAnnHasCustomAssets?: () => boolean;
 }
 
 export class DatabaseService {
   private readonly db: SqliteDatabase;
+  private readonly legacyAnnHasCustomAssets: () => boolean;
 
   constructor(options: DatabaseServiceOptions = {}) {
+    this.legacyAnnHasCustomAssets = options.legacyAnnHasCustomAssets ?? (() => false);
     this.db = new DatabaseSync(options.path ?? ':memory:');
     this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec(sqliteSchema);
@@ -90,7 +93,7 @@ export class DatabaseService {
     }
     this.ensurePendingActionsTable();
     this.ensureTopicPreferencesTable();
-    this.ensureBuiltinAnn();
+    this.migrateLegacyBuiltinAnn();
   }
 
   private ensureTopicPreferencesTable(): void {
@@ -142,20 +145,44 @@ export class DatabaseService {
     `);
   }
 
-  private ensureBuiltinAnn(): void {
-    const existing = this.db.prepare('SELECT id FROM companions WHERE id = ?').get('ann');
-    if (existing) return;
-    const now = nowIso();
-    this.db.prepare(
-      `INSERT INTO companions (id, name, personality_description, personality_json, asset_root, is_primary, is_builtin, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?)`
-    ).run('ann', 'Ann', 'A curious, warm desktop companion.', '{}', 'assets/companions/ann', now, now);
+  /**
+   * Removes only the untouched legacy built-in profile. Any Ann record with user
+   * data or customization is retained as a normal user Companion; no user data
+   * is ever deleted by this migration.
+   */
+  private migrateLegacyBuiltinAnn(): void {
+    const ann = this.db.prepare('SELECT * FROM companions WHERE id = ? AND is_builtin = 1').get('ann') as Record<string, unknown> | undefined;
+    if (!ann) return;
+    const isOriginalProfile = ann.name === 'Ann' &&
+      ann.personality_description === 'A curious, warm desktop companion.' &&
+      ann.personality_json === '{}' && ann.asset_root === 'assets/companions/ann';
+    const relatedDataTables = [
+      ['memory_nodes', 'companion_id'], ['companion_messages', 'character_id'], ['diary_entries', 'character_id'],
+      ['pending_companion_actions', 'companion_id'], ['conversation_sessions', 'companion_id'], ['character_state', 'character_id'],
+    ] as const;
+    const hasRelatedData = this.legacyAnnHasCustomAssets() || relatedDataTables.some(([table, column]) =>
+      Boolean(this.db.prepare(`SELECT 1 FROM ${table} WHERE ${column} = ? LIMIT 1`).get('ann'))
+    );
+    if (isOriginalProfile && !hasRelatedData) {
+      this.db.prepare('DELETE FROM companions WHERE id = ?').run('ann');
+      return;
+    }
+    this.db.prepare('UPDATE companions SET is_builtin = 0 WHERE id = ?').run('ann');
   }
 
-  /** Single source of truth for active companion ID in production paths */
+  tryResolveActiveCompanionId(): string | null {
+    return this.getPrimaryCompanion()?.id ?? null;
+  }
+
+  /** Single source of truth for active companion ID in production paths. */
   resolveActiveCompanionId(characterId?: string): string {
-    if (characterId) return characterId;
-    return this.getPrimaryCompanion()?.id ?? 'ann';
+    if (characterId) {
+      if (!this.getCompanion(characterId)) throw new Error(`Companion not found: ${characterId}`);
+      return characterId;
+    }
+    const active = this.tryResolveActiveCompanionId();
+    if (!active) throw new Error('NO_ACTIVE_COMPANION: No active Companion. Complete Companion creation first.');
+    return active;
   }
 
   close(): void {
@@ -289,13 +316,24 @@ export class DatabaseService {
   }
 
   deleteCompanion(id: string): { id: string; deleted: true } {
+    if (this.listCompanions().length <= 1) {
+      throw new Error('Create another Companion before deleting your only Companion.');
+    }
     this.db.prepare('DELETE FROM companions WHERE id = ?').run(id);
     return { id, deleted: true };
   }
 
   setPrimaryCompanion(id: string): CompanionProfile {
-    this.db.prepare('UPDATE companions SET is_primary = 0').run();
-    this.db.prepare('UPDATE companions SET is_primary = 1 WHERE id = ?').run(id);
+    if (!this.getCompanion(id)) throw new Error(`Companion not found: ${id}`);
+    this.db.exec('BEGIN');
+    try {
+      this.db.prepare('UPDATE companions SET is_primary = 0').run();
+      this.db.prepare('UPDATE companions SET is_primary = 1 WHERE id = ?').run(id);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
     return this.getCompanion(id)!;
   }
 
@@ -710,7 +748,7 @@ export class DatabaseService {
         insight.summary,
         insight.insight,
         insight.whyItMatters,
-        insight.whyAnnFoundIt,
+        insight.whyCompanionFoundIt,
         insight.confidence,
         insight.novelty,
         insight.emotionalRelevance,
@@ -1296,6 +1334,11 @@ export class DatabaseService {
     this.db.prepare('UPDATE pending_companion_actions SET status = ? WHERE id = ?').run(status, id);
   }
 
+  /** Used only to roll back an uncommitted creation attempt. */
+  rollbackCompanionCreation(id: string): void {
+    this.db.prepare('DELETE FROM companions WHERE id = ? AND is_primary = 0').run(id);
+  }
+
   updatePendingActionDeferReason(id: string, deferReason: string): void {
     this.db.prepare('UPDATE pending_companion_actions SET defer_reason = ? WHERE id = ?').run(deferReason, id);
   }
@@ -1538,7 +1581,7 @@ function mapCompanionInsight(row: Record<string, unknown>): CompanionInsight {
     summary: String(row.summary),
     insight: String(row.insight),
     whyItMatters: String(row.why_it_matters),
-    whyAnnFoundIt: String(row.why_ann_found_it),
+    whyCompanionFoundIt: String(row.why_ann_found_it),
     confidence: Number(row.confidence),
     novelty: Number(row.novelty),
     emotionalRelevance: Number(row.emotional_relevance),

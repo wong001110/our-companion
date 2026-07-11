@@ -1,7 +1,7 @@
 import type {
   AnimationKey,
   AnimationRequest,
-  AnnMood,
+  CompanionMood,
   BehaviourState,
   CharacterPackage,
   CharacterRuntimeState,
@@ -16,7 +16,7 @@ import type {
   PerformanceScript,
   ValidationResult
 } from '@our-companion/shared';
-import { clampScore, DEFAULT_CHARACTER_ID, createId, nowIso } from '@our-companion/shared';
+import { clampScore, createId, nowIso } from '@our-companion/shared';
 
 export const neutralEmotion: EmotionState = {
   neutral: 70,
@@ -45,48 +45,7 @@ export const requiredCreatorAnimations = [
   'Idle_Sleepy'
 ];
 
-export const defaultAnnPackage: CharacterPackage = {
-  id: 'ann',
-  name: 'Ann',
-  version: '1.0.0',
-  personalityPreset: {
-    traits: ['curious', 'calm', 'gentle', 'analytical'],
-    corePersonality: ['introverted', 'curious', 'warm', 'observant'],
-    expertise: ['web', 'frontend', 'ux'],
-    speakingStyle: {
-      tone: 'warm',
-      length: 'short',
-      avoid: ['romantic', 'clingy', 'preachy']
-    }
-  },
-  assetManifest: {
-    assets: []
-  },
-  animationManifest: {
-    required: requiredCreatorAnimations,
-    mappings: {
-      Idle_Neutral: 'Idle_Neutral',
-      Walk_Right: 'Walk_Right',
-      Think: 'Think',
-      Talk_Neutral: 'Talk_Neutral',
-      Expedition_Prepare: 'Expedition_Prepare',
-      Expedition_Return: 'Expedition_Return',
-      Expedition_Present: 'Expedition_Present',
-      Work_Focus: 'Work_Focus',
-      Music_Idle: 'Music_Idle',
-      Listening: 'Listening',
-      Idle_Sleepy: 'Idle_Sleepy'
-    }
-  },
-  metadata: {
-    description: 'Default Our Companion character package.',
-    tags: ['default', 'ann']
-  },
-  futureVoice: {},
-  futureTts: {}
-};
-
-export function createInitialCharacterState(characterId = DEFAULT_CHARACTER_ID): CharacterRuntimeState {
+export function createInitialCharacterState(characterId: string): CharacterRuntimeState {
   return {
     characterId,
     coreState: 'idle',
@@ -131,9 +90,9 @@ export function validateCharacterPackage(pkg: CharacterPackage): ValidationResul
 
 export class CharacterPackageRegistry {
   private readonly packages = new Map<string, CharacterPackage>();
-  private activePackageId = defaultAnnPackage.id;
+  private activePackageId: string | undefined;
 
-  constructor(initialPackages: CharacterPackage[] = [defaultAnnPackage]) {
+  constructor(initialPackages: CharacterPackage[] = []) {
     for (const pkg of initialPackages) {
       this.register(pkg);
     }
@@ -156,26 +115,28 @@ export class CharacterPackageRegistry {
   }
 
   activate(id: string): CharacterPackage {
-    const pkg = this.packages.get(id) ?? this.packages.get(defaultAnnPackage.id) ?? defaultAnnPackage;
+    const pkg = this.packages.get(id);
+    if (!pkg) throw new Error(`Character package not found: ${id}`);
     this.activePackageId = pkg.id;
     return pkg;
   }
 
   active(): CharacterPackage {
+    if (!this.activePackageId) throw new Error('No active Character package.');
     return this.activate(this.activePackageId);
   }
 }
 
 export function createRuntimeDescriptor(pkg: CharacterPackage): CharacterRuntimeDescriptor {
   const validation = validateCharacterPackage(pkg);
-  const safePackage = validation.valid ? pkg : defaultAnnPackage;
+  if (!validation.valid) throw new Error('Invalid Character package.');
   return {
-    packageId: safePackage.id,
-    characterId: safePackage.id,
-    displayName: safePackage.name,
-    defaultAnimation: safePackage.animationManifest.mappings.Idle_Neutral,
-    animations: safePackage.animationManifest.mappings,
-    personalityPreset: safePackage.personalityPreset
+    packageId: pkg.id,
+    characterId: pkg.id,
+    displayName: pkg.name,
+    defaultAnimation: pkg.animationManifest.mappings.Idle_Neutral,
+    animations: pkg.animationManifest.mappings,
+    personalityPreset: pkg.personalityPreset
   };
 }
 
@@ -184,7 +145,8 @@ export function loadCharacterPackage(
   registry = new CharacterPackageRegistry()
 ): { package: CharacterPackage; validation: ValidationResult; runtime: CharacterRuntimeDescriptor } {
   const validation = registry.register(pkg);
-  const activePackage = validation.valid ? registry.activate(pkg.id) : registry.activate(defaultAnnPackage.id);
+  if (!validation.valid) throw new Error('Invalid Character package.');
+  const activePackage = registry.activate(pkg.id);
   return {
     package: activePackage,
     validation,
@@ -371,7 +333,7 @@ export interface CharacterExpressionContext {
   availableAnimations?: string[];
 }
 
-export function emotionForDecision(decision: Pick<CompanionDecision, 'action' | 'priority'>, context: CharacterExpressionContext = {}): AnnMood {
+export function emotionForDecision(decision: Pick<CompanionDecision, 'action' | 'priority'>, context: CharacterExpressionContext = {}): CompanionMood {
   if ((context.energy ?? 70) < 25) return 'tired';
   if (decision.action === 'perform_action') return 'focused';
   if (decision.action === 'speak' && decision.priority === 'high') return 'curious';
@@ -427,7 +389,7 @@ export function nextAnimationState(current: AnimationKey, requested?: AnimationK
   return transitions[current] ?? 'Idle_Neutral';
 }
 
-export function animationKeyForBehaviour(behaviour: BehaviourState, mood: AnnMood): AnimationKey {
+export function animationKeyForBehaviour(behaviour: BehaviourState, mood: CompanionMood): AnimationKey {
   if (behaviour === 'present_discovery') return 'Expedition_Present';
   if (behaviour === 'perform_task') return 'Expedition_Prepare';
   if (behaviour === 'reflect' || mood === 'thinking') return 'Think';
@@ -439,12 +401,12 @@ export function animationKeyForBehaviour(behaviour: BehaviourState, mood: AnnMoo
 export function planAnimationRequest(input: {
   characterId?: string;
   behaviour: BehaviourState;
-  mood: AnnMood;
+  mood: CompanionMood;
   reason: string;
 }): AnimationRequest {
   return {
     id: createId('animation'),
-    characterId: input.characterId ?? DEFAULT_CHARACTER_ID,
+    characterId: input.characterId ?? (() => { throw new Error('Companion identity is required.'); })(),
     animationKey: animationKeyForBehaviour(input.behaviour, input.mood),
     interruptSafe: input.behaviour !== 'perform_task',
     reason: input.reason,

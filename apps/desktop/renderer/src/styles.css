@@ -324,7 +324,7 @@ input {
   border-radius: 8px;
 }
 
-.canvas-ann {
+.canvas-companion {
   display: grid;
   justify-items: center;
   margin: 0;
@@ -333,11 +333,11 @@ input {
   filter: drop-shadow(0 18px 22px rgba(0, 0, 0, 0.35));
 }
 
-.canvas-ann-compact {
+.canvas-companion-compact {
   transform: scale(1.18);
 }
 
-.canvas-ann canvas {
+.canvas-companion canvas {
   display: block;
   width: 220px;
   height: 230px;
@@ -345,175 +345,22 @@ input {
   pointer-events: none;
 }
 
-.canvas-ann-compact canvas {
+.canvas-companion-compact canvas {
   width: 260px;
   height: 260px;
 }
 
-.canvas-ann-facing-right canvas {
+.canvas-companion-facing-right canvas {
   transform: scaleX(-1);
 }
 
-.canvas-ann figcaption {
+.canvas-companion figcaption {
   margin-top: -8px;
   color: #f5edf8;
   font-size: 13px;
   font-weight: 700;
   text-align: center;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
-}
-
-.fallback-ann {
-  position: relative;
-  width: 170px;
-  height: 215px;
-  filter: drop-shadow(0 18px 22px rgba(0, 0, 0, 0.35));
-}
-
-.fallback-ann-shadow {
-  position: absolute;
-  left: 28px;
-  bottom: 23px;
-  width: 114px;
-  height: 20px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.24);
-}
-
-.fallback-ann-compact {
-  transform: scale(1.18);
-}
-
-.fallback-ann-facing-right {
-  transform: scaleX(-1);
-}
-
-.fallback-ann-facing-right.fallback-ann-compact {
-  transform: scaleX(-1) scale(1.18);
-}
-
-.fallback-ann-facing-right .fallback-ann-label {
-  transform: scaleX(-1);
-}
-
-.fallback-ann-tail {
-  position: absolute;
-  right: 14px;
-  top: 104px;
-  width: 54px;
-  height: 20px;
-  border: 3px solid #7c64b6;
-  border-left: 0;
-  border-radius: 0 22px 22px 0;
-  background: #21172d;
-}
-
-.fallback-ann-ear,
-.fallback-ann-hair,
-.fallback-ann-head,
-.fallback-ann-body {
-  position: absolute;
-  background: #21182a;
-  border: 3px solid #8a70c7;
-}
-
-.fallback-ann-ear {
-  top: 16px;
-  width: 34px;
-  height: 40px;
-  transform: rotate(45deg);
-  border-radius: 8px 4px 8px 4px;
-}
-
-.fallback-ann-ear-left {
-  left: 47px;
-}
-
-.fallback-ann-ear-right {
-  right: 47px;
-}
-
-.fallback-ann-head {
-  left: 37px;
-  top: 36px;
-  width: 96px;
-  height: 88px;
-  border-radius: 44px;
-  z-index: 4;
-}
-
-.fallback-ann-hair {
-  left: 32px;
-  top: 28px;
-  width: 106px;
-  height: 76px;
-  border-radius: 48px 48px 30px 30px;
-  background:
-    radial-gradient(circle at 78% 20%, rgba(130, 95, 190, 0.7) 0 8px, transparent 9px),
-    #17111f;
-  z-index: 3;
-  clip-path: polygon(0 0, 100% 0, 100% 58%, 90% 48%, 82% 66%, 72% 50%, 62% 68%, 50% 48%, 38% 67%, 27% 50%, 16% 66%, 7% 48%, 0 60%);
-}
-
-.fallback-ann-eye {
-  position: absolute;
-  top: 39px;
-  width: 11px;
-  height: 11px;
-  border-radius: 999px;
-  background: #bca6ff;
-  box-shadow: 0 0 12px rgba(188, 166, 255, 0.72);
-  z-index: 4;
-}
-
-.fallback-ann-eye-left {
-  left: 28px;
-}
-
-.fallback-ann-eye-right {
-  right: 28px;
-}
-
-.fallback-ann-mouth {
-  position: absolute;
-  left: 41px;
-  top: 58px;
-  width: 14px;
-  height: 5px;
-  border-radius: 999px;
-  background: #f0c2d0;
-  z-index: 4;
-}
-
-.fallback-ann-body {
-  left: 48px;
-  top: 104px;
-  width: 74px;
-  height: 78px;
-  border-radius: 24px;
-  z-index: 1;
-}
-
-.fallback-ann-laptop {
-  position: absolute;
-  left: 8px;
-  top: 28px;
-  width: 58px;
-  height: 36px;
-  border-radius: 6px;
-  background: #4a3a72;
-  border: 2px solid #d8c9ff;
-}
-
-.fallback-ann-label {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  color: #f5edf8;
-  font-size: 13px;
-  font-weight: 700;
-  text-align: center;
 }
 
 .panel-shell {
@@ -897,7 +744,7 @@ input {
   }
 }
 
-/* Ann's Notebook panel redesign */
+/* Companion notebook panel redesign */
 .panel-shell {
   grid-template-columns: 180px minmax(0, 1fr);
   min-height: 100vh;

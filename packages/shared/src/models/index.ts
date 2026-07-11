@@ -104,9 +104,9 @@ export interface CompanionDecision {
   displayHint?: 'stay_silent' | 'ambient_reaction' | 'show_soft_hint' | 'present_discovery' | 'start_conversation' | 'suggest_next_action';
 }
 
-export type AnnMood = 'neutral' | 'curious' | 'happy' | 'thinking' | 'focused' | 'tired' | 'concerned';
+export type CompanionMood = 'neutral' | 'curious' | 'happy' | 'thinking' | 'focused' | 'tired' | 'concerned';
 
-export type AnnIntent =
+export type CompanionIntent =
   | 'idle'
   | 'present_discovery'
   | 'wait_response'
@@ -115,8 +115,8 @@ export type AnnIntent =
   | 'return_home';
 
 export interface CharacterState {
-  mood: AnnMood;
-  intent: AnnIntent;
+  mood: CompanionMood;
+  intent: CompanionIntent;
   energy: number;
   currentAnimation?: string;
 }
@@ -151,7 +151,7 @@ export interface AnimationRequest {
 export interface SpeechPayload {
   id: string;
   text: string;
-  mood: AnnMood;
+  mood: CompanionMood;
   actionLabel?: string;
   createdAt: string;
 }

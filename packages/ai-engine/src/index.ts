@@ -199,7 +199,7 @@ export const companionInsightSchema = z.object({
   summary: z.string(),
   insight: z.string(),
   whyItMatters: z.string(),
-  whyAnnFoundIt: z.string(),
+  whyCompanionFoundIt: z.string(),
   confidence: z.number().min(0).max(1),
   novelty: z.number().min(0).max(1),
   emotionalRelevance: z.number().min(0).max(1),
@@ -285,7 +285,7 @@ export function validateDecision(text: string): Pick<CompanionDecision, 'action'
   return decisionSchema.parse(parseJsonObject(text));
 }
 
-export function validateCompanionInsights(text: string): Array<Partial<CompanionInsight> & Pick<CompanionInsight, 'title' | 'type' | 'summary' | 'insight' | 'whyItMatters' | 'whyAnnFoundIt' | 'confidence' | 'novelty' | 'emotionalRelevance' | 'practicalRelevance' | 'supportingCandidateIds'>> {
+export function validateCompanionInsights(text: string): Array<Partial<CompanionInsight> & Pick<CompanionInsight, 'title' | 'type' | 'summary' | 'insight' | 'whyItMatters' | 'whyCompanionFoundIt' | 'confidence' | 'novelty' | 'emotionalRelevance' | 'practicalRelevance' | 'supportingCandidateIds'>> {
   const parsed = parseJsonObject(text);
   const list = Array.isArray(parsed) ? parsed : z.object({ insights: z.array(companionInsightSchema) }).parse(parsed).insights;
   return z.array(companionInsightSchema).parse(list);

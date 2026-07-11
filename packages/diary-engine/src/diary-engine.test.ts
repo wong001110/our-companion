@@ -32,7 +32,7 @@ describe('diary engine', () => {
         }
       ]
     });
-    const diary = diaryFromReflection(reflection);
+    const diary = diaryFromReflection(reflection, 'test-companion');
 
     expect(reflection.changedUnderstanding).toContain('Local-first memory matters');
     expect(reflection.whyItMattered).toContain('persistent understanding');

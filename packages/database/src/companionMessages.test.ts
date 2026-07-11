@@ -2,9 +2,19 @@ import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { DatabaseService } from '@our-companion/database';
 
+function createTestDatabase(): DatabaseService {
+  const db = new DatabaseService({ path: ':memory:' });
+  const companion = db.createCompanion({
+    name: 'Test', personalityDescription: 'Test fixture', personalityAnalysisId: 'fixture', assetRoot: 'test',
+    personality: { energy: 50, curiosity: 50, sociability: 50, diligence: 50, playfulness: 50, confidence: 50, calmness: 50, shyness: 50 },
+  });
+  db.setPrimaryCompanion(companion.id);
+  return db;
+}
+
 describe('companion messages', () => {
   it('inserts and retrieves a message', () => {
-    const db = new DatabaseService({ path: ':memory:' });
+    const db = createTestDatabase();
 
     const msg = db.insertCompanionMessage({
       role: 'user',
@@ -17,7 +27,7 @@ describe('companion messages', () => {
     expect(msg.content).toBe('Hello Ann');
     expect(msg.source).toBe('panel');
     expect(msg.status).toBe('ok');
-    expect(msg.characterId).toBe('ann');
+    expect(msg.characterId).toBe(db.resolveActiveCompanionId());
 
     const list = db.listCompanionMessages();
     expect(list).toHaveLength(1);
@@ -27,7 +37,7 @@ describe('companion messages', () => {
   });
 
   it('inserts pair and retrieves in chronological order', () => {
-    const db = new DatabaseService({ path: ':memory:' });
+    const db = createTestDatabase();
 
     db.insertCompanionMessage({ role: 'user', content: 'First', source: 'voice' });
     db.insertCompanionMessage({ role: 'assistant', content: 'Reply', source: 'voice' });
@@ -41,7 +51,7 @@ describe('companion messages', () => {
   });
 
   it('filters by source', () => {
-    const db = new DatabaseService({ path: ':memory:' });
+    const db = createTestDatabase();
 
     db.insertCompanionMessage({ role: 'user', content: 'Voice message', source: 'voice' });
     db.insertCompanionMessage({ role: 'user', content: 'Panel message', source: 'panel' });
@@ -57,7 +67,7 @@ describe('companion messages', () => {
   });
 
   it('filters by status', () => {
-    const db = new DatabaseService({ path: ':memory:' });
+    const db = createTestDatabase();
 
     db.insertCompanionMessage({ role: 'user', content: 'OK msg', source: 'voice', status: 'ok' });
     db.insertCompanionMessage({ role: 'system', content: 'Error', source: 'voice', status: 'error' });
@@ -70,7 +80,7 @@ describe('companion messages', () => {
   });
 
   it('filters by query text', () => {
-    const db = new DatabaseService({ path: ':memory:' });
+    const db = createTestDatabase();
 
     db.insertCompanionMessage({ role: 'user', content: 'Tell me about PixiJS', source: 'panel' });
     db.insertCompanionMessage({ role: 'user', content: 'What is TypeScript?', source: 'panel' });
@@ -83,7 +93,7 @@ describe('companion messages', () => {
   });
 
   it('prunes messages older than retention days', () => {
-    const db = new DatabaseService({ path: ':memory:' });
+    const db = createTestDatabase();
     const rawDb = (db as unknown as { db: InstanceType<typeof DatabaseSync> }).db;
 
     // Insert a fresh message
@@ -114,20 +124,20 @@ describe('companion messages', () => {
   });
 
   it('respects retention override from app_settings', () => {
-    const db = new DatabaseService({ path: ':memory:' });
+    const db = createTestDatabase();
     db.setAppSetting('companion.chatRetentionDays', 1);
     expect(db.getCompanionRetentionDays()).toBe(1);
     db.close();
   });
 
   it('returns default retention when no override set', () => {
-    const db = new DatabaseService({ path: ':memory:' });
+    const db = createTestDatabase();
     expect(db.getCompanionRetentionDays()).toBe(7);
     db.close();
   });
 
   it('clears all messages', () => {
-    const db = new DatabaseService({ path: ':memory:' });
+    const db = createTestDatabase();
 
     db.insertCompanionMessage({ role: 'user', content: 'A', source: 'panel' });
     db.insertCompanionMessage({ role: 'user', content: 'B', source: 'voice' });
@@ -139,13 +149,13 @@ describe('companion messages', () => {
   });
 
   it('listCompanionContext returns ok user/assistant messages in chronological order', () => {
-    const db = new DatabaseService({ path: ':memory:' });
+    const db = createTestDatabase();
 
     db.insertCompanionMessage({ role: 'user', content: 'Q1', source: 'panel', status: 'ok' });
     db.insertCompanionMessage({ role: 'assistant', content: 'A1', source: 'panel', status: 'ok' });
     db.insertCompanionMessage({ role: 'system', content: 'err', source: 'voice', status: 'error' });
 
-    const context = db.listCompanionContext('ann', 12);
+    const context = db.listCompanionContext(db.resolveActiveCompanionId(), 12);
     expect(context).toHaveLength(2);
     expect(context[0].content).toBe('Q1');
     expect(context[1].content).toBe('A1');

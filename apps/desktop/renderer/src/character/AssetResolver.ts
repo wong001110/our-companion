@@ -29,5 +29,3 @@ export class AssetResolver {
     return this.root;
   }
 }
-
-export const DEFAULT_ASSET_ROOT = 'assets/companions/ann';

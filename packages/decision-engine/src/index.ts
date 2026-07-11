@@ -96,7 +96,7 @@ export function decideCompanionAction(input: DecisionInput): CompanionDecision {
     return baseDecision('queue_for_later', {
       timing: 'next_idle',
       priority: growth >= 75 ? 'normal' : 'low',
-      reason: 'User appears focused, so Ann should protect attention.'
+      reason: 'User appears focused, so the Companion should protect attention.'
     });
   }
 

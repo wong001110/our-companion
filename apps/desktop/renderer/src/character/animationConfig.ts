@@ -1,5 +1,5 @@
 import type { SpriteSheetConfig } from './SpriteAnimator';
-import { AssetResolver, DEFAULT_ASSET_ROOT } from './AssetResolver';
+import { AssetResolver } from './AssetResolver';
 import type { CompanionAnimationName } from '../companion/runtime/animationRegistry';
 
 export interface CompanionAnimationConfig extends SpriteSheetConfig {
@@ -20,7 +20,7 @@ function anim(name: CompanionAnimationName, frameMs: number, assetRoot: string, 
   };
 }
 
-export function createCompanionAnimations(assetRoot: string = DEFAULT_ASSET_ROOT) {
+export function createCompanionAnimations(assetRoot: string) {
   return {
     Idle_Neutral: anim('Idle_Neutral', 520, assetRoot),
     Idle_Breathe: anim('Idle_Breathe', 620, assetRoot),
@@ -54,6 +54,4 @@ export function createCompanionAnimations(assetRoot: string = DEFAULT_ASSET_ROOT
   } as const satisfies Record<string, CompanionAnimationConfig>;
 }
 
-export const companionAnimations = createCompanionAnimations();
-
-export type AnimationName = keyof typeof companionAnimations;
+export type AnimationName = keyof ReturnType<typeof createCompanionAnimations>;

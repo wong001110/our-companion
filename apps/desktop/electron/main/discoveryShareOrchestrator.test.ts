@@ -24,7 +24,7 @@ function sampleDiscovery(id: string, overrides?: Partial<Discovery>): Discovery 
 }
 
 function createDeps(overrides?: { canAnnounce?: () => boolean; shouldInterruptShare?: () => boolean }) {
-  let current = createInitialCharacterState();
+  let current = createInitialCharacterState('test-companion');
   return {
     getState: () => current,
     saveState: (state: typeof current) => { current = state; return state; },
@@ -42,7 +42,7 @@ describe('DiscoveryShareOrchestrator', () => {
   it('advances through thinking, discovering, talking, and idle', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const states: string[] = [];
-    let current = createInitialCharacterState();
+    let current = createInitialCharacterState('test-companion');
 
     const orchestrator = new DiscoveryShareOrchestrator({
       getState: () => current,
