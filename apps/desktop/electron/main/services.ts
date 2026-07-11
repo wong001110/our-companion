@@ -88,7 +88,7 @@ import type {
   UpdateMemoryNodeInput
 } from '@our-companion/shared';
 import type { UserProfile, OnlineMode, RegisterUserInput, LoginUserInput } from '@our-companion/shared';
-import { COMPANION_ANIMATION_MANIFEST, COMPANION_CHAT_CONTEXT_LIMIT, createId, nowIso, clampScore, type BaseEvent } from '@our-companion/shared';
+import { COMPANION_ANIMATION_MANIFEST, COMPANION_CHAT_CONTEXT_LIMIT, createId, nowIso, clampScore, type BaseEvent, type CompanionAnimationManifestEntry } from '@our-companion/shared';
 import { detectPatterns } from '@our-companion/pattern-engine';
 import { executeActionStep, executeTool, previewTool } from '@our-companion/tool-engine';
 import { createElectronToolAdapters } from './platform/electronCommandAdapter';
@@ -98,9 +98,20 @@ import type { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 import type { DiscoveryRefreshResult } from './discoveryScheduler';
 import { buildEngineSnapshot } from './engineSnapshot';
 import { CompanionRuntime } from './companionRuntime';
+import {
+  COMPANION_ASSET_SUBFOLDERS,
+  CompanionAssetPathError,
+  getCompanionAssetMimeType,
+  isSupportedCompanionAssetExtension,
+  resolveCompanionAssetPath as resolveCompanionAssetPathSafe,
+  type ResolveCompanionAssetPathInput
+} from './platform/companionAssetPaths';
 
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
+const PERSONALITY_ANALYSIS_MAX_ENTRIES = 50;
+export const MAX_COMPANION_ASSET_BYTES = 20 * 1024 * 1024;
+export const MAX_COMPANION_TOTAL_ASSET_BYTES = 200 * 1024 * 1024;
 
 export type CommandRecordStatus = 'issued' | CommandAckStatus;
 
@@ -109,6 +120,10 @@ interface ActiveCommandRecord {
   latestStatus: CommandRecordStatus;
   updatedAt: string;
   terminal: boolean;
+}
+
+export interface AppServicesOptions {
+  onFirstCompanionCreated?: (companion: CompanionProfile) => void;
 }
 
 export const VALID_COMMAND_TRANSITIONS: Record<CommandRecordStatus, CommandAckStatus[]> = {
@@ -138,7 +153,8 @@ export class AppServices {
 
   constructor(
     dbPath = path.join(app.getPath('userData'), 'our-companion.db'),
-    readonly eventBus: EventBus = globalEventBus
+    readonly eventBus: EventBus = globalEventBus,
+    private readonly options: AppServicesOptions = {}
   ) {
     const userDataDir = app.getPath('userData');
     if (userDataDir !== ':memory:') {
@@ -202,6 +218,45 @@ export class AppServices {
     return this.db.tryResolveActiveCompanionId() !== null;
   }
 
+  private resolveCompanionRoot(companionId: string): string {
+    return path.resolve(app.getPath('userData'), 'companions', companionId);
+  }
+
+  private resolveCompanionAssetPath(input: ResolveCompanionAssetPathInput) {
+    return resolveCompanionAssetPathSafe(input, {
+      userDataDir: app.getPath('userData'),
+      companionExists: (companionId) => Boolean(this.db.getCompanion(companionId)),
+    });
+  }
+
+  private completeFirstCompanionCreation(companion: CompanionProfile): void {
+    try {
+      const primary = this.db.getPrimaryCompanion();
+      if (!primary || primary.id !== companion.id) return;
+      this.startRuntimeIfReady();
+      this.options.onFirstCompanionCreated?.(primary);
+    } catch (error) {
+      console.error('[our-companion] First Companion persisted, but onboarding UI transition failed.', error);
+    }
+  }
+
+  private prunePersonalityAnalyses(): void {
+    const now = Date.now();
+    for (const [id, analysis] of this.personalityAnalyses) {
+      if (analysis.used || analysis.expiresAt <= now) {
+        this.personalityAnalyses.delete(id);
+      }
+    }
+    const overflow = this.personalityAnalyses.size - PERSONALITY_ANALYSIS_MAX_ENTRIES;
+    if (overflow <= 0) return;
+    const oldest = [...this.personalityAnalyses.entries()]
+      .sort((left, right) => left[1].expiresAt - right[1].expiresAt)
+      .slice(0, overflow);
+    for (const [id] of oldest) {
+      this.personalityAnalyses.delete(id);
+    }
+  }
+
   private requireActiveCompanion(): CompanionProfile {
     const companion = this.db.getPrimaryCompanion();
     if (!companion) throw new Error('NO_ACTIVE_COMPANION: No active Companion. Complete Companion creation first.');
@@ -255,6 +310,7 @@ export class AppServices {
   companionNew = {
     analyzePersonality: async (description: string): Promise<CompanionPersonalityAnalysis> => this.analyzeCompanionPersonality(description),
     create: async (input: CreateCompanionInput): Promise<CompanionProfile> => {
+      this.prunePersonalityAnalyses();
       const name = input.name.trim();
       const description = input.personalityDescription.trim();
       if (!name || !description || !input.personalityAnalysisId) {
@@ -273,26 +329,44 @@ export class AppServices {
       if (requiredAssets.some((entry) => !assetsByKey.has(entry.key))) {
         throw new Error('All required Companion animation assets must be provided.');
       }
-      if (assets.some((asset) => asset.buffer.byteLength === 0)) {
-        throw new Error('Companion animation assets cannot be empty.');
+      const manifestByKey = new Map(COMPANION_ANIMATION_MANIFEST.map((entry) => [entry.key, entry]));
+      const validatedAssets = new Map<string, Buffer>();
+      let totalBytes = 0;
+      for (const asset of assets) {
+        const definition = manifestByKey.get(asset.animationKey);
+        if (!definition) throw new Error(`${asset.animationKey} is not a supported Companion animation.`);
+        const bytes = toBuffer(asset.buffer);
+        validateCompanionPngAsset(definition, bytes);
+        totalBytes += bytes.byteLength;
+        if (totalBytes > MAX_COMPANION_TOTAL_ASSET_BYTES) {
+          throw new Error('Companion animation assets exceed the maximum total size.');
+        }
+        validatedAssets.set(definition.key, bytes);
       }
       analysis.used = true;
       let companion: CompanionProfile | undefined;
       let companionDir: string | undefined;
       try {
+        const shouldBecomePrimary = !this.db.getPrimaryCompanion();
         companion = this.db.createCompanion({ ...input, name, personalityDescription: description, personality: analysis.personality });
-        companionDir = path.join(app.getPath('userData'), 'companions', companion.id);
-        const animationsDir = path.join(companionDir, 'assets', 'animations');
+        companionDir = this.resolveCompanionRoot(companion.id);
+        const animationsDir = this.resolveCompanionAssetPath({
+          companionId: companion.id,
+          relativePath: path.join('assets', 'animations')
+        }).target;
         fs.mkdirSync(animationsDir, { recursive: true });
         for (const entry of requiredAssets) {
-          const asset = assetsByKey.get(entry.key)!;
-          const bytes = asset.buffer instanceof Uint8Array
-            ? Buffer.from(asset.buffer.buffer, asset.buffer.byteOffset, asset.buffer.byteLength)
-            : Buffer.from(asset.buffer);
-          fs.writeFileSync(path.join(animationsDir, entry.fileName), bytes);
+          const filePath = this.resolveCompanionAssetPath({
+            companionId: companion.id,
+            subfolder: 'animations',
+            fileName: entry.fileName
+          }).target;
+          fs.writeFileSync(filePath, validatedAssets.get(entry.key)!);
         }
         companion = this.db.updateCompanion(companion.id, { assetRoot: `companion://${companion.id}/assets` });
-        if (!this.db.getPrimaryCompanion()) companion = this.db.setPrimaryCompanion(companion.id);
+        if (shouldBecomePrimary) companion = this.db.setPrimaryCompanion(companion.id);
+        this.personalityAnalyses.delete(input.personalityAnalysisId);
+        if (shouldBecomePrimary) this.completeFirstCompanionCreation(companion);
         return companion;
       } catch (error) {
         analysis.used = false;
@@ -315,12 +389,14 @@ export class AppServices {
       return this.db.getCompanion(id);
     },
     update: async (input: { id: string } & UpdateCompanionInput): Promise<CompanionProfile> => {
+      this.prunePersonalityAnalyses();
       const { id, ...rest } = input;
       const current = this.db.getCompanion(id);
       if (!current) throw new Error(`Companion not found: ${id}`);
       const description = rest.personalityDescription?.trim() ?? current.personalityDescription;
       const personalityChanged = rest.personality !== undefined || description !== current.personalityDescription;
       let consumedAnalysis: { used: boolean } | undefined;
+      let consumedAnalysisId: string | undefined;
       if (personalityChanged) {
         const analysis = rest.personalityAnalysisId ? this.personalityAnalyses.get(rest.personalityAnalysisId) : undefined;
         if (!analysis || analysis.used || analysis.expiresAt <= Date.now() || analysis.description !== description) {
@@ -328,12 +404,15 @@ export class AppServices {
         }
         analysis.used = true;
         consumedAnalysis = analysis;
+        consumedAnalysisId = rest.personalityAnalysisId;
         rest.personality = analysis.personality;
         rest.personalityDescription = description;
       }
       const { personalityAnalysisId: _analysisId, ...trusted } = rest;
       try {
-        return this.db.updateCompanion(id, trusted);
+        const updated = this.db.updateCompanion(id, trusted);
+        if (consumedAnalysisId) this.personalityAnalyses.delete(consumedAnalysisId);
+        return updated;
       } catch (error) {
         if (consumedAnalysis) consumedAnalysis.used = false;
         throw error;
@@ -366,32 +445,48 @@ export class AppServices {
     getAssetRoot: async (id: string): Promise<string> => {
       const companion = this.db.getCompanion(id);
       if (!companion) throw new Error(`Companion not found: ${id}`);
-      const companionsDir = path.join(app.getPath('userData'), 'companions', id, 'assets');
+      const companionsDir = this.resolveCompanionAssetPath({ companionId: id, relativePath: 'assets' }).target;
       fs.mkdirSync(companionsDir, { recursive: true });
       return `companion://${id}/assets`;
     },
     uploadAsset: async (input: { companionId: string; fileName: string; buffer: ArrayBuffer | Uint8Array }): Promise<{ name: string; path: string }> => {
-      const companion = this.db.getCompanion(input.companionId);
-      if (!companion) throw new Error(`Companion not found: ${input.companionId}`);
-      const animationsDir = path.join(app.getPath('userData'), 'companions', input.companionId, 'assets', 'animations');
+      if (!this.db.getCompanion(input.companionId)) throw new Error(`Companion not found: ${input.companionId}`);
+      const definition = COMPANION_ANIMATION_MANIFEST.find((entry) => entry.fileName === input.fileName);
+      if (!definition) throw new Error(`${input.fileName} is not a valid Companion animation asset.`);
+      const buf = toBuffer(input.buffer);
+      validateCompanionPngAsset(definition, buf);
+      const animationsDir = this.resolveCompanionAssetPath({
+        companionId: input.companionId,
+        relativePath: path.join('assets', 'animations')
+      }).target;
       fs.mkdirSync(animationsDir, { recursive: true });
-      const safeName = path.basename(input.fileName).replace(/[^a-zA-Z0-9_.-]/g, '_');
-      const filePath = path.join(animationsDir, safeName);
-      const buf = input.buffer instanceof Uint8Array ? Buffer.from(input.buffer.buffer, input.buffer.byteOffset, input.buffer.byteLength) : Buffer.from(input.buffer);
+      const filePath = this.resolveCompanionAssetPath({
+        companionId: input.companionId,
+        subfolder: 'animations',
+        fileName: definition.fileName
+      }).target;
+      if (fs.existsSync(filePath) && !fs.lstatSync(filePath).isFile()) {
+        throw new Error('Cannot overwrite a non-file Companion asset.');
+      }
       fs.writeFileSync(filePath, buf);
-      return { name: safeName, path: filePath };
+      return { name: definition.fileName, path: filePath };
     },
     listAssets: async (companionId: string): Promise<Array<{ name: string; size: number; subfolder: string }>> => {
-      const companion = this.db.getCompanion(companionId);
-      if (!companion) throw new Error(`Companion not found: ${companionId}`);
-      const assetsDir = path.join(app.getPath('userData'), 'companions', companionId, 'assets');
+      if (!this.db.getCompanion(companionId)) throw new Error(`Companion not found: ${companionId}`);
+      const assetsDir = this.resolveCompanionAssetPath({ companionId, relativePath: 'assets' }).target;
       if (!fs.existsSync(assetsDir)) return [];
       const results: Array<{ name: string; size: number; subfolder: string }> = [];
-      for (const subfolder of ['animations', 'portraits', 'icons', 'voices']) {
-        const dir = path.join(assetsDir, subfolder);
+      for (const subfolder of COMPANION_ASSET_SUBFOLDERS) {
+        const dir = this.resolveCompanionAssetPath({
+          companionId,
+          relativePath: path.join('assets', subfolder)
+        }).target;
         if (!fs.existsSync(dir)) continue;
+        if (!fs.lstatSync(dir).isDirectory()) continue;
         for (const file of fs.readdirSync(dir)) {
-          const stat = fs.statSync(path.join(dir, file));
+          if (!isSupportedCompanionAssetExtension(file)) continue;
+          const filePath = this.resolveCompanionAssetPath({ companionId, subfolder, fileName: file, mustExist: true }).target;
+          const stat = fs.lstatSync(filePath);
           if (stat.isFile()) {
             results.push({ name: file, size: stat.size, subfolder });
           }
@@ -400,22 +495,38 @@ export class AppServices {
       return results;
     },
     deleteAsset: async (input: { companionId: string; subfolder: string; fileName: string }): Promise<{ deleted: true }> => {
-      const companion = this.db.getCompanion(input.companionId);
-      if (!companion) throw new Error(`Companion not found: ${input.companionId}`);
-      const filePath = path.join(app.getPath('userData'), 'companions', input.companionId, 'assets', input.subfolder, input.fileName);
+      if (!this.db.getCompanion(input.companionId)) throw new Error(`Companion not found: ${input.companionId}`);
+      if (!isSupportedCompanionAssetExtension(input.fileName)) throw new Error('Unsupported Companion asset type.');
+      const filePath = this.resolveCompanionAssetPath({
+        companionId: input.companionId,
+        subfolder: input.subfolder,
+        fileName: input.fileName,
+        mustExist: true
+      }).target;
       if (!fs.existsSync(filePath)) throw new Error('Asset not found');
+      if (!fs.lstatSync(filePath).isFile()) throw new Error('Only regular asset files can be deleted.');
       fs.unlinkSync(filePath);
       return { deleted: true };
     },
     readAsset: async (input: { companionId: string; subfolder: string; fileName: string }): Promise<{ dataUrl: string } | null> => {
-      const companion = this.db.getCompanion(input.companionId);
-      if (!companion) return null;
-      const assetsDir = path.join(app.getPath('userData'), 'companions', input.companionId, 'assets');
-      const filePath = path.join(assetsDir, input.subfolder, input.fileName);
+      if (!this.db.getCompanion(input.companionId)) throw new Error(`Companion not found: ${input.companionId}`);
+      const mime = getCompanionAssetMimeType(input.fileName);
+      if (!mime) throw new Error('Unsupported Companion asset type.');
+      let filePath: string;
+      try {
+        filePath = this.resolveCompanionAssetPath({
+          companionId: input.companionId,
+          subfolder: input.subfolder,
+          fileName: input.fileName,
+          mustExist: true
+        }).target;
+      } catch (error) {
+        if (error instanceof CompanionAssetPathError && error.code === 'not_found') return null;
+        throw error;
+      }
       if (!fs.existsSync(filePath)) return null;
+      if (!fs.lstatSync(filePath).isFile()) throw new Error('Only regular asset files can be read.');
       const buffer = fs.readFileSync(filePath);
-      const ext = path.extname(input.fileName).toLowerCase();
-      const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : ext === '.gif' ? 'image/gif' : 'image/png';
       const base64 = buffer.toString('base64');
       return { dataUrl: `data:${mime};base64,${base64}` };
     }
@@ -1455,6 +1566,7 @@ export class AppServices {
   }
 
   private async analyzeCompanionPersonality(description: string): Promise<CompanionPersonalityAnalysis> {
+    this.prunePersonalityAnalyses();
     const trimmed = description.trim();
     if (!trimmed) throw new Error('A personality description is required.');
     if (!this.getAiSettings().apiKeyConfigured) {
@@ -1486,6 +1598,7 @@ export class AppServices {
     const analysisId = createId('personality_analysis');
     const expiresAt = Date.now() + 10 * 60 * 1000;
     this.personalityAnalyses.set(analysisId, { personality, description: trimmed, expiresAt, used: false });
+    this.prunePersonalityAnalyses();
     return { analysisId, personality, description: trimmed, expiresAt: new Date(expiresAt).toISOString() };
   }
 
@@ -1644,5 +1757,50 @@ function getDebugResponseBody(error: unknown): unknown {
 function whisperLanguageForReplyLanguage(replyLanguage: CompanionReplyLanguage): string {
   if (replyLanguage === 'zh-CN') return 'zh';
   return 'en';
+}
+
+function toBuffer(value: ArrayBuffer | Uint8Array): Buffer {
+  return value instanceof Uint8Array
+    ? Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+    : Buffer.from(value);
+}
+
+function validateCompanionPngAsset(definition: CompanionAnimationManifestEntry, bytes: Buffer): void {
+  if (bytes.byteLength === 0) throw new Error(`${definition.key} cannot be empty.`);
+  if (bytes.byteLength > MAX_COMPANION_ASSET_BYTES) {
+    throw new Error(`${definition.key} exceeds the maximum file size.`);
+  }
+  const dimensions = readPngDimensions(bytes, definition.key);
+  if (dimensions.width <= 0 || dimensions.height <= 0) {
+    throw new Error(`${definition.key} has invalid PNG dimensions.`);
+  }
+  if (dimensions.width > definition.maxFrameSize * definition.maxFrames || dimensions.height > definition.maxFrameSize) {
+    throw new Error(`${definition.key} dimensions exceed the maximum allowed size.`);
+  }
+  if (dimensions.height < definition.minFrameSize || dimensions.height > definition.maxFrameSize) {
+    throw new Error(`${definition.key} frame size is outside the allowed range.`);
+  }
+  if (dimensions.width % dimensions.height !== 0) {
+    throw new Error(`${definition.key} has an invalid sprite-sheet width.`);
+  }
+  const frameCount = dimensions.width / dimensions.height;
+  if (frameCount < definition.minFrames || frameCount > definition.maxFrames) {
+    throw new Error(`${definition.key} has an invalid sprite-sheet frame count.`);
+  }
+}
+
+function readPngDimensions(bytes: Buffer, label: string): { width: number; height: number } {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (bytes.byteLength < 24 || signature.some((value, index) => bytes[index] !== value)) {
+    throw new Error(`${label} is not a valid PNG.`);
+  }
+  const chunkType = bytes.toString('ascii', 12, 16);
+  if (chunkType !== 'IHDR') {
+    throw new Error(`${label} is not a valid PNG.`);
+  }
+  return {
+    width: bytes.readUInt32BE(16),
+    height: bytes.readUInt32BE(20),
+  };
 }
 

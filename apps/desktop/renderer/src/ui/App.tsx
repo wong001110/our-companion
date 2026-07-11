@@ -958,8 +958,12 @@ function CreationShell() {
     return () => document.documentElement.classList.remove('creation-mode');
   }, []);
 
-  async function handleComplete(companion: CompanionProfile) {
-    await window.ourCompanion.companionNew.setPrimary(companion.id);
+  function handleCreationComplete(companion: CompanionProfile) {
+    void window.ourCompanion.creation.completed(companion);
+  }
+
+  async function handleSelectCompanion(selected: CompanionProfile) {
+    const companion = await window.ourCompanion.companionNew.setPrimary(selected.id);
     void window.ourCompanion.creation.completed(companion);
   }
 
@@ -1001,7 +1005,7 @@ function CreationShell() {
           &#x2715;
         </button>
         <CompanionCreationPage
-          onComplete={handleComplete}
+          onComplete={handleCreationComplete}
           onCancel={() => setView('select')}
         />
       </main>
@@ -1015,7 +1019,7 @@ function CreationShell() {
         &#x2715;
       </button>
       <CompanionSelectionPage
-        onSelect={(companion) => handleComplete(companion)}
+        onSelect={(companion) => { void handleSelectCompanion(companion); }}
         onCreateNew={() => { setEditingCompanion(undefined); setView('create'); }}
         onEdit={handleEdit}
       />

@@ -172,7 +172,6 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
         name: name.trim(), personalityDescription: description.trim(), personalityAnalysisId,
         assetRoot: '', assets,
       });
-      await window.ourCompanion.companionNew.setPrimary(companion.id);
       onComplete(companion);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

@@ -153,21 +153,58 @@ export class DatabaseService {
   private migrateLegacyBuiltinAnn(): void {
     const ann = this.db.prepare('SELECT * FROM companions WHERE id = ? AND is_builtin = 1').get('ann') as Record<string, unknown> | undefined;
     if (!ann) return;
-    const isOriginalProfile = ann.name === 'Ann' &&
-      ann.personality_description === 'A curious, warm desktop companion.' &&
-      ann.personality_json === '{}' && ann.asset_root === 'assets/companions/ann';
-    const relatedDataTables = [
-      ['memory_nodes', 'companion_id'], ['companion_messages', 'character_id'], ['diary_entries', 'character_id'],
-      ['pending_companion_actions', 'companion_id'], ['conversation_sessions', 'companion_id'], ['character_state', 'character_id'],
-    ] as const;
-    const hasRelatedData = this.legacyAnnHasCustomAssets() || relatedDataTables.some(([table, column]) =>
-      Boolean(this.db.prepare(`SELECT 1 FROM ${table} WHERE ${column} = ? LIMIT 1`).get('ann'))
-    );
-    if (isOriginalProfile && !hasRelatedData) {
+    if (this.shouldDeleteUntouchedLegacyAnn(ann)) {
       this.db.prepare('DELETE FROM companions WHERE id = ?').run('ann');
       return;
     }
     this.db.prepare('UPDATE companions SET is_builtin = 0 WHERE id = ?').run('ann');
+  }
+
+  private shouldDeleteUntouchedLegacyAnn(ann: Record<string, unknown>): boolean {
+    const isOriginalProfile = ann.id === 'ann' &&
+      ann.is_builtin === 1 &&
+      ann.name === 'Ann' &&
+      ann.personality_description === 'A curious, warm desktop companion.' &&
+      ann.personality_json === '{}' &&
+      ann.asset_root === 'assets/companions/ann';
+    if (!isOriginalProfile) return false;
+
+    try {
+      if (this.legacyAnnHasCustomAssets()) return false;
+      if (this.hasLegacyAnnOwnedRecords()) return false;
+      if (this.hasMeaningfulApplicationActivity()) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private hasLegacyAnnOwnedRecords(): boolean {
+    const identityColumns = new Set(['companion_id', 'character_id', 'from_companion_id', 'to_companion_id']);
+    for (const table of this.listUserTables()) {
+      const columns = this.db.prepare(`PRAGMA table_info(${quoteIdent(table)})`).all() as Array<{ name: string }>;
+      for (const column of columns) {
+        if (!identityColumns.has(column.name)) continue;
+        const row = this.db.prepare(`SELECT 1 FROM ${quoteIdent(table)} WHERE ${quoteIdent(column.name)} = ? LIMIT 1`).get('ann');
+        if (row) return true;
+      }
+    }
+    return false;
+  }
+
+  private hasMeaningfulApplicationActivity(): boolean {
+    const ignored = new Set(['companions', 'sqlite_sequence']);
+    for (const table of this.listUserTables()) {
+      if (ignored.has(table)) continue;
+      const row = this.db.prepare(`SELECT 1 FROM ${quoteIdent(table)} LIMIT 1`).get();
+      if (row) return true;
+    }
+    return false;
+  }
+
+  private listUserTables(): string[] {
+    return (this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>)
+      .map((row) => String(row.name));
   }
 
   tryResolveActiveCompanionId(): string | null {
@@ -1720,4 +1757,8 @@ function mapCompanionProfile(row: Record<string, unknown>): CompanionProfile {
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
+}
+
+function quoteIdent(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`;
 }

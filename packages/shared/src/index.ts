@@ -1927,6 +1927,10 @@ export interface CompanionAnimationManifestEntry {
   fileName: `${CompanionAnimationName}.png`;
   requiredForCreation: boolean;
   fallback: CompanionAnimationName;
+  minFrames: number;
+  maxFrames: number;
+  minFrameSize: number;
+  maxFrameSize: number;
 }
 
 const REQUIRED_COMPANION_ANIMATION_KEYS = new Set<CompanionAnimationName>(COMPANION_ANIMATION_NAMES.slice(0, 15));
@@ -1937,6 +1941,10 @@ export const COMPANION_ANIMATION_MANIFEST: readonly CompanionAnimationManifestEn
   fileName: `${key}.png`,
   requiredForCreation: REQUIRED_COMPANION_ANIMATION_KEYS.has(key),
   fallback: 'Idle_Neutral',
+  minFrames: 1,
+  maxFrames: 120,
+  minFrameSize: 300,
+  maxFrameSize: 4096,
 }));
 
 export interface CompanionCreationAsset {

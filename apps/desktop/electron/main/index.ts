@@ -7,40 +7,14 @@ import { AppServices } from './services';
 import { DiscoveryScheduler } from './discoveryScheduler';
 import { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 import { ElectronIpcBroadcaster } from './adapters/electronIpcBroadcaster';
+import { handleCompanionProtocolRequest } from './platform/companionProtocol';
+import { completeOnboardingTransition } from './platform/onboardingCompletion';
 
 function registerCompanionProtocol(): void {
   protocol.handle('companion', (request) => {
-    const url = new URL(request.url);
-    const companionId = url.hostname;
-    const filePath = url.pathname.replace(/^\//, '');
-    const fullPath = path.join(
-      app.getPath('userData'),
-      'companions',
-      companionId,
-      filePath,
-    );
-
-    if (!fs.existsSync(fullPath)) {
-      return new Response('Not found', { status: 404 });
-    }
-
-    const ext = path.extname(fullPath).toLowerCase();
-    const mime: Record<string, string> = {
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.gif': 'image/gif',
-      '.webp': 'image/webp',
-      '.svg': 'image/svg+xml',
-      '.mp3': 'audio/mpeg',
-      '.wav': 'audio/wav',
-      '.ogg': 'audio/ogg',
-      '.json': 'application/json',
-    };
-    const contentType = mime[ext] ?? 'application/octet-stream';
-    const buffer = fs.readFileSync(fullPath);
-    return new Response(buffer, {
-      headers: { 'Content-Type': contentType },
+    return handleCompanionProtocolRequest(request.url, {
+      userDataDir: app.getPath('userData'),
+      companionExists: (id) => Boolean(services.db.getCompanion(id)),
     });
   });
 }
@@ -137,6 +111,20 @@ function createPanelWindow(): BrowserWindow {
   return window;
 }
 
+function ensureCompanionWindow(): BrowserWindow {
+  if (!companionWindow || companionWindow.isDestroyed()) {
+    return createCompanionWindow();
+  }
+  return companionWindow;
+}
+
+function ensurePanelWindow(): BrowserWindow {
+  if (!panelWindow || panelWindow.isDestroyed()) {
+    return createPanelWindow();
+  }
+  return panelWindow;
+}
+
 function createCreationWindow(): BrowserWindow {
   if (creationWindow && !creationWindow.isDestroyed()) {
     creationWindow.focus();
@@ -221,6 +209,31 @@ function createStartupErrorWindow(error: unknown): BrowserWindow {
   `;
   window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
   return window;
+}
+
+function completeOnboarding(companion: { id: string }): boolean {
+  return completeOnboardingTransition(companion, {
+    getPrimaryCompanion: () => services.db.getPrimaryCompanion(),
+    closeCreationWindow: () => {
+      if (creationWindow && !creationWindow.isDestroyed()) {
+        creationWindow.close();
+        creationWindow = undefined;
+      }
+    },
+    ensureCompanionWindow: () => {
+      const window = ensureCompanionWindow();
+      return {
+        show: () => window.show(),
+        keepOnTop: () => keepCompanionOnTop(window),
+        isLoading: () => window.webContents.isLoading(),
+        onceLoaded: (callback) => window.webContents.once('did-finish-load', callback),
+        sendCompleted: (profile) => window.webContents.send('creation:completed', profile),
+      };
+    },
+    ensurePanelWindow: () => { ensurePanelWindow(); },
+    startRuntimeIfReady: () => services.startRuntimeIfReady(),
+    startDiscoveryAutomation,
+  });
 }
 
 function registerIpc(): void {
@@ -397,37 +410,15 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('creation:completed', (_event, companion) => {
-    const primary = services.db.getPrimaryCompanion();
-    if (!primary || !companion || companion.id !== primary.id) {
-      throw new Error('Creation completion requires the persisted primary Companion.');
-    }
-    if (creationWindow && !creationWindow.isDestroyed()) {
-      creationWindow.close();
-      creationWindow = undefined;
-    }
-    createCompanionWindow();
-    createPanelWindow();
-    services.startRuntimeIfReady();
-    startDiscoveryAutomation();
-    if (companionWindow && !companionWindow.isDestroyed()) {
-      companionWindow.show();
-      keepCompanionOnTop(companionWindow);
-      const sendCreationEvent = () => {
-        companionWindow?.webContents.send('creation:completed', companion);
-      };
-      if (companionWindow.webContents.isLoading()) {
-        companionWindow.webContents.once('did-finish-load', sendCreationEvent);
-      } else {
-        sendCreationEvent();
-      }
-    }
+    if (!companion) throw new Error('Creation completion requires the persisted primary Companion.');
+    return completeOnboarding(companion);
   });
 
   ipcMain.handle('creation:openWindow', () => {
     if (services.hasActiveCompanion()) {
       services.startRuntimeIfReady();
-      createCompanionWindow();
-      createPanelWindow();
+      ensureCompanionWindow();
+      ensurePanelWindow();
       startDiscoveryAutomation();
     } else {
       createCreationWindow();
@@ -631,8 +622,8 @@ app.whenReady().then(async () => {
       });
     }
 
+    services = new AppServices(undefined, undefined, { onFirstCompanionCreated: completeOnboarding });
     registerCompanionProtocol();
-    services = new AppServices();
     registerIpc();
     session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
       callback(permission === 'media');
@@ -640,8 +631,8 @@ app.whenReady().then(async () => {
     registerCompanionHotkey();
     if (services.hasActiveCompanion()) {
       services.startRuntimeIfReady();
-      createCompanionWindow();
-      createPanelWindow();
+      ensureCompanionWindow();
+      ensurePanelWindow();
       startDiscoveryAutomation();
     } else {
       createCreationWindow();
@@ -656,8 +647,8 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       if (services.hasActiveCompanion()) {
-        createCompanionWindow();
-        createPanelWindow();
+        ensureCompanionWindow();
+        ensurePanelWindow();
       } else {
         createCreationWindow();
       }

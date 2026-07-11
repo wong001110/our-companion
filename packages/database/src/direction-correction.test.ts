@@ -51,6 +51,16 @@ describe('direction correction — companion registry', () => {
     db.close();
   });
 
+  it('preserves a personality-modified legacy Ann as a normal user Companion', () => {
+    const db = new DatabaseService({ path: ':memory:' });
+    insertLegacyAnn(db);
+    const raw = (db as unknown as { db: DatabaseSync }).db;
+    raw.prepare("UPDATE companions SET personality_json = ? WHERE id = 'ann'").run(JSON.stringify({ curiosity: 80 }));
+    (db as unknown as { migrateLegacyBuiltinAnn(): void }).migrateLegacyBuiltinAnn();
+    expect(db.getCompanion('ann')).toEqual(expect.objectContaining({ isBuiltIn: false }));
+    db.close();
+  });
+
   it('preserves a data-bearing legacy Ann as a normal user Companion', () => {
     const db = new DatabaseService({ path: ':memory:' });
     insertLegacyAnn(db);
@@ -67,6 +77,39 @@ describe('direction correction — companion registry', () => {
 
   it('preserves a legacy Ann with customized assets as a normal user Companion', () => {
     const db = new DatabaseService({ path: ':memory:', legacyAnnHasCustomAssets: () => true });
+    insertLegacyAnn(db);
+    (db as unknown as { migrateLegacyBuiltinAnn(): void }).migrateLegacyBuiltinAnn();
+    expect(db.getCompanion('ann')).toEqual(expect.objectContaining({ isBuiltIn: false }));
+    db.close();
+  });
+
+  it('preserves exploration-bearing and relationship-bearing legacy Ann data', () => {
+    const db = new DatabaseService({ path: ':memory:' });
+    insertLegacyAnn(db);
+    const now = new Date().toISOString();
+    db.insertExplorationCycle({
+      id: 'cycle_legacy',
+      userId: 'local',
+      companionId: 'ann',
+      trigger: 'manual',
+      state: 'planning',
+      curiosityTargetIds: [],
+      discoveryCandidateIds: [],
+      insightIds: [],
+      startedAt: now,
+    });
+    const relationship = db.getRelationship('local', 'ann');
+    relationship.trust = 42;
+    db.saveRelationship(relationship);
+    (db as unknown as { migrateLegacyBuiltinAnn(): void }).migrateLegacyBuiltinAnn();
+    expect(db.getCompanion('ann')).toEqual(expect.objectContaining({ isBuiltIn: false }));
+    expect(db.getExplorationCycle('cycle_legacy')).toEqual(expect.objectContaining({ companionId: 'ann' }));
+    expect(db.getRelationship('local', 'ann').trust).toBe(42);
+    db.close();
+  });
+
+  it('preserves legacy Ann when migration ownership checks are uncertain', () => {
+    const db = new DatabaseService({ path: ':memory:', legacyAnnHasCustomAssets: () => { throw new Error('filesystem unavailable'); } });
     insertLegacyAnn(db);
     (db as unknown as { migrateLegacyBuiltinAnn(): void }).migrateLegacyBuiltinAnn();
     expect(db.getCompanion('ann')).toEqual(expect.objectContaining({ isBuiltIn: false }));

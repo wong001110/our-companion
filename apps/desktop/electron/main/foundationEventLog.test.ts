@@ -1,15 +1,51 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { COMPANION_ANIMATION_MANIFEST, createId, nowIso, type CompanionCommand, type CompanionPersonality } from '@our-companion/shared';
-import { AppServices } from './services';
+import { app } from 'electron';
+import { AppServices, MAX_COMPANION_ASSET_BYTES, MAX_COMPANION_TOTAL_ASSET_BYTES } from './services';
 
 vi.mock('electron', () => ({
   app: {
-    getPath: () => ':memory:'
+    getPath: vi.fn(() => process.env.OUR_COMPANION_TEST_USER_DATA ?? ':memory:')
   }
 }));
 
 describe('foundation event log', () => {
+  const tempRoots: string[] = [];
+
+  afterEach(() => {
+    for (const root of tempRoots.splice(0)) {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+    delete process.env.OUR_COMPANION_TEST_USER_DATA;
+    vi.mocked(app.getPath).mockClear();
+  });
+
+  function useTempUserData(): string {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'our-companion-main-'));
+    tempRoots.push(root);
+    process.env.OUR_COMPANION_TEST_USER_DATA = root;
+    return root;
+  }
+
+  function png(width: number, height: number): Uint8Array {
+    const buffer = Buffer.alloc(24);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buffer, 0);
+    buffer.writeUInt32BE(13, 8);
+    buffer.write('IHDR', 12, 4, 'ascii');
+    buffer.writeUInt32BE(width, 16);
+    buffer.writeUInt32BE(height, 20);
+    return new Uint8Array(buffer);
+  }
+
+  function requiredAssets(bytes = png(300, 300)) {
+    return COMPANION_ANIMATION_MANIFEST
+      .filter((entry) => entry.requiredForCreation)
+      .map((entry) => ({ animationKey: entry.key, buffer: bytes }));
+  }
+
   function initializeCompanion(services: AppServices): string {
     const companion = services.db.createCompanion({
       name: 'Test', personalityDescription: 'A generated test Companion', personalityAnalysisId: 'db-fixture', assetRoot: 'companion://test/assets',
@@ -82,6 +118,7 @@ describe('foundation event log', () => {
   });
 
   it('rolls back the profile when required asset persistence fails', async () => {
+    useTempUserData();
     const services = new AppServices(':memory:');
     const personality: CompanionPersonality = { energy: 50, curiosity: 60, sociability: 40, diligence: 70, playfulness: 55, confidence: 45, calmness: 75, shyness: 25 };
     const analyses = (services as unknown as {
@@ -89,15 +126,137 @@ describe('foundation event log', () => {
     }).personalityAnalyses;
     analyses.set('analysis-fixture', { personality, description: 'Atomic fixture', expiresAt: Date.now() + 60_000, used: false });
     const mkdir = vi.spyOn(fs, 'mkdirSync').mockImplementation(() => { throw new Error('asset write failure'); });
-    const assets = COMPANION_ANIMATION_MANIFEST
-      .filter((entry) => entry.requiredForCreation)
-      .map((entry) => ({ animationKey: entry.key, buffer: new Uint8Array([1]) }));
     await expect(services.companionNew.create({
-      name: 'Rollback', personalityDescription: 'Atomic fixture', personalityAnalysisId: 'analysis-fixture', assetRoot: '', assets,
+      name: 'Rollback', personalityDescription: 'Atomic fixture', personalityAnalysisId: 'analysis-fixture', assetRoot: '', assets: requiredAssets(),
     })).rejects.toThrow('asset write failure');
     expect(services.db.listCompanions()).toEqual([]);
     expect(analyses.get('analysis-fixture')?.used).toBe(false);
     mkdir.mockRestore();
+    services.db.close();
+  });
+
+  it('validates required PNG animation assets before creation', async () => {
+    useTempUserData();
+    const services = new AppServices(':memory:');
+    const personality: CompanionPersonality = { energy: 50, curiosity: 60, sociability: 40, diligence: 70, playfulness: 55, confidence: 45, calmness: 75, shyness: 25 };
+    const analyses = (services as unknown as {
+      personalityAnalyses: Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>;
+    }).personalityAnalyses;
+    analyses.set('analysis-fixture', { personality, description: 'PNG fixture', expiresAt: Date.now() + 60_000, used: false });
+
+    await expect(services.companionNew.create({
+      name: 'Bad', personalityDescription: 'PNG fixture', personalityAnalysisId: 'analysis-fixture', assetRoot: '', assets: requiredAssets(new Uint8Array([1])),
+    })).rejects.toThrow('not a valid PNG');
+
+    analyses.set('analysis-fixture-2', { personality, description: 'PNG fixture', expiresAt: Date.now() + 60_000, used: false });
+    await expect(services.companionNew.create({
+      name: 'Zero', personalityDescription: 'PNG fixture', personalityAnalysisId: 'analysis-fixture-2', assetRoot: '', assets: requiredAssets(png(0, 300)),
+    })).rejects.toThrow('invalid PNG dimensions');
+
+    analyses.set('analysis-fixture-3', { personality, description: 'PNG fixture', expiresAt: Date.now() + 60_000, used: false });
+    await expect(services.companionNew.create({
+      name: 'BadSheet', personalityDescription: 'PNG fixture', personalityAnalysisId: 'analysis-fixture-3', assetRoot: '', assets: requiredAssets(png(301, 300)),
+    })).rejects.toThrow('invalid sprite-sheet width');
+
+    analyses.set('analysis-fixture-4', { personality, description: 'PNG fixture', expiresAt: Date.now() + 60_000, used: false });
+    await expect(services.companionNew.create({
+      name: 'HugeFrames', personalityDescription: 'PNG fixture', personalityAnalysisId: 'analysis-fixture-4', assetRoot: '', assets: requiredAssets(png(300 * 121, 300)),
+    })).rejects.toThrow('invalid sprite-sheet frame count');
+    services.db.close();
+  });
+
+  it('enforces asset size limits, duplicate keys, and missing required animations', async () => {
+    useTempUserData();
+    const services = new AppServices(':memory:');
+    const personality: CompanionPersonality = { energy: 50, curiosity: 60, sociability: 40, diligence: 70, playfulness: 55, confidence: 45, calmness: 75, shyness: 25 };
+    const analyses = (services as unknown as {
+      personalityAnalyses: Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>;
+    }).personalityAnalyses;
+    const create = (id: string, assets: ReturnType<typeof requiredAssets>) => services.companionNew.create({
+      name: id, personalityDescription: 'Limit fixture', personalityAnalysisId: id, assetRoot: '', assets,
+    });
+
+    analyses.set('duplicate-fixture', { personality, description: 'Limit fixture', expiresAt: Date.now() + 60_000, used: false });
+    await expect(create('duplicate-fixture', [requiredAssets()[0], requiredAssets()[0]])).rejects.toThrow('Duplicate');
+
+    analyses.set('missing-fixture', { personality, description: 'Limit fixture', expiresAt: Date.now() + 60_000, used: false });
+    await expect(create('missing-fixture', requiredAssets().slice(1))).rejects.toThrow('All required');
+
+    const overFile = new Uint8Array(MAX_COMPANION_ASSET_BYTES + 1);
+    png(300, 300).forEach((value, index) => { overFile[index] = value; });
+    analyses.set('large-fixture', { personality, description: 'Limit fixture', expiresAt: Date.now() + 60_000, used: false });
+    await expect(create('large-fixture', requiredAssets(overFile))).rejects.toThrow('maximum file size');
+
+    const overTotal = new Uint8Array(Math.floor(MAX_COMPANION_TOTAL_ASSET_BYTES / 15) + 1);
+    png(300, 300).forEach((value, index) => { overTotal[index] = value; });
+    analyses.set('total-fixture', { personality, description: 'Limit fixture', expiresAt: Date.now() + 60_000, used: false });
+    await expect(create('total-fixture', requiredAssets(overTotal))).rejects.toThrow('maximum total size');
+    services.db.close();
+  });
+
+  it('deletes consumed personality analyses, restores failed attempts, prunes expired entries, and caps the cache', async () => {
+    useTempUserData();
+    const services = new AppServices(':memory:');
+    const personality: CompanionPersonality = { energy: 50, curiosity: 60, sociability: 40, diligence: 70, playfulness: 55, confidence: 45, calmness: 75, shyness: 25 };
+    const internals = services as unknown as {
+      personalityAnalyses: Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>;
+      prunePersonalityAnalyses(): void;
+    };
+    internals.personalityAnalyses.set('expired-fixture', { personality, description: 'expired', expiresAt: Date.now() - 1, used: false });
+    internals.prunePersonalityAnalyses();
+    expect(internals.personalityAnalyses.has('expired-fixture')).toBe(false);
+
+    internals.personalityAnalyses.set('success-fixture', { personality, description: 'Success fixture', expiresAt: Date.now() + 60_000, used: false });
+    const created = await services.companionNew.create({
+      name: 'Success', personalityDescription: 'Success fixture', personalityAnalysisId: 'success-fixture', assetRoot: '', assets: requiredAssets(),
+    });
+    expect(created.isPrimary).toBe(true);
+    expect(internals.personalityAnalyses.has('success-fixture')).toBe(false);
+    await expect(services.companionNew.create({
+      name: 'Reuse', personalityDescription: 'Success fixture', personalityAnalysisId: 'success-fixture', assetRoot: '', assets: requiredAssets(),
+    })).rejects.toThrow('invalid, expired, or already used');
+
+    internals.personalityAnalyses.set('failed-fixture', { personality, description: 'Failed fixture', expiresAt: Date.now() + 60_000, used: false });
+    const mkdir = vi.spyOn(fs, 'mkdirSync').mockImplementationOnce(() => { throw new Error('asset write failure'); });
+    await expect(services.companionNew.create({
+      name: 'Failed', personalityDescription: 'Failed fixture', personalityAnalysisId: 'failed-fixture', assetRoot: '', assets: requiredAssets(),
+    })).rejects.toThrow('asset write failure');
+    expect(internals.personalityAnalyses.get('failed-fixture')?.used).toBe(false);
+    mkdir.mockRestore();
+
+    for (let index = 0; index < 55; index += 1) {
+      internals.personalityAnalyses.set(`analysis-${index}`, { personality, description: `${index}`, expiresAt: Date.now() + index + 1_000, used: false });
+    }
+    internals.prunePersonalityAnalyses();
+    expect(internals.personalityAnalyses.size).toBeLessThanOrEqual(50);
+    services.db.close();
+  });
+
+  it('sets only the first Companion primary and leaves later creation non-primary', async () => {
+    useTempUserData();
+    const onFirstCompanionCreated = vi.fn();
+    const services = new AppServices(':memory:', undefined, { onFirstCompanionCreated });
+    const personality: CompanionPersonality = { energy: 50, curiosity: 60, sociability: 40, diligence: 70, playfulness: 55, confidence: 45, calmness: 75, shyness: 25 };
+    const analyses = (services as unknown as {
+      personalityAnalyses: Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>;
+    }).personalityAnalyses;
+    analyses.set('first-fixture', { personality, description: 'First fixture', expiresAt: Date.now() + 60_000, used: false });
+    analyses.set('second-fixture', { personality, description: 'Second fixture', expiresAt: Date.now() + 60_000, used: false });
+
+    const first = await services.companionNew.create({
+      name: 'First', personalityDescription: 'First fixture', personalityAnalysisId: 'first-fixture', assetRoot: '', assets: requiredAssets(),
+    });
+    const second = await services.companionNew.create({
+      name: 'Second', personalityDescription: 'Second fixture', personalityAnalysisId: 'second-fixture', assetRoot: '', assets: requiredAssets(),
+    });
+    expect(first.isPrimary).toBe(true);
+    expect(second.isPrimary).toBe(false);
+    expect(services.db.getPrimaryCompanion()?.id).toBe(first.id);
+    expect(onFirstCompanionCreated).toHaveBeenCalledTimes(1);
+
+    const switched = await services.companionNew.setPrimary(second.id);
+    expect(switched.isPrimary).toBe(true);
+    expect(services.db.getPrimaryCompanion()?.id).toBe(second.id);
     services.db.close();
   });
 
