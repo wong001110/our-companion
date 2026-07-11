@@ -5,6 +5,7 @@ interface CompanionSelectionPageProps {
   onSelect: (companion: CompanionProfile) => void;
   onCreateNew: () => void;
   onEdit: (companion: CompanionProfile) => void;
+  refreshKey?: number;
 }
 
 const PERSONALITY_TRAITS: (keyof CompanionPersonality)[] = [
@@ -57,7 +58,7 @@ function CompanionAvatar({ companion }: { companion: CompanionProfile }) {
   );
 }
 
-export function CompanionSelectionPage({ onSelect, onCreateNew, onEdit }: CompanionSelectionPageProps) {
+export function CompanionSelectionPage({ onSelect, onCreateNew, onEdit, refreshKey = 0 }: CompanionSelectionPageProps) {
   const [companions, setCompanions] = useState<CompanionProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -72,7 +73,7 @@ export function CompanionSelectionPage({ onSelect, onCreateNew, onEdit }: Compan
   useEffect(() => {
     void loadCompanions();
     void loadAiSettings();
-  }, []);
+  }, [refreshKey]);
 
   async function loadCompanions() {
     setLoading(true);

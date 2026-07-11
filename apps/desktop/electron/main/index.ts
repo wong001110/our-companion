@@ -229,6 +229,11 @@ function createOnboardingCompletionCoordinator(): OnboardingCompletionCoordinato
         isLoading: () => window.webContents.isLoading(),
         isDestroyed: () => window.isDestroyed(),
         onceLoaded: (callback) => window.webContents.once('did-finish-load', callback),
+        onceUnavailable: (callback) => {
+          window.once('closed', () => callback('closed'));
+          window.webContents.once('did-fail-load', () => callback('did-fail-load'));
+          window.webContents.once('render-process-gone', () => callback('render-process-gone'));
+        },
         sendCompleted: (profile) => window.webContents.send('creation:completed', profile),
       };
     },
@@ -249,11 +254,7 @@ function scheduleOnboardingCompletion(companion: { id: string; isPrimary?: boole
   if (!companion.isPrimary) return false;
   const primary = services.db.getPrimaryCompanion();
   if (!primary || primary.id !== companion.id) return false;
-  return onboardingCompletion.schedule(primary);
-}
-
-function completeOnboarding(companion: { id: string }): boolean {
-  return onboardingCompletion.completeOnce(companion);
+  return onboardingCompletion.request(primary);
 }
 
 function registerIpc(): void {
@@ -410,11 +411,10 @@ function registerIpc(): void {
     if (panelWindow && !panelWindow.isDestroyed()) {
       panelWindow.hide();
     }
-    if (companionWindow && !companionWindow.isDestroyed()) {
-      companionWindow.show();
-      keepCompanionOnTop(companionWindow);
-      companionWindow.webContents.send('companion:refresh');
-    }
+    const activeCompanionWindow = ensureCompanionWindow();
+    activeCompanionWindow.show();
+    keepCompanionOnTop(activeCompanionWindow);
+    activeCompanionWindow.webContents.send('companion:refresh');
     return true;
   });
 
@@ -435,7 +435,7 @@ function registerIpc(): void {
 
   ipcMain.handle('creation:completed', (_event, companion) => {
     if (!companion) throw new Error('Creation completion requires the persisted primary Companion.');
-    return completeOnboarding(companion);
+    return scheduleOnboardingCompletion(companion);
   });
 
   ipcMain.handle('creation:openWindow', () => {

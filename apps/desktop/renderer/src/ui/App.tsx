@@ -70,6 +70,7 @@ import type { CompanionProfile } from '@our-companion/shared';
 import { CompanionCreationPage } from '../companion/creation/CompanionCreationPage';
 import { CompanionEditPage } from '../companion/creation/CompanionEditPage';
 import { CompanionSelectionPage } from '../companion/selection/CompanionSelectionPage';
+import { getCreationCompletionAction, switchToSelectedCompanion } from '../companion/creation/creationCompletionFlow';
 
 type LocalExecutionPhase = 'waiting_to_start' | 'started' | 'completed' | 'cancelled' | 'failed';
 
@@ -952,6 +953,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
 function CreationShell() {
   const [view, setView] = useState<'select' | 'create' | 'edit'>('select');
   const [editingCompanion, setEditingCompanion] = useState<CompanionProfile | undefined>(undefined);
+  const [selectionRefreshKey, setSelectionRefreshKey] = useState(0);
 
   useEffect(() => {
     document.documentElement.classList.add('creation-mode');
@@ -959,12 +961,18 @@ function CreationShell() {
   }, []);
 
   function handleCreationComplete(companion: CompanionProfile) {
-    void window.ourCompanion.creation.completed(companion);
+    if (getCreationCompletionAction(companion) === 'main-process-onboarding') return;
+    setEditingCompanion(undefined);
+    setSelectionRefreshKey((key) => key + 1);
+    setView('select');
   }
 
   async function handleSelectCompanion(selected: CompanionProfile) {
-    const companion = await window.ourCompanion.companionNew.setPrimary(selected.id);
-    void window.ourCompanion.creation.completed(companion);
+    await switchToSelectedCompanion(selected, {
+      setPrimary: (id) => window.ourCompanion.companionNew.setPrimary(id),
+      showCompanion: () => window.ourCompanion.window.showCompanion(),
+      closeCreationWindow: () => window.ourCompanion.creation.closeWindow(),
+    });
   }
 
   function handleEdit(companion: CompanionProfile) {
@@ -1019,6 +1027,7 @@ function CreationShell() {
         &#x2715;
       </button>
       <CompanionSelectionPage
+        refreshKey={selectionRefreshKey}
         onSelect={(companion) => { void handleSelectCompanion(companion); }}
         onCreateNew={() => { setEditingCompanion(undefined); setView('create'); }}
         onEdit={handleEdit}

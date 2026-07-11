@@ -6,6 +6,7 @@ export interface OnboardingCompanionWindow {
   isLoading(): boolean;
   isDestroyed(): boolean;
   onceLoaded(callback: () => void): void;
+  onceUnavailable(callback: (reason: string) => void): void;
   sendCompleted(companion: CompanionProfile): void;
 }
 
@@ -30,6 +31,7 @@ export interface OnboardingCompletionStateSnapshot {
   pendingCompletionBroadcastFor: string | null;
 }
 
+/** Coordinates the one-time, deferred transition after the first Companion is persisted. */
 export class OnboardingCompletionCoordinator {
   private readonly scheduledCompanionIds = new Set<string>();
   private completedCompanionId: string | null = null;
@@ -50,9 +52,16 @@ export class OnboardingCompletionCoordinator {
     };
   }
 
-  schedule(companion: CompanionProfile): boolean {
+  /**
+   * Requests first-onboarding completion. Every accepted request is deferred so IPC callers
+   * return before any window or runtime side effects occur.
+   */
+  request(companion: CompanionProfile): boolean {
+    const primary = this.deps.getPrimaryCompanion();
+    if (!companion.isPrimary || !primary || primary.id !== companion.id) return false;
     if (this.completedCompanionId === companion.id) return false;
     if (this.scheduledCompanionIds.has(companion.id)) return false;
+    if (this.completionInProgressFor === companion.id) return false;
     if (this.pendingCompletionBroadcastFor === companion.id) return false;
 
     this.scheduledCompanionIds.add(companion.id);
@@ -60,7 +69,7 @@ export class OnboardingCompletionCoordinator {
       this.scheduler(() => {
         this.scheduledCompanionIds.delete(companion.id);
         try {
-          this.completeOnce(companion);
+          this.executeOnce(primary);
         } catch (error) {
           this.deps.logError('[our-companion] Deferred onboarding completion failed.', error);
         }
@@ -73,13 +82,13 @@ export class OnboardingCompletionCoordinator {
     }
   }
 
-  completeOnce(companion: { id: string }): boolean {
-    if (this.completedCompanionId === companion.id) return false;
-    if (this.completionInProgressFor === companion.id) return false;
-    if (this.pendingCompletionBroadcastFor === companion.id) return false;
+  private executeOnce(companion: CompanionProfile): void {
+    if (this.completedCompanionId === companion.id) return;
+    if (this.completionInProgressFor === companion.id) return;
+    if (this.pendingCompletionBroadcastFor === companion.id) return;
 
     const primary = this.deps.getPrimaryCompanion();
-    if (!primary || companion.id !== primary.id) {
+    if (!primary || primary.id !== companion.id) {
       throw new Error('Onboarding completion requires the persisted primary Companion.');
     }
 
@@ -93,35 +102,48 @@ export class OnboardingCompletionCoordinator {
       companionWindow.show();
       companionWindow.keepOnTop();
       this.broadcastCompletionOnce(primary, companionWindow);
-      return true;
-    } catch (error) {
-      this.deps.logError('[our-companion] Onboarding UI transition failed after Companion persistence.', error);
-      throw error;
     } finally {
       this.completionInProgressFor = null;
     }
   }
 
   private broadcastCompletionOnce(companion: CompanionProfile, companionWindow: OnboardingCompanionWindow): void {
+    const clearPending = () => {
+      if (this.pendingCompletionBroadcastFor === companion.id) {
+        this.pendingCompletionBroadcastFor = null;
+      }
+    };
+    let settled = false;
+
     const send = () => {
+      if (settled) return;
+      settled = true;
       try {
         if (companionWindow.isDestroyed()) {
-          this.pendingCompletionBroadcastFor = null;
+          clearPending();
           this.deps.logError('[our-companion] Onboarding completion broadcast skipped because Companion Window was destroyed.', undefined);
           return;
         }
         companionWindow.sendCompleted(companion);
-        this.pendingCompletionBroadcastFor = null;
+        clearPending();
         this.completedCompanionId = companion.id;
       } catch (error) {
-        this.pendingCompletionBroadcastFor = null;
+        clearPending();
         this.deps.logError('[our-companion] Onboarding completion broadcast failed.', error);
       }
+    };
+
+    const unavailable = (reason: string) => {
+      if (settled) return;
+      settled = true;
+      clearPending();
+      this.deps.logError(`[our-companion] Onboarding completion broadcast unavailable: ${reason}.`, undefined);
     };
 
     if (companionWindow.isLoading()) {
       this.pendingCompletionBroadcastFor = companion.id;
       companionWindow.onceLoaded(send);
+      companionWindow.onceUnavailable(unavailable);
       return;
     }
     send();
