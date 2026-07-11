@@ -36,6 +36,7 @@ import type {
 } from '@our-companion/shared';
 
 let pendingCreationCompanion: CompanionProfile | null = null;
+let pendingCreationStartupFailure: string | null = null;
 
 function invoke<T>(channel: string, input?: unknown): Promise<T> {
   return ipcRenderer.invoke(channel, input) as Promise<T>;
@@ -212,6 +213,20 @@ const api: OurCompanionApi = {
       if (pendingCreationCompanion) {
         listener(pendingCreationCompanion);
         pendingCreationCompanion = null;
+      }
+      return () => ipcRenderer.removeListener(channel, handler);
+    },
+    retryCompletion: () => invoke<boolean>('creation:retryCompletion'),
+    onStartupFailed: (listener: (reason: string) => void) => {
+      const channel = 'creation:startupFailed';
+      const handler = (_event: Electron.IpcRendererEvent, reason: string) => {
+        pendingCreationStartupFailure = reason;
+        listener(reason);
+      };
+      ipcRenderer.on(channel, handler);
+      if (pendingCreationStartupFailure) {
+        listener(pendingCreationStartupFailure);
+        pendingCreationStartupFailure = null;
       }
       return () => ipcRenderer.removeListener(channel, handler);
     },

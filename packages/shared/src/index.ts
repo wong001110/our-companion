@@ -1546,6 +1546,8 @@ export interface OurCompanionApi {
   creation: {
     completed(companion: CompanionProfile): Promise<boolean>;
     onCompleted(listener: (companion: CompanionProfile) => void): () => void;
+    retryCompletion(): Promise<boolean>;
+    onStartupFailed(listener: (reason: string) => void): () => void;
     openWindow(): Promise<boolean>;
     closeWindow(): Promise<boolean>;
   };

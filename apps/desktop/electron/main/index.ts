@@ -9,6 +9,7 @@ import { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 import { ElectronIpcBroadcaster } from './adapters/electronIpcBroadcaster';
 import { handleCompanionProtocolRequest } from './platform/companionProtocol';
 import { OnboardingCompletionCoordinator } from './platform/onboardingCompletion';
+import { createOnboardingCompanionWindowAdapter, invalidateFailedCompanionWindow } from './platform/onboardingCompanionWindow';
 
 function registerCompanionProtocol(): void {
   protocol.handle('companion', (request) => {
@@ -76,6 +77,9 @@ function createCompanionWindow(): BrowserWindow {
     keepCompanionOnTop(window);
   });
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  window.once('closed', () => {
+    if (companionWindow === window) companionWindow = undefined;
+  });
   window.loadURL(rendererUrl('companion'));
   companionWindow = window;
   return window;
@@ -117,6 +121,16 @@ function ensureCompanionWindow(): BrowserWindow {
     return createCompanionWindow();
   }
   return companionWindow;
+}
+
+function invalidateCompanionWindow(window: BrowserWindow, reason: string): void {
+  const invalidated = invalidateFailedCompanionWindow(
+    window,
+    () => companionWindow === window,
+    () => { companionWindow = undefined; },
+    (error) => console.error('[our-companion] Failed to destroy unavailable Companion Window.', error)
+  );
+  if (invalidated) console.error(`[our-companion] Invalidated Companion Window after onboarding failure: ${reason}.`);
 }
 
 function ensurePanelWindow(): BrowserWindow {
@@ -223,23 +237,19 @@ function createOnboardingCompletionCoordinator(): OnboardingCompletionCoordinato
     },
     ensureCompanionWindow: () => {
       const window = ensureCompanionWindow();
-      return {
-        show: () => window.show(),
-        keepOnTop: () => keepCompanionOnTop(window),
-        isLoading: () => window.webContents.isLoading(),
-        isDestroyed: () => window.isDestroyed(),
-        onceLoaded: (callback) => window.webContents.once('did-finish-load', callback),
-        onceUnavailable: (callback) => {
-          window.once('closed', () => callback('closed'));
-          window.webContents.once('did-fail-load', () => callback('did-fail-load'));
-          window.webContents.once('render-process-gone', () => callback('render-process-gone'));
-        },
-        sendCompleted: (profile) => window.webContents.send('creation:completed', profile),
-      };
+      return createOnboardingCompanionWindowAdapter(
+        window,
+        () => keepCompanionOnTop(window),
+        (reason) => invalidateCompanionWindow(window, reason)
+      );
     },
     ensurePanelWindow: () => { ensurePanelWindow(); },
     startRuntimeIfReady: () => services.startRuntimeIfReady(),
     startDiscoveryAutomation,
+    reportRecovery: (reason) => {
+      const window = createCreationWindow();
+      if (!window.isDestroyed()) window.webContents.send('creation:startupFailed', reason);
+    },
     logError: (message, error) => {
       if (error === undefined) {
         console.error(message);
@@ -436,6 +446,12 @@ function registerIpc(): void {
   ipcMain.handle('creation:completed', (_event, companion) => {
     if (!companion) throw new Error('Creation completion requires the persisted primary Companion.');
     return scheduleOnboardingCompletion(companion);
+  });
+
+  ipcMain.handle('creation:retryCompletion', () => {
+    const primary = services.db.getPrimaryCompanion();
+    if (!primary) throw new Error('No persisted primary Companion is available for onboarding retry.');
+    return onboardingCompletion.request(primary);
   });
 
   ipcMain.handle('creation:openWindow', () => {

@@ -5,9 +5,9 @@ export interface OnboardingCompanionWindow {
   keepOnTop(): void;
   isLoading(): boolean;
   isDestroyed(): boolean;
-  onceLoaded(callback: () => void): void;
-  onceUnavailable(callback: (reason: string) => void): void;
+  observeReadiness(onReady: () => void, onUnavailable: (reason: string) => void): () => void;
   sendCompleted(companion: CompanionProfile): void;
+  invalidate(reason: string): void;
 }
 
 export interface OnboardingCompletionDeps {
@@ -17,6 +17,7 @@ export interface OnboardingCompletionDeps {
   ensurePanelWindow(): void;
   startRuntimeIfReady(): boolean;
   startDiscoveryAutomation(): void;
+  reportRecovery(reason: string): void;
   logError(message: string, error: unknown): void;
 }
 
@@ -98,10 +99,12 @@ export class OnboardingCompletionCoordinator {
       this.deps.ensurePanelWindow();
       this.deps.startRuntimeIfReady();
       this.deps.startDiscoveryAutomation();
-      this.deps.closeCreationWindow();
       companionWindow.show();
       companionWindow.keepOnTop();
       this.broadcastCompletionOnce(primary, companionWindow);
+    } catch (error) {
+      this.deps.reportRecovery('companion-window-setup-failed');
+      throw error;
     } finally {
       this.completionInProgressFor = null;
     }
@@ -115,20 +118,27 @@ export class OnboardingCompletionCoordinator {
     };
     let settled = false;
 
-    const send = () => {
+    let removeReadinessListeners = () => {};
+
+    const completeSuccessfully = () => {
       if (settled) return;
       settled = true;
+      removeReadinessListeners();
       try {
         if (companionWindow.isDestroyed()) {
           clearPending();
+          companionWindow.invalidate('destroyed-before-completion');
+          this.deps.reportRecovery('destroyed-before-completion');
           this.deps.logError('[our-companion] Onboarding completion broadcast skipped because Companion Window was destroyed.', undefined);
           return;
         }
         companionWindow.sendCompleted(companion);
         clearPending();
         this.completedCompanionId = companion.id;
+        this.deps.closeCreationWindow();
       } catch (error) {
         clearPending();
+        this.deps.reportRecovery('completion-event-send-failed');
         this.deps.logError('[our-companion] Onboarding completion broadcast failed.', error);
       }
     };
@@ -136,16 +146,23 @@ export class OnboardingCompletionCoordinator {
     const unavailable = (reason: string) => {
       if (settled) return;
       settled = true;
+      removeReadinessListeners();
       clearPending();
+      companionWindow.invalidate(reason);
+      this.deps.reportRecovery(reason);
       this.deps.logError(`[our-companion] Onboarding completion broadcast unavailable: ${reason}.`, undefined);
     };
 
     if (companionWindow.isLoading()) {
       this.pendingCompletionBroadcastFor = companion.id;
-      companionWindow.onceLoaded(send);
-      companionWindow.onceUnavailable(unavailable);
+      try {
+        removeReadinessListeners = companionWindow.observeReadiness(completeSuccessfully, unavailable);
+      } catch (error) {
+        clearPending();
+        throw error;
+      }
       return;
     }
-    send();
+    completeSuccessfully();
   }
 }

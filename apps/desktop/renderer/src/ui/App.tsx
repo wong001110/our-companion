@@ -954,14 +954,22 @@ function CreationShell() {
   const [view, setView] = useState<'select' | 'create' | 'edit'>('select');
   const [editingCompanion, setEditingCompanion] = useState<CompanionProfile | undefined>(undefined);
   const [selectionRefreshKey, setSelectionRefreshKey] = useState(0);
+  const [startupState, setStartupState] = useState<'idle' | 'starting' | 'recovery'>('idle');
 
   useEffect(() => {
     document.documentElement.classList.add('creation-mode');
     return () => document.documentElement.classList.remove('creation-mode');
   }, []);
 
+  useEffect(() => window.ourCompanion.creation.onStartupFailed(() => {
+    setStartupState('recovery');
+  }), []);
+
   function handleCreationComplete(companion: CompanionProfile) {
-    if (getCreationCompletionAction(companion) === 'main-process-onboarding') return;
+    if (getCreationCompletionAction(companion) === 'main-process-onboarding') {
+      setStartupState('starting');
+      return;
+    }
     setEditingCompanion(undefined);
     setSelectionRefreshKey((key) => key + 1);
     setView('select');
@@ -987,6 +995,44 @@ function CreationShell() {
 
   function handleClose() {
     void window.ourCompanion.app.quit();
+  }
+
+  async function handleRetryStartup() {
+    setStartupState('starting');
+    try {
+      const scheduled = await window.ourCompanion.creation.retryCompletion();
+      if (!scheduled) setStartupState('recovery');
+    } catch {
+      setStartupState('recovery');
+    }
+  }
+
+  if (startupState !== 'idle') {
+    const recovering = startupState === 'recovery';
+    return (
+      <main className="creation-shell">
+        <CreationDragHandle />
+        <button className="creation-close-btn" onClick={handleClose} title="Close">
+          &#x2715;
+        </button>
+        <div className="companion-creation-page">
+          <div className="creation-card">
+            <h1>{recovering ? 'Your Companion is ready to retry' : 'Starting your Companion…'}</h1>
+            <p className="creation-subtitle">
+              {recovering
+                ? 'Your Companion was created, but its window could not start. Your data is safe.'
+                : 'Opening your Companion Window…'}
+            </p>
+            {recovering && (
+              <div className="creation-actions">
+                <button className="btn-secondary" onClick={handleClose}>Quit</button>
+                <button className="btn-primary" onClick={() => void handleRetryStartup()}>Retry Companion Window</button>
+              </div>
+            )}
+          </div>
+        </div>
+      </main>
+    );
   }
 
   if (view === 'edit' && editingCompanion) {
