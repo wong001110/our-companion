@@ -11,7 +11,7 @@ import type {
 } from './CompanionBehaviorTypes';
 import { createDefaultBehaviorState } from './CompanionBehaviorTypes';
 import { applyDismissSuppression, applyIgnoreSuppression } from './InterruptionPolicy';
-import { createCommandExecutor } from './commandLifecycle';
+import { createCommandExecutor, type ActiveCommandExecution, type CommandExecutionHandle } from './commandLifecycle';
 
 const STORAGE_KEY_PREFIX = 'companion:behavior:';
 
@@ -32,7 +32,7 @@ function persistState(companionId: string, state: CompanionBehaviorState): void 
 
 export interface UseCompanionBehaviorOptions {
   companionId: string;
-  onCommand: (command: CompanionCommand) => void | Promise<void>;
+  onCommand: (command: CompanionCommand) => CommandExecutionHandle;
 }
 
 /** Executes authoritative main-process commands; it makes no behavior decisions. */
@@ -42,6 +42,9 @@ export function useCompanionBehavior({ companionId, onCommand }: UseCompanionBeh
     ...loadPersistedState(companionId),
   }));
   const [activeCommand, setActiveCommand] = useState<CompanionCommand | null>(null);
+  // These stores deliberately outlive renders and IPC re-subscriptions.
+  const handledCommandIdsRef = useRef<Set<string>>(new Set());
+  const activeExecutionRef = useRef<ActiveCommandExecution | null>(null);
 
   useEffect(() => {
     persistState(companionId, state);
@@ -61,13 +64,17 @@ export function useCompanionBehavior({ companionId, onCommand }: UseCompanionBeh
   const execute = useCallback(createCommandExecutor({
     companionId,
     acknowledge,
-    execute: async (command) => {
+    handledCommandIds: handledCommandIdsRef.current,
+    activeExecution: activeExecutionRef,
+    execute: (command) => {
       setActiveCommand(command);
-      try {
-        await onCommand(command);
-      } finally {
+      const handle = onCommand(command);
+      void handle.completed.then(() => {
         setActiveCommand((current) => current?.id === command.id ? null : current);
-      }
+      }, () => {
+        setActiveCommand((current) => current?.id === command.id ? null : current);
+      });
+      return handle;
     },
   }), [acknowledge, companionId, onCommand]);
 
@@ -78,6 +85,14 @@ export function useCompanionBehavior({ companionId, onCommand }: UseCompanionBeh
     });
     return () => unsubscribe?.();
   }, [execute]);
+
+  useEffect(() => () => {
+    activeExecutionRef.current?.cancel('renderer_unmounted');
+  }, [companionId]);
+
+  const cancelActiveCommand = useCallback((reason: string) => {
+    activeExecutionRef.current?.cancel(reason);
+  }, []);
 
   const recordInteraction = useCallback(() => setState((prev) => ({ ...prev, lastUserInteractionAt: Date.now() })), []);
   const recordSpeech = useCallback(() => setState((prev) => ({ ...prev, lastCompanionSpokeAt: Date.now() })), []);
@@ -92,5 +107,5 @@ export function useCompanionBehavior({ companionId, onCommand }: UseCompanionBeh
   const setInitiativeLevel = useCallback((initiativeLevel: InitiativeLevel) => setState((prev) => ({ ...prev, initiativeLevel })), []);
   const setDebugOverride = useCallback((debugOverride: boolean) => setState((prev) => ({ ...prev, debugOverride })), []);
 
-  return { state, activeCommand, recordInteraction, recordSpeech, recordDiscoveryPresented, recordDismiss, recordIgnore, setDiscoveryPresentationState, setMode, setMood, setEnergy, setFocus, setInitiativeLevel, setDebugOverride };
+  return { state, activeCommand, cancelActiveCommand, recordInteraction, recordSpeech, recordDiscoveryPresented, recordDismiss, recordIgnore, setDiscoveryPresentationState, setMode, setMood, setEnergy, setFocus, setInitiativeLevel, setDebugOverride };
 }

@@ -1,5 +1,17 @@
 # Repair Execution Log
 
+## Command Execution Reliability Pass
+
+- Issue: renderer command execution could be duplicated after a render, overwrite a pending presentation resolver, report `started` before rendering, and remain pending if typewriter completion did not fire. Main-process recovery could also return terminal commands and accept invalid acknowledgement ordering.
+- Current flow: main process emits one authoritative `CompanionCommand`; IPC event delivery and `getActiveCommand()` recovery both enter the renderer executor; renderer reports lifecycle acknowledgements to the current `CompanionRuntime` coordinator.
+- Failure mode: closure-local handled IDs were lost when the executor was recreated; event/recovery races executed twice; the single unkeyed resolver could be overwritten; no timeout or cancellation existed; lifecycle status was accepted without command/Companion/transition validation.
+- Files involved: `useCompanionBehavior.ts`, `commandLifecycle.ts`, `commandLifecycle.test.ts`, `App.tsx`, `services.ts`, and this log. No additional production files were required.
+- Old behavior removed: closure-local-only idempotency, automatic `started` acknowledgement after invocation, unkeyed `commandCompletionRef`, and status-set-only acknowledgement acceptance.
+- New behavior: stable ref-backed handled and active stores unify IPC and recovery; presentation returns a keyed execution handle whose `started` resolves at its first render frame and whose `completed` resolves at the documented endpoint (`show_soft_hint`: rendered; `present_discovery`: typewriter completed). Commands time out after 45 seconds with `failed: command_timeout`; unmount cancels active work; conflicts fail with `renderer_busy`; unsupported hints fail explicitly. Main process accepts only valid forward lifecycle transitions for the current active command and suppresses terminal recovery.
+- Tests added: truthful start/completion, duplicate event/recovery delivery, recreation with shared stores, timeout and late completion, and active-command conflict.
+- Verification result: `npm.cmd run typecheck` passed. Full test, architecture, and build verification are run after this implementation pass.
+- Renderer state ownership: `discoveryPresentationState` and timestamp fields are display-only presentation history; `debugOverride` is debug-only. Legacy `mode`, `mood`, `energy`, `focus`, and `initiativeLevel` remain only for existing UI compatibility and are not consulted for behavioral decisions; their removal is outside this narrowly scoped command repair.
+
 ## Phase 1 — True single decision ownership
 
 ### P0-1: Deferred command emission

@@ -17,7 +17,7 @@ import { collectWorkspaceStatus, type WorkspaceStatusSnapshot } from './workspac
 import { generateCuriosityTargets } from '@our-companion/curiosity-engine';
 import { assessCuriosity } from '@our-companion/curiosity-engine';
 import { DatabaseService } from '@our-companion/database';
-import type { CompanionDecision, CompanionCommand, CompanionCommandAck } from '@our-companion/shared';
+import type { CommandAckStatus, CompanionDecision, CompanionCommand, CompanionCommandAck } from '@our-companion/shared';
 import { generateDailyDiary } from '@our-companion/diary-engine';
 import {
   createFallbackConnector,
@@ -100,6 +100,21 @@ import { CompanionRuntime } from './companionRuntime';
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
 
+interface ActiveCommandRecord {
+  command: CompanionCommand;
+  latestStatus: CommandAckStatus;
+  updatedAt: string;
+  terminal: boolean;
+}
+
+const VALID_COMMAND_TRANSITIONS: Record<CommandAckStatus, CommandAckStatus[]> = {
+  received: ['started', 'failed', 'cancelled'],
+  started: ['completed', 'failed', 'cancelled'],
+  completed: [],
+  failed: [],
+  cancelled: [],
+};
+
 export class AppServices {
   readonly db: DatabaseService;
   readonly databaseMode: 'persistent' | 'memory';
@@ -109,8 +124,7 @@ export class AppServices {
   private readonly companionRuntime: CompanionRuntime;
   private explorationBroadcaster?: (event: ExplorationLoopEvent) => void;
   private commandBroadcaster?: (command: CompanionCommand) => void;
-  private activeCommand: CompanionCommand | null = null;
-  private readonly acknowledgedCommandStatuses = new Set<string>();
+  private activeCommand: ActiveCommandRecord | null = null;
   private foundationEventBroadcaster?: (event: BaseEvent) => void;
   private debugLog: AiDebugEntry[] = [];
   private foundationEventLog: BaseEvent[] = [];
@@ -160,7 +174,7 @@ export class AppServices {
         });
       },
       (command) => {
-        this.activeCommand = command;
+        this.activeCommand = { command, latestStatus: 'received', updatedAt: new Date().toISOString(), terminal: false };
         this.commandBroadcaster?.(command);
         this.tryPresentPendingDiscovery(command);
       }
@@ -752,14 +766,23 @@ export class AppServices {
     cancelPendingAction: async (id: string): Promise<void> => {
       this.db.updatePendingActionStatus(id, 'cancelled');
     },
-    getActiveCommand: async (): Promise<CompanionCommand | null> => this.activeCommand,
-    reportCommandAck: async (ack: CompanionCommandAck) => {
-      const acknowledgementKey = `${ack.commandId}:${ack.status}`;
-      if (this.acknowledgedCommandStatuses.has(acknowledgementKey)) return;
-      this.acknowledgedCommandStatuses.add(acknowledgementKey);
-      if (this.activeCommand?.id === ack.commandId && ['completed', 'cancelled', 'failed'].includes(ack.status)) {
-        this.activeCommand = null;
+    getActiveCommand: async (): Promise<CompanionCommand | null> => {
+      const record = this.activeCommand;
+      const primaryId = this.db.getPrimaryCompanion()?.id;
+      if (!record || record.terminal || record.command.companionId !== primaryId ||
+        (record.command.expiresAt && Date.parse(record.command.expiresAt) <= Date.now())) {
+        if (record?.command.expiresAt && Date.parse(record.command.expiresAt) <= Date.now()) this.activeCommand = null;
+        return null;
       }
+      return record.command;
+    },
+    reportCommandAck: async (ack: CompanionCommandAck) => {
+      const record = this.activeCommand;
+      if (!record || record.command.id !== ack.commandId || record.command.companionId !== ack.companionId) return;
+      if (record.terminal || record.latestStatus === ack.status || !VALID_COMMAND_TRANSITIONS[record.latestStatus].includes(ack.status)) return;
+      record.latestStatus = ack.status;
+      record.updatedAt = ack.reportedAt;
+      record.terminal = ['completed', 'cancelled', 'failed'].includes(ack.status);
       this.emitFoundationEvent('CompanionCommandAck', 'companion', {
         commandId: ack.commandId,
         companionId: ack.companionId,
@@ -767,6 +790,7 @@ export class AppServices {
         reason: ack.reason,
         failedStep: ack.failedStep
       });
+      if (record.terminal) this.activeCommand = null;
     }
   };
 

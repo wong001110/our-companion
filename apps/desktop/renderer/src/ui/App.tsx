@@ -64,6 +64,7 @@ import { CompanionQuickActions } from '../companion/CompanionQuickActions';
 import { DragHandle } from '../companion/DragHandle';
 import { anchorFromBounds, type Rect } from '../companion/floatingPlacement';
 import { useCompanionBehavior } from '../companion/behavior/useCompanionBehavior';
+import type { CommandExecutionHandle } from '../companion/behavior/commandLifecycle';
 import { useInteractiveRegion } from '../companion/useInteractiveRegion';
 import type { CompanionProfile } from '@our-companion/shared';
 import { CompanionCreationPage } from '../companion/creation/CompanionCreationPage';
@@ -219,32 +220,56 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       sessionActiveRef.current = paused;
     }
   });
-  const commandCompletionRef = useRef<(() => void) | null>(null);
-
-  const behavior = useCompanionBehavior({
-    companionId: companion.id,
-    onCommand: (command) => handleCompanionCommand(command),
-  });
-
   const [softHintVisible, setSoftHintVisible] = useState(false);
+  const behaviorCommandActionsRef = useRef<{ recordSpeech: () => void; recordDiscoveryPresented: () => void }>({
+    recordSpeech: () => undefined,
+    recordDiscoveryPresented: () => undefined,
+  });
+  const commandCompletionRef = useRef<{ commandId: string; resolve: () => void; reject: (reason: Error) => void } | null>(null);
+  const commandPresentationRef = useRef({ discovery, softHintVisible, speech, companionName: companion.name });
+  commandPresentationRef.current = { discovery, softHintVisible, speech, companionName: companion.name };
 
-  function handleCompanionCommand(command: import('@our-companion/shared').CompanionCommand): void | Promise<void> {
+  const handleCompanionCommand = useCallback((command: import('@our-companion/shared').CompanionCommand): CommandExecutionHandle => {
+    const presentation = commandPresentationRef.current;
+    let resolveStarted!: () => void;
+    let rejectStarted!: (reason: Error) => void;
+    let resolveCompleted!: () => void;
+    let rejectCompleted!: (reason: Error) => void;
+    const started = new Promise<void>((resolve, reject) => { resolveStarted = resolve; rejectStarted = reject; });
+    const completed = new Promise<void>((resolve, reject) => { resolveCompleted = resolve; rejectCompleted = reject; });
+    const beginVisiblePresentation = () => window.requestAnimationFrame(() => resolveStarted());
+    const cancel = (reason: string) => {
+      if (commandCompletionRef.current?.commandId === command.id) commandCompletionRef.current = null;
+      rejectStarted(new Error(reason));
+      rejectCompleted(new Error(reason));
+    };
     const displayHint = command.decision.displayHint;
-    if (displayHint === 'show_soft_hint' && !discovery.popup && !softHintVisible) {
+    if (displayHint === 'show_soft_hint' && !presentation.discovery.popup && !presentation.softHintVisible) {
       setSoftHintVisible(true);
-      behavior.recordSpeech();
-      speech.showInstant(`${companion.name} found something interesting. Want to see it?`);
-    } else if (displayHint === 'present_discovery' && !discovery.popup) {
-      const next = discovery.presentNext();
+      behaviorCommandActionsRef.current.recordSpeech();
+      presentation.speech.showInstant(`${presentation.companionName} found something interesting. Want to see it?`);
+      beginVisiblePresentation();
+      window.requestAnimationFrame(() => resolveCompleted());
+    } else if (displayHint === 'present_discovery' && !presentation.discovery.popup) {
+      const next = presentation.discovery.presentNext();
       if (next) {
-        speech.showTypewriter(next.shareMessage);
-        behavior.recordDiscoveryPresented();
-        return new Promise<void>((resolve) => {
-          commandCompletionRef.current = resolve;
-        });
+        presentation.speech.showTypewriter(next.shareMessage);
+        behaviorCommandActionsRef.current.recordDiscoveryPresented();
+        commandCompletionRef.current = { commandId: command.id, resolve: resolveCompleted, reject: rejectCompleted };
+        beginVisiblePresentation();
+      } else {
+        rejectStarted(new Error('missing_discovery'));
+        rejectCompleted(new Error('missing_discovery'));
       }
+    } else {
+      rejectStarted(new Error('unsupported_command'));
+      rejectCompleted(new Error('unsupported_command'));
     }
-  }
+    return { started, completed, cancel };
+  }, []);
+
+  const behavior = useCompanionBehavior({ companionId: companion.id, onCommand: handleCompanionCommand });
+  behaviorCommandActionsRef.current = behavior;
 
   const floatingPositions = useFloatingPlacement({
     hasBubble: speech.hasSpeech,
@@ -257,8 +282,9 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const handleTypewriterComplete = useCallback(() => {
     speech.onTypewriterComplete();
     onTypewriterComplete();
-    commandCompletionRef.current?.();
+    const completion = commandCompletionRef.current;
     commandCompletionRef.current = null;
+    completion?.resolve();
   }, [speech.onTypewriterComplete, onTypewriterComplete]);
 
   const openTextInput = useCallback(() => {
@@ -793,6 +819,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           onAddToJourney={() => discovery.addToJourney(discovery.popup!)}
           onIgnore={() => discovery.ignore(discovery.popup!)}
           onClose={() => {
+            behavior.cancelActiveCommand('user_dismissed');
             discovery.dismiss();
             interactive.clearAll();
           }}
