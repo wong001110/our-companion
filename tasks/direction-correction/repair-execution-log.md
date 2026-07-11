@@ -1,5 +1,43 @@
 # Repair Execution Log
 
+## Command Lifecycle Final Stabilization
+
+### Total deadline and cancellation settlement
+
+- Issue: a command could remain forever in `received`, and cancellation could attempt duplicate settlement.
+- Root cause: timeout started after `handle.started`; the presentation handle had no phase guard.
+- Old behavior: only completion was timed; cancellation rejected both promises indiscriminately.
+- New behavior: one deadline races the complete lifecycle from receipt; timeout reports `command_start` or `presentation` accurately. Local handle phases make cancellation, completion, and late callbacks idempotent.
+- Files changed: `commandLifecycle.ts`, `commandLifecycle.test.ts`, and `App.tsx`.
+- Tests added: timeout before/after start, late start/completion, shutdown/unmount cancellation, and double cancellation.
+- Verification result: passed in the final suite.
+- Remaining limitations: request-animation-frame is still the visible-start signal by design, now bounded by the total deadline.
+
+### Main activation, recovery, and issued state
+
+- Issue: a second command could replace an active record; recovery used primary identity; records falsely began as `received`.
+- Root cause: direct record assignment, primary lookup, and no internal issued state.
+- Old behavior: active commands could be overwritten, recovery could cross Companion identity, and a real renderer receipt acknowledgement was discarded.
+- New behavior: `tryActivateCommand()` defers a conflicting command, recovery uses `resolveActiveCompanionId()`, and records transition from `issued` through real renderer acknowledgements only.
+- Files changed: `services.ts` and `foundationEventLog.test.ts`.
+- Tests added: issued/received/started/completed, failure/cancellation, invalid and duplicate transitions, deferred second command, terminal reactivation, active non-primary resolver, previous Companion, and expiry recovery.
+- Verification result: passed in the final suite.
+- Remaining limitations: commands remain intentionally in-memory for the single-runtime scope.
+
+### Shutdown and temporary prompt cleanup
+
+- Issue: shutdown relied on React cleanup, and the obsolete command-reliability execution prompt remained in the repository.
+- Root cause: no explicit renderer shutdown cancellation path and temporary task material was retained after the previous pass.
+- Old behavior: exit could bypass a lifecycle acknowledgement; the old prompt remained at `tasks/temp-task/our-companion-command-execution-reliability.md`.
+- New behavior: exit animation and `beforeunload` explicitly cancel active work with `window_shutdown`; the temporary prompt is deleted while this durable execution log remains.
+- Files changed: `App.tsx`, this log, and the removed temporary prompt.
+- Tests added: executor shutdown cancellation coverage.
+- Verification result: passed in the final suite.
+- Remaining limitations: compatibility-only renderer fields (`mode`, `mood`, `energy`, `focus`, `initiativeLevel`, and `debugOverride`) remain non-decision UI state; broad cleanup is intentionally out of scope.
+
+- Final verification: `npm.cmd run typecheck` passed; `npm.cmd run test` passed (43 files, 322 tests); `npm.cmd run arch:check` passed; `npm.cmd run build` passed. The build retained its pre-existing Vite dynamic/static import warning for `character-engine`, with no build failure.
+- Search review: no production `latestStatus: 'received'` or legacy renderer behavior path remains. `getPrimaryCompanion()` matches are unrelated companion/profile, exploration, or presentation code; command recovery uses `resolveActiveCompanionId()`. Remaining `activeCommand` assignments are only activation and terminal discard/clear. `commandCompletionRef`, timeout, busy, unmount, and shutdown matches are intentional lifecycle code and tests. No reference to the removed command-reliability prompt remains; unrelated archived `tasks/temp-task` references in historical documentation were preserved.
+
 ## Command Execution Reliability Pass
 
 - Issue: renderer command execution could be duplicated after a render, overwrite a pending presentation resolver, report `started` before rendering, and remain pending if typewriter completion did not fire. Main-process recovery could also return terminal commands and accept invalid acknowledgement ordering.

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createId, nowIso, type CompanionCommand } from '@our-companion/shared';
 import { AppServices } from './services';
 
 vi.mock('electron', () => ({
@@ -8,6 +9,13 @@ vi.mock('electron', () => ({
 }));
 
 describe('foundation event log', () => {
+  function command(companionId: string): CompanionCommand {
+    return {
+      id: createId('cmd'), companionId, issuedAt: nowIso(),
+      decision: { id: createId('decision'), action: 'share_discovery', timing: 'now', priority: 'normal', reason: 'test', createdAt: nowIso() },
+    };
+  }
+
   it('records emitted foundation events and filters by source', async () => {
     const services = new AppServices(':memory:');
 
@@ -36,6 +44,73 @@ describe('foundation event log', () => {
     expect(log).toHaveLength(200);
     expect((log[0].payload as { index: number }).index).toBe(204);
 
+    services.db.close();
+  });
+
+  it('keeps the first command active and records the real issued lifecycle', async () => {
+    const services = new AppServices(':memory:');
+    const internals = services as unknown as {
+      activeCommand: { command: CompanionCommand; latestStatus: string } | null;
+      tryActivateCommand(command: CompanionCommand): boolean;
+    };
+    const activeCompanionId = services.db.resolveActiveCompanionId();
+    const first = command(activeCompanionId);
+    const second = command(activeCompanionId);
+
+    expect(internals.tryActivateCommand(first)).toBe(true);
+    expect(internals.activeCommand?.latestStatus).toBe('issued');
+    expect(internals.tryActivateCommand(second)).toBe(false);
+    expect(internals.activeCommand?.command.id).toBe(first.id);
+
+    await services.companion.reportCommandAck({ commandId: first.id, companionId: activeCompanionId, status: 'completed', reportedAt: nowIso() });
+    expect(internals.activeCommand?.latestStatus).toBe('issued');
+    await services.companion.reportCommandAck({ commandId: first.id, companionId: activeCompanionId, status: 'received', reportedAt: nowIso() });
+    await services.companion.reportCommandAck({ commandId: first.id, companionId: activeCompanionId, status: 'received', reportedAt: nowIso() });
+    await services.companion.reportCommandAck({ commandId: first.id, companionId: activeCompanionId, status: 'started', reportedAt: nowIso() });
+    await services.companion.reportCommandAck({ commandId: first.id, companionId: activeCompanionId, status: 'completed', reportedAt: nowIso() });
+    expect(internals.activeCommand).toBeNull();
+    expect(internals.tryActivateCommand(second)).toBe(true);
+
+    await services.companion.reportCommandAck({ commandId: second.id, companionId: activeCompanionId, status: 'failed', reportedAt: nowIso() });
+    expect(internals.activeCommand).toBeNull();
+    const third = command(activeCompanionId);
+    expect(internals.tryActivateCommand(third)).toBe(true);
+    await services.companion.reportCommandAck({ commandId: third.id, companionId: activeCompanionId, status: 'cancelled', reportedAt: nowIso() });
+    expect(internals.activeCommand).toBeNull();
+
+    const acknowledgements = (await services.debug.getFoundationLog({ source: 'companion', limit: 10 }))
+      .filter((event) => event.type === 'CompanionCommandAck' && (event.payload as { commandId: string }).commandId === first.id);
+    expect(acknowledgements.map((event) => (event.payload as { status: string }).status).reverse()).toEqual(['received', 'started', 'completed']);
+    services.db.close();
+  });
+
+  it('recovers only a non-expired command for the active Companion', async () => {
+    const services = new AppServices(':memory:');
+    const internals = services as unknown as {
+      activeCommand: { command: CompanionCommand } | null;
+      tryActivateCommand(command: CompanionCommand): boolean;
+    };
+    const activeCompanionId = services.db.resolveActiveCompanionId();
+    const current = command(activeCompanionId);
+    internals.tryActivateCommand(current);
+    expect((await services.companion.getActiveCommand())?.id).toBe(current.id);
+
+    const activeNonPrimaryId = 'active-non-primary';
+    const activeResolver = vi.spyOn(services.db, 'resolveActiveCompanionId').mockReturnValue(activeNonPrimaryId);
+    await services.companion.reportCommandAck({ commandId: current.id, companionId: activeCompanionId, status: 'cancelled', reportedAt: nowIso() });
+    const nonPrimary = command(activeNonPrimaryId);
+    internals.tryActivateCommand(nonPrimary);
+    expect((await services.companion.getActiveCommand())?.id).toBe(nonPrimary.id);
+    activeResolver.mockRestore();
+
+    internals.activeCommand = { command: command('previous-companion') };
+    expect(await services.companion.getActiveCommand()).toBeNull();
+    expect(internals.activeCommand).toBeNull();
+
+    const expired = command(activeCompanionId);
+    expired.expiresAt = new Date(Date.now() - 1).toISOString();
+    internals.tryActivateCommand(expired);
+    expect(await services.companion.getActiveCommand()).toBeNull();
     services.db.close();
   });
 });

@@ -100,14 +100,17 @@ import { CompanionRuntime } from './companionRuntime';
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
 
+export type CommandRecordStatus = 'issued' | CommandAckStatus;
+
 interface ActiveCommandRecord {
   command: CompanionCommand;
-  latestStatus: CommandAckStatus;
+  latestStatus: CommandRecordStatus;
   updatedAt: string;
   terminal: boolean;
 }
 
-const VALID_COMMAND_TRANSITIONS: Record<CommandAckStatus, CommandAckStatus[]> = {
+export const VALID_COMMAND_TRANSITIONS: Record<CommandRecordStatus, CommandAckStatus[]> = {
+  issued: ['received', 'failed', 'cancelled'],
   received: ['started', 'failed', 'cancelled'],
   started: ['completed', 'failed', 'cancelled'],
   completed: [],
@@ -174,7 +177,7 @@ export class AppServices {
         });
       },
       (command) => {
-        this.activeCommand = { command, latestStatus: 'received', updatedAt: new Date().toISOString(), terminal: false };
+        if (!this.tryActivateCommand(command)) return;
         this.commandBroadcaster?.(command);
         this.tryPresentPendingDiscovery(command);
       }
@@ -768,10 +771,11 @@ export class AppServices {
     },
     getActiveCommand: async (): Promise<CompanionCommand | null> => {
       const record = this.activeCommand;
-      const primaryId = this.db.getPrimaryCompanion()?.id;
-      if (!record || record.terminal || record.command.companionId !== primaryId ||
+      const activeCompanionId = this.db.resolveActiveCompanionId();
+      if (!record || record.terminal || record.command.companionId !== activeCompanionId ||
         (record.command.expiresAt && Date.parse(record.command.expiresAt) <= Date.now())) {
-        if (record?.command.expiresAt && Date.parse(record.command.expiresAt) <= Date.now()) this.activeCommand = null;
+        if (record && (record.command.companionId !== activeCompanionId ||
+          (record.command.expiresAt && Date.parse(record.command.expiresAt) <= Date.now()))) this.activeCommand = null;
         return null;
       }
       return record.command;
@@ -793,6 +797,20 @@ export class AppServices {
       if (record.terminal) this.activeCommand = null;
     }
   };
+
+  /** Keeps one authoritative command record; the renderer is never sent a predictable busy conflict. */
+  private tryActivateCommand(command: CompanionCommand): boolean {
+    if (this.activeCommand && !this.activeCommand.terminal) {
+      this.emitFoundationEvent('CompanionCommandDeferred', 'companion', {
+        commandId: command.id,
+        companionId: command.companionId,
+        reason: 'active_command_exists',
+      });
+      return false;
+    }
+    this.activeCommand = { command, latestStatus: 'issued', updatedAt: new Date().toISOString(), terminal: false };
+    return true;
+  }
 
   debug = {
     resetData: async (input: DebugDataResetInput) => this.db.resetDebugData(input),

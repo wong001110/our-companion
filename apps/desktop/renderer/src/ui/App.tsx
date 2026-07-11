@@ -71,6 +71,8 @@ import { CompanionCreationPage } from '../companion/creation/CompanionCreationPa
 import { CompanionEditPage } from '../companion/creation/CompanionEditPage';
 import { CompanionSelectionPage } from '../companion/selection/CompanionSelectionPage';
 
+type LocalExecutionPhase = 'waiting_to_start' | 'started' | 'completed' | 'cancelled' | 'failed';
+
 export function App() {
   const mode = new URLSearchParams(window.location.search).get('mode');
   if (mode === 'panel') return <PanelShell />;
@@ -156,9 +158,11 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const [dragHandleVisible, setDragHandleVisible] = useState(false);
   const isHoveringCompanionRef = useRef(false);
   const isHoveringActionsRef = useRef(false);
+  const cancelCommandRef = useRef<(reason: string) => void>(() => undefined);
 
   useEffect(() => {
     const unsub = window.ourCompanion.app.onExitAnimation(() => {
+      cancelCommandRef.current('window_shutdown');
       setIdleAnimation('Expedition_Leave');
       window.setTimeout(() => {
         void window.ourCompanion.app.quit();
@@ -225,7 +229,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     recordSpeech: () => undefined,
     recordDiscoveryPresented: () => undefined,
   });
-  const commandCompletionRef = useRef<{ commandId: string; resolve: () => void; reject: (reason: Error) => void } | null>(null);
+  const commandCompletionRef = useRef<{ commandId: string; complete: () => void } | null>(null);
   const commandPresentationRef = useRef({ discovery, softHintVisible, speech, companionName: companion.name });
   commandPresentationRef.current = { discovery, softHintVisible, speech, companionName: companion.name };
 
@@ -237,10 +241,32 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     let rejectCompleted!: (reason: Error) => void;
     const started = new Promise<void>((resolve, reject) => { resolveStarted = resolve; rejectStarted = reject; });
     const completed = new Promise<void>((resolve, reject) => { resolveCompleted = resolve; rejectCompleted = reject; });
-    const beginVisiblePresentation = () => window.requestAnimationFrame(() => resolveStarted());
-    const cancel = (reason: string) => {
+    let phase: LocalExecutionPhase = 'waiting_to_start';
+    const fail = (reason: string) => {
+      if (phase === 'completed' || phase === 'cancelled' || phase === 'failed') return;
+      const wasWaitingToStart = phase === 'waiting_to_start';
+      phase = 'failed';
       if (commandCompletionRef.current?.commandId === command.id) commandCompletionRef.current = null;
-      rejectStarted(new Error(reason));
+      if (wasWaitingToStart) rejectStarted(new Error(reason));
+      rejectCompleted(new Error(reason));
+    };
+    const beginVisiblePresentation = () => window.requestAnimationFrame(() => {
+      if (phase !== 'waiting_to_start') return;
+      phase = 'started';
+      resolveStarted();
+    });
+    const completePresentation = () => {
+      if (phase !== 'started') return;
+      phase = 'completed';
+      if (commandCompletionRef.current?.commandId === command.id) commandCompletionRef.current = null;
+      resolveCompleted();
+    };
+    const cancel = (reason: string) => {
+      if (phase === 'completed' || phase === 'cancelled' || phase === 'failed') return;
+      const wasWaitingToStart = phase === 'waiting_to_start';
+      phase = 'cancelled';
+      if (commandCompletionRef.current?.commandId === command.id) commandCompletionRef.current = null;
+      if (wasWaitingToStart) rejectStarted(new Error(reason));
       rejectCompleted(new Error(reason));
     };
     const displayHint = command.decision.displayHint;
@@ -249,27 +275,32 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       behaviorCommandActionsRef.current.recordSpeech();
       presentation.speech.showInstant(`${presentation.companionName} found something interesting. Want to see it?`);
       beginVisiblePresentation();
-      window.requestAnimationFrame(() => resolveCompleted());
+      window.requestAnimationFrame(completePresentation);
     } else if (displayHint === 'present_discovery' && !presentation.discovery.popup) {
       const next = presentation.discovery.presentNext();
       if (next) {
         presentation.speech.showTypewriter(next.shareMessage);
         behaviorCommandActionsRef.current.recordDiscoveryPresented();
-        commandCompletionRef.current = { commandId: command.id, resolve: resolveCompleted, reject: rejectCompleted };
+        commandCompletionRef.current = { commandId: command.id, complete: completePresentation };
         beginVisiblePresentation();
       } else {
-        rejectStarted(new Error('missing_discovery'));
-        rejectCompleted(new Error('missing_discovery'));
+        fail('missing_discovery');
       }
     } else {
-      rejectStarted(new Error('unsupported_command'));
-      rejectCompleted(new Error('unsupported_command'));
+      fail('unsupported_command');
     }
     return { started, completed, cancel };
   }, []);
 
   const behavior = useCompanionBehavior({ companionId: companion.id, onCommand: handleCompanionCommand });
   behaviorCommandActionsRef.current = behavior;
+  cancelCommandRef.current = behavior.cancelActiveCommand;
+
+  useEffect(() => {
+    const cancelForShutdown = () => behavior.cancelActiveCommand('window_shutdown');
+    window.addEventListener('beforeunload', cancelForShutdown);
+    return () => window.removeEventListener('beforeunload', cancelForShutdown);
+  }, [behavior.cancelActiveCommand]);
 
   const floatingPositions = useFloatingPlacement({
     hasBubble: speech.hasSpeech,
@@ -284,7 +315,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     onTypewriterComplete();
     const completion = commandCompletionRef.current;
     commandCompletionRef.current = null;
-    completion?.resolve();
+    completion?.complete();
   }, [speech.onTypewriterComplete, onTypewriterComplete]);
 
   const openTextInput = useCallback(() => {

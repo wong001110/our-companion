@@ -54,8 +54,11 @@ export function createCommandExecutor({
     }
 
     let terminal = false;
+    let started = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let handle: CommandExecutionHandle | undefined;
+    let rejectCancellation!: (reason: Error) => void;
+    const cancellationPromise = new Promise<never>((_, reject) => { rejectCancellation = reject; });
     const finish = (status: Extract<CommandAckStatus, 'completed' | 'cancelled' | 'failed'>, reason?: string, failedStep?: string) => {
       if (terminal) return;
       terminal = true;
@@ -68,26 +71,31 @@ export function createCommandExecutor({
       if (terminal) return;
       handle?.cancel(reason);
       finish('cancelled', reason);
+      rejectCancellation(new Error(reason));
     };
     activeExecution.current = { commandId: command.id, companionId: command.companionId, startedAt: new Date().toISOString(), cancel };
 
     try {
-      handle = execute(command);
-      await handle.started;
-      if (terminal) return;
-      acknowledge(command, 'started');
-      await new Promise<void>((resolve, reject) => {
+      const timeoutPromise = new Promise<never>((_, reject) => {
         timeout = setTimeout(() => reject(new Error('command_timeout')), timeoutMs);
-        void handle!.completed.then(resolve, reject);
       });
+      const runCommandLifecycle = async () => {
+        handle = execute(command);
+        await handle.started;
+        started = true;
+        if (terminal) return;
+        acknowledge(command, 'started');
+        await handle.completed;
+      };
+      await Promise.race([runCommandLifecycle(), timeoutPromise, cancellationPromise]);
       finish('completed');
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       if (reason === 'command_timeout') {
         handle?.cancel(reason);
-        finish('failed', reason, 'presentation');
+        finish('failed', reason, started ? 'presentation' : 'command_start');
       } else {
-        finish('failed', reason, 'presentation');
+        finish('failed', reason, started ? 'presentation' : 'command_start');
       }
     }
   };

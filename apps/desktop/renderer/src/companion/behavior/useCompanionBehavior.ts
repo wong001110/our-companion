@@ -68,7 +68,13 @@ export function useCompanionBehavior({ companionId, onCommand }: UseCompanionBeh
     activeExecution: activeExecutionRef,
     execute: (command) => {
       setActiveCommand(command);
-      const handle = onCommand(command);
+      let handle: CommandExecutionHandle;
+      try {
+        handle = onCommand(command);
+      } catch (error) {
+        setActiveCommand((current) => current?.id === command.id ? null : current);
+        throw error;
+      }
       void handle.completed.then(() => {
         setActiveCommand((current) => current?.id === command.id ? null : current);
       }, () => {

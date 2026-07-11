@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CompanionCommand } from '@our-companion/shared';
 import { createId, nowIso } from '@our-companion/shared';
-import { createCommandExecutor, type CommandExecutionHandle } from './commandLifecycle';
+import { createCommandExecutor, type ActiveCommandExecution, type CommandExecutionHandle } from './commandLifecycle';
 
 function command(overrides: Partial<CompanionCommand> = {}): CompanionCommand {
   return { id: createId('cmd'), companionId: 'ann', issuedAt: nowIso(), decision: { id: createId('decision'), action: 'share_discovery', timing: 'now', priority: 'normal', reason: 'test', createdAt: nowIso() }, ...overrides };
@@ -15,9 +15,14 @@ function deferredHandle(): CommandExecutionHandle & { start: () => void; complet
   return { started, completed, start, complete, cancel: vi.fn() };
 }
 
-function executor(execute: (command: CompanionCommand) => CommandExecutionHandle, statuses: string[], timeoutMs?: number) {
+function executor(
+  execute: (command: CompanionCommand) => CommandExecutionHandle,
+  statuses: string[],
+  timeoutMs?: number,
+  activeExecution: { current: ActiveCommandExecution | null } = { current: null },
+) {
   return createCommandExecutor({ companionId: 'ann', acknowledge: (_command, status) => statuses.push(status), execute, timeoutMs,
-    handledCommandIds: new Set(), activeExecution: { current: null } });
+    handledCommandIds: new Set(), activeExecution });
 }
 
 describe('command lifecycle', () => {
@@ -44,6 +49,15 @@ describe('command lifecycle', () => {
     await createCommandExecutor(deps)(item); expect(execute).toHaveBeenCalledTimes(1);
   });
 
+  it('fails a command when started never resolves and ignores a late start', async () => {
+    vi.useFakeTimers();
+    const statuses: string[] = []; const handle = deferredHandle(); const run = executor(() => handle, statuses, 20);
+    const pending = run(command()); await vi.advanceTimersByTimeAsync(20); await pending;
+    handle.start(); await Promise.resolve();
+    expect(statuses).toEqual(['received', 'failed']); expect(handle.cancel).toHaveBeenCalledWith('command_timeout');
+    vi.useRealTimers();
+  });
+
   it('fails a command that never completes and ignores its late completion', async () => {
     vi.useFakeTimers();
     const statuses: string[] = []; const handle = deferredHandle(); const run = executor(() => handle, statuses, 20);
@@ -51,6 +65,22 @@ describe('command lifecycle', () => {
     handle.complete(); await Promise.resolve();
     expect(statuses).toEqual(['received', 'started', 'failed']); expect(handle.cancel).toHaveBeenCalledWith('command_timeout');
     vi.useRealTimers();
+  });
+
+  it('cancels safely before start, after start, and only once', async () => {
+    const statuses: string[] = []; const handle = deferredHandle();
+    const active = { current: null as ActiveCommandExecution | null };
+    const run = executor(() => handle, statuses, undefined, active);
+    const pending = run(command()); active.current!.cancel('window_shutdown'); active.current?.cancel('window_shutdown');
+    await pending; handle.start(); handle.complete(); await Promise.resolve();
+    expect(statuses).toEqual(['received', 'cancelled']); expect(handle.cancel).toHaveBeenCalledTimes(1);
+
+    const afterStartStatuses: string[] = []; const afterStart = deferredHandle();
+    const activeAfterStart = { current: null as ActiveCommandExecution | null };
+    const afterStartRun = executor(() => afterStart, afterStartStatuses, undefined, activeAfterStart);
+    const afterStartPending = afterStartRun(command()); afterStart.start(); await Promise.resolve();
+    activeAfterStart.current!.cancel('renderer_unmounted'); await afterStartPending;
+    expect(afterStartStatuses).toEqual(['received', 'started', 'cancelled']);
   });
 
   it('rejects a conflicting command without overwriting the active execution', async () => {
