@@ -1,5 +1,17 @@
 # Repair Execution Log
 
+## Command Deferral and Terminal Cleanup
+
+- Issue: a command deferred because another command was active was only logged, while recovery validation could silently discard an active record.
+- Root cause: command activation did not report acceptance to the runtime/pending-action owner, and terminal state mutation was split between acknowledgement and recovery paths.
+- Old behavior: a blocked immediate decision lost its Discovery intent; Companion mismatch and expiry assigned `activeCommand = null` without a lifecycle event.
+- New behavior: pending-action ownership remains in `DecisionCoordinator`; activation acceptance controls completion of a pending action; all internal and renderer terminal outcomes use one AppServices transition method.
+- Files changed: `services.ts`, `CompanionRuntime.ts`, `DecisionCoordinator.ts`, focused tests, and this log. Database changes are limited to updating an existing pending action's defer reason where it prevents a duplicate action.
+- Tests added: pending deferral/re-evaluation and centralized terminal cleanup coverage.
+- Verification result: `npm.cmd run typecheck` passed; `npm.cmd run test` passed (43 files, 325 tests); `npm.cmd run arch:check` passed; `npm.cmd run build` passed. The build retains its pre-existing non-failing Vite dynamic/static import warning for `character-engine`.
+- Remaining limitations: no renderer command queue or stale-command replay is introduced; pending actions remain the sole durable intent representation.
+- Search review: the only production `activeCommand = null` is inside centralized accepted terminal transition handling. `CompanionCommandDeferred` now coincides with Runtime preservation of a pending action; `getActiveCommand` delegates mismatch/expiry to the same terminal transition. `tryActivateCommand`, acknowledgement, re-evaluation, and deferred-enqueue matches are the intended authoritative path.
+
 ## Command Lifecycle Final Stabilization
 
 ### Total deadline and cancellation settlement

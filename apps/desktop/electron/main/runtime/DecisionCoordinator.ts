@@ -31,6 +31,11 @@ export interface ReevaluateContext {
   explicitMode?: 'available' | 'focused' | 'do_not_disturb';
 }
 
+export interface ReevaluateResult {
+  decision: CompanionDecision | null;
+  pendingAction?: PendingCompanionAction;
+}
+
 export class DecisionCoordinator {
   constructor(private readonly db: DatabaseService) {}
 
@@ -49,6 +54,20 @@ export class DecisionCoordinator {
     return action;
   }
 
+  /** Preserves an intent, not a stale renderer command, when execution is currently busy. */
+  ensureDeferred(decision: CompanionDecision, companionId: string, discoveryId?: string, deferReason = 'active_command_exists', userId = 'local'): PendingCompanionAction {
+    const existing = this.db.listPendingActions(companionId, userId).find((action) =>
+      (discoveryId !== undefined && action.discoveryId === discoveryId) || action.decision.id === decision.id
+    );
+    if (existing) {
+      this.db.updatePendingActionDeferReason(existing.id, deferReason);
+      return { ...existing, deferReason };
+    }
+    const action = this.enqueueDeferred(decision, companionId, discoveryId, userId);
+    this.db.updatePendingActionDeferReason(action.id, deferReason);
+    return { ...action, deferReason };
+  }
+
   expireStale(companionId: string, userId = 'local'): void {
     const now = Date.now();
     for (const action of this.db.listPendingActions(companionId, userId)) {
@@ -64,13 +83,13 @@ export class DecisionCoordinator {
     }
   }
 
-  reevaluatePending(ctx: ReevaluateContext): CompanionDecision | null {
+  reevaluatePending(ctx: ReevaluateContext): ReevaluateResult {
     this.expireStale(ctx.companionId, ctx.userId);
     const pending = this.db.listPendingActions(ctx.companionId, ctx.userId);
-    if (pending.length === 0) return null;
+    if (pending.length === 0) return { decision: null };
 
     const action = pending[0];
-    if (action.status === 'cancelled' || action.status === 'expired') return null;
+    if (action.status === 'cancelled' || action.status === 'expired') return { decision: null };
 
     const attention = buildUserAttentionContext({
       conversationActive: ctx.sessionActive,
@@ -104,15 +123,18 @@ export class DecisionCoordinator {
     const decision = decideUnifiedCompanionAction(input);
 
     if (shouldPresentNow(decision)) {
-      this.db.updatePendingActionStatus(action.id, 'completed');
-      return decision;
+      return { decision, pendingAction: action };
     }
 
     if (decision.action === 'stay_silent' || decision.timing === 'later') {
-      return null;
+      return { decision: null, pendingAction: action };
     }
 
-    return null;
+    return { decision, pendingAction: action };
+  }
+
+  completePendingAction(id: string): void {
+    this.db.updatePendingActionStatus(id, 'completed');
   }
 
   listReadyForPresentation(companionId: string, userId = 'local'): PendingCompanionAction[] {

@@ -41,6 +41,7 @@ export class CompanionRuntime {
   private companionDragging = false;
   private explicitMode?: 'available' | 'focused' | 'do_not_disturb';
   private lastCompanionId: string | null = null;
+  private pendingReevaluationScheduled = false;
 
   private readonly conversation: ConversationCoordinator;
   private readonly decisions: DecisionCoordinator;
@@ -52,7 +53,7 @@ export class CompanionRuntime {
     private readonly db: DatabaseService,
     private readonly emitState: (state: CharacterRuntimeState) => void,
     private readonly emitDecision: (decision: CompanionDecision) => void,
-    private readonly emitCommand?: (command: CompanionCommand) => void,
+    private readonly emitCommand?: (command: CompanionCommand) => boolean | void,
     lifeDeps?: ConstructorParameters<typeof LifeCoordinator>[0]
   ) {
     this.conversation = new ConversationCoordinator(db);
@@ -260,7 +261,9 @@ export class CompanionRuntime {
     if (shouldDeferDiscovery(decision)) {
       this.decisions.enqueueDeferred(decision, companionId, discovery.id, LOCAL_USER_ID);
     } else if (shouldEmitCompanionCommand(decision)) {
-      this.emitCompanionCommand(companionId, decision);
+      if (!this.emitCompanionCommand(companionId, decision)) {
+        this.decisions.ensureDeferred(decision, companionId, discovery.id, 'active_command_exists', LOCAL_USER_ID);
+      }
     }
 
     return decision;
@@ -323,13 +326,26 @@ export class CompanionRuntime {
       recentActions: this.buildRecentActions(),
       explicitMode: this.explicitMode
     };
-    const decision = this.decisions.reevaluatePending(ctx);
+    const result = this.decisions.reevaluatePending(ctx);
+    const decision = result.decision;
     if (decision) {
       this.lastDecision = decision;
       this.emitDecision(decision);
-      if (shouldEmitCompanionCommand(decision)) this.emitCompanionCommand(id, decision);
+      if (shouldEmitCompanionCommand(decision) && this.emitCompanionCommand(id, decision)) {
+        if (result.pendingAction) this.decisions.completePendingAction(result.pendingAction.id);
+      }
     }
     return decision;
+  }
+
+  /** Defers a normal pending-action evaluation to avoid nesting command lifecycle transitions. */
+  schedulePendingReevaluation(): void {
+    if (this.pendingReevaluationScheduled) return;
+    this.pendingReevaluationScheduled = true;
+    queueMicrotask(() => {
+      this.pendingReevaluationScheduled = false;
+      this.reevaluatePendingActions();
+    });
   }
 
   feedbackDomainForValue(value: string) {
@@ -353,14 +369,14 @@ export class CompanionRuntime {
     return this.db.listInteractionFeedbackActions(20);
   }
 
-  private emitCompanionCommand(companionId: string, decision: CompanionDecision): void {
-    if (!this.emitCommand || !shouldEmitCompanionCommand(decision)) return;
+  private emitCompanionCommand(companionId: string, decision: CompanionDecision): boolean {
+    if (!this.emitCommand || !shouldEmitCompanionCommand(decision)) return false;
     const command: CompanionCommand = {
       id: createId('cmd'),
       companionId,
       decision,
       issuedAt: nowIso()
     };
-    this.emitCommand(command);
+    return this.emitCommand(command) !== false;
   }
 }

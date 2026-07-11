@@ -177,9 +177,10 @@ export class AppServices {
         });
       },
       (command) => {
-        if (!this.tryActivateCommand(command)) return;
+        if (!this.tryActivateCommand(command)) return false;
         this.commandBroadcaster?.(command);
         this.tryPresentPendingDiscovery(command);
+        return true;
       }
     );
     this.companionRuntime.setExplicitMode(
@@ -249,6 +250,7 @@ export class AppServices {
       return this.db.deleteCompanion(id);
     },
     setPrimary: async (id: string): Promise<CompanionProfile> => {
+      this.cancelCommandForCompanionSwitch(id);
       return this.db.setPrimaryCompanion(id);
     },
     getPrimary: async (): Promise<CompanionProfile | null> => {
@@ -772,29 +774,27 @@ export class AppServices {
     getActiveCommand: async (): Promise<CompanionCommand | null> => {
       const record = this.activeCommand;
       const activeCompanionId = this.db.resolveActiveCompanionId();
-      if (!record || record.terminal || record.command.companionId !== activeCompanionId ||
-        (record.command.expiresAt && Date.parse(record.command.expiresAt) <= Date.now())) {
-        if (record && (record.command.companionId !== activeCompanionId ||
-          (record.command.expiresAt && Date.parse(record.command.expiresAt) <= Date.now()))) this.activeCommand = null;
+      if (!record || record.terminal) return null;
+      if (record.command.companionId !== activeCompanionId) {
+        this.transitionActiveCommand('cancelled', {
+          commandId: record.command.id,
+          companionId: record.command.companionId,
+          reason: 'companion_switched',
+        });
+        return null;
+      }
+      if (record.command.expiresAt && Date.parse(record.command.expiresAt) <= Date.now()) {
+        this.transitionActiveCommand('cancelled', {
+          commandId: record.command.id,
+          companionId: record.command.companionId,
+          reason: 'command_expired',
+        });
         return null;
       }
       return record.command;
     },
     reportCommandAck: async (ack: CompanionCommandAck) => {
-      const record = this.activeCommand;
-      if (!record || record.command.id !== ack.commandId || record.command.companionId !== ack.companionId) return;
-      if (record.terminal || record.latestStatus === ack.status || !VALID_COMMAND_TRANSITIONS[record.latestStatus].includes(ack.status)) return;
-      record.latestStatus = ack.status;
-      record.updatedAt = ack.reportedAt;
-      record.terminal = ['completed', 'cancelled', 'failed'].includes(ack.status);
-      this.emitFoundationEvent('CompanionCommandAck', 'companion', {
-        commandId: ack.commandId,
-        companionId: ack.companionId,
-        status: ack.status,
-        reason: ack.reason,
-        failedStep: ack.failedStep
-      });
-      if (record.terminal) this.activeCommand = null;
+      this.transitionActiveCommand(ack.status, ack);
     }
   };
 
@@ -803,6 +803,7 @@ export class AppServices {
     if (this.activeCommand && !this.activeCommand.terminal) {
       this.emitFoundationEvent('CompanionCommandDeferred', 'companion', {
         commandId: command.id,
+        decisionId: command.decision.id,
         companionId: command.companionId,
         reason: 'active_command_exists',
       });
@@ -810,6 +811,48 @@ export class AppServices {
     }
     this.activeCommand = { command, latestStatus: 'issued', updatedAt: new Date().toISOString(), terminal: false };
     return true;
+  }
+
+  private transitionActiveCommand(nextStatus: CommandAckStatus, input: {
+    commandId?: string;
+    companionId?: string;
+    reason?: string;
+    failedStep?: string;
+    reportedAt?: string;
+  }): boolean {
+    const record = this.activeCommand;
+    const validNextStatuses = record ? VALID_COMMAND_TRANSITIONS[record.latestStatus] ?? [] : [];
+    if (!record || record.terminal ||
+      (input.commandId && record.command.id !== input.commandId) ||
+      (input.companionId && record.command.companionId !== input.companionId) ||
+      record.latestStatus === nextStatus ||
+      !validNextStatuses.includes(nextStatus)) return false;
+
+    record.latestStatus = nextStatus;
+    record.updatedAt = input.reportedAt ?? nowIso();
+    record.terminal = ['completed', 'cancelled', 'failed'].includes(nextStatus);
+    this.emitFoundationEvent('CompanionCommandAck', 'companion', {
+      commandId: record.command.id,
+      companionId: record.command.companionId,
+      status: nextStatus,
+      reason: input.reason,
+      failedStep: input.failedStep,
+    });
+    if (record.terminal) {
+      this.activeCommand = null;
+      this.companionRuntime.schedulePendingReevaluation();
+    }
+    return true;
+  }
+
+  private cancelCommandForCompanionSwitch(nextCompanionId: string): void {
+    const record = this.activeCommand;
+    if (!record || record.terminal || record.command.companionId === nextCompanionId) return;
+    this.transitionActiveCommand('cancelled', {
+      commandId: record.command.id,
+      companionId: record.command.companionId,
+      reason: 'companion_switched',
+    });
   }
 
   debug = {

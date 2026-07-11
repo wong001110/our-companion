@@ -1296,6 +1296,10 @@ export class DatabaseService {
     this.db.prepare('UPDATE pending_companion_actions SET status = ? WHERE id = ?').run(status, id);
   }
 
+  updatePendingActionDeferReason(id: string, deferReason: string): void {
+    this.db.prepare('UPDATE pending_companion_actions SET defer_reason = ? WHERE id = ?').run(deferReason, id);
+  }
+
   listPendingActions(companionId: string, userId = 'local'): PendingCompanionAction[] {
     return (this.db.prepare(
       `SELECT * FROM pending_companion_actions WHERE companion_id = ? AND user_id = ? AND status IN ('pending', 'ready') ORDER BY created_at ASC`

@@ -87,7 +87,7 @@ describe('foundation event log', () => {
   it('recovers only a non-expired command for the active Companion', async () => {
     const services = new AppServices(':memory:');
     const internals = services as unknown as {
-      activeCommand: { command: CompanionCommand } | null;
+      activeCommand: { command: CompanionCommand; latestStatus: 'issued' | 'received' | 'started'; updatedAt: string; terminal: boolean } | null;
       tryActivateCommand(command: CompanionCommand): boolean;
     };
     const activeCompanionId = services.db.resolveActiveCompanionId();
@@ -103,14 +103,49 @@ describe('foundation event log', () => {
     expect((await services.companion.getActiveCommand())?.id).toBe(nonPrimary.id);
     activeResolver.mockRestore();
 
-    internals.activeCommand = { command: command('previous-companion') };
+    const previous = command('previous-companion');
+    internals.activeCommand = { command: previous, latestStatus: 'issued', updatedAt: nowIso(), terminal: false };
     expect(await services.companion.getActiveCommand()).toBeNull();
     expect(internals.activeCommand).toBeNull();
+
+    const switchEvents = (await services.debug.getFoundationLog({ source: 'companion', limit: 10 }))
+      .filter((event) => event.type === 'CompanionCommandAck' && (event.payload as { commandId: string }).commandId === previous.id);
+    expect((switchEvents[0].payload as { status: string; reason: string }).status).toBe('cancelled');
+    expect((switchEvents[0].payload as { status: string; reason: string }).reason).toBe('companion_switched');
 
     const expired = command(activeCompanionId);
     expired.expiresAt = new Date(Date.now() - 1).toISOString();
     internals.tryActivateCommand(expired);
     expect(await services.companion.getActiveCommand()).toBeNull();
+    const expiryEvents = (await services.debug.getFoundationLog({ source: 'companion', limit: 10 }))
+      .filter((event) => event.type === 'CompanionCommandAck' && (event.payload as { commandId: string }).commandId === expired.id);
+    expect((expiryEvents[0].payload as { status: string; reason: string }).reason).toBe('command_expired');
+    services.db.close();
+  });
+
+  it('uses one terminal transition for switch and renderer acknowledgement cleanup', async () => {
+    const services = new AppServices(':memory:');
+    const internals = services as unknown as {
+      activeCommand: { command: CompanionCommand; latestStatus: 'issued' | 'received' | 'started'; updatedAt: string; terminal: boolean } | null;
+      tryActivateCommand(command: CompanionCommand): boolean;
+      cancelCommandForCompanionSwitch(nextCompanionId: string): void;
+      companionRuntime: { schedulePendingReevaluation(): void };
+    };
+    const activeCompanionId = services.db.resolveActiveCompanionId();
+    const schedule = vi.spyOn(internals.companionRuntime, 'schedulePendingReevaluation');
+
+    for (const status of ['issued', 'received', 'started'] as const) {
+      const current = command(activeCompanionId);
+      internals.activeCommand = { command: current, latestStatus: status, updatedAt: nowIso(), terminal: false };
+      internals.cancelCommandForCompanionSwitch('next-companion');
+      expect(internals.activeCommand).toBeNull();
+      await services.companion.reportCommandAck({ commandId: current.id, companionId: activeCompanionId, status: 'cancelled', reportedAt: nowIso() });
+    }
+    expect(schedule).toHaveBeenCalledTimes(3);
+    const cancellations = (await services.debug.getFoundationLog({ source: 'companion', limit: 10 }))
+      .filter((event) => event.type === 'CompanionCommandAck');
+    expect(cancellations).toHaveLength(3);
+    expect(cancellations.every((event) => (event.payload as { reason: string }).reason === 'companion_switched')).toBe(true);
     services.db.close();
   });
 });
