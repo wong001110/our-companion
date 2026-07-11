@@ -122,10 +122,6 @@ interface ActiveCommandRecord {
   terminal: boolean;
 }
 
-export interface AppServicesOptions {
-  onFirstCompanionCreated?: (companion: CompanionProfile) => void;
-}
-
 export const VALID_COMMAND_TRANSITIONS: Record<CommandRecordStatus, CommandAckStatus[]> = {
   issued: ['received', 'failed', 'cancelled'],
   received: ['started', 'failed', 'cancelled'],
@@ -153,8 +149,7 @@ export class AppServices {
 
   constructor(
     dbPath = path.join(app.getPath('userData'), 'our-companion.db'),
-    readonly eventBus: EventBus = globalEventBus,
-    private readonly options: AppServicesOptions = {}
+    readonly eventBus: EventBus = globalEventBus
   ) {
     const userDataDir = app.getPath('userData');
     if (userDataDir !== ':memory:') {
@@ -227,17 +222,6 @@ export class AppServices {
       userDataDir: app.getPath('userData'),
       companionExists: (companionId) => Boolean(this.db.getCompanion(companionId)),
     });
-  }
-
-  private completeFirstCompanionCreation(companion: CompanionProfile): void {
-    try {
-      const primary = this.db.getPrimaryCompanion();
-      if (!primary || primary.id !== companion.id) return;
-      this.startRuntimeIfReady();
-      this.options.onFirstCompanionCreated?.(primary);
-    } catch (error) {
-      console.error('[our-companion] First Companion persisted, but onboarding UI transition failed.', error);
-    }
   }
 
   private prunePersonalityAnalyses(): void {
@@ -366,7 +350,6 @@ export class AppServices {
         companion = this.db.updateCompanion(companion.id, { assetRoot: `companion://${companion.id}/assets` });
         if (shouldBecomePrimary) companion = this.db.setPrimaryCompanion(companion.id);
         this.personalityAnalyses.delete(input.personalityAnalysisId);
-        if (shouldBecomePrimary) this.completeFirstCompanionCreation(companion);
         return companion;
       } catch (error) {
         analysis.used = false;

@@ -232,10 +232,10 @@ describe('foundation event log', () => {
     services.db.close();
   });
 
-  it('sets only the first Companion primary and leaves later creation non-primary', async () => {
+  it('sets only the first Companion primary and leaves later creation non-primary without starting onboarding UI synchronously', async () => {
     useTempUserData();
-    const onFirstCompanionCreated = vi.fn();
-    const services = new AppServices(':memory:', undefined, { onFirstCompanionCreated });
+    const services = new AppServices(':memory:');
+    const internals = services as unknown as { runtimeStarted: boolean };
     const personality: CompanionPersonality = { energy: 50, curiosity: 60, sociability: 40, diligence: 70, playfulness: 55, confidence: 45, calmness: 75, shyness: 25 };
     const analyses = (services as unknown as {
       personalityAnalyses: Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>;
@@ -252,7 +252,8 @@ describe('foundation event log', () => {
     expect(first.isPrimary).toBe(true);
     expect(second.isPrimary).toBe(false);
     expect(services.db.getPrimaryCompanion()?.id).toBe(first.id);
-    expect(onFirstCompanionCreated).toHaveBeenCalledTimes(1);
+    expect(internals.runtimeStarted).toBe(false);
+    expect(analyses.has('first-fixture')).toBe(false);
 
     const switched = await services.companionNew.setPrimary(second.id);
     expect(switched.isPrimary).toBe(true);

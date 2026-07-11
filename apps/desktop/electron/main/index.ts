@@ -8,7 +8,7 @@ import { DiscoveryScheduler } from './discoveryScheduler';
 import { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 import { ElectronIpcBroadcaster } from './adapters/electronIpcBroadcaster';
 import { handleCompanionProtocolRequest } from './platform/companionProtocol';
-import { completeOnboardingTransition } from './platform/onboardingCompletion';
+import { OnboardingCompletionCoordinator } from './platform/onboardingCompletion';
 
 function registerCompanionProtocol(): void {
   protocol.handle('companion', (request) => {
@@ -23,6 +23,7 @@ let companionWindow: BrowserWindow | undefined;
 let panelWindow: BrowserWindow | undefined;
 let creationWindow: BrowserWindow | undefined;
 let services: AppServices;
+let onboardingCompletion: OnboardingCompletionCoordinator;
 let discoveryScheduler: DiscoveryScheduler | undefined;
 let discoveryShareOrchestrator: DiscoveryShareOrchestrator | undefined;
 let companionClickThrough = true;
@@ -211,8 +212,8 @@ function createStartupErrorWindow(error: unknown): BrowserWindow {
   return window;
 }
 
-function completeOnboarding(companion: { id: string }): boolean {
-  return completeOnboardingTransition(companion, {
+function createOnboardingCompletionCoordinator(): OnboardingCompletionCoordinator {
+  return new OnboardingCompletionCoordinator({
     getPrimaryCompanion: () => services.db.getPrimaryCompanion(),
     closeCreationWindow: () => {
       if (creationWindow && !creationWindow.isDestroyed()) {
@@ -226,6 +227,7 @@ function completeOnboarding(companion: { id: string }): boolean {
         show: () => window.show(),
         keepOnTop: () => keepCompanionOnTop(window),
         isLoading: () => window.webContents.isLoading(),
+        isDestroyed: () => window.isDestroyed(),
         onceLoaded: (callback) => window.webContents.once('did-finish-load', callback),
         sendCompleted: (profile) => window.webContents.send('creation:completed', profile),
       };
@@ -233,7 +235,25 @@ function completeOnboarding(companion: { id: string }): boolean {
     ensurePanelWindow: () => { ensurePanelWindow(); },
     startRuntimeIfReady: () => services.startRuntimeIfReady(),
     startDiscoveryAutomation,
+    logError: (message, error) => {
+      if (error === undefined) {
+        console.error(message);
+        return;
+      }
+      console.error(message, error);
+    },
   });
+}
+
+function scheduleOnboardingCompletion(companion: { id: string; isPrimary?: boolean }): boolean {
+  if (!companion.isPrimary) return false;
+  const primary = services.db.getPrimaryCompanion();
+  if (!primary || primary.id !== companion.id) return false;
+  return onboardingCompletion.schedule(primary);
+}
+
+function completeOnboarding(companion: { id: string }): boolean {
+  return onboardingCompletion.completeOnce(companion);
 }
 
 function registerIpc(): void {
@@ -337,7 +357,11 @@ function registerIpc(): void {
       if (!onboardingAllowed && !services.hasActiveCompanion()) {
         throw new Error('NO_ACTIVE_COMPANION: No active Companion. Complete Companion creation first.');
       }
-      return (handler as (input: unknown) => Promise<unknown>)(input);
+      const result = await (handler as (input: unknown) => Promise<unknown>)(input);
+      if (channel === 'companionNew:create') {
+        scheduleOnboardingCompletion(result as { id: string; isPrimary?: boolean });
+      }
+      return result;
     });
   }
 
@@ -622,7 +646,8 @@ app.whenReady().then(async () => {
       });
     }
 
-    services = new AppServices(undefined, undefined, { onFirstCompanionCreated: completeOnboarding });
+    services = new AppServices();
+    onboardingCompletion = createOnboardingCompletionCoordinator();
     registerCompanionProtocol();
     registerIpc();
     session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
