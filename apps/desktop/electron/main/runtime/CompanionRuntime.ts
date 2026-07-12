@@ -139,13 +139,14 @@ export class CompanionRuntime {
   setSessionPhase(phase: CompanionSessionPhase): void {
     const companionId = this.resolveCompanionId();
 
-    if (phase === 'inactive' || phase === 'closing') {
+    let restoredLifeActivity: CompanionLifeActivity | undefined;
+    if (phase === 'inactive' || phase === 'idle' || phase === 'closing') {
       const sessionId = this.conversation.getActiveSessionId(companionId, LOCAL_USER_ID);
       if (sessionId) {
         this.conversation.closeSession(sessionId, phase === 'closing' ? 'completed' : 'user_closed', LOCAL_USER_ID, companionId);
         this.relationship.applySignal(LOCAL_USER_ID, companionId, 'conversation_completed');
       }
-      this.life.restoreAfterOverride(companionId);
+      restoredLifeActivity = this.life.restoreAfterOverride(companionId);
       this.reevaluatePendingActions(companionId);
     } else if (phase === 'listening' || phase === 'opening' || phase === 'thinking' || phase === 'talking' || phase === 'responding') {
       this.life.interrupt(companionId, 'interacting', 'conversation active');
@@ -156,14 +157,27 @@ export class CompanionRuntime {
 
     const state = this.db.getCharacterState(companionId);
     const sessionIntent = animationIntentForSessionPhase(phase);
-    const animationIntent = sessionIntent
-      ? resolveToAssetKey(sessionIntent)
-      : state.animationIntent ?? resolveToAssetKey({ category: 'idle' });
+    const sessionState = phase === 'listening' || phase === 'opening'
+      ? { coreState: 'listening' as const, intent: 'asking_permission' as const }
+      : phase === 'thinking'
+        ? { coreState: 'thinking' as const, intent: 'helping_task' as const }
+        : phase === 'talking' || phase === 'responding'
+          ? { coreState: 'talking' as const, intent: 'helping_task' as const }
+          : { coreState: 'idle' as const, intent: 'waiting' as const };
+    // Talking is semantic state. The renderer owns its emotional Talk variant.
+    const animationIntent = phase === 'talking' || phase === 'responding'
+      ? undefined
+      : phase === 'waiting_for_user'
+        ? 'Waiting_Response'
+        : sessionIntent
+          ? resolveToAssetKey(sessionIntent)
+          : undefined;
 
     const next = this.db.saveCharacterState({
       ...state,
+      ...sessionState,
       animationIntent,
-      lifeActivity: phase === 'idle' || phase === 'inactive' ? 'idle' : 'interacting',
+      lifeActivity: restoredLifeActivity ?? (phase === 'idle' || phase === 'inactive' || phase === 'closing' ? 'idle' : 'interacting'),
       updatedAt: nowIso()
     });
     this.emitState(next);

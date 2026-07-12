@@ -163,6 +163,10 @@ const en = {
   speech_ambient_2: 'Quiet focus mode sounds nice right now.',
   speech_ambient_3: 'I found a cozy corner to think in.',
   speech_ambient_4: 'Tiny notes, tidy thoughts.',
+  speech_enter_1: "I'm here!",
+  speech_enter_2: 'Ready when you are.',
+  speech_leave_1: "I'll be back soon.",
+  speech_leave_2: 'Heading out for now. See you soon!',
   speech_walk_start_1: 'Stretching my legs for a bit.',
   speech_walk_start_2: 'Small patrol around the desk.',
   speech_walk_start_3: 'I will wander softly.',
@@ -340,6 +344,10 @@ const zhCN: TranslationDict = {
 
   lang_en: 'English',
   lang_zh_cn: 'ä¸­æ–‡ï¼ˆç®€ä½“ï¼‰',
+  speech_enter_1: '\u6211\u6765\u5566\uff01',
+  speech_enter_2: '\u6211\u51c6\u5907\u597d\u4e86\u3002',
+  speech_leave_1: '\u6211\u5148\u544a\u522b\u4e86\uff0c\u5f88\u5feb\u518d\u89c1\u3002',
+  speech_leave_2: '\u6211\u5148\u51fa\u53d1\u4e86\uff0c\u5f85\u4f1a\u513f\u89c1\u3002',
 };
 
 export type TranslationKey = keyof typeof en;

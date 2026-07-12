@@ -47,6 +47,7 @@ import type {
   CharacterRuntimeState,
   ChatInput,
   CompanionInsight,
+  InsightV2,
   CompanionAppendMessageInput,
   CompanionHistoryInput,
   CompanionMessage,
@@ -72,7 +73,6 @@ import type {
   ExplorationLoopEvent,
   ExplorationState,
   FoundationEventLogInput,
-  InsightV2,
   NormalizedDiscovery,
   PerformanceScriptV2,
   SpeechSettings,
@@ -112,6 +112,26 @@ const FOUNDATION_EVENT_LOG_MAX = 200;
 const PERSONALITY_ANALYSIS_MAX_ENTRIES = 50;
 export const MAX_COMPANION_ASSET_BYTES = 20 * 1024 * 1024;
 export const MAX_COMPANION_TOTAL_ASSET_BYTES = 200 * 1024 * 1024;
+
+export function toPersistedCompanionInsight(
+  insight: InsightV2,
+  companionId: string,
+  whyCompanionFoundIt: string,
+  supportingCandidateIds: string[]
+): CompanionInsight {
+  const type = insight.category === 'risk' ? 'warning'
+    : insight.category === 'project' ? 'practical_next_step'
+    : insight.category === 'discovery' ? 'observation'
+    : 'pattern';
+  return {
+    id: insight.id, userId: insight.userId, companionId, title: insight.title, type,
+    summary: insight.summary, insight: insight.explanation, whyItMatters: insight.explanation,
+    whyCompanionFoundIt, confidence: insight.confidence, novelty: insight.novelty,
+    emotionalRelevance: 0.5, practicalRelevance: insight.importance, supportingCandidateIds,
+    relatedMemoryIds: insight.supportingMemoryIds, relatedPatternIds: insight.supportingPatternIds,
+    createdAt: insight.createdAt,
+  };
+}
 
 export type CommandRecordStatus = 'issued' | CommandAckStatus;
 
@@ -1278,7 +1298,7 @@ export class AppServices {
       discoveryCandidates
     });
     for (const insight of insights) {
-      this.db.insertCompanionInsight(insight as unknown as CompanionInsight);
+      this.db.insertCompanionInsight(toPersistedCompanionInsight(insight, companionId, selectedCuriosityTarget.reason, discoveryCandidates.map((candidate) => candidate.id)));
     }
     const selectedInsight = selectPrimaryInsight(insights);
     cycle = this.saveCycleState(cycle, 'returning', {

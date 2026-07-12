@@ -126,7 +126,8 @@ input {
   border: 1px solid rgba(137, 89, 190, 0.18);
   border-radius: 8px;
   padding: 14px;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.72);
+  color: #352539;
 }
 
 .behavior-debug-grid {
@@ -144,7 +145,7 @@ input {
 .behavior-debug-label {
   font-size: 11px;
   font-weight: 700;
-  color: rgba(247, 237, 245, 0.55);
+  color: #6b5870;
   text-transform: uppercase;
 }
 
@@ -153,8 +154,8 @@ input {
   padding: 4px 8px;
   border-radius: 6px;
   border: 1px solid rgba(137, 89, 190, 0.22);
-  background: rgba(255, 255, 255, 0.08);
-  color: #f7edf5;
+  background: #fffdfb;
+  color: #352539;
   font-size: 12px;
 }
 
@@ -173,7 +174,12 @@ input {
 
 .behavior-debug-value {
   font-size: 12px;
-  color: #f7edf5;
+  color: #352539;
+}
+
+.behavior-debug-block select option {
+  background: #fffdfb;
+  color: #352539;
 }
 
 .behavior-debug-actions {
@@ -1570,8 +1576,8 @@ textarea {
   border: 1px solid rgba(74, 49, 79, 0.16);
   border-radius: 10px;
   padding: 14px 16px;
-  background: transparent;
-  color: #f7edf5;
+  background: rgba(255, 255, 255, 0.72);
+  color: #352539;
 }
 
 .debug-reset-panel {
@@ -1579,8 +1585,8 @@ textarea {
   border: 1px solid rgba(74, 49, 79, 0.16);
   border-radius: 10px;
   padding: 14px 16px;
-  background: transparent;
-  color: #f7edf5;
+  background: rgba(255, 255, 255, 0.72);
+  color: #352539;
 }
 
 .debug-audio-panel {
@@ -1588,8 +1594,8 @@ textarea {
   border: 1px solid rgba(74, 49, 79, 0.16);
   border-radius: 10px;
   padding: 14px 16px;
-  background: transparent;
-  color: #f7edf5;
+  background: rgba(255, 255, 255, 0.72);
+  color: #352539;
 }
 
 .debug-ai-log-header {
@@ -1615,12 +1621,12 @@ textarea {
 
 .debug-ai-log-count {
   font-size: 11px;
-  color: rgba(247, 237, 245, 0.62);
+  color: #6b5870;
 }
 
 .debug-reset-status {
   font-size: 11px;
-  color: rgba(247, 237, 245, 0.62);
+  color: #6b5870;
 }
 
 .debug-ai-log-refresh {
@@ -1628,8 +1634,8 @@ textarea {
   padding: 4px 10px;
   border-radius: 6px;
   border: 1px solid rgba(137, 89, 190, 0.3);
-  background: transparent;
-  color: #f7edf5;
+  background: #fffdfb;
+  color: #57386b;
   cursor: pointer;
 }
 
@@ -1668,7 +1674,7 @@ textarea {
   border: none;
   cursor: pointer;
   text-align: left;
-  color: #f7edf5;
+  color: #352539;
   font-size: 12px;
 }
 
@@ -1687,17 +1693,17 @@ textarea {
 
 .debug-channel-chat {
   background: rgba(147, 112, 219, 0.28);
-  color: #c8b4ff;
+  color: #563990;
 }
 
 .debug-channel-turn {
   background: rgba(72, 185, 199, 0.22);
-  color: #8fe8f4;
+  color: #176d78;
 }
 
 .debug-channel-discovery_reason {
   background: rgba(236, 169, 91, 0.22);
-  color: #ffd19a;
+  color: #8a4c12;
 }
 
 .debug-status-badge {
@@ -1710,12 +1716,12 @@ textarea {
 
 .debug-status-success {
   background: rgba(86, 186, 131, 0.18);
-  color: #9af0bd;
+  color: #246b42;
 }
 
 .debug-status-error {
   background: rgba(231, 83, 99, 0.18);
-  color: #ff9aa6;
+  color: #a32e3d;
 }
 
 .debug-source-badge {
@@ -1736,12 +1742,12 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #f7edf5;
+  color: #352539;
 }
 
 .debug-ai-log-chevron {
   font-size: 10px;
-  color: rgba(247, 237, 245, 0.5);
+  color: #816d87;
 }
 
 .debug-ai-log-detail {
@@ -1813,7 +1819,7 @@ textarea {
 }
 
 .debug-audio-result span {
-  color: rgba(247, 237, 245, 0.62);
+  color: #6b5870;
   font-size: 11px;
 }
 
@@ -1830,7 +1836,7 @@ textarea {
 }
 
 .debug-audio-result .debug-audio-error {
-  color: #ffb3bd;
+  color: #a32e3d;
 }
 
 .debug-reset-item {

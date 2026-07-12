@@ -5,6 +5,7 @@ export interface SpriteSheetConfig {
   frameMs: number;
   columns?: number;
   rows?: number;
+  loop?: boolean;
 }
 
 export interface SpriteAnimatorViewport {
@@ -15,6 +16,7 @@ export interface SpriteAnimatorViewport {
 export interface SpriteAnimatorOptions {
   cacheKey?: string;
   onError?: () => void;
+  onComplete?: () => void;
 }
 
 export class SpriteAnimator {
@@ -25,6 +27,7 @@ export class SpriteAnimator {
   private frameHeight: number;
   private totalFrames: number;
   private readonly onError?: () => void;
+  private readonly onComplete?: () => void;
   private readonly cacheKey: string;
 
   private image: HTMLImageElement | null = null;
@@ -33,6 +36,7 @@ export class SpriteAnimator {
   private frameIndex = 0;
   private interval: number | undefined;
   private cancelled = false;
+  private completed = false;
 
   constructor(config: SpriteSheetConfig, options: SpriteAnimatorOptions = {}) {
     this.config = config;
@@ -42,6 +46,7 @@ export class SpriteAnimator {
     this.rows = config.rows ?? 1;
     this.totalFrames = 0;
     this.onError = options.onError;
+    this.onComplete = options.onComplete;
     this.cacheKey = options.cacheKey ?? config.sheet;
   }
 
@@ -61,6 +66,11 @@ export class SpriteAnimator {
         this.columns = this.columns || Math.floor(image.naturalWidth / image.naturalHeight);
         this.rows = this.rows || 1;
         this.totalFrames = this.columns * this.rows;
+        if (!Number.isFinite(this.columns) || !Number.isFinite(this.totalFrames) || this.columns <= 0 || this.totalFrames <= 0) {
+          this.onError?.();
+          reject(new Error(`Invalid sprite sheet frame count: ${this.config.sheet}`));
+          return;
+        }
 
         resolve();
       };
@@ -75,6 +85,11 @@ export class SpriteAnimator {
   }
 
   start(canvas: HTMLCanvasElement, viewport: SpriteAnimatorViewport): void {
+    this.stop();
+    if (!Number.isFinite(this.totalFrames) || this.totalFrames <= 0 || this.columns <= 0) {
+      this.onError?.();
+      return;
+    }
     const dpr = window.devicePixelRatio || 1;
 
     canvas.width = Math.round(viewport.width * dpr);
@@ -97,7 +112,7 @@ export class SpriteAnimator {
     this.frameIndex = 0;
 
     this.drawFrame();
-    this.interval = window.setInterval(() => this.drawFrame(), this.config.frameMs);
+    if (this.totalFrames > 1) this.interval = window.setInterval(() => this.drawFrame(), this.config.frameMs);
   }
 
   stop(): void {
@@ -142,6 +157,18 @@ export class SpriteAnimator {
       sx, sy, this.frameWidth - 1, this.frameHeight - 1,
       dx, dy, dw, dh
     );
-    this.frameIndex = (this.frameIndex + 1) % this.totalFrames;
+    if (this.frameIndex < this.totalFrames - 1) {
+      this.frameIndex += 1;
+      return;
+    }
+    if (this.config.loop !== false) {
+      this.frameIndex = 0;
+      return;
+    }
+    this.stop();
+    if (!this.completed && !this.cancelled) {
+      this.completed = true;
+      this.onComplete?.();
+    }
   }
 }

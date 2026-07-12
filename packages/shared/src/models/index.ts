@@ -130,19 +130,13 @@ export type BehaviourState =
   | 'reflect'
   | 'return_home';
 
-export type AnimationKey =
-  | 'Idle_Neutral'
-  | 'curious'
-  | 'Think'
-  | 'Expedition_Present'
-  | 'Expedition_Prepare'
-  | 'Work_Focus'
-  | 'Expedition_Return';
+/** @deprecated Use CompanionAnimationName for new production animation APIs. */
+export type AnimationKey = import('../index').CompanionAnimationName;
 
 export interface AnimationRequest {
   id: string;
   characterId: string;
-  animationKey: AnimationKey;
+  animationKey: import('../index').CompanionAnimationName;
   interruptSafe: boolean;
   reason: string;
   createdAt: string;
@@ -174,7 +168,7 @@ export interface NotificationPayload {
 }
 
 export interface PerformanceStep {
-  animationKey: AnimationKey;
+  animationKey: import('../index').CompanionAnimationName;
   label: string;
   durationMs: number;
 }

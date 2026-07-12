@@ -71,6 +71,8 @@ import { CompanionCreationPage } from '../companion/creation/CompanionCreationPa
 import { CompanionEditPage } from '../companion/creation/CompanionEditPage';
 import { CompanionSelectionPage } from '../companion/selection/CompanionSelectionPage';
 import { getCreationCompletionAction, switchToSelectedCompanion } from '../companion/creation/creationCompletionFlow';
+import { isCompanionAnimationName, resolveWalkDirection } from '../character/animationSelection';
+import { startPerformancePlayback, type ActivePerformancePlayback } from '../character/performancePlayback';
 
 type LocalExecutionPhase = 'waiting_to_start' | 'started' | 'completed' | 'cancelled' | 'failed';
 
@@ -139,6 +141,10 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const [state, setState] = useState<CharacterRuntimeState>();
   const [facing, setFacing] = useState<'left' | 'right'>('right');
   const [idleAnimation, setIdleAnimation] = useState<AnimationName>('Idle_Neutral');
+  const [movementAnimation, setMovementAnimation] = useState<AnimationName | undefined>(undefined);
+  const [performanceAnimation, setPerformanceAnimation] = useState<AnimationName | undefined>(undefined);
+  const performancePlaybackRef = useRef<ActivePerformancePlayback | undefined>(undefined);
+  const exitRequestedRef = useRef(false);
 
   const [developerEnabled, setDeveloperEnabled] = useState(() =>
     import.meta.env.DEV && localStorage.getItem('companion:developer:enabled') === 'true'
@@ -147,6 +153,13 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const [engineSnapshot, setEngineSnapshot] = useState<EngineSnapshot>();
 
   const speech = useSpeech();
+
+  useEffect(() => {
+    setPerformanceAnimation('Enter');
+    speech.showInstant(selectSpeechLine('enter', Math.random, langRef.current));
+    const fallback = window.setTimeout(() => setPerformanceAnimation((current) => current === 'Enter' ? undefined : current), 2500);
+    return () => window.clearTimeout(fallback);
+  }, [speech.showInstant]);
 
   const discovery = useDiscoveryPresentation({
     onDismissed: () => behavior.recordDismiss(),
@@ -169,9 +182,11 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   useEffect(() => {
     const unsub = window.ourCompanion.app.onExitAnimation(() => {
       cancelCommandRef.current('window_shutdown');
-      setIdleAnimation('Expedition_Leave');
+      exitRequestedRef.current = true;
+      speech.showInstant(selectSpeechLine('leave', Math.random, langRef.current));
+      setPerformanceAnimation('Leave');
       window.setTimeout(() => {
-        void window.ourCompanion.app.quit();
+        if (exitRequestedRef.current) void window.ourCompanion.app.quit();
       }, 1800);
     });
     return unsub;
@@ -296,7 +311,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       fail('unsupported_command');
     }
     return { started, completed, cancel };
-  }, []);
+  }, [speech.showInstant]);
 
   const behavior = useCompanionBehavior({ companionId: companion.id, onCommand: handleCompanionCommand });
   behaviorCommandActionsRef.current = behavior;
@@ -450,26 +465,30 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       discovery.enqueue(pc);
     });
     const unsubscribePerformance = window.ourCompanion.action.onPerformance((script: PerformanceScriptV2) => {
-      let delay = 0;
-      for (const cue of script.animationSequence) {
-        const animKey = cue.payload && typeof cue.payload === 'object' && 'animationKey' in cue.payload
-          ? (cue.payload as { animationKey: string }).animationKey as AnimationName
-          : cue.id as AnimationName;
-        window.setTimeout(() => {
-          setIdleAnimation(animKey);
-        }, delay);
-        delay += cue.durationMs ?? 0;
-      }
+      performancePlaybackRef.current?.cancel();
+      setPerformanceAnimation(undefined);
+      performancePlaybackRef.current = startPerformancePlayback(script, setPerformanceAnimation);
     });
     return () => {
       unsubscribeState();
       unsubscribeAnnounce();
       unsubscribePerformance();
+      performancePlaybackRef.current?.cancel();
+      performancePlaybackRef.current = undefined;
     };
   }, []);
 
   function handlePointerHitChange(_isHit: boolean) {
   }
+
+  const handleAnimationComplete = useCallback((name: AnimationName) => {
+    if (name === 'Leave' && exitRequestedRef.current) {
+      exitRequestedRef.current = false;
+      void window.ourCompanion.app.quit();
+      return;
+    }
+    if (name === performanceAnimation) setPerformanceAnimation(undefined);
+  }, [performanceAnimation]);
 
   function handleCompanionHoverEnter() {
     isHoveringCompanionRef.current = true;
@@ -518,6 +537,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
 
   function handleDragStart(point: CompanionDragPoint) {
     isDraggingRef.current = true;
+    setMovementAnimation(undefined);
     dragOriginRef.current = undefined;
     setQuickActionsVisible(false);
     setDragHandleVisible(false);
@@ -583,13 +603,14 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       setState(next);
     }
 
-    function previewState(coreState: CharacterRuntimeState['coreState'], intent: CharacterRuntimeState['intent']) {
+    function previewState(coreState: CharacterRuntimeState['coreState'], intent: CharacterRuntimeState['intent'], animationIntent?: AnimationName) {
       const base = stateRef.current;
       if (!base) return;
       applyStateFromEffect({
         ...base,
-        coreState,
-        intent,
+          coreState,
+          intent,
+          animationIntent,
         updatedAt: new Date().toISOString()
       });
     }
@@ -624,15 +645,15 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
 
         const dx = targetX - currentX;
         const dy = targetY - currentY;
-        const isHorizontalDominant = Math.abs(dx) >= Math.abs(dy);
+        const walkAnimation = resolveWalkDirection(dx, dy);
 
-        if (isHorizontalDominant) {
+        if (Math.abs(dx) >= Math.abs(dy)) {
           setFacing(dx < 0 ? 'left' : 'right');
         }
-        setIdleAnimation('Walk_Right');
 
         speech.showTypewriter(selectSpeechLine('walk_start', Math.random, langRef.current));
-        previewState('walking', 'wandering');
+        setMovementAnimation(walkAnimation ?? undefined);
+        previewState('walking', 'wandering', walkAnimation ?? undefined);
 
         const startX = currentX;
         const startY = currentY;
@@ -673,6 +694,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       } catch (error) {
         console.warn('[our-companion] Companion walk failed; scheduling next walk.', error);
       } finally {
+        setMovementAnimation(undefined);
         if (!isDraggingRef.current) {
           previewState('idle', 'waiting');
           if (!cancelled) speech.showTypewriter(selectSpeechLine('walk_end', Math.random, langRef.current));
@@ -799,13 +821,17 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           isListening={phase === 'listening'}
           userIsTyping={textOpen}
           assetRoot={companion.assetRoot}
-          animationOverride={isIdleState(state) && !isSessionActive && state?.intent !== 'sharing_discovery' ? idleAnimation : undefined}
+          companionId={companion.id}
+          movementAnimation={movementAnimation}
+          idleAnimation={idleAnimation}
+          animationOverride={performanceAnimation}
           onPointerHitChange={handlePointerHitChange}
           onOpenPanel={() => undefined}
           onToggleListen={toggleListening}
           onDragStart={handleDragStart}
           onDragMove={handleDragMove}
           onDragEnd={handleDragEnd}
+          onAnimationComplete={handleAnimationComplete}
         />
       </div>
       {speech.typewriterMessage && (
@@ -1249,7 +1275,7 @@ function PanelDashboard() {
           {tab === 'journey' && <JourneyView journeys={journeys} timeline={timeline} onRefresh={refreshAll} />}
           {tab === 'memory' && <MemoryView graph={memoryGraph} onRefresh={refreshAll} />}
           {tab === 'chat' && <ChatView />}
-          {tab === 'settings' && <SettingsView state={state} behaviorSettings={behaviorSettings} onRefresh={refreshAll} onLangChange={setLang} assetRoot={primaryCompanion?.assetRoot} />}
+          {tab === 'settings' && <SettingsView state={state} behaviorSettings={behaviorSettings} onRefresh={refreshAll} onLangChange={setLang} companionId={primaryCompanion?.id} assetRoot={primaryCompanion?.assetRoot} />}
         </section>
       </main>
     </LangContext.Provider>
@@ -1787,11 +1813,12 @@ function ChatView() {
   );
 }
 
-function SettingsView({ state, behaviorSettings, onRefresh, onLangChange, assetRoot }: {
+function SettingsView({ state, behaviorSettings, onRefresh, onLangChange, companionId, assetRoot }: {
   state?: CharacterRuntimeState;
   behaviorSettings?: CharacterBehaviorSettings;
   onRefresh: () => Promise<void>;
   onLangChange: (lang: Lang) => void;
+  companionId?: string;
   assetRoot?: string;
 }) {
   const lang = useLang();
@@ -1878,7 +1905,7 @@ function SettingsView({ state, behaviorSettings, onRefresh, onLangChange, assetR
           <button onClick={() => setDeveloperOpen((open) => { const next = !open; localStorage.setItem('companion:developer:enabled', String(next)); return next; })}>
             {developerOpen ? t(lang, 'settings_developer_hide') : t(lang, 'settings_developer_show')}
           </button>
-          {developerOpen && <DeveloperPreview state={previewState} devAnimation={devAnimation} animationOverride={animationOverride} onAnimationChange={setDevAnimation} settings={behaviorSettings} onRefresh={onRefresh} assetRoot={assetRoot} />}
+          {developerOpen && <DeveloperPreview state={previewState} devAnimation={devAnimation} animationOverride={animationOverride} onAnimationChange={setDevAnimation} settings={behaviorSettings} onRefresh={onRefresh} companionId={companionId} assetRoot={assetRoot} />}
         </PaperCard>
       </div>
     </NotebookPage>
@@ -2190,19 +2217,20 @@ function BehaviorPanel({ settings, onRefresh }: { settings?: CharacterBehaviorSe
   );
 }
 
-function DeveloperPreview({ state, devAnimation, animationOverride, onAnimationChange, settings, onRefresh, assetRoot }: {
+function DeveloperPreview({ state, devAnimation, animationOverride, onAnimationChange, settings, onRefresh, companionId, assetRoot }: {
   state?: CharacterRuntimeState;
   devAnimation: DevAnimation;
   animationOverride?: AnimationName;
   onAnimationChange: (animation: DevAnimation) => void;
   settings?: CharacterBehaviorSettings;
   onRefresh: () => Promise<void>;
+  companionId?: string;
   assetRoot?: string;
 }) {
   return (
     <div className="developer-tools">
       <div className="developer-preview-canvas">
-        {assetRoot ? <CompanionCanvas state={state} compact animationOverride={animationOverride} assetRoot={assetRoot} /> : <p>No Companion assets available.</p>}
+        {assetRoot && companionId ? <CompanionCanvas state={state} compact animationOverride={animationOverride} companionId={companionId} assetRoot={assetRoot} /> : <p>No Companion assets available.</p>}
       </div>
       <div className="dev-animation-panel">
         <p className="eyebrow">Developer use</p>

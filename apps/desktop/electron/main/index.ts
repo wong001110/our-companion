@@ -437,9 +437,9 @@ function registerIpc(): void {
       companionWindow.hide();
     }
     if (panelWindow && !panelWindow.isDestroyed()) {
-      panelWindow.show();
-      panelWindow.focus();
+      panelWindow.hide();
     }
+    createCreationWindow();
     return true;
   });
 

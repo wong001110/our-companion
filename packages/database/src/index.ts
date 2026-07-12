@@ -63,6 +63,7 @@ export class DatabaseService {
     this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec(sqliteSchema);
     this.runMigrations();
+    this.ensureCompatibilityIndexes();
   }
 
   private runMigrations(): void {
@@ -94,6 +95,11 @@ export class DatabaseService {
     this.ensurePendingActionsTable();
     this.ensureTopicPreferencesTable();
     this.migrateLegacyBuiltinAnn();
+  }
+
+  private ensureCompatibilityIndexes(): void {
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_companion_messages_session ON companion_messages(session_id)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_memory_nodes_companion ON memory_nodes(companion_id)');
   }
 
   private ensureTopicPreferencesTable(): void {

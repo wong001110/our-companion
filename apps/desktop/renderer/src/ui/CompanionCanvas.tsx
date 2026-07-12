@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import type { CharacterRuntimeState } from '@our-companion/shared';
 import { createCompanionAnimations, type AnimationName, type CompanionAnimationConfig } from '../character/animationConfig';
 import { SpriteAnimator } from '../character/SpriteAnimator';
-import { resolveAnimation, getAvailableClipNames } from '../character/AnimationResolver';
 import type { CompanionAnimationName } from '../companion/runtime/animationRegistry';
+import { resolveAnimationFallback, resolveCompanionAnimation } from '../character/animationSelection';
 
 export type { AnimationName };
 
@@ -18,17 +18,20 @@ interface CompanionCanvasProps {
   state?: CharacterRuntimeState;
   compact?: boolean;
   animationOverride?: AnimationName;
+  movementAnimation?: AnimationName;
+  idleAnimation?: AnimationName;
+  companionId?: string;
   assetRoot: string;
   facing?: 'left' | 'right';
   isListening?: boolean;
   userIsTyping?: boolean;
-  isMusicPlaying?: boolean;
   onPointerHitChange?: (isHit: boolean) => void;
   onOpenPanel?: () => void;
   onToggleListen?: () => void;
   onDragStart?: (point: CompanionDragPoint) => void;
   onDragMove?: (point: CompanionDragPoint) => void;
   onDragEnd?: (point: CompanionDragPoint) => void;
+  onAnimationComplete?: (name: AnimationName) => void;
 }
 
 const canvasSize = {
@@ -40,17 +43,20 @@ export function CompanionCanvas({
   state,
   compact = false,
   animationOverride,
+  movementAnimation,
+  idleAnimation,
+  companionId,
   assetRoot,
   facing = 'right',
   isListening = false,
   userIsTyping = false,
-  isMusicPlaying = false,
   onPointerHitChange,
   onOpenPanel,
   onToggleListen,
   onDragStart,
   onDragMove,
-  onDragEnd
+  onDragEnd,
+  onAnimationComplete
 }: CompanionCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -61,22 +67,35 @@ export function CompanionCanvas({
   const suppressClickTimeoutRef = useRef<number | undefined>(undefined);
   const singleClickTimeoutRef = useRef<number | undefined>(undefined);
   const [assetFailed, setAssetFailed] = useState(false);
+  const [availableClips, setAvailableClips] = useState<Set<CompanionAnimationName>>(() => new Set(['Idle_Neutral']));
+  const [failedClips, setFailedClips] = useState<Set<CompanionAnimationName>>(() => new Set());
   const [dragState, setDragState] = useState<'idle' | 'dragging' | 'releasing'>('idle');
   const dragReleaseTimerRef = useRef<number | undefined>(undefined);
   const intent = state?.intent ?? 'waiting';
   const animations = useMemo(() => createCompanionAnimations(assetRoot), [assetRoot]);
-  const availableClips = useMemo(() => getAvailableClipNames(animations), [animations]);
-  const animation = useMemo(() => {
-    if (animationOverride) return animations[animationOverride];
-    if (dragState === 'dragging') return animations.Drag_Hold;
-    if (dragState === 'releasing') return animations.Drag_Release;
-    if (state?.animationIntent && animations[state.animationIntent as AnimationName]) {
-      return animations[state.animationIntent as AnimationName];
-    }
-    const resolvedIntent = stateToIntent(state, { userIsTyping, isMusicPlaying });
-    const resolution = resolveAnimation({ intent: resolvedIntent }, availableClips);
-    return animations[resolution.clip as AnimationName] ?? animations.Idle_Neutral;
-  }, [animationOverride, dragState, state?.animationIntent, state?.coreState, state?.intent, state?.emotion, userIsTyping, isMusicPlaying, animations, availableClips]);
+  useEffect(() => {
+    let active = true;
+    setFailedClips(new Set());
+    if (!companionId) return () => { active = false; };
+    void window.ourCompanion.companionNew.listAssets(companionId).then((assets) => {
+      if (!active) return;
+      const available = assets
+        .filter((asset) => asset.subfolder === 'animations' && asset.name.endsWith('.png'))
+        .map((asset) => asset.name.slice(0, -4))
+        .filter((name): name is CompanionAnimationName => name in animations);
+      setAvailableClips(new Set<CompanionAnimationName>(available));
+    }).catch(() => { if (active) setAvailableClips(new Set(['Idle_Neutral'])); });
+    return () => { active = false; };
+  }, [companionId, animations]);
+
+  const resolved = useMemo(() => {
+    const requested = resolveCompanionAnimation({ state, dragState, performanceAnimation: animationOverride, movementAnimation, idleAnimation, userIsTyping });
+    const usable = new Set([...availableClips].filter((name) => !failedClips.has(name)));
+    const name = resolveAnimationFallback(requested.name, usable);
+    return { ...requested, name };
+  }, [animationOverride, dragState, movementAnimation, state, userIsTyping, idleAnimation, availableClips, failedClips]);
+  const animation = animations[resolved.name as AnimationName] ?? animations.Idle_Neutral;
+  const usesDirectionalAsset = animation.name.startsWith('Walk_');
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -86,8 +105,18 @@ export function CompanionCanvas({
 
     const viewport = compact ? canvasSize.compact : canvasSize.normal;
     const animator = new SpriteAnimator(animation, {
-      cacheKey: animation.name,
-      onError: () => setAssetFailed(true)
+      cacheKey: `${assetRoot}:${animation.name}`,
+      onError: () => {
+        console.warn('[our-companion] Companion animation asset failed; trying fallback.', {
+          requestedAnimation: resolved.name,
+          failedAssetUrl: animation.sheet,
+        });
+        setFailedClips((failed) => new Set(failed).add(animation.name));
+      },
+      onComplete: () => {
+        if (resolved.name === 'Drag_Release') setDragState('idle');
+        onAnimationComplete?.(resolved.name);
+      },
     });
 
     let active = true;
@@ -99,14 +128,14 @@ export function CompanionCanvas({
         animator.start(canvas, viewport);
       })
       .catch(() => {
-        if (active) setAssetFailed(true);
+        if (active && animation.name === 'Idle_Neutral') setAssetFailed(true);
       });
 
     return () => {
       active = false;
       animator.destroy();
     };
-  }, [animation, compact]);
+  }, [animation, compact, assetRoot, resolved.name, onAnimationComplete]);
 
   useEffect(() => {
     return () => {
@@ -173,7 +202,7 @@ export function CompanionCanvas({
       dragReleaseTimerRef.current = window.setTimeout(() => {
         setDragState('idle');
         dragReleaseTimerRef.current = undefined;
-      }, 600);
+      }, 2500);
       if (suppressClickTimeoutRef.current !== undefined) {
         window.clearTimeout(suppressClickTimeoutRef.current);
       }
@@ -241,7 +270,7 @@ export function CompanionCanvas({
     if (!context) return false;
 
     const visualX = event.clientX - rect.left;
-    const sampleX = facing === 'right' ? rect.width - visualX : visualX;
+    const sampleX = !usesDirectionalAsset && facing === 'right' ? rect.width - visualX : visualX;
     const sampleY = event.clientY - rect.top;
     const x = clamp(Math.floor((sampleX / rect.width) * canvas.width), 0, canvas.width - 1);
     const y = clamp(Math.floor((sampleY / rect.height) * canvas.height), 0, canvas.height - 1);
@@ -269,7 +298,7 @@ export function CompanionCanvas({
       {isListening && <div className="companion-listening-indicator" aria-label="Listening" />}
       {!assetFailed && (
         <figure
-          className={`canvas-companion canvas-companion-${animation.name} canvas-companion-facing-${facing} ${compact ? 'canvas-companion-compact' : ''}`}
+          className={`canvas-companion canvas-companion-${animation.name} ${usesDirectionalAsset ? 'canvas-companion-directional' : `canvas-companion-facing-${facing}`} ${compact ? 'canvas-companion-compact' : ''}`}
         >
           <canvas ref={canvasRef} />
           <figcaption>{intentLabel(intent)}</figcaption>
@@ -285,36 +314,6 @@ function isInsideRect(x: number, y: number, rect: DOMRect): boolean {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
-}
-
-interface StateToIntentContext {
-  userIsTyping?: boolean;
-  isMusicPlaying?: boolean;
-}
-
-function stateToIntent(state?: CharacterRuntimeState, ctx: StateToIntentContext = {}): CompanionAnimationName {
-  if (!state) return 'Idle_Neutral';
-  if (state.coreState === 'listening') return 'Listening';
-  if (state.coreState === 'executing') return 'Work_Focus';
-  if (state.coreState === 'returning') return 'Expedition_Return';
-  if (state.coreState === 'talking') {
-    const mood = state.emotion;
-    if (mood && mood.concerned > 60) return 'Talk_Concerned';
-    if (mood && (mood.focused > 60 || mood.confused > 50)) return 'Talk_Thinking';
-    return 'Talk_Neutral';
-  }
-  if (state.intent === 'sharing_discovery' || state.coreState === 'discovering') return 'Expedition_Present';
-  if (
-    state.intent === 'reviewing_memory' ||
-    state.intent === 'reflecting_journey' ||
-    state.intent === 'organizing_backpack' ||
-    state.coreState === 'thinking' ||
-    state.coreState === 'observing'
-  ) return 'Think';
-  if (state.intent === 'wandering' || state.coreState === 'walking') return 'Walk_Right';
-  if (ctx.userIsTyping) return 'Waiting_Response';
-  if (ctx.isMusicPlaying) return 'Music_Idle';
-  return 'Idle_Neutral';
 }
 
 function intentLabel(intent: string): string {

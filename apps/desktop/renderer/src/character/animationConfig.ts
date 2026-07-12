@@ -1,6 +1,7 @@
 import type { SpriteSheetConfig } from './SpriteAnimator';
 import { AssetResolver } from './AssetResolver';
 import type { CompanionAnimationName } from '../companion/runtime/animationRegistry';
+import { ANIMATION_REGISTRY } from '../companion/runtime/animationRegistry';
 
 export interface CompanionAnimationConfig extends SpriteSheetConfig {
   name: CompanionAnimationName;
@@ -17,6 +18,7 @@ function anim(name: CompanionAnimationName, frameMs: number, assetRoot: string, 
     frameWidth,
     frameHeight,
     frameMs,
+    loop: ANIMATION_REGISTRY[name].loop,
   };
 }
 

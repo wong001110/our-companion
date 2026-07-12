@@ -1,9 +1,11 @@
 import { t, type Lang, type TranslationKey } from '../../i18n';
 
-export type SpeechEvent = 'ambient' | 'walk_start' | 'walk_end' | 'discovery' | 'task' | 'ask';
+export type SpeechEvent = 'ambient' | 'enter' | 'leave' | 'walk_start' | 'walk_end' | 'discovery' | 'task' | 'ask';
 
 const speechKeys: Record<SpeechEvent, TranslationKey[]> = {
   ambient: ['speech_ambient_1', 'speech_ambient_2', 'speech_ambient_3', 'speech_ambient_4'],
+  enter: ['speech_enter_1', 'speech_enter_2'],
+  leave: ['speech_leave_1', 'speech_leave_2'],
   walk_start: ['speech_walk_start_1', 'speech_walk_start_2', 'speech_walk_start_3'],
   walk_end: ['speech_walk_end_1', 'speech_walk_end_2', 'speech_walk_end_3'],
   discovery: ['speech_discovery_1', 'speech_discovery_2'],

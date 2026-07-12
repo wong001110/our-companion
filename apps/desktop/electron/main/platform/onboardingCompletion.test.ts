@@ -79,16 +79,30 @@ describe('onboarding completion coordinator', () => {
     expect(deps.closeCreationWindow).toHaveBeenCalledTimes(1);
   });
 
-  it('does not close Creation or mark complete when sending the completion event fails', () => {
+  it('invalidates a failed completion-delivery window, keeps Creation open, and retries with a replacement window', () => {
     const primary = profile();
-    const { coordinator, deps, companionWindow, scheduled } = createHarness(primary);
-    vi.mocked(companionWindow.sendCompleted).mockImplementation(() => { throw new Error('send failed'); });
+    const first = createHarness(primary);
+    const replacement: OnboardingCompanionWindow = {
+      show: vi.fn(), keepOnTop: vi.fn(), isLoading: () => false, isDestroyed: () => false,
+      observeReadiness: vi.fn(() => () => {}), sendCompleted: vi.fn(), invalidate: vi.fn(),
+    };
+    vi.mocked(first.companionWindow.sendCompleted).mockImplementation(() => { throw new Error('send failed'); });
+    vi.mocked(first.deps.ensureCompanionWindow)
+      .mockImplementationOnce(() => first.companionWindow)
+      .mockImplementation(() => replacement);
 
-    coordinator.request(primary);
-    scheduled[0]();
-    expectIncomplete(coordinator);
-    expect(deps.closeCreationWindow).not.toHaveBeenCalled();
-    expect(deps.reportRecovery).toHaveBeenCalledWith('completion-event-send-failed');
+    first.coordinator.request(primary);
+    first.scheduled[0]();
+    expectIncomplete(first.coordinator);
+    expect(first.companionWindow.invalidate).toHaveBeenCalledWith('completion-event-send-failed');
+    expect(first.deps.closeCreationWindow).not.toHaveBeenCalled();
+    expect(first.deps.reportRecovery).toHaveBeenCalledWith('completion-event-send-failed');
+
+    expect(first.coordinator.request(primary)).toBe(true);
+    first.scheduled[1]();
+    expect(replacement.sendCompleted).toHaveBeenCalledWith(primary);
+    expect(first.deps.closeCreationWindow).toHaveBeenCalledTimes(1);
+    expect(first.coordinator.getState().completedCompanionId).toBe(primary.id);
   });
 
   it('rejects a non-primary request before scheduling or window side effects', () => {

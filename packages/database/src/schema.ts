@@ -357,8 +357,6 @@ CREATE INDEX IF NOT EXISTS idx_exploration_events_cycle ON exploration_loop_even
 CREATE INDEX IF NOT EXISTS idx_discovery_feedback_cycle ON discovery_feedback(cycle_id);
 CREATE INDEX IF NOT EXISTS idx_companion_messages_created ON companion_messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_companion_messages_character_created ON companion_messages(character_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_companion_messages_session ON companion_messages(session_id);
-CREATE INDEX IF NOT EXISTS idx_memory_nodes_companion ON memory_nodes(companion_id);
 CREATE INDEX IF NOT EXISTS idx_conversation_sessions_companion ON conversation_sessions(companion_id);
 CREATE INDEX IF NOT EXISTS idx_pending_actions_companion ON pending_companion_actions(companion_id, status);
 

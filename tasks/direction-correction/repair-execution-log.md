@@ -1,5 +1,59 @@
 # Repair Execution Log
 
+## Onboarding Recovery Closure and Animation Pipeline Repair
+
+- Issues: completion-event delivery failure could reuse a non-destroyed Companion Window. Renderer animation selection allowed idle overrides and stale intent to mask active behavior; walking always selected `Walk_Right`; optional assets were inferred from configuration rather than persisted files; and sprite playback always looped.
+- Root causes: completion-send error handling did not invalidate its window; animation decisions were distributed between App, Canvas, runtime intent, and idle state; `SpriteAnimator` had no loop metadata or completion callback.
+- Old behavior: failed completion delivery left the same window available for retry; weighted idle could be passed as an unconditional Canvas override; all movement used `Walk_Right`; one-shot registry entries looped; and the legacy `curious` key was treated as an animation asset.
+- New behavior: completion-send failure invalidates the window before recovery. A renderer selection resolver supplies drag/session/performance/movement/runtime/life/interaction/idle precedence, uses XY eight-direction walking, maps emotional talk variants, and follows registry fallbacks against the persisted Companion animation file list. Directional walk clips are not CSS-mirrored. Sprite configs use registry loop metadata; one-shots hold their last frame and signal completion for Drag Release, Enter/Leave-capable performance state, and normal Leave shutdown. Performance uses `startMs`, cancels prior timers, and clears its override. Legacy `curious` resolves to `Think`.
+- Animation priority policy: drag, one-shot release/shutdown, performance, session, walking, runtime intent, Life Activity, Waiting Response, weighted idle, then Idle Neutral. Dedicated directional clips retain their canonical orientation; non-directional clips may retain existing facing mirroring.
+- Walk direction policy: browser-coordinate `dx`/`dy` is quantized into eight canonical `Walk_` directions with a six-pixel dead zone. Walking preview writes the selected direction into `animationIntent`, then clears it on idle completion.
+- Files changed: onboarding coordinator/tests; renderer App, Canvas, animation config, SpriteAnimator, new selection resolver/tests; character-engine compatibility mapping/test; shared legacy animation-key type; and this log.
+- Tests added: completion-send invalidation with replacement retry; eight-direction/dead-zone/priority/talk/fallback resolver coverage; SpriteAnimator loop, one-shot, and destruction coverage.
+- Manual verification: not performed in this non-interactive automated workspace. Visual checking of every installed Companion asset/trigger remains required before release.
+- Command verification: `npm.cmd run typecheck`, `npm.cmd run test` (50 files, 369 tests), `npm.cmd run arch:check`, `npm.cmd run build`, and `git diff --check` all passed. Build retained the existing Vite mixed dynamic/static `character-engine` warning and Node experimental SQLite warnings; diff validation emitted only LF-to-CRLF working-copy warnings.
+- Remaining limitations: interactive asset-by-asset verification and expanded renderer integration tests remain outstanding before this repair can be declared fully complete.
+
+### Follow-up runtime and playback audit
+
+- Issues: the legacy Main Process animation resolver still emitted obsolete `Walk_TopLeft`/`TopRight`/`Bottom*` asset names. Session-phase writes could preserve a stale animation intent after returning idle and forced Main Process `Talk_Neutral`, preventing renderer-owned emotional talk selection. Sprite playback accepted invalid non-finite frame counts and could create a second interval if started twice. Performance timers were renderer-local rather than a dedicated cancellable playback unit.
+- Root causes: the old resolver’s semantic diagonal directions had not been translated to canonical asset keys; session lifecycle changed only an intent rather than semantic core state; sprite startup assumed a valid successful `load()`; and performance scheduling lived inline in `App`.
+- Old behavior: a legacy walk intent could resolve to an asset that cannot exist; session completion could remain visually `Listening` or another stale runtime override; invalid sprite geometry could proceed as `NaN`; a restarted animator could retain its prior interval; and superseding performance scripts could leave the old override visible until a later cue.
+- New behavior: all Main Process diagonal outputs now use `Walk_UpLeft`, `Walk_UpRight`, `Walk_DownLeft`, or `Walk_DownRight`. Session transitions persist `listening`, `thinking`, or semantic `talking` core state, use `Waiting_Response` for `waiting_for_user`, restore Life Activity on idle, and clear the session override so the renderer selects emotional Talk variants. Sprite startup rejects non-finite/zero frame geometry and stops an existing interval before restarting. `performancePlayback.ts` owns one cancellable timeline, honors `startMs`, ignores invalid cue keys, immediately clears a superseded override, and releases its override at completion.
+- Animation priority policy: unchanged: drag, release/shutdown, active performance, session, movement, runtime intent, Life Activity, waiting interaction, weighted idle, then `Idle_Neutral`. A talking session is now semantic state, so the renderer applies the same emotional Talk policy consistently.
+- Walk direction policy: unchanged browser-coordinate XY resolution; legacy semantic `top_*`/`bottom_*` inputs now translate only to canonical `Up*`/`Down*` asset names. Search confirmed no obsolete diagonal asset names remain in TypeScript production code.
+- Files changed: `apps/desktop/electron/main/runtime/AnimationResolver.ts`, `CompanionRuntime.ts`, and their tests; renderer `SpriteAnimator.ts`, `CompanionCanvas.tsx`, `App.tsx`, `animationSelection.test.ts`, new `performancePlayback.ts`/test, and this log.
+- Tests added: Main Process canonical diagonal mapping; session talking/waiting/idle state ownership; session-over-Life emotional talk priority; invalid sprite-frame rejection; duplicate-start interval cleanup; and Performance cue timing, invalid-cue rejection, cancellation, and completion release.
+- Manual verification: still not performed in this non-interactive workspace. The required per-asset visual trigger/loop/transition/fallback checklist remains a release gate.
+- Command verification: `npm.cmd run typecheck` passed; focused onboarding, runtime resolver/session, selection, SpriteAnimator, and Performance playback tests passed (5 files, 20 tests); `npm.cmd run test` passed (52 files, 377 tests); `npm.cmd run arch:check` passed; `npm.cmd run build` passed; `git diff --check` passed. Known non-failing warnings are Node experimental SQLite notices, the existing Vite mixed dynamic/static `character-engine` import warning, and Git LF-to-CRLF working-copy warnings.
+- Remaining limitations: manual visual verification of every installed Companion animation (including actual fallback image-load behavior) and focused DOM-level renderer integration tests for movement/drag remain outstanding; they cannot be proven by the available non-interactive test environment.
+
+### Canonical animation API follow-up
+
+- Issue: the character engine still exposed `AnimationKey` in live request, transition, and legacy-performance signatures, despite the renderer and registry using `CompanionAnimationName`.
+- Root cause: the compatibility type had been deprecated but the production-facing models and character-engine helpers had not been moved to the canonical type.
+- New behavior: `AnimationRequest`, `PerformanceStep`, `nextAnimationState()`, and `animationKeyForBehaviour()` use `CompanionAnimationName`. `AnimationKey` remains only as a `@deprecated` alias for source compatibility and is not used by production animation APIs.
+- Tests added: canonical directional input coverage for `nextAnimationState`; character-engine and action-engine focused suites pass (2 files, 48 tests).
+
+### Developer Preview asset availability follow-up
+
+- Issue: selecting an animation in Developer Preview did not reliably change the visible clip.
+- Root cause: the preview mounted `CompanionCanvas` without the active `companionId`. The canvas correctly treats persisted `listAssets(companionId)` data as authoritative; without an ID it knew only the required `Idle_Neutral` fallback, so preview selections resolved back to idle.
+- New behavior: Settings passes the active primary Companion ID through `DeveloperPreview` to `CompanionCanvas`, so preview selection resolves against that Companion's actual animation files and follows the same fallback rules as the live window.
+- Verification: `npm.cmd run typecheck`, `npm.cmd run build`, and `git diff --check` passed. The build retained the pre-existing Vite mixed dynamic/static `character-engine` warning.
+
+### Walk animation lifetime follow-up
+
+- Issue: a Companion could still be moving toward its target after its walk clip was replaced by a refreshed runtime, Life Activity, or idle state.
+- Root cause: the active walk direction existed only in the mutable shared `CharacterRuntimeState`; an unrelated Main Process state event could overwrite that preview state before the request-animation-frame interpolation finished.
+- New behavior: `CompanionShell` owns a local `movementAnimation` for the lifetime of its active interpolation and clears it only in the movement `finally` block or when drag begins. The animation resolver gives this movement source normal walking priority over stale runtime and Life Activity candidates, while drag/session/performance retain their documented higher-priority interruption rules.
+- Tests added: a local movement clip defeats stale runtime intent, and drag still overrides a local walk. `npm.cmd run typecheck`, focused selection/SpriteAnimator tests (2 files, 9 tests), `npm.cmd run build`, and `git diff --check` passed.
+
+### Enter and Leave speech follow-up
+
+- New behavior: the existing instantaneous speech bubble appears when the window begins `Enter` and when exit requests `Leave`, with localized English and Simplified Chinese lines. Lifecycle speech remains independent of typewriter/conversation completion state.
+- Tests added: deterministic entry and exit speech selection. `npm.cmd run typecheck`, focused companion-behavior/SpriteAnimator tests (2 files, 9 tests), `npm.cmd run build`, and `git diff --check` passed.
+
 ## Companion Window Load Recovery Final Patch
 
 - Issue: first-onboarding closed the Creation Window before the Companion Window was known usable. A main-frame load failure, render-process crash, or early close could leave a blank BrowserWindow referenced for reuse, with no reliable recovery surface.

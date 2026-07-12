@@ -138,6 +138,7 @@ export class OnboardingCompletionCoordinator {
         this.deps.closeCreationWindow();
       } catch (error) {
         clearPending();
+        companionWindow.invalidate('completion-event-send-failed');
         this.deps.reportRecovery('completion-event-send-failed');
         this.deps.logError('[our-companion] Onboarding completion broadcast failed.', error);
       }

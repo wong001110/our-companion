@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { COMPANION_ANIMATION_MANIFEST, createId, nowIso, type CompanionCommand, type CompanionPersonality } from '@our-companion/shared';
+import { COMPANION_ANIMATION_MANIFEST, createId, nowIso, type CompanionCommand, type CompanionPersonality, type InsightV2 } from '@our-companion/shared';
 import { app } from 'electron';
-import { AppServices, MAX_COMPANION_ASSET_BYTES, MAX_COMPANION_TOTAL_ASSET_BYTES } from './services';
+import { AppServices, MAX_COMPANION_ASSET_BYTES, MAX_COMPANION_TOTAL_ASSET_BYTES, toPersistedCompanionInsight } from './services';
 
 vi.mock('electron', () => ({
   app: {
@@ -21,6 +21,18 @@ describe('foundation event log', () => {
     }
     delete process.env.OUR_COMPANION_TEST_USER_DATA;
     vi.mocked(app.getPath).mockClear();
+  });
+
+  it('maps Insight V2 output to SQLite-bindable persisted Companion insight fields', () => {
+    const insight: InsightV2 = {
+      id: 'insight_1', userId: 'local', category: 'discovery', title: 'Title', summary: 'Summary', explanation: 'Explanation',
+      supportingPatternIds: ['pattern_1'], supportingMemoryIds: ['memory_1'], confidence: 0.8, importance: 0.7,
+      novelty: 0.6, evidenceCount: 1, status: 'active', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const persisted = toPersistedCompanionInsight(insight, 'companion_1', 'Curiosity target reason', ['candidate_1']);
+    expect(persisted.companionId).toBe('companion_1');
+    expect(persisted.insight).toBe('Explanation');
+    expect(persisted.supportingCandidateIds).toEqual(['candidate_1']);
   });
 
   function useTempUserData(): string {

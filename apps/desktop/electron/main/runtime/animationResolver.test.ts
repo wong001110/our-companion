@@ -19,7 +19,7 @@ describe('AnimationResolver', () => {
   });
 
   it('maps all eight walk directions', () => {
-    const expected = { left: 'Walk_Left', right: 'Walk_Right', up: 'Walk_Up', down: 'Walk_Down', top_left: 'Walk_TopLeft', top_right: 'Walk_TopRight', bottom_left: 'Walk_BottomLeft', bottom_right: 'Walk_BottomRight' } as const;
+    const expected = { left: 'Walk_Left', right: 'Walk_Right', up: 'Walk_Up', down: 'Walk_Down', top_left: 'Walk_UpLeft', top_right: 'Walk_UpRight', bottom_left: 'Walk_DownLeft', bottom_right: 'Walk_DownRight' } as const;
     for (const [direction, asset] of Object.entries(expected)) {
       expect(resolveToAssetKey({ category: 'walk', direction: direction as keyof typeof expected })).toBe(asset);
     }

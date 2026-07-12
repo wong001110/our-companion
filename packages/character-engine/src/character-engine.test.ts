@@ -100,7 +100,8 @@ describe('character engine', () => {
   });
 
   it('keeps idle animation loops interrupt-safe', () => {
-    expect(nextAnimationState('Idle_Neutral')).toBe('curious');
+    expect(nextAnimationState('Idle_Neutral')).toBe('Think');
+    expect(nextAnimationState('Walk_UpLeft')).toBe('Idle_Neutral');
     expect(planAnimationRequest({ characterId: 'test-companion', behaviour: 'idle', mood: 'neutral', reason: 'Idle loop.' }).interruptSafe).toBe(true);
   });
 

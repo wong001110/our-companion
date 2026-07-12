@@ -1,6 +1,6 @@
 import type {
-  AnimationKey,
   AnimationRequest,
+  CompanionAnimationName,
   CompanionMood,
   BehaviourState,
   CharacterPackage,
@@ -375,11 +375,10 @@ export function resolveCharacterState(
   };
 }
 
-export function nextAnimationState(current: AnimationKey, requested?: AnimationKey): AnimationKey {
+export function nextAnimationState(current: CompanionAnimationName, requested?: CompanionAnimationName): CompanionAnimationName {
   if (requested && requested !== current) return requested;
-  const transitions: Record<AnimationKey, AnimationKey> = {
-    Idle_Neutral: 'curious',
-    curious: 'Think',
+  const transitions: Partial<Record<CompanionAnimationName, CompanionAnimationName>> = {
+    Idle_Neutral: 'Think',
     Think: 'Expedition_Present',
     Expedition_Present: 'Expedition_Return',
     Expedition_Prepare: 'Work_Focus',
@@ -389,12 +388,12 @@ export function nextAnimationState(current: AnimationKey, requested?: AnimationK
   return transitions[current] ?? 'Idle_Neutral';
 }
 
-export function animationKeyForBehaviour(behaviour: BehaviourState, mood: CompanionMood): AnimationKey {
+export function animationKeyForBehaviour(behaviour: BehaviourState, mood: CompanionMood): CompanionAnimationName {
   if (behaviour === 'present_discovery') return 'Expedition_Present';
   if (behaviour === 'perform_task') return 'Expedition_Prepare';
   if (behaviour === 'reflect' || mood === 'thinking') return 'Think';
   if (behaviour === 'return_home') return 'Expedition_Return';
-  if (mood === 'curious') return 'curious';
+  if (mood === 'curious') return 'Think';
   return 'Idle_Neutral';
 }
 

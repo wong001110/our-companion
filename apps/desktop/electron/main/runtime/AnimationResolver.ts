@@ -38,7 +38,11 @@ function mapIntentToAsset(intent: AnimationIntent): string | undefined {
   if (category === 'listen') return 'Listening';
   if (category === 'think') return 'Think';
   if (category === 'walk') {
-    const walks = { left: 'Walk_Left', right: 'Walk_Right', up: 'Walk_Up', down: 'Walk_Down', top_left: 'Walk_TopLeft', top_right: 'Walk_TopRight', bottom_left: 'Walk_BottomLeft', bottom_right: 'Walk_BottomRight' };
+    const walks = {
+      left: 'Walk_Left', right: 'Walk_Right', up: 'Walk_Up', down: 'Walk_Down',
+      top_left: 'Walk_UpLeft', top_right: 'Walk_UpRight',
+      bottom_left: 'Walk_DownLeft', bottom_right: 'Walk_DownRight'
+    };
     return direction ? walks[direction] : undefined;
   }
   if (category === 'expedition') {

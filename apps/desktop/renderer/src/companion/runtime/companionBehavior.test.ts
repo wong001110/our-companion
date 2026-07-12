@@ -11,6 +11,11 @@ describe('Ann companion behavior', () => {
     expect(calm.minMs).toBeGreaterThanOrEqual(30000);
   });
 
+  it('provides lifecycle speech for entering and leaving', () => {
+    expect(selectSpeechLine('enter', () => 0)).toBe("I'm here!");
+    expect(selectSpeechLine('leave', () => 0.99)).toBe('Heading out for now. See you soon!');
+  });
+
   it('supports deterministic walk delays', () => {
     const range = getWalkDelayRange(100);
 
