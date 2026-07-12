@@ -2003,10 +2003,6 @@ function OnlineModeCard() {
 
   async function handleModeToggle() {
     if (!networkStatus) return;
-    if (!networkStatus.onlineModeEnabled && !networkStatus.account) {
-      setShowRegister(true);
-      return;
-    }
     try {
       await (networkStatus.onlineModeEnabled
         ? window.ourCompanion.network.disableOnlineMode()

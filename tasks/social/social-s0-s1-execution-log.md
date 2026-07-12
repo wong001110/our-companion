@@ -5,7 +5,7 @@
 - Fixed lifecycle root causes: restored sessions now bind to their issuing server origin, refresh before Socket.IO use, reload the account with `/api/auth/me`, and perform at most one refresh after socket authentication failure. Reconnect delay now grows from 1s to 30s and resets only on a successful connection, manual retry, disable, or logout.
 - Logout now exposes whether remote session revocation was confirmed; unavailable servers clear only the local session and leave that distinction visible in status.
 - The Online Mode card subscribes to `network:statusChanged`, renders the full lifecycle state, and provides a guarded Network Server URL editor. Switching servers disconnects, clears the old session/account, and never sends old credentials to the new origin.
-- Tests added: `apps/desktop/electron/main/networkConnection.test.ts` (offline isolation, refresh-before-connect/account restoration, origin isolation, URL validation).
+- Tests added: `apps/desktop/electron/main/networkConnection.test.ts` (offline isolation, refresh-before-connect/account restoration, origin isolation, URL validation, compatibility-before-login, and server-switch session clearing).
 - Commands: `npm run typecheck` passed; `npm run arch:check` passed; `npm test` passed (53 files, 382 tests); `npm run build` passed; `git diff --check` passed.
 - Manual integration: not run. This workspace has no Docker executable or reachable PostgreSQL/Network Server, so two-isolated-client verification remains required before S1 can be declared closed.
 - Deferred unchanged: S2–S5 friends, publishing, assets, visits, and remote AI remain out of scope.

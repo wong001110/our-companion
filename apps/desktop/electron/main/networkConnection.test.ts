@@ -57,6 +57,25 @@ describe('NetworkConnectionService', () => {
     expect((await service.getStatus()).state).toBe('authentication_required');
   });
 
+  it('does not send login credentials when the server rejects the client version', async () => {
+    const db = new TestDb();
+    const fetch = vi.fn().mockResolvedValue(response({ compatible: false, reason: 'CLIENT_VERSION_TOO_OLD' }));
+    const service = new NetworkConnectionService(db as never, undefined, { fetch, createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
+    await expect(service.login({ email: 'a@example.com', password: 'secret' })).rejects.toThrow('CLIENT_VERSION_TOO_OLD');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toContain('/api/meta/client-compatibility');
+    expect((await service.getStatus()).state).toBe('incompatible_client');
+  });
+
+  it('clears the encrypted session when changing server origin', async () => {
+    const db = new TestDb();
+    db.setAppSetting('network.secure-session', Buffer.from(JSON.stringify({ serverOrigin: 'http://localhost:3001', accessToken: 'old', refreshToken: 'refresh' })).toString('base64'));
+    const service = new NetworkConnectionService(db as never, undefined, { fetch: vi.fn(), createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
+    await service.configureServer('https://network.example');
+    expect(db.getAppSetting('network.secure-session')).toBe('');
+    expect((await service.getStatus()).serverUrl).toBe('https://network.example');
+  });
+
   it('normalizes only permitted origins', () => {
     expect(normalizeServerUrl('https://network.example/')).toBe('https://network.example');
     expect(() => normalizeServerUrl('https://user:secret@network.example')).toThrow('INVALID_NETWORK_SERVER_URL');

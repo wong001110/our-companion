@@ -75,8 +75,8 @@ export class NetworkConnectionService {
   };
 
   register = async (input: { email: string; username: string; password: string }): Promise<NetworkStatus> => {
-    await this.checkCompatibility();
     try {
+      await this.checkCompatibility();
       const result = await this.publicRequest<AuthResult>('/api/auth/register', { ...input, deviceId: this.deviceId });
       await this.acceptAuthentication(result);
       return this.enableAuthenticatedConnection();
@@ -87,8 +87,8 @@ export class NetworkConnectionService {
   };
 
   login = async (input: { email: string; password: string }): Promise<NetworkStatus> => {
-    await this.checkCompatibility();
     try {
+      await this.checkCompatibility();
       const result = await this.publicRequest<AuthResult>('/api/auth/login', { ...input, deviceId: this.deviceId });
       await this.acceptAuthentication(result);
       return this.enableAuthenticatedConnection();
