@@ -1388,6 +1388,15 @@ export interface WorkspaceStatusSnapshot {
 
 export type OnlineMode = 'online' | 'offline';
 
+export type NetworkConnectionState = 'offline' | 'checking_server' | 'authentication_required' | 'connecting' | 'online' | 'reconnecting' | 'incompatible_client' | 'server_unavailable' | 'authentication_failed' | 'disabled';
+export interface NetworkStatus {
+  state: NetworkConnectionState;
+  onlineModeEnabled: boolean;
+  serverUrl: string;
+  account?: { id: string; email: string; username: string; friendCode: string };
+  message?: string;
+}
+
 export interface UserProfile {
   id: string;
   username: string;
@@ -1534,6 +1543,17 @@ export interface OurCompanionApi {
     getMode(): Promise<OnlineMode>;
     setMode(mode: OnlineMode): Promise<OnlineMode>;
     onModeChange(listener: (mode: OnlineMode) => void): () => void;
+  };
+  network: {
+    getStatus(): Promise<NetworkStatus>;
+    configureServer(serverUrl: string): Promise<NetworkStatus>;
+    register(input: { email: string; username: string; password: string }): Promise<NetworkStatus>;
+    login(input: { email: string; password: string }): Promise<NetworkStatus>;
+    logout(): Promise<NetworkStatus>;
+    enableOnlineMode(): Promise<NetworkStatus>;
+    disableOnlineMode(): Promise<NetworkStatus>;
+    retryConnection(): Promise<NetworkStatus>;
+    onStatusChanged(listener: (status: NetworkStatus) => void): () => void;
   };
   window: {
     openPanel(input?: { companionX?: number; companionY?: number }): Promise<boolean>;

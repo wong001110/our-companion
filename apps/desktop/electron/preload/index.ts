@@ -23,6 +23,7 @@ import type {
   EngineSnapshotInput,
   FoundationEventLogInput,
   LoginUserInput,
+  NetworkStatus,
   OnlineMode,
   OurCompanionApi,
   PerformanceScriptV2,
@@ -247,6 +248,22 @@ const api: OurCompanionApi = {
     onModeChange: (listener: (mode: OnlineMode) => void) => {
       ipcRenderer.on('user:modeChanged', (_event, mode) => listener(mode));
       return () => { ipcRenderer.removeAllListeners('user:modeChanged'); };
+    }
+  },
+  network: {
+    getStatus: () => invoke<NetworkStatus>('network:getStatus'),
+    configureServer: (serverUrl) => invoke<NetworkStatus>('network:configureServer', serverUrl),
+    register: (input) => invoke<NetworkStatus>('network:register', input),
+    login: (input) => invoke<NetworkStatus>('network:login', input),
+    logout: () => invoke<NetworkStatus>('network:logout'),
+    enableOnlineMode: () => invoke<NetworkStatus>('network:enableOnlineMode'),
+    disableOnlineMode: () => invoke<NetworkStatus>('network:disableOnlineMode'),
+    retryConnection: () => invoke<NetworkStatus>('network:retryConnection'),
+    onStatusChanged: (listener) => {
+      const channel = 'network:statusChanged';
+      const handler = (_event: Electron.IpcRendererEvent, status: NetworkStatus) => listener(status);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
     }
   },
   app: {

@@ -346,6 +346,14 @@ function registerIpc(): void {
     'user:logout': services.user.logout,
     'user:getMode': services.user.getMode,
     'user:setMode': services.user.setMode,
+    'network:getStatus': services.network.getStatus,
+    'network:configureServer': services.network.configureServer,
+    'network:register': services.network.register,
+    'network:login': services.network.login,
+    'network:logout': services.network.logout,
+    'network:enableOnlineMode': services.network.enableOnlineMode,
+    'network:disableOnlineMode': services.network.disableOnlineMode,
+    'network:retryConnection': services.network.retryConnection,
     'companionNew:create': services.companionNew.create,
     'companionNew:analyzePersonality': services.companionNew.analyzePersonality,
     'companionNew:list': services.companionNew.list,
@@ -364,7 +372,7 @@ function registerIpc(): void {
   for (const [channel, handler] of Object.entries(routes)) {
     ipcMain.handle(channel, async (_event, input) => {
       const onboardingAllowed = channel.startsWith('companionNew:') || channel === 'ai:getSettings' ||
-        channel === 'ai:updateSettings' || channel.startsWith('user:') || channel.startsWith('workspace:');
+        channel === 'ai:updateSettings' || channel.startsWith('user:') || channel.startsWith('network:') || channel.startsWith('workspace:');
       if (!onboardingAllowed && !services.hasActiveCompanion()) {
         throw new Error('NO_ACTIVE_COMPANION: No active Companion. Complete Companion creation first.');
       }
@@ -663,6 +671,13 @@ app.whenReady().then(async () => {
     }
 
     services = new AppServices();
+    services.attachNetworkStatusBroadcaster((status) => {
+      for (const win of [companionWindow, panelWindow]) {
+        if (win && !win.isDestroyed()) win.webContents.send('network:statusChanged', status);
+      }
+    });
+    const networkStatus = await services.network.getStatus();
+    if (networkStatus.onlineModeEnabled) void services.network.enableOnlineMode();
     onboardingCompletion = createOnboardingCompletionCoordinator();
     registerCompanionProtocol();
     registerIpc();
@@ -719,6 +734,7 @@ function forceCleanup(): void {
     }
   }
   try { services?.db.close(); } catch { /* ignore */ }
+  try { services?.network.dispose(); } catch { /* ignore */ }
 }
 
 app.on('window-all-closed', () => {

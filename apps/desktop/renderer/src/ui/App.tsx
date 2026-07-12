@@ -1992,12 +1992,9 @@ function OnlineModeCard() {
   async function loadData() {
     setLoading(true);
     try {
-      const [currentMode, profile] = await Promise.all([
-        window.ourCompanion.user.getMode(),
-        window.ourCompanion.user.getProfile()
-      ]);
-      setMode(currentMode);
-      setUser(profile);
+      const status = await window.ourCompanion.network.getStatus();
+      setMode(status.state === 'online' ? 'online' : 'offline');
+      setUser(status.account ? { id: status.account.id, username: status.account.username, displayName: status.account.username, email: status.account.email, createdAt: '', updatedAt: '' } : null);
     } catch {
       // ignore
     } finally {
@@ -2012,27 +2009,27 @@ function OnlineModeCard() {
       return;
     }
     try {
-      const next = await window.ourCompanion.user.setMode(newMode);
-      setMode(next);
+      const status = newMode === 'online'
+        ? await window.ourCompanion.network.enableOnlineMode()
+        : await window.ourCompanion.network.disableOnlineMode();
+      setMode(status.state === 'online' ? 'online' : 'offline');
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : 'Failed to update mode');
     }
   }
 
   async function handleRegister() {
-    if (!username.trim() || !password.trim() || !displayName.trim()) return;
+    if (!username.trim() || !password.trim() || !email.trim()) return;
     setSaving(true);
     setAuthError('');
     try {
-      const profile = await window.ourCompanion.user.register({
+      const status = await window.ourCompanion.network.register({
         username: username.trim(),
-        displayName: displayName.trim(),
-        email: email.trim() || undefined,
+        email: email.trim(),
         password
       });
-      setUser(profile);
-      await window.ourCompanion.user.setMode('online');
-      setMode('online');
+      setUser(status.account ? { id: status.account.id, username: status.account.username, displayName: status.account.username, email: status.account.email, createdAt: '', updatedAt: '' } : null);
+      setMode(status.state === 'online' ? 'online' : 'offline');
       setShowRegister(false);
       resetForm();
     } catch (err) {
@@ -2043,17 +2040,16 @@ function OnlineModeCard() {
   }
 
   async function handleLogin() {
-    if (!username.trim() || !password.trim()) return;
+    if (!email.trim() || !password.trim()) return;
     setSaving(true);
     setAuthError('');
     try {
-      const profile = await window.ourCompanion.user.login({
-        username: username.trim(),
+      const status = await window.ourCompanion.network.login({
+        email: email.trim(),
         password
       });
-      setUser(profile);
-      await window.ourCompanion.user.setMode('online');
-      setMode('online');
+      setUser(status.account ? { id: status.account.id, username: status.account.username, displayName: status.account.username, email: status.account.email, createdAt: '', updatedAt: '' } : null);
+      setMode(status.state === 'online' ? 'online' : 'offline');
       setShowLogin(false);
       resetForm();
     } catch (err) {
@@ -2064,8 +2060,7 @@ function OnlineModeCard() {
   }
 
   async function handleLogout() {
-    await window.ourCompanion.user.logout();
-    await window.ourCompanion.user.setMode('offline');
+    await window.ourCompanion.network.logout();
     setUser(null);
     setMode('offline');
   }
@@ -2108,13 +2103,12 @@ function OnlineModeCard() {
         <div className="online-auth-form">
           <h3>Create Account</h3>
           <label><span>Username</span><input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="username" autoFocus /></label>
-          <label><span>Display Name</span><input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Your name" /></label>
-          <label><span>Email (optional)</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" /></label>
+          <label><span>Email</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" /></label>
           <label><span>Password</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" /></label>
           {authError && <p className="creation-error">{authError}</p>}
           <div className="action-row">
             <button className="btn-secondary btn-sm" onClick={() => { setShowRegister(false); resetForm(); }}>Cancel</button>
-            <button className="btn-primary btn-sm" disabled={saving || !username.trim() || !password.trim() || !displayName.trim()} onClick={() => void handleRegister()}>
+            <button className="btn-primary btn-sm" disabled={saving || !username.trim() || !password.trim() || !email.trim()} onClick={() => void handleRegister()}>
               {saving ? 'Creating...' : 'Create Account'}
             </button>
           </div>
@@ -2123,12 +2117,12 @@ function OnlineModeCard() {
       ) : showLogin ? (
         <div className="online-auth-form">
           <h3>Log In</h3>
-          <label><span>Username</span><input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="username" autoFocus /></label>
+          <label><span>Email</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" autoFocus /></label>
           <label><span>Password</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" /></label>
           {authError && <p className="creation-error">{authError}</p>}
           <div className="action-row">
             <button className="btn-secondary btn-sm" onClick={() => { setShowLogin(false); resetForm(); }}>Cancel</button>
-            <button className="btn-primary btn-sm" disabled={saving || !username.trim() || !password.trim()} onClick={() => void handleLogin()}>
+            <button className="btn-primary btn-sm" disabled={saving || !email.trim() || !password.trim()} onClick={() => void handleLogin()}>
               {saving ? 'Logging in...' : 'Log In'}
             </button>
           </div>

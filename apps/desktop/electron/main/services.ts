@@ -106,6 +106,7 @@ import {
   resolveCompanionAssetPath as resolveCompanionAssetPathSafe,
   type ResolveCompanionAssetPathInput
 } from './platform/companionAssetPaths';
+import { NetworkConnectionService, type NetworkStatus } from './networkConnection';
 
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
@@ -166,6 +167,8 @@ export class AppServices {
   private foundationEventLog: BaseEvent[] = [];
   private runtimeStarted = false;
   private readonly personalityAnalyses = new Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>();
+  readonly network: NetworkConnectionService;
+  private networkStatusBroadcaster?: (status: NetworkStatus) => void;
 
   constructor(
     dbPath = path.join(app.getPath('userData'), 'our-companion.db'),
@@ -224,6 +227,7 @@ export class AppServices {
         return true;
       }
     );
+    this.network = new NetworkConnectionService(this.db, (status) => this.networkStatusBroadcaster?.(status));
     this.companionRuntime.setExplicitMode(
       this.db.getAppSetting<'available' | 'focused' | 'do_not_disturb'>('attention_mode') ?? 'available'
     );
@@ -1109,6 +1113,10 @@ export class AppServices {
 
   attachShareOrchestrator(orchestrator: DiscoveryShareOrchestrator): void {
     this.shareOrchestrator = orchestrator;
+  }
+
+  attachNetworkStatusBroadcaster(broadcaster: (status: NetworkStatus) => void): void {
+    this.networkStatusBroadcaster = broadcaster;
   }
 
   private tryPresentPendingDiscovery(command: CompanionCommand): void {
