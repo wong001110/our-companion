@@ -1396,6 +1396,21 @@ export interface NetworkStatus {
   account?: { id: string; email: string; username: string; friendCode: string };
   message?: string;
   remoteRevocationConfirmed?: boolean;
+  socialRevision?: number;
+}
+
+export type FriendPresence = 'online' | 'idle' | 'offline';
+export interface FriendSummary { userId: string; username: string; friendCode: string; presence: FriendPresence; }
+export interface FriendRequestSummary { id: string; direction: 'incoming' | 'outgoing'; userId: string; username: string; friendCode: string; status: 'pending'; createdAt: string; }
+export interface BlockedUserSummary { userId: string; username: string; blockedAt: string; }
+export interface SocialState {
+  friends: FriendSummary[];
+  incomingRequests: FriendRequestSummary[];
+  outgoingRequests: FriendRequestSummary[];
+  blockedUsers: BlockedUserSummary[];
+  loading: boolean;
+  error?: string;
+  lastSynchronizedAt?: string;
 }
 
 export interface UserProfile {
@@ -1555,6 +1570,19 @@ export interface OurCompanionApi {
     disableOnlineMode(): Promise<NetworkStatus>;
     retryConnection(): Promise<NetworkStatus>;
     onStatusChanged(listener: (status: NetworkStatus) => void): () => void;
+    friends: {
+      lookup(friendCode: string): Promise<{ id: string; username: string; friendCode: string; relationship: string }>;
+      getAll(): Promise<FriendSummary[]>;
+      getIncomingRequests(): Promise<FriendRequestSummary[]>;
+      getOutgoingRequests(): Promise<FriendRequestSummary[]>;
+      sendRequest(userId: string): Promise<unknown>;
+      acceptRequest(requestId: string): Promise<unknown>;
+      rejectRequest(requestId: string): Promise<unknown>;
+      cancelRequest(requestId: string): Promise<unknown>;
+      remove(userId: string): Promise<unknown>;
+    };
+    blocks: { getAll(): Promise<BlockedUserSummary[]>; block(userId: string): Promise<unknown>; unblock(userId: string): Promise<unknown>; };
+    presence: { getFriendPresence(): Promise<Array<{ userId: string; status: FriendPresence; updatedAt?: string | null }>>; sendActivity(): Promise<void>; };
   };
   window: {
     openPanel(input?: { companionX?: number; companionY?: number }): Promise<boolean>;

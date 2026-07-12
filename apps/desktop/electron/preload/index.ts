@@ -264,7 +264,20 @@ const api: OurCompanionApi = {
       const handler = (_event: Electron.IpcRendererEvent, status: NetworkStatus) => listener(status);
       ipcRenderer.on(channel, handler);
       return () => ipcRenderer.removeListener(channel, handler);
-    }
+    },
+    friends: {
+      lookup: (friendCode) => invoke('network:friends:lookup', friendCode),
+      getAll: () => invoke('network:friends:getAll'),
+      getIncomingRequests: () => invoke('network:friends:getIncomingRequests'),
+      getOutgoingRequests: () => invoke('network:friends:getOutgoingRequests'),
+      sendRequest: (userId) => invoke('network:friends:sendRequest', userId),
+      acceptRequest: (requestId) => invoke('network:friends:acceptRequest', requestId),
+      rejectRequest: (requestId) => invoke('network:friends:rejectRequest', requestId),
+      cancelRequest: (requestId) => invoke('network:friends:cancelRequest', requestId),
+      remove: (userId) => invoke('network:friends:remove', userId),
+    },
+    blocks: { getAll: () => invoke('network:blocks:getAll'), block: (userId) => invoke('network:blocks:block', userId), unblock: (userId) => invoke('network:blocks:unblock', userId) },
+    presence: { getFriendPresence: () => invoke('network:presence:getFriendPresence'), sendActivity: () => invoke('network:presence:sendActivity') },
   },
   app: {
     quit: () => invoke<boolean>('app:quit'),

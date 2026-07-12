@@ -76,6 +76,25 @@ describe('NetworkConnectionService', () => {
     expect((await service.getStatus()).serverUrl).toBe('https://network.example');
   });
 
+  it('keeps Online Mode disabled after logout when that preference is disabled', async () => {
+    const db = new TestDb();
+    const service = new NetworkConnectionService(db as never, undefined, { fetch: vi.fn(), createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
+    const status = await service.logout();
+    expect(status.onlineModeEnabled).toBe(false);
+    expect(status.state).toBe('disabled');
+    expect(db.getAppSetting('network.online-mode-enabled')).toBeUndefined();
+  });
+
+  it('keeps Online Mode enabled after logout when that preference is enabled', async () => {
+    const db = new TestDb();
+    db.setAppSetting('network.online-mode-enabled', true);
+    const service = new NetworkConnectionService(db as never, undefined, { fetch: vi.fn(), createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
+    const status = await service.logout();
+    expect(status.onlineModeEnabled).toBe(true);
+    expect(status.state).toBe('authentication_required');
+    expect(db.getAppSetting('network.online-mode-enabled')).toBe(true);
+  });
+
   it('normalizes only permitted origins', () => {
     expect(normalizeServerUrl('https://network.example/')).toBe('https://network.example');
     expect(() => normalizeServerUrl('https://user:secret@network.example')).toThrow('INVALID_NETWORK_SERVER_URL');

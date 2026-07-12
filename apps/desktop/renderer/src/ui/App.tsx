@@ -1876,6 +1876,7 @@ function SettingsView({ state, behaviorSettings, onRefresh, onLangChange, compan
         <PaperCard title={t(lang, 'settings_privacy_title')} tape><p>{t(lang, 'settings_privacy_desc')}</p></PaperCard>
         <VoiceSettingsCard />
         <OnlineModeCard />
+        <SocialCard />
         <PaperCard title="Attention" tape>
           <label><span>Companion initiative</span><select value={attentionMode} onChange={(event) => {
             const mode = event.target.value as 'available' | 'focused' | 'do_not_disturb';
@@ -2108,6 +2109,49 @@ function OnlineModeCard() {
       )}
     </PaperCard>
   );
+}
+
+function SocialCard() {
+  const [status, setStatus] = useState<NetworkStatus>();
+  const [friends, setFriends] = useState<Array<{ userId: string; username: string; friendCode: string; presence: string }>>([]);
+  const [incoming, setIncoming] = useState<Array<{ id: string; username: string }>>([]);
+  const [outgoing, setOutgoing] = useState<Array<{ id: string; username: string }>>([]);
+  const [blocked, setBlocked] = useState<Array<{ userId: string; username: string }>>([]);
+  const [friendCode, setFriendCode] = useState('');
+  const [lookup, setLookup] = useState<{ id: string; username: string; friendCode: string; relationship: string }>();
+  const [error, setError] = useState('');
+
+  const available = status?.onlineModeEnabled && status.state === 'online' && Boolean(status.account);
+  const refresh = async () => {
+    if (!available) return;
+    try {
+      const [nextFriends, nextIncoming, nextOutgoing, nextBlocked, presence] = await Promise.all([
+        window.ourCompanion.network.friends.getAll(), window.ourCompanion.network.friends.getIncomingRequests(), window.ourCompanion.network.friends.getOutgoingRequests(), window.ourCompanion.network.blocks.getAll(), window.ourCompanion.network.presence.getFriendPresence(),
+      ]);
+      const presenceByUser = new Map(presence.map((item) => [item.userId, item.status]));
+      setFriends(nextFriends.map((friend) => ({ ...friend, presence: presenceByUser.get(friend.userId) ?? 'offline' })));
+      setIncoming(nextIncoming); setOutgoing(nextOutgoing); setBlocked(nextBlocked); setError('');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to synchronize Social.'); }
+  };
+
+  useEffect(() => {
+    void window.ourCompanion.network.getStatus().then(setStatus);
+    return window.ourCompanion.network.onStatusChanged((next) => setStatus(next));
+  }, []);
+  useEffect(() => { void refresh(); }, [available, status?.socialRevision]);
+
+  if (!available) return <PaperCard title="Social" tape className="settings-panel"><p>Social features are unavailable while Offline Mode is enabled or authentication is required.</p></PaperCard>;
+  const action = async (operation: () => Promise<unknown>) => { try { await operation(); await window.ourCompanion.network.presence.sendActivity(); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Social action failed.'); } };
+
+  return <PaperCard title="Social" tape className="settings-panel">
+    <div className="online-auth-form"><label><span>Add Friend by Code</span><input value={friendCode} onChange={(event) => setFriendCode(event.target.value.toUpperCase())} placeholder="ABC12345" /></label><button className="btn-secondary btn-sm" onClick={() => void action(async () => { const result = await window.ourCompanion.network.friends.lookup(friendCode.trim()); setLookup(result); })} disabled={!friendCode.trim()}>Find</button></div>
+    {lookup && <div className="online-user-info"><p><strong>{lookup.username}</strong> · {lookup.friendCode}</p>{lookup.relationship === 'none' && <button className="btn-primary btn-sm" onClick={() => void action(() => window.ourCompanion.network.friends.sendRequest(lookup.id))}>Send Request</button>}<p>{lookup.relationship.replaceAll('_', ' ')}</p></div>}
+    {error && <p className="creation-error">{error}</p>}
+    <h3>Friends</h3>{friends.length ? friends.map((friend) => <div className="online-user-info" key={friend.userId}><strong>{friend.username}</strong><span> · {friend.presence}</span><div className="action-row"><button className="btn-ghost btn-sm" onClick={() => void action(() => window.ourCompanion.network.friends.remove(friend.userId))}>Remove</button><button className="btn-ghost btn-sm" onClick={() => void action(() => window.ourCompanion.network.blocks.block(friend.userId))}>Block</button></div></div>) : <p>No friends yet.</p>}
+    <h3>Incoming Requests</h3>{incoming.map((request) => <div className="action-row" key={request.id}><span>{request.username}</span><button onClick={() => void action(() => window.ourCompanion.network.friends.acceptRequest(request.id))}>Accept</button><button onClick={() => void action(() => window.ourCompanion.network.friends.rejectRequest(request.id))}>Reject</button></div>)}
+    <h3>Outgoing Requests</h3>{outgoing.map((request) => <div className="action-row" key={request.id}><span>{request.username} · Pending</span><button onClick={() => void action(() => window.ourCompanion.network.friends.cancelRequest(request.id))}>Cancel</button></div>)}
+    <h3>Blocked Users</h3>{blocked.map((user) => <div className="action-row" key={user.userId}><span>{user.username}</span><button onClick={() => void action(() => window.ourCompanion.network.blocks.unblock(user.userId))}>Unblock</button></div>)}
+  </PaperCard>;
 }
 
 const ALL_PERMISSION_SCOPES: PermissionScope[] = ['browser', 'automation', 'files', 'clipboard', 'calendar'];
