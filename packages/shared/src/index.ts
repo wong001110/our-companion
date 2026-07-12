@@ -1395,6 +1395,7 @@ export interface NetworkStatus {
   serverUrl: string;
   account?: { id: string; email: string; username: string; friendCode: string };
   message?: string;
+  remoteRevocationConfirmed?: boolean;
 }
 
 export interface UserProfile {

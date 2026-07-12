@@ -22,7 +22,7 @@ import type {
   JourneyMilestoneV2,
   KnowledgeGraph,
   KnowledgeGraphNode,
-  OnlineMode,
+  NetworkStatus,
   PermissionScope,
   PerformanceScriptV2,
   SpeechSettings,
@@ -32,8 +32,7 @@ import type {
   UiLang,
   UpdateAiSettingsInput,
   UpdateSpeechSettingsInput,
-  UserProfile
-  ,PendingCompanionAction
+  PendingCompanionAction
 } from '@our-companion/shared';
 import { COMPANION_CHAT_RETENTION_DAYS } from '@our-companion/shared';
 import { t, type Lang } from '../i18n';
@@ -1972,9 +1971,7 @@ function VoiceSettingsCard() {
 }
 
 function OnlineModeCard() {
-  const lang = useLang();
-  const [mode, setMode] = useState<OnlineMode>('offline');
-  const [user, setUser] = useState<UserProfile | null>(null);
+  const [networkStatus, setNetworkStatus] = useState<NetworkStatus>();
   const [loading, setLoading] = useState(true);
   const [showRegister, setShowRegister] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -1984,119 +1981,111 @@ function OnlineModeCard() {
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [serverUrl, setServerUrl] = useState('');
+  const [serverError, setServerError] = useState('');
+  const [editingServer, setEditingServer] = useState(false);
 
   useEffect(() => {
-    void loadData();
+    let mounted = true;
+    void window.ourCompanion.network.getStatus().then((status) => {
+      if (!mounted) return;
+      setNetworkStatus(status);
+      setServerUrl(status.serverUrl);
+      setLoading(false);
+    }).catch(() => { if (mounted) setLoading(false); });
+    const unsubscribe = window.ourCompanion.network.onStatusChanged((status) => {
+      if (!mounted) return;
+      setNetworkStatus(status);
+      if (!editingServer) setServerUrl(status.serverUrl);
+    });
+    return () => { mounted = false; unsubscribe(); };
   }, []);
 
-  async function loadData() {
-    setLoading(true);
-    try {
-      const status = await window.ourCompanion.network.getStatus();
-      setMode(status.state === 'online' ? 'online' : 'offline');
-      setUser(status.account ? { id: status.account.id, username: status.account.username, displayName: status.account.username, email: status.account.email, createdAt: '', updatedAt: '' } : null);
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false);
-    }
-  }
-
   async function handleModeToggle() {
-    const newMode = mode === 'online' ? 'offline' : 'online';
-    if (newMode === 'online' && !user) {
+    if (!networkStatus) return;
+    if (!networkStatus.onlineModeEnabled && !networkStatus.account) {
       setShowRegister(true);
       return;
     }
     try {
-      const status = newMode === 'online'
-        ? await window.ourCompanion.network.enableOnlineMode()
-        : await window.ourCompanion.network.disableOnlineMode();
-      setMode(status.state === 'online' ? 'online' : 'offline');
+      await (networkStatus.onlineModeEnabled
+        ? window.ourCompanion.network.disableOnlineMode()
+        : window.ourCompanion.network.enableOnlineMode());
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : 'Failed to update mode');
     }
   }
 
+  async function saveServerUrl() {
+    if (!networkStatus) return;
+    if (networkStatus.account && !window.confirm('Changing Network Server will sign you out from the current server. Continue?')) return;
+    setSaving(true); setServerError('');
+    try {
+      const status = await window.ourCompanion.network.configureServer(serverUrl);
+      setNetworkStatus(status);
+      setServerUrl(status.serverUrl);
+      setEditingServer(false);
+    } catch (error) {
+      setServerError(error instanceof Error ? error.message : 'Invalid Network Server URL.');
+    } finally { setSaving(false); }
+  }
+
   async function handleRegister() {
     if (!username.trim() || !password.trim() || !email.trim()) return;
-    setSaving(true);
-    setAuthError('');
+    setSaving(true); setAuthError('');
     try {
-      const status = await window.ourCompanion.network.register({
-        username: username.trim(),
-        email: email.trim(),
-        password
-      });
-      setUser(status.account ? { id: status.account.id, username: status.account.username, displayName: status.account.username, email: status.account.email, createdAt: '', updatedAt: '' } : null);
-      setMode(status.state === 'online' ? 'online' : 'offline');
-      setShowRegister(false);
-      resetForm();
-    } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Registration failed');
-    } finally {
-      setSaving(false);
-    }
+      await window.ourCompanion.network.register({ username: username.trim(), email: email.trim(), password });
+      setShowRegister(false); resetForm();
+    } catch (err) { setAuthError(err instanceof Error ? err.message : 'Registration failed'); }
+    finally { setSaving(false); }
   }
 
   async function handleLogin() {
     if (!email.trim() || !password.trim()) return;
-    setSaving(true);
-    setAuthError('');
+    setSaving(true); setAuthError('');
     try {
-      const status = await window.ourCompanion.network.login({
-        email: email.trim(),
-        password
-      });
-      setUser(status.account ? { id: status.account.id, username: status.account.username, displayName: status.account.username, email: status.account.email, createdAt: '', updatedAt: '' } : null);
-      setMode(status.state === 'online' ? 'online' : 'offline');
-      setShowLogin(false);
-      resetForm();
-    } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Login failed');
-    } finally {
-      setSaving(false);
-    }
+      await window.ourCompanion.network.login({ email: email.trim(), password });
+      setShowLogin(false); resetForm();
+    } catch (err) { setAuthError(err instanceof Error ? err.message : 'Login failed'); }
+    finally { setSaving(false); }
   }
 
-  async function handleLogout() {
-    await window.ourCompanion.network.logout();
-    setUser(null);
-    setMode('offline');
-  }
+  async function handleLogout() { await window.ourCompanion.network.logout(); }
 
   function resetForm() {
-    setUsername('');
-    setDisplayName('');
-    setEmail('');
-    setPassword('');
-    setAuthError('');
+    setUsername(''); setDisplayName(''); setEmail(''); setPassword(''); setAuthError('');
   }
 
+  const busy = saving || ['checking_server', 'connecting'].includes(networkStatus?.state ?? '');
+  const label = networkStatus ? networkStatus.state.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Offline';
+
   if (loading) {
-    return (
-      <PaperCard title="Online Mode" tape className="settings-panel">
-        <p>Loading...</p>
-      </PaperCard>
-    );
+    return <PaperCard title="Online Mode" tape className="settings-panel"><p>Loading...</p></PaperCard>;
   }
 
   return (
     <PaperCard title="Online Mode" tape className="settings-panel">
       <div className="online-mode-header">
         <div className="online-mode-status">
-          <span className={`online-mode-dot ${mode === 'online' ? 'online-mode-dot-active' : ''}`} />
-          <span className="online-mode-label">{mode === 'online' ? 'Online' : 'Offline'}</span>
+          <span className={`online-mode-dot ${networkStatus?.state === 'online' ? 'online-mode-dot-active' : ''}`} />
+          <span className="online-mode-label">{label}</span>
         </div>
-        <button className="btn-secondary btn-sm" onClick={() => void handleModeToggle()}>
-          {mode === 'online' ? 'Go Offline' : 'Go Online'}
+        <button className="btn-secondary btn-sm" onClick={() => void handleModeToggle()} disabled={busy}>
+          {networkStatus?.onlineModeEnabled ? 'Go Offline' : 'Go Online'}
         </button>
       </div>
+      <div className="online-auth-form">
+        <label><span>Network Server</span><input value={serverUrl} disabled={busy || !editingServer} onChange={(event) => setServerUrl(event.target.value)} /></label>
+        {!editingServer ? <button className="btn-ghost btn-sm" disabled={busy} onClick={() => setEditingServer(true)}>Change Server</button> : <div className="action-row"><button className="btn-secondary btn-sm" disabled={saving} onClick={() => { setServerUrl(networkStatus?.serverUrl ?? ''); setEditingServer(false); }}>Cancel</button><button className="btn-primary btn-sm" disabled={saving} onClick={() => void saveServerUrl()}>Save Server</button></div>}
+        <p>Changing the server signs you out. Production servers require HTTPS.</p>
+        {serverError && <p className="creation-error">{serverError}</p>}
+      </div>
+      {networkStatus?.message && <p className="creation-error">{networkStatus.message}</p>}
 
-      {user ? (
+      {networkStatus?.account ? (
         <div className="online-user-info">
-          <p><strong>{user.displayName}</strong> (@{user.username})</p>
-          {user.email && <p>{user.email}</p>}
+          <p><strong>{networkStatus.account.username}</strong> (@{networkStatus.account.username})</p>
+          <p>{networkStatus.account.email}</p>
           <button className="btn-ghost btn-sm" onClick={() => void handleLogout()}>Log out</button>
         </div>
       ) : showRegister ? (
@@ -2106,12 +2095,7 @@ function OnlineModeCard() {
           <label><span>Email</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" /></label>
           <label><span>Password</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" /></label>
           {authError && <p className="creation-error">{authError}</p>}
-          <div className="action-row">
-            <button className="btn-secondary btn-sm" onClick={() => { setShowRegister(false); resetForm(); }}>Cancel</button>
-            <button className="btn-primary btn-sm" disabled={saving || !username.trim() || !password.trim() || !email.trim()} onClick={() => void handleRegister()}>
-              {saving ? 'Creating...' : 'Create Account'}
-            </button>
-          </div>
+          <div className="action-row"><button className="btn-secondary btn-sm" onClick={() => { setShowRegister(false); resetForm(); }}>Cancel</button><button className="btn-primary btn-sm" disabled={saving || !username.trim() || !password.trim() || !email.trim()} onClick={() => void handleRegister()}>{saving ? 'Creating...' : 'Create Account'}</button></div>
           <p className="online-auth-switch">Already have an account? <button className="btn-ghost btn-sm" onClick={() => { setShowRegister(false); setShowLogin(true); resetForm(); }}>Log in</button></p>
         </div>
       ) : showLogin ? (
@@ -2120,19 +2104,11 @@ function OnlineModeCard() {
           <label><span>Email</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" autoFocus /></label>
           <label><span>Password</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" /></label>
           {authError && <p className="creation-error">{authError}</p>}
-          <div className="action-row">
-            <button className="btn-secondary btn-sm" onClick={() => { setShowLogin(false); resetForm(); }}>Cancel</button>
-            <button className="btn-primary btn-sm" disabled={saving || !email.trim() || !password.trim()} onClick={() => void handleLogin()}>
-              {saving ? 'Logging in...' : 'Log In'}
-            </button>
-          </div>
+          <div className="action-row"><button className="btn-secondary btn-sm" onClick={() => { setShowLogin(false); resetForm(); }}>Cancel</button><button className="btn-primary btn-sm" disabled={saving || !email.trim() || !password.trim()} onClick={() => void handleLogin()}>{saving ? 'Logging in...' : 'Log In'}</button></div>
           <p className="online-auth-switch">Don&apos;t have an account? <button className="btn-ghost btn-sm" onClick={() => { setShowLogin(false); setShowRegister(true); resetForm(); }}>Create one</button></p>
         </div>
       ) : (
-        <div className="online-auth-buttons">
-          <button className="btn-secondary btn-sm" onClick={() => setShowLogin(true)}>Log In</button>
-          <button className="btn-primary btn-sm" onClick={() => setShowRegister(true)}>Create Account</button>
-        </div>
+        <div className="online-auth-buttons"><button className="btn-secondary btn-sm" onClick={() => setShowLogin(true)}>Log In</button><button className="btn-primary btn-sm" onClick={() => setShowRegister(true)}>Create Account</button></div>
       )}
     </PaperCard>
   );
