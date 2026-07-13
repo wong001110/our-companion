@@ -9,4 +9,4 @@
 ## Verification
 
 - Focused speech tests: 15 passed.
-- Full Node 22 client regression: 55 files / 407 tests passed.
+- Full Node 22 client regression: 55 files / 409 tests passed.

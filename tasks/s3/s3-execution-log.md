@@ -10,7 +10,7 @@
 
 ## Verification
 
-- Node 22.23.1: typecheck, architecture check, build, and full Vitest suite passed: 55 files / 407 tests.
+- Node 22.23.1: typecheck, architecture check, build, and full Vitest suite passed: 55 files / 409 tests.
 - Focused asset builder and transfer ownership tests passed.
 - Live R2 integration passed: private upload, HEAD, download/hash, manifest write, delete, and clean test teardown.
 - Two-client desktop smoke test: passed. The owner and friend completed the online publish/download flow successfully on separate devices.
@@ -18,3 +18,9 @@
 ## Remaining limitation
 
 The initial IPC binding issue encountered during the first asset-pack build was fixed in `9e078a8`; all public-companion IPC handlers now retain their service instance binding.
+
+## Follow-up client polish
+
+- `0cae222` adds `hasPublishedCompanion` to the Friend summary. The desktop disables Companion viewing before making a request when the friend has no published active asset pack, while the Server authorization check remains authoritative.
+- Friends now display their unique Friend Code beside their username.
+- App restart restores the encrypted same-origin refresh session automatically when Online Mode remains enabled; explicit logout, server changes, session revocation/expiry, or unavailable OS secure storage still require authentication.
