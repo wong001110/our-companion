@@ -1999,6 +1999,7 @@ function OnlineModeCard() {
   const [serverUrl, setServerUrl] = useState('');
   const [serverError, setServerError] = useState('');
   const [editingServer, setEditingServer] = useState(false);
+  const [friendCodeCopied, setFriendCodeCopied] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -2063,6 +2064,18 @@ function OnlineModeCard() {
 
   async function handleLogout() { await window.ourCompanion.network.logout(); }
 
+  async function copyFriendCode() {
+    const friendCode = networkStatus?.account?.friendCode;
+    if (!friendCode) return;
+    try {
+      await navigator.clipboard.writeText(friendCode);
+      setFriendCodeCopied(true);
+      window.setTimeout(() => setFriendCodeCopied(false), 2_000);
+    } catch {
+      setAuthError('Unable to copy Friend Code. Select and copy it manually.');
+    }
+  }
+
   function resetForm() {
     setUsername(''); setDisplayName(''); setEmail(''); setPassword(''); setAuthError('');
   }
@@ -2097,6 +2110,8 @@ function OnlineModeCard() {
         <div className="online-user-info">
           <p><strong>{networkStatus.account.username}</strong> (@{networkStatus.account.username})</p>
           <p>{networkStatus.account.email}</p>
+          <p><strong>Your Friend Code:</strong> <code>{networkStatus.account.friendCode}</code></p>
+          <button className="btn-ghost btn-sm" onClick={() => void copyFriendCode()}>{friendCodeCopied ? 'Copied' : 'Copy Friend Code'}</button>
           <button className="btn-ghost btn-sm" onClick={() => void handleLogout()}>Log out</button>
         </div>
       ) : showRegister ? (
