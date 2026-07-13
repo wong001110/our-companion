@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({ safeStorage: { isEncryptionAvailable: () => true, encryptString: (value: string) => Buffer.from(value), decryptString: (value: Buffer) => value.toString() } }));
 
-import { NetworkConnectionService, normalizeServerUrl } from './networkConnection';
+import { NetworkConnectionService, normalizeServerUrl, sanitizeVisitRuntimeConfig } from './networkConnection';
 
 class TestDb {
   readonly values = new Map<string, unknown>();
@@ -73,6 +73,22 @@ describe('NetworkConnectionService', () => {
     const service = new NetworkConnectionService(db as never, undefined, { fetch, createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
     await (service as any).checkCompatibility();
     await expect(service.getStatus()).resolves.toMatchObject({ features: { visitInvitations: false, visitSessions: false } });
+  });
+
+  it('stores valid sanitized Visit runtime timing from compatibility metadata', async () => {
+    const db = new TestDb();
+    const fetch = vi.fn().mockResolvedValue(response({ compatible: true, visit: { heartbeatIntervalSeconds: 5, heartbeatTimeoutSeconds: 30 } }));
+    const service = new NetworkConnectionService(db as never, undefined, { fetch, createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
+    await (service as any).checkCompatibility();
+    expect(service.getStatusSnapshot().visit).toEqual({ heartbeatIntervalSeconds: 5, heartbeatTimeoutSeconds: 30 });
+  });
+
+  it.each([
+    [{ heartbeatIntervalSeconds: 4, heartbeatTimeoutSeconds: 30 }],
+    [{ heartbeatIntervalSeconds: 5, heartbeatTimeoutSeconds: 10 }],
+    [{ heartbeatIntervalSeconds: 61, heartbeatTimeoutSeconds: 122 }],
+  ])('rejects malformed Visit runtime timing', (value) => {
+    expect(sanitizeVisitRuntimeConfig(value)).toBeUndefined();
   });
 
   it('clears the encrypted session when changing server origin', async () => {

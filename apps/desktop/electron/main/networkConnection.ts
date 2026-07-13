@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { safeStorage } from 'electron';
 import { io, type Socket } from 'socket.io-client';
 import type { DatabaseService } from '@our-companion/database';
-import type { BlockedUserSummary, CompanionAssetManifestV1, CompleteAssetPackResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile, VisitInvitationStatus, VisitInvitationSummary, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
+import type { BlockedUserSummary, CompanionAssetManifestV1, CompleteAssetPackResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile, VisitInvitationStatus, VisitInvitationSummary, VisitRuntimeConfig, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
 
 export const NETWORK_PROTOCOL_VERSION = '0.3';
 export const NETWORK_CLIENT_VERSION = '0.3.0';
@@ -25,6 +25,7 @@ export interface NetworkStatus {
   socialRevision?: number;
   socialInvalidation?: SocialInvalidation;
   features?: { visitInvitations: boolean; visitSessions: boolean; [feature: string]: boolean };
+  visit?: VisitRuntimeConfig;
 }
 export interface StoredNetworkSession { serverOrigin: string; accessToken: string; refreshToken: string; }
 
@@ -75,6 +76,7 @@ export class NetworkConnectionService {
   }
 
   getStatus = async (): Promise<NetworkStatus> => ({ ...this.status });
+  getStatusSnapshot = (): NetworkStatus => ({ ...this.status });
 
   configureServer = async (serverUrl: string): Promise<NetworkStatus> => {
     const normalized = normalizeServerUrl(serverUrl);
@@ -240,9 +242,9 @@ export class NetworkConnectionService {
   }
 
   private async checkCompatibility(): Promise<void> {
-    const data = await this.request<{ compatible: boolean; reason?: string; features?: NetworkStatus['features'] }>('/api/meta/client-compatibility');
+    const data = await this.request<{ compatible: boolean; reason?: string; features?: NetworkStatus['features']; visit?: unknown }>('/api/meta/client-compatibility');
     if (!data.compatible) throw new Error(data.reason ?? 'INCOMPATIBLE_CLIENT');
-    this.setStatus({ features: data.features });
+    this.setStatus({ features: data.features, visit: sanitizeVisitRuntimeConfig(data.visit) });
   }
 
   private async acceptAuthentication(result: AuthResult): Promise<void> {
@@ -405,3 +407,11 @@ export function normalizeServerUrl(value: string): string {
 function isIncompatible(code: string): boolean { return ['INCOMPATIBLE_CLIENT', 'UNSUPPORTED_PROTOCOL_VERSION', 'CLIENT_VERSION_TOO_OLD'].includes(code); }
 function isAuthenticationError(code: string): boolean { return ['AUTHENTICATION_FAILED', 'AUTHENTICATION_REQUIRED', 'TOKEN_EXPIRED'].includes(code); }
 function messageFor(error: unknown): string { return error instanceof Error ? error.message : 'NETWORK_ERROR'; }
+export function sanitizeVisitRuntimeConfig(input: unknown): VisitRuntimeConfig | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const value = input as Partial<VisitRuntimeConfig>;
+  const interval = value.heartbeatIntervalSeconds;
+  const timeout = value.heartbeatTimeoutSeconds;
+  if (typeof interval !== 'number' || !Number.isInteger(interval) || interval < 5 || interval > 60 || typeof timeout !== 'number' || !Number.isInteger(timeout) || timeout < Math.max(30, interval * 2, interval + 5) || timeout > 300) return undefined;
+  return { heartbeatIntervalSeconds: interval, heartbeatTimeoutSeconds: timeout };
+}

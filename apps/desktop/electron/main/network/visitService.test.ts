@@ -9,9 +9,10 @@ const session = (state: 'preparing' | 'ready' | 'active' | 'ended' = 'preparing'
   visitorOwnerReady: false, hostReady: false, createdAt: '2026-07-13T00:00:00.000Z', updatedAt: '2026-07-13T00:00:00.000Z',
 });
 
-function dependencies(accountId = owner) {
+function dependencies(accountId = owner, visit?: { heartbeatIntervalSeconds: number; heartbeatTimeoutSeconds: number }) {
   const network = {
-    getStatus: vi.fn().mockResolvedValue({ onlineModeEnabled: true, state: 'online', account: { id: accountId } }),
+    getStatus: vi.fn().mockResolvedValue({ onlineModeEnabled: true, state: 'online', account: { id: accountId }, visit }),
+    getStatusSnapshot: vi.fn(() => ({ onlineModeEnabled: true, state: 'online', account: { id: accountId }, visit })),
     getVisitSession: vi.fn().mockResolvedValue(session()),
     markVisitReady: vi.fn().mockResolvedValue({ ...session(), visitorOwnerReady: true }),
     startVisitSession: vi.fn(), endVisitSession: vi.fn(), heartbeatVisitSession: vi.fn().mockResolvedValue(session()),
@@ -91,5 +92,44 @@ describe('VisitService main-process coordinator', () => {
     await vi.advanceTimersByTimeAsync(15_000);
     await vi.advanceTimersByTimeAsync(15_000);
     expect(network.heartbeatVisitSession).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    [5, 5_000, 1],
+    [30, 15_000, 0],
+    [30, 30_000, 1],
+  ])('uses the server heartbeat cadence of %is', async (interval, elapsed, expected) => {
+    vi.useFakeTimers();
+    const { service, network } = dependencies(owner, { heartbeatIntervalSeconds: interval, heartbeatTimeoutSeconds: Math.max(30, interval * 2) });
+    network.listVisitSessions.mockResolvedValue([session('preparing')]);
+    await service.listSessions();
+    await vi.advanceTimersByTimeAsync(elapsed);
+    expect(network.heartbeatVisitSession).toHaveBeenCalledTimes(expected);
+  });
+
+  it('falls back to fifteen seconds when runtime timing is missing or invalid', async () => {
+    vi.useFakeTimers();
+    const { service, network } = dependencies(owner);
+    network.getStatusSnapshot.mockReturnValue({ onlineModeEnabled: true, state: 'online', account: { id: owner }, visit: { heartbeatIntervalSeconds: 4, heartbeatTimeoutSeconds: 8 } });
+    network.listVisitSessions.mockResolvedValue([session('preparing')]);
+    await service.listSessions();
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(network.heartbeatVisitSession).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(network.heartbeatVisitSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('recreates heartbeat timers with the current server cadence after reconciliation', async () => {
+    vi.useFakeTimers();
+    const { service, network } = dependencies(owner, { heartbeatIntervalSeconds: 15, heartbeatTimeoutSeconds: 30 });
+    network.listVisitSessions.mockResolvedValue([session('preparing')]);
+    await service.reconcile();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(network.heartbeatVisitSession).not.toHaveBeenCalled();
+    service.stopAll();
+    network.getStatusSnapshot.mockReturnValue({ onlineModeEnabled: true, state: 'online', account: { id: owner }, visit: { heartbeatIntervalSeconds: 5, heartbeatTimeoutSeconds: 30 } });
+    await service.reconcile();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(network.heartbeatVisitSession).toHaveBeenCalledTimes(1);
   });
 });

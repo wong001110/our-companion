@@ -2,7 +2,6 @@ import type { VisitInvitationStatus, VisitInvitationSummary, VisitSessionSummary
 import type { NetworkConnectionService } from '../networkConnection';
 import type { PublicCompanionService } from './publicCompanionService';
 
-const HEARTBEAT_MS = 15_000;
 const LIVE_STATES = new Set<VisitSessionSummary['state']>(['preparing', 'ready', 'active']);
 
 /** Main-process-only S4 coordinator. It deliberately returns only sanitized REST summaries. */
@@ -106,7 +105,7 @@ export class VisitService {
         if (failures >= 3) void this.reconcile().catch(() => undefined);
       }
     };
-    this.heartbeatTimers.set(session.id, setInterval(() => void heartbeat(), HEARTBEAT_MS));
+    this.heartbeatTimers.set(session.id, setInterval(() => void heartbeat(), this.heartbeatIntervalMs()));
   }
 
   private stop(sessionId: string): void {
@@ -120,5 +119,10 @@ export class VisitService {
   private isTerminalHeartbeatError(error: unknown): boolean {
     const code = error instanceof Error ? error.message : String(error);
     return ['VISIT_SESSION_NOT_FOUND', 'VISIT_SESSION_NOT_PARTICIPANT', 'VISIT_SESSION_STATE_CHANGED', 'AUTHENTICATION_REQUIRED', 'ONLINE_MODE_DISABLED'].some(value => code.includes(value));
+  }
+
+  private heartbeatIntervalMs(): number {
+    const interval = this.network.getStatusSnapshot().visit?.heartbeatIntervalSeconds;
+    return typeof interval === 'number' && Number.isInteger(interval) && interval >= 5 && interval <= 60 ? interval * 1_000 : 15_000;
   }
 }

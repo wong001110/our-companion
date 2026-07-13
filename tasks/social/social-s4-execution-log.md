@@ -19,3 +19,11 @@
 - Verification: bundled Node 24 runtime, `npm run typecheck` (after project reference rebuild), `npm run arch:check`, full `npm test` (56 files / 416 tests), focused Visit tests, `npm run build`, and `git diff --check` passed.
 - Two-client S4 smoke test: passed (reported by the tester).
 - Remaining environment limitation: the supplied command runtime did not provide Node 22 specifically; the bundled Node 24 runtime was used because it provides `node:sqlite`, required by the full suite.
+
+## S4 heartbeat configuration closure (2026-07-14)
+
+- Previous reviewed baseline: `8fc124552920f2617564b2043ecef0eed3f0b5cd`.
+- The compatibility response now carries sanitized Visit cadence in `NetworkStatus.visit`; malformed or missing timing uses the safe 15-second client fallback.
+- Visit timers are created from the current server interval. Reconnect stops existing timers and reconciliation recreates them using the latest compatibility metadata.
+- Focused connection/coordinator tests passed (30 tests). Full Client verification passed: typecheck, architecture check, build, and 56 files / 426 tests using the supported bundled runtime.
+- Remaining manual verification: two-client default, custom 5/30-second, and reconnect heartbeat smoke tests.

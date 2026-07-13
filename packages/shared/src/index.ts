@@ -1389,6 +1389,7 @@ export interface WorkspaceStatusSnapshot {
 export type OnlineMode = 'online' | 'offline';
 
 export type NetworkConnectionState = 'offline' | 'checking_server' | 'authentication_required' | 'connecting' | 'online' | 'reconnecting' | 'incompatible_client' | 'server_unavailable' | 'authentication_failed' | 'disabled';
+export interface VisitRuntimeConfig { heartbeatIntervalSeconds: number; heartbeatTimeoutSeconds: number; }
 export interface NetworkStatus {
   state: NetworkConnectionState;
   onlineModeEnabled: boolean;
@@ -1399,6 +1400,7 @@ export interface NetworkStatus {
   socialRevision?: number;
   socialInvalidation?: SocialInvalidation;
   features?: { visitInvitations: boolean; visitSessions: boolean; [feature: string]: boolean };
+  visit?: VisitRuntimeConfig;
 }
 
 export type SocialInvalidation =

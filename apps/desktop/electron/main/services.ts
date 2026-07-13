@@ -237,6 +237,7 @@ export class AppServices {
     this.network = new NetworkConnectionService(this.db, (status) => {
       const visitInvalidated = status.socialInvalidation?.type === 'visit_session' && status.socialRevision !== lastVisitRevision;
       if (visitInvalidated) lastVisitRevision = status.socialRevision;
+      if (status.state === 'reconnecting') visits?.stopAll();
       if (status.state === 'online' && (!wasOnline || visitInvalidated)) void visits?.reconcile();
       wasOnline = status.state === 'online';
       this.networkStatusBroadcaster?.(status);
