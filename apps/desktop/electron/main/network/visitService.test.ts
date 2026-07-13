@@ -53,6 +53,16 @@ describe('VisitService main-process coordinator', () => {
     expect(network.heartbeatVisitSession).toHaveBeenCalledTimes(2);
   });
 
+  it('reconciles a restored session once after reconnect and resumes its heartbeat', async () => {
+    vi.useFakeTimers();
+    const { service, network } = dependencies(owner);
+    network.listVisitSessions.mockResolvedValue([session('ready')]);
+    await Promise.all([service.reconcile(), service.reconcile()]);
+    expect(network.listVisitSessions).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(network.heartbeatVisitSession).toHaveBeenCalledWith('session-1');
+  });
+
   it('refuses preparation while Online Mode is unavailable', async () => {
     const { service, network } = dependencies(owner);
     network.getStatus.mockResolvedValue({ onlineModeEnabled: false, state: 'disabled' });

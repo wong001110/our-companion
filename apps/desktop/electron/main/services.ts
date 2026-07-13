@@ -231,9 +231,19 @@ export class AppServices {
         return true;
       }
     );
-    this.network = new NetworkConnectionService(this.db, (status) => this.networkStatusBroadcaster?.(status));
+    let visits: VisitService | undefined;
+    let wasOnline = false;
+    let lastVisitRevision: number | undefined;
+    this.network = new NetworkConnectionService(this.db, (status) => {
+      const visitInvalidated = status.socialInvalidation?.type === 'visit_session' && status.socialRevision !== lastVisitRevision;
+      if (visitInvalidated) lastVisitRevision = status.socialRevision;
+      if (status.state === 'online' && (!wasOnline || visitInvalidated)) void visits?.reconcile();
+      wasOnline = status.state === 'online';
+      this.networkStatusBroadcaster?.(status);
+    });
     this.publicCompanions = new PublicCompanionService(this.db, this.network, userDataDir);
     this.visits = new VisitService(this.network, this.publicCompanions);
+    visits = this.visits;
     this.network.setTransferLifecycleHandler(() => { this.publicCompanions.cancelTransfers(); this.visits.stopAll(); });
     this.companionRuntime.setExplicitMode(
       this.db.getAppSetting<'available' | 'focused' | 'do_not_disturb'>('attention_mode') ?? 'available'

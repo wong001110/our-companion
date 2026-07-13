@@ -8,6 +8,7 @@ const LIVE_STATES = new Set<VisitSessionSummary['state']>(['preparing', 'ready',
 /** Main-process-only S4 coordinator. It deliberately returns only sanitized REST summaries. */
 export class VisitService {
   private readonly heartbeatTimers = new Map<string, NodeJS.Timeout>();
+  private reconcilePromise?: Promise<void>;
 
   constructor(private readonly network: NetworkConnectionService, private readonly companions: PublicCompanionService) {}
 
@@ -25,6 +26,13 @@ export class VisitService {
     const sessions = await this.network.listVisitSessions();
     sessions.forEach((session) => this.track(session));
     return sessions;
+  };
+
+  /** Restores heartbeat ownership after an app reconnect without involving a renderer window. */
+  reconcile = async (): Promise<void> => {
+    if (this.reconcilePromise) return this.reconcilePromise;
+    this.reconcilePromise = this.listSessions().then(() => undefined).finally(() => { this.reconcilePromise = undefined; });
+    return this.reconcilePromise;
   };
   getSession = async (sessionId: string): Promise<VisitSessionSummary> => {
     const session = await this.network.getVisitSession(sessionId);
