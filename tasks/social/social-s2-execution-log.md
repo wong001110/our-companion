@@ -18,6 +18,6 @@
   - With the bundled Node `24.14.0` runtime: `npx tsc -b --force`, then `npm run typecheck` — passed.
   - With the bundled Node `24.14.0` runtime: `npm test` — passed (53 files, 389 tests).
   - `git diff --check` — passed.
-- Scripted integration results: pending a real PostgreSQL database and two accounts.
-- Manual two-client desktop smoke test: pending.
-- Remaining limitations: the project declares Node `>=22 <23`, while this environment supplies Node 20 and bundled Node 24; repeat the full client verification under Node 22. Real PostgreSQL integration and the manual two-client desktop smoke test remain pending. S3 public identity/assets, S4 invitations, and S5 visual visits remain deferred.
+- Real two-account integration: exercised through the user-confirmed live two-client test on 2026-07-13.
+- Manual two-client desktop smoke test: completed and confirmed by the user on 2026-07-13.
+- Remaining limitations: the project declares Node `>=22 <23`, while this environment supplies Node 20 and bundled Node 24; repeat the full client verification under Node 22 when that runtime is available. S3 public identity/assets, S4 invitations, and S5 visual visits remain deferred.
