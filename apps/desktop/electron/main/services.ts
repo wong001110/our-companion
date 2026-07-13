@@ -231,6 +231,7 @@ export class AppServices {
     );
     this.network = new NetworkConnectionService(this.db, (status) => this.networkStatusBroadcaster?.(status));
     this.publicCompanions = new PublicCompanionService(this.db, this.network, userDataDir);
+    this.network.setTransferLifecycleHandler(() => this.publicCompanions.cancelTransfers());
     this.companionRuntime.setExplicitMode(
       this.db.getAppSetting<'available' | 'focused' | 'do_not_disturb'>('attention_mode') ?? 'available'
     );

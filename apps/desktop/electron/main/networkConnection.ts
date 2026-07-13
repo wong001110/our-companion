@@ -61,6 +61,7 @@ export class NetworkConnectionService {
   private socketRefreshAttempted = false;
   private socialRevision = 0;
   private lastPresenceActivityAt = 0;
+  private transferLifecycleHandler?: (reason: string) => void;
 
   constructor(
     private readonly db: DatabaseService,
@@ -75,6 +76,7 @@ export class NetworkConnectionService {
   configureServer = async (serverUrl: string): Promise<NetworkStatus> => {
     const normalized = normalizeServerUrl(serverUrl);
     if (normalized === this.serverUrl) return this.getStatus();
+    this.transferLifecycleHandler?.('server_changed');
     this.clearReconnectTimer();
     this.socket?.disconnect();
     this.socket = undefined;
@@ -131,6 +133,7 @@ export class NetworkConnectionService {
   }
 
   disableOnlineMode = async (): Promise<NetworkStatus> => {
+    this.transferLifecycleHandler?.('online_mode_disabled');
     this.db.setAppSetting(MODE_KEY, false);
     this.stopSocket();
     this.resetReconnectAttempts();
@@ -139,6 +142,7 @@ export class NetworkConnectionService {
   };
 
   logout = async (): Promise<NetworkStatus> => {
+    this.transferLifecycleHandler?.('logout');
     let remoteRevocationConfirmed = false;
     try {
       if (this.session) {
@@ -187,17 +191,19 @@ export class NetworkConnectionService {
   getMyCompanions = () => this.socialRequest<{ activeNetworkCompanionId?: string; companions: Array<PublicCompanionProfile & { assetPacks: NetworkAssetPack[] }> }>('/api/companions/mine');
   createNetworkCompanion = (input: { name: string; publicDescription?: string; publicTags?: string[] }) => this.socialRequest<{ networkCompanionId: string; companion: PublicCompanionProfile }>('/api/companions', input);
   updateNetworkCompanion = (companionId: string, input: { name: string; publicDescription?: string; publicTags?: string[] }) => this.socialRequest<PublicCompanionProfile>(`/api/companions/${companionId}`, input, 'PATCH');
-  activateNetworkCompanion = (companionId: string) => this.socialRequest<{ activeNetworkCompanionId: string }>(`/api/companions/${companionId}/activate`, {});
+  activateNetworkCompanion = (companionId: string) => this.socialRequest<{ activeNetworkCompanionId: string; changed: boolean }>(`/api/companions/${companionId}/activate`, {});
   publishNetworkCompanion = (companionId: string) => this.socialRequest<PublicCompanionProfile>(`/api/companions/${companionId}/publish`, {});
   unpublishNetworkCompanion = (companionId: string) => this.socialRequest<PublicCompanionProfile>(`/api/companions/${companionId}/unpublish`, {});
   getFriendCompanion = (friendUserId: string) => this.socialRequest<PublicCompanionProfile>(`/api/friends/${friendUserId}/companion`);
-  initiateAssetPack = (companionId: string, input: { schemaVersion: 1; manifestHash: string; totalFiles: number; totalBytes: number; manifest: CompanionAssetManifestV1 }) => this.socialRequest<{ reused: boolean; assetPack: NetworkAssetPack; fileIds?: string[] }>(`/api/companions/${companionId}/asset-packs`, input);
+  initiateAssetPack = (companionId: string, input: { schemaVersion: 1; manifestHash: string; totalFiles: number; totalBytes: number; manifest: CompanionAssetManifestV1 }) => this.socialRequest<{ reused: boolean; resumed?: boolean; requiresActivation?: boolean; assetPack: NetworkAssetPack; fileIds?: string[] }>(`/api/companions/${companionId}/asset-packs`, input);
   getUploadUrls = (assetPackId: string, fileIds: string[]) => this.socialRequest<{ uploads: Array<{ fileId: string; relativePath: string; uploadUrl: string; expiresAt: string; requiredHeaders: { 'content-type': string; 'x-amz-meta-sha256': string } }> }>(`/api/asset-packs/${assetPackId}/upload-urls`, { fileIds });
   completeAssetPack = (assetPackId: string) => this.socialRequest<{ assetPack: NetworkAssetPack }>(`/api/asset-packs/${assetPackId}/complete`, {});
+  activateAssetPack = (assetPackId: string) => this.socialRequest<PublicCompanionProfile>(`/api/asset-packs/${assetPackId}/activate`, {});
   getAssetPackManifest = (assetPackId: string) => this.socialRequest<{ manifest: CompanionAssetManifestV1; files: Array<{ id: string; relativePath: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/asset-packs/${assetPackId}/manifest`);
   getDownloadUrls = (assetPackId: string, fileIds: string[]) => this.socialRequest<{ downloads: Array<{ fileId: string; relativePath: string; downloadUrl: string; expiresAt: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/asset-packs/${assetPackId}/download-urls`, { fileIds });
 
-  dispose(): void { this.stopSocket(); }
+  setTransferLifecycleHandler(handler: (reason: string) => void) { this.transferLifecycleHandler = handler; }
+  dispose(): void { this.transferLifecycleHandler?.('app_shutdown'); this.stopSocket(); }
 
   private get enabled(): boolean { return this.db.getAppSetting<boolean>(MODE_KEY) ?? false; }
   private get serverUrl(): string { return this.db.getAppSetting<string>(URL_KEY) ?? 'http://localhost:3001'; }
@@ -247,7 +253,7 @@ export class NetworkConnectionService {
         this.session = { ...this.session, ...result };
         this.writeSession(this.session);
         return true;
-      } catch { this.stopSocket(); this.clearSession(); return false; }
+      } catch { this.transferLifecycleHandler?.('session_refresh_failed'); this.stopSocket(); this.clearSession(); return false; }
     })().finally(() => { this.refreshPromise = undefined; });
     return this.refreshPromise;
   }

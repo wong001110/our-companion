@@ -19,6 +19,7 @@ export function stripMarkdown(text: string): string {
     .replace(/`([^`]+)`/g, '$1')                  // inline code
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')     // images -> alt text
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')      // links -> link text
+    .replace(/<\/?[a-z][^>]*>/gi, '')                // HTML wrappers have no spoken form
     .replace(/^\s{0,3}#{1,6}\s+/gm, '')           // headings
     .replace(/^\s*>+\s?/gm, '')                   // blockquotes
     .replace(/^\s*(?:[-*+]|\d+\.)\s+/gm, '')      // list markers
@@ -60,13 +61,15 @@ function splitSentences(text: string): string[] {
     let start = 0;
     let match: RegExpExecArray | null;
     while ((match = boundary.exec(trimmed)) !== null) {
-      const after = trimmed[boundary.lastIndex];
-      const atEnd = boundary.lastIndex >= trimmed.length;
+      let end = boundary.lastIndex;
+      while (/["'”’）)\]}]/.test(trimmed[end] ?? '')) end++;
+      const after = trimmed[end];
+      const atEnd = end >= trimmed.length;
       const alwaysBreaks = /[。！？…]/.test(match[0][match[0].length - 1]);
       if (!alwaysBreaks && !atEnd && after !== ' ' && after !== '\t') continue;
       if (isAbbreviation(trimmed.slice(start, match.index))) continue;
-      out.push(trimmed.slice(start, boundary.lastIndex).trim());
-      start = boundary.lastIndex;
+      out.push(trimmed.slice(start, end).trim());
+      start = end;
     }
     const tail = trimmed.slice(start).trim();
     if (tail) out.push(tail);

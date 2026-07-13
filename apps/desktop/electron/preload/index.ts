@@ -288,7 +288,7 @@ const api: OurCompanionApi = {
       getFriendCompanion: (friendUserId) => invoke('network:companions:getFriend', friendUserId),
     },
     assets: {
-      inspectLocalPack: (input) => invoke('network:assets:inspect', input), publishPack: (input) => invoke('network:assets:publish', input), cancelPublish: () => invoke('network:assets:cancelPublish'), getPublishStatus: () => invoke('network:assets:getPublishStatus'), downloadPack: (input) => invoke('network:assets:download', input), getCachedPack: (assetPackId) => invoke('network:assets:getCached', assetPackId), clearUnusedCache: () => invoke('network:assets:clearUnusedCache'),
+      inspectLocalPack: (input) => invoke('network:assets:inspect', input), publishPack: (input) => invoke('network:assets:publish', input), cancelPublish: () => invoke('network:assets:cancelPublish'), cancelDownload: () => invoke('network:assets:cancelDownload'), getPublishStatus: () => invoke('network:assets:getPublishStatus'), downloadPack: (input) => invoke('network:assets:download', input), getCachedPack: (assetPackId) => invoke('network:assets:getCached', assetPackId), clearUnusedCache: () => invoke('network:assets:clearUnusedCache'),
     },
   },
   app: {

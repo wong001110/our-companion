@@ -77,4 +77,15 @@ describe('typewriterSpeech helpers', () => {
       '我们一起玩吧！',
     ]);
   });
+
+  it('keeps closing quotes and brackets with their sentence terminator', () => {
+    const chunks = splitIntoChunks('She said "Ready!" Next (go now.) Then.');
+    expect(chunks[0]).toBe('She said "Ready!"');
+    expect(chunks.join(' ')).toContain('Next (go now.)');
+  });
+
+  it('reduces markdown-only replies to no chunks and removes HTML wrappers', () => {
+    expect(splitIntoChunks('---\n```ts\n```\n<strong></strong>')).toEqual([]);
+    expect(splitIntoChunks('> [Read **this**](https://example.test)\n- `now`')).toEqual(['Read this now']);
+  });
 });

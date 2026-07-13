@@ -12,7 +12,7 @@ interface UseCompanionSessionOptions {
   stateRef: React.MutableRefObject<CharacterRuntimeState | undefined>;
   applyState: (next: CharacterRuntimeState) => void;
   onInstantSpeech: (message: string) => void;
-  onTypewriterSpeech: (message: string) => void;
+  onTypewriterSpeech: (message: string) => boolean;
   onSessionPhaseChange?: (phase: CompanionSessionPhase) => void;
   pauseAmbient?: (paused: boolean) => void;
 }
@@ -100,7 +100,7 @@ export function useCompanionSession({
         const reply = await window.ourCompanion.companion.turn({ characterId, message: trimmed, source });
         setSessionPhase('talking');
         applyPreview('talking', 'helping_task');
-        onTypewriterSpeech(reply.message);
+        if (onTypewriterSpeech(reply.message)) finishToIdle();
       } catch (error) {
         const text = error instanceof Error ? error.message : 'Something went wrong while I was thinking.';
         onInstantSpeech(text);

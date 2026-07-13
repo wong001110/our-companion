@@ -24,7 +24,8 @@ export function buildAssetManifest(input: { companionId: string; includeVoices?:
     if (lower.has(key)) throw new Error('ASSET_PACK_MANIFEST_INVALID');
     lower.add(key);
     const extension = path.extname(normalized).toLowerCase();
-    if (!ALLOWED.has(extension) || extension === '.svg' || (VOICE.has(extension) && !input.includeVoices)) continue;
+    if (VOICE.has(extension) && !input.includeVoices) continue;
+    if (!ALLOWED.has(extension) || extension === '.svg') throw new Error('ASSET_PACK_FILE_INVALID');
     const stat = fs.lstatSync(filePath);
     if (!stat.isFile() || stat.size <= 0 || stat.size > limits.maxFileBytes) throw new Error('ASSET_PACK_LIMIT_EXCEEDED');
     const mimeType = getCompanionAssetMimeType(normalized);
@@ -40,7 +41,12 @@ export function buildAssetManifest(input: { companionId: string; includeVoices?:
   const animations = COMPANION_ANIMATION_MANIFEST
     .map(definition => ({ definition, relativePath: `assets/animations/${definition.fileName}` }))
     .filter(({ relativePath }) => byPath.has(relativePath))
-    .map(({ definition, relativePath }) => ({ name: definition.key, format: 'sprite_sheet' as const, files: [relativePath], loop: definition.key !== 'Enter' && definition.key !== 'Leave' }));
+    .map(({ definition, relativePath }) => {
+      const source = files.get(relativePath.slice('assets/'.length));
+      if (!source) throw new Error('ASSET_PACK_FILE_MISSING');
+      const sprite = readPngSpriteMetadata(source);
+      return { name: definition.key, format: 'sprite_sheet' as const, files: [relativePath], frameWidth: sprite.frameWidth, frameHeight: sprite.frameHeight, frameCount: sprite.frameCount, fps: 1, loop: definition.key !== 'Enter' && definition.key !== 'Leave' };
+    });
   const animationNames = new Set(animations.map(animation => animation.name));
   for (const required of ['Idle_Neutral', 'Enter', 'Leave'] as const) if (!animationNames.has(required)) throw new Error('ASSET_PACK_MANIFEST_INVALID');
   const portraitPath = entries.find(entry => entry.category === 'portrait')?.relativePath;
@@ -73,3 +79,12 @@ function collectFiles(root: string, directory: string, files: Map<string, string
 }
 function categoryFor(relativePath: string): CompanionAssetManifestV1['files'][number]['category'] { if (relativePath.startsWith('assets/animations/')) return 'animation'; if (relativePath.startsWith('assets/portraits/')) return 'portrait'; if (relativePath.startsWith('assets/icons/')) return 'icon'; if (relativePath.startsWith('assets/voices/')) return 'voice'; return 'metadata'; }
 function hashFile(filePath: string): string { return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex'); }
+function readPngSpriteMetadata(filePath: string) {
+  const bytes = fs.readFileSync(filePath);
+  if (bytes.length < 24 || bytes.toString('ascii', 1, 4) !== 'PNG' || bytes.toString('ascii', 12, 16) !== 'IHDR') throw new Error('ASSET_PACK_FILE_INVALID');
+  const width = bytes.readUInt32BE(16); const height = bytes.readUInt32BE(20);
+  if (!width || !height || width % height !== 0 || height < 300 || height > 4096) throw new Error('ASSET_PACK_MANIFEST_INVALID');
+  const frameCount = width / height;
+  if (frameCount < 1 || frameCount > 120) throw new Error('ASSET_PACK_MANIFEST_INVALID');
+  return { frameWidth: height, frameHeight: height, frameCount };
+}

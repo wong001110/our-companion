@@ -1619,7 +1619,7 @@ export interface OurCompanionApi {
       getMine(): Promise<{ activeNetworkCompanionId?: string; companions: Array<PublicCompanionProfile & { assetPacks: NetworkAssetPack[] }> }>;
       create(input: { localCompanionId: string; name: string; publicDescription?: string; publicTags?: string[] }): Promise<{ networkCompanionId: string; companion: PublicCompanionProfile }>;
       update(companionId: string, input: { name: string; publicDescription?: string; publicTags?: string[] }): Promise<PublicCompanionProfile>;
-      activate(companionId: string): Promise<{ activeNetworkCompanionId: string }>;
+      activate(companionId: string): Promise<{ activeNetworkCompanionId: string; changed: boolean }>;
       publish(companionId: string): Promise<PublicCompanionProfile>;
       unpublish(companionId: string): Promise<PublicCompanionProfile>;
       getFriendCompanion(friendUserId: string): Promise<PublicCompanionProfile>;
@@ -1628,6 +1628,7 @@ export interface OurCompanionApi {
       inspectLocalPack(input: { localCompanionId: string; includeVoices?: boolean }): Promise<BuiltAssetPack>;
       publishPack(input: { localCompanionId: string; networkCompanionId: string; includeVoices?: boolean }): Promise<NetworkAssetPack>;
       cancelPublish(): Promise<void>;
+      cancelDownload(): Promise<void>;
       getPublishStatus(): Promise<AssetUploadProgress | undefined>;
       downloadPack(input: { assetPackId: string; networkCompanionId: string }): Promise<CachedAssetPack>;
       getCachedPack(assetPackId: string): Promise<CachedAssetPack | undefined>;

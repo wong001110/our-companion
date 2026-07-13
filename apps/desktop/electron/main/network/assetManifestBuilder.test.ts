@@ -7,9 +7,10 @@ import { buildAssetManifest } from './assetManifestBuilder';
 function withAssets(run: (root: string) => void) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 's3-pack-'));
   const assets = path.join(root, 'companions', 'companion-1', 'assets', 'animations'); fs.mkdirSync(assets, { recursive: true });
-  for (const name of ['Idle_Neutral', 'Enter', 'Leave']) fs.writeFileSync(path.join(assets, `${name}.png`), name);
+  for (const name of ['Idle_Neutral', 'Enter', 'Leave']) fs.writeFileSync(path.join(assets, `${name}.png`), pngHeader(300, 300));
   try { run(root); } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
+function pngHeader(width: number, height: number) { const bytes = Buffer.alloc(24); bytes.write('\x89PNG', 0, 'binary'); bytes.writeUInt32BE(13, 8); bytes.write('IHDR', 12, 'ascii'); bytes.writeUInt32BE(width, 16); bytes.writeUInt32BE(height, 20); return bytes; }
 const options = (root: string) => ({ userDataDir: root, companionExists: (id: string) => id === 'companion-1' });
 
 describe('S3 asset manifest builder', () => {

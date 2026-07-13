@@ -344,8 +344,8 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     screenWorkArea: { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight },
   });
 
-  const handleTypewriterComplete = useCallback(() => {
-    if (!speech.onTypewriterComplete()) return; // still more chunks to speak
+  const handleTypewriterComplete = useCallback((generation: number) => {
+    if (!speech.onTypewriterComplete(generation)) return; // still more chunks to speak or stale completion
     onTypewriterComplete();
     const completion = commandCompletionRef.current;
     commandCompletionRef.current = null;
@@ -849,8 +849,9 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       </div>
       {speech.typewriterMessage && (
         <TypewriterSpeechBubble
+          key={speech.typewriterGeneration}
           message={speech.typewriterMessage}
-          onComplete={handleTypewriterComplete}
+          onComplete={() => handleTypewriterComplete(speech.typewriterGeneration)}
           onMouseEnter={() => interactive.enter('speech-bubble')}
           onMouseLeave={() => interactive.leave('speech-bubble')}
           style={floatingPositions.bubble ? {
@@ -1997,12 +1998,20 @@ function OnlineCompanionCard() {
   const [networkCompanionId, setNetworkCompanionId] = useState<string>();
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [publishProgress, setPublishProgress] = useState<import('@our-companion/shared').AssetUploadProgress>();
 
   useEffect(() => { void Promise.all([window.ourCompanion.companionNew.list(), window.ourCompanion.network.companions.getMine().catch(() => undefined)]).then(([items, mine]) => { setCompanions(items); const first = items[0]; if (first) { setSelectedId(first.id); setName(first.name); } if (mine?.activeNetworkCompanionId) setNetworkCompanionId(mine.activeNetworkCompanionId); }); }, []);
+  useEffect(() => {
+    if (!busy) return;
+    let active = true;
+    const refresh = () => void window.ourCompanion.network.assets.getPublishStatus().then(progress => { if (active) setPublishProgress(progress); }).catch(() => undefined);
+    refresh(); const timer = window.setInterval(refresh, 300);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [busy]);
   const selected = companions.find((companion) => companion.id === selectedId);
   async function inspect() { if (!selectedId) return; setBusy(true); try { const result = await window.ourCompanion.network.assets.inspectLocalPack({ localCompanionId: selectedId, includeVoices }); setInspection(result); setStatus('Asset Pack is ready to publish.'); } catch (error) { setStatus(error instanceof Error ? error.message : 'Unable to inspect Asset Pack.'); } finally { setBusy(false); } }
   async function publish() {
-    if (!selectedId || !name.trim()) return; setBusy(true); setStatus('Preparing public profile…');
+    if (!selectedId || !name.trim()) return; setPublishProgress(undefined); setBusy(true); setStatus('Preparing public profile…');
     try {
       const profile = await window.ourCompanion.network.companions.create({ localCompanionId: selectedId, name: name.trim(), publicDescription: description.trim() || undefined, publicTags: tags.split(',').map(tag => tag.trim()).filter(Boolean) });
       setNetworkCompanionId(profile.networkCompanionId);
@@ -2025,6 +2034,7 @@ function OnlineCompanionCard() {
     <label className="checkbox-row"><input type="checkbox" checked={includeVoices} disabled={busy} onChange={(event) => setIncludeVoices(event.target.checked)} /><span>Include voice assets</span></label>
     {includeVoices && <p>Voice files will be uploaded to private network storage and available to accepted friends.</p>}
     {inspection && <p>Ready: {inspection.totalFiles} files · {(inspection.totalBytes / 1024 / 1024).toFixed(2)} MB · <code>{inspection.manifestHash}</code></p>}
+    {publishProgress && <p><strong>{publishProgress.state.replace(/_/g, ' ')}</strong> · {publishProgress.completedFiles}/{publishProgress.totalFiles} files · {publishProgress.totalBytes ? Math.round((publishProgress.uploadedBytes / publishProgress.totalBytes) * 100) : 0}%{publishProgress.currentFile ? ` · ${publishProgress.currentFile}` : ''}</p>}
     <div className="action-row"><button className="btn-secondary btn-sm" disabled={busy || !selected} onClick={() => void inspect()}>Build Asset Pack</button><button className="btn-primary btn-sm" disabled={busy || !selected || !name.trim()} onClick={() => void publish()}>{busy ? 'Publishing…' : 'Publish'}</button><button className="btn-ghost btn-sm" disabled={!busy} onClick={() => void cancel()}>Cancel Upload</button><button className="btn-ghost btn-sm" disabled={busy || !networkCompanionId} onClick={() => void unpublish()}>Unpublish</button></div>
     {status && <p>{status}</p>}
   </PaperCard>;

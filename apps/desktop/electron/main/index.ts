@@ -378,6 +378,7 @@ function registerIpc(): void {
     'network:assets:inspect': services.publicCompanions.inspectLocalPack,
     'network:assets:publish': services.publicCompanions.publishPack,
     'network:assets:cancelPublish': services.publicCompanions.cancelPublish,
+    'network:assets:cancelDownload': services.publicCompanions.cancelDownload,
     'network:assets:getPublishStatus': services.publicCompanions.getPublishStatus,
     'network:assets:download': services.publicCompanions.downloadPack,
     'network:assets:getCached': services.publicCompanions.getCachedPack,

@@ -49,26 +49,26 @@ export class PublicCompanionService {
       this.publishProgress = { ...this.publishProgress, totalFiles: built.totalFiles, totalBytes: built.totalBytes };
       const initiated = await this.network.initiateAssetPack(input.networkCompanionId, { schemaVersion: 1, manifestHash: built.manifestHash, totalFiles: built.totalFiles, totalBytes: built.totalBytes, manifest: built.manifest });
       if (initiated.reused) {
+        const reusedPack = initiated.requiresActivation ? { ...initiated.assetPack, status: 'active' as const } : initiated.assetPack;
+        if (initiated.requiresActivation) await this.network.activateAssetPack(initiated.assetPack.id);
         this.publishProgress = { ...this.publishProgress, assetPackId: initiated.assetPack.id, completedFiles: built.totalFiles, uploadedBytes: built.totalBytes, state: 'completed' };
-        await this.saveLink(input.localCompanionId, input.networkCompanionId, initiated.assetPack, built.manifestHash);
-        return initiated.assetPack;
+        await this.saveLink(input.localCompanionId, input.networkCompanionId, reusedPack, built.manifestHash);
+        return reusedPack;
       }
       this.publishProgress = { ...this.publishProgress, assetPackId: initiated.assetPack.id, state: 'uploading' };
       const manifestFiles = built.manifest.files;
       const fileIds = initiated.fileIds;
       if (!fileIds || fileIds.length !== manifestFiles.length) throw new Error('ASSET_PACK_FILE_MISSING');
-      const uploadRecords: Array<{ relativePath: string; uploadUrl: string; requiredHeaders: { 'content-type': string; 'x-amz-meta-sha256': string } }> = [];
       for (let offset = 0; offset < fileIds.length; offset += 50) {
         const response = await this.network.getUploadUrls(initiated.assetPack.id, fileIds.slice(offset, offset + 50));
-        uploadRecords.push(...response.uploads);
+        await this.withConcurrency(response.uploads, 3, async record => {
+          const source = built.filePaths.get(record.relativePath);
+          if (!source) throw new Error('ASSET_PACK_FILE_MISSING');
+          const size = fs.statSync(source).size;
+          await this.uploadWithRetry(record, fs.readFileSync(source), abort.signal, async () => (await this.network.getUploadUrls(initiated.assetPack.id, [record.fileId])).uploads[0]);
+          this.publishProgress = { ...this.publishProgress!, completedFiles: this.publishProgress!.completedFiles + 1, uploadedBytes: this.publishProgress!.uploadedBytes + size, currentFile: record.relativePath };
+        });
       }
-      await this.withConcurrency(uploadRecords, 3, async record => {
-        const source = built.filePaths.get(record.relativePath);
-        if (!source) throw new Error('ASSET_PACK_FILE_MISSING');
-        const size = fs.statSync(source).size;
-        await this.uploadWithRetry(record.uploadUrl, fs.readFileSync(source), record.requiredHeaders, abort.signal);
-        this.publishProgress = { ...this.publishProgress!, completedFiles: this.publishProgress!.completedFiles + 1, uploadedBytes: this.publishProgress!.uploadedBytes + size, currentFile: record.relativePath };
-      });
       this.publishProgress = { ...this.publishProgress, state: 'verifying' };
       const completed = await this.network.completeAssetPack(initiated.assetPack.id);
       this.publishProgress = { ...this.publishProgress, state: 'completed', completedFiles: built.totalFiles, uploadedBytes: built.totalBytes };
@@ -81,6 +81,8 @@ export class PublicCompanionService {
   }
 
   cancelPublish = async () => { this.publishAbort?.abort(); };
+  cancelDownload = async () => { this.downloadAbort?.abort(); };
+  cancelTransfers = () => { this.publishAbort?.abort(); this.downloadAbort?.abort(); };
   getPublishStatus = async () => this.publishProgress ? { ...this.publishProgress } : undefined;
 
   async downloadPack(input: { assetPackId: string; networkCompanionId: string }): Promise<CachedAssetPack> {
@@ -99,22 +101,18 @@ export class PublicCompanionService {
     const finalRoot = path.join(base, input.assetPackId);
     try {
       fs.mkdirSync(partial, { recursive: true });
-      const downloads: Array<{ relativePath: string; downloadUrl: string; sizeBytes: number; sha256: string }> = [];
       for (let offset = 0; offset < payload.files.length; offset += 50) {
         const result = await this.network.getDownloadUrls(input.assetPackId, payload.files.slice(offset, offset + 50).map(file => file.id));
-        downloads.push(...result.downloads);
+        await this.withConcurrency(result.downloads, 3, async record => {
+          const file = payload.files.find(item => item.relativePath === record.relativePath);
+          if (!file || file.sizeBytes !== record.sizeBytes || file.sha256 !== record.sha256) throw new Error('ASSET_INTEGRITY_FAILED');
+          const destination = safeDestination(partial, record.relativePath);
+          fs.mkdirSync(path.dirname(destination), { recursive: true });
+          const bytes = await this.downloadWithRetry(record, abort.signal, async () => (await this.network.getDownloadUrls(input.assetPackId, [record.fileId])).downloads[0]);
+          if (bytes.byteLength !== record.sizeBytes || createHash('sha256').update(bytes).digest('hex') !== record.sha256) throw new Error('ASSET_INTEGRITY_FAILED');
+          fs.writeFileSync(destination, bytes, { flag: 'wx' });
+        });
       }
-      await this.withConcurrency(downloads, 3, async record => {
-        const file = payload.files.find(item => item.relativePath === record.relativePath);
-        if (!file || file.sizeBytes !== record.sizeBytes || file.sha256 !== record.sha256) throw new Error('ASSET_INTEGRITY_FAILED');
-        const destination = safeDestination(partial, record.relativePath);
-        fs.mkdirSync(path.dirname(destination), { recursive: true });
-        const response = await fetch(record.downloadUrl, { signal: abort.signal });
-        if (!response.ok) throw new Error('ASSET_INTEGRITY_FAILED');
-        const bytes = Buffer.from(await response.arrayBuffer());
-        if (bytes.byteLength !== record.sizeBytes || createHash('sha256').update(bytes).digest('hex') !== record.sha256) throw new Error('ASSET_INTEGRITY_FAILED');
-        fs.writeFileSync(destination, bytes, { flag: 'wx' });
-      });
       fs.writeFileSync(path.join(partial, 'manifest.json'), canonicalJson(payload.manifest), { flag: 'wx' });
       if (!this.verifyCache(partial, manifestHash)) throw new Error('ASSET_INTEGRITY_FAILED');
       fs.rmSync(finalRoot, { recursive: true, force: true });
@@ -132,10 +130,12 @@ export class PublicCompanionService {
   private async scope() { const status = await this.network.getStatus(); if (!status.account || !status.onlineModeEnabled) throw new Error('ONLINE_MODE_DISABLED'); return { serverOrigin: status.serverUrl, networkAccountId: status.account.id }; }
   private requireLocalCompanion(id: string) { if (!this.db.getCompanion(id)) throw new Error('COMPANION_NOT_FOUND'); }
   private async saveLink(localCompanionId: string, networkCompanionId: string, pack: NetworkAssetPack, manifestHash: string) { const scope = await this.scope(); this.db.upsertNetworkCompanionLink({ ...scope, localCompanionId, networkCompanionId, activeAssetPackId: pack.status === 'active' ? pack.id : undefined, lastPublishedManifestHash: manifestHash, lastPublishedAt: new Date().toISOString(), publishStatus: pack.status }); }
-  private async uploadWithRetry(url: string, body: Buffer, headers: Record<string, string>, signal: AbortSignal) { const bytes = body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer; for (let attempt = 0; attempt < 3; attempt++) { const response = await fetch(url, { method: 'PUT', headers, body: bytes, signal }); if (response.ok) return; if (response.status >= 400 && response.status < 500) throw new Error('ASSET_INTEGRITY_FAILED'); await new Promise(resolve => setTimeout(resolve, 250 * 2 ** attempt)); } throw new Error('ASSET_INTEGRITY_FAILED'); }
+  private async uploadWithRetry(record: { uploadUrl: string; requiredHeaders: Record<string, string> }, body: Buffer, signal: AbortSignal, reSign: () => Promise<{ uploadUrl: string; requiredHeaders: Record<string, string> }>) { let current = record; let resigns = 0; const bytes = body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer; for (let attempt = 0; attempt < 3; attempt++) { const response = await fetch(current.uploadUrl, { method: 'PUT', headers: current.requiredHeaders, body: bytes, signal }); if (response.ok) return; if ((response.status === 401 || response.status === 403) && resigns++ < 2) { current = await reSign(); continue; } if (response.status >= 400 && response.status < 500) throw new Error('ASSET_INTEGRITY_FAILED'); await waitForRetry(250 * 2 ** attempt, signal); } throw new Error('ASSET_INTEGRITY_FAILED'); }
+  private async downloadWithRetry(record: { downloadUrl: string }, signal: AbortSignal, reSign: () => Promise<{ downloadUrl: string }>): Promise<Buffer> { let current = record; let resigns = 0; for (let attempt = 0; attempt < 3; attempt++) { const response = await fetch(current.downloadUrl, { signal }); if (response.ok) return Buffer.from(await response.arrayBuffer()); if ((response.status === 401 || response.status === 403) && resigns++ < 2) { current = await reSign(); continue; } if (response.status >= 400 && response.status < 500) throw new Error('ASSET_INTEGRITY_FAILED'); await waitForRetry(250 * 2 ** attempt, signal); } throw new Error('ASSET_INTEGRITY_FAILED'); }
   private async withConcurrency<T>(items: T[], concurrency: number, task: (item: T) => Promise<void>) { let cursor = 0; await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => { while (cursor < items.length) { const index = cursor++; await task(items[index]); } })); }
   private verifyCache(root: string, expectedManifestHash: string) { try { const manifestPath = path.join(root, 'manifest.json'); const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); if (createHash('sha256').update(canonicalJson(manifest), 'utf8').digest('hex') !== expectedManifestHash) return false; for (const file of manifest.files) { const source = safeDestination(root, file.relativePath); const bytes = fs.readFileSync(source); if (bytes.byteLength !== file.sizeBytes || createHash('sha256').update(bytes).digest('hex') !== file.sha256) return false; } return true; } catch { return false; } }
 }
 
 function safeDestination(root: string, relativePath: string): string { if (!relativePath || !relativePath.startsWith('assets/') || relativePath.includes('\\') || relativePath.split('/').some(part => !part || part === '.' || part === '..' || part.includes('\0'))) throw new Error('ASSET_PACK_MANIFEST_INVALID'); const target = path.resolve(root, 'files', relativePath); if (!target.startsWith(`${root}${path.sep}`)) throw new Error('ASSET_PACK_MANIFEST_INVALID'); return target; }
 function withoutRoot(cache: CachedAssetPack & { cacheRoot: string }): CachedAssetPack { const { cacheRoot: _cacheRoot, ...visible } = cache; return visible; }
+function waitForRetry(ms: number, signal: AbortSignal) { return new Promise<void>((resolve, reject) => { const timer = setTimeout(resolve, ms); signal.addEventListener('abort', () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); }, { once: true }); }); }
