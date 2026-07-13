@@ -149,11 +149,16 @@ function assertNoSymlinkEscape(root: string, target: string, mustExist: boolean)
   for (const part of relative.split(path.sep)) {
     if (!part) continue;
     current = path.join(current, part);
-    if (!fs.existsSync(current)) {
+    let stat: fs.Stats;
+    try {
+      // `existsSync` follows links and treats a dangling symlink as absent.
+      // Inspect the directory entry itself so every symbolic-link path is rejected.
+      stat = fs.lstatSync(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       if (mustExist) throw new CompanionAssetPathError('Asset not found.', 'not_found');
       continue;
     }
-    const stat = fs.lstatSync(current);
     if (stat.isSymbolicLink()) {
       throw new CompanionAssetPathError('Companion asset paths cannot include symbolic links.', 'forbidden');
     }
