@@ -13,8 +13,8 @@
 - Node 22.23.1: typecheck, architecture check, build, and full Vitest suite passed: 55 files / 407 tests.
 - Focused asset builder and transfer ownership tests passed.
 - Live R2 integration passed: private upload, HEAD, download/hash, manifest write, delete, and clean test teardown.
-- Two-client desktop smoke test: pending manual execution with separate owner/friend data directories.
+- Two-client desktop smoke test: passed. The owner and friend completed the online publish/download flow successfully on separate devices.
 
 ## Remaining limitation
 
-The final implementation commit SHA and manual two-client result are recorded after the manual smoke test.
+The initial IPC binding issue encountered during the first asset-pack build was fixed in `9e078a8`; all public-companion IPC handlers now retain their service instance binding.

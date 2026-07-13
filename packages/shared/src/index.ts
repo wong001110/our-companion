@@ -1407,7 +1407,7 @@ export type SocialInvalidation =
   | { type: 'companion_asset_pack'; ownerUserId: string; companionId: string; assetPackId: string };
 
 export type FriendPresence = 'online' | 'idle' | 'offline';
-export interface FriendSummary { userId: string; username: string; friendCode: string; presence: FriendPresence; }
+export interface FriendSummary { userId: string; username: string; friendCode: string; presence: FriendPresence; hasPublishedCompanion: boolean; }
 export interface FriendRequestSummary { id: string; direction: 'incoming' | 'outgoing'; userId: string; username: string; friendCode: string; status: 'pending'; createdAt: string; }
 export interface BlockedUserSummary { userId: string; username: string; blockedAt: string; }
 export interface PublicCompanionProfile {

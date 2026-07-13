@@ -170,7 +170,7 @@ export class NetworkConnectionService {
   };
 
   lookupFriend = (friendCode: string) => this.socialRequest<{ id: string; username: string; friendCode: string; relationship: string }>(`/api/friends/lookup/${encodeURIComponent(friendCode)}`);
-  getFriends = async (): Promise<FriendSummary[]> => (await this.socialRequest<Array<{ id: string; username: string; friendCode: string }>>('/api/friends')).map((friend) => ({ userId: friend.id, username: friend.username, friendCode: friend.friendCode, presence: 'offline' }));
+  getFriends = async (): Promise<FriendSummary[]> => (await this.socialRequest<Array<{ id: string; username: string; friendCode: string; hasPublishedCompanion: boolean }>>('/api/friends')).map((friend) => ({ userId: friend.id, username: friend.username, friendCode: friend.friendCode, presence: 'offline', hasPublishedCompanion: friend.hasPublishedCompanion }));
   getIncomingRequests = async (): Promise<FriendRequestSummary[]> => (await this.socialRequest<Array<any>>('/api/friends/requests/incoming')).map((request) => ({ id: request.id, direction: 'incoming', userId: request.sender.id, username: request.sender.username, friendCode: request.sender.friendCode, status: 'pending', createdAt: request.createdAt }));
   getOutgoingRequests = async (): Promise<FriendRequestSummary[]> => (await this.socialRequest<Array<any>>('/api/friends/requests/outgoing')).map((request) => ({ id: request.id, direction: 'outgoing', userId: request.receiver.id, username: request.receiver.username, friendCode: request.receiver.friendCode, status: 'pending', createdAt: request.createdAt }));
   sendFriendRequest = (userId: string) => this.socialRequest('/api/friends/requests', { receiverId: userId });

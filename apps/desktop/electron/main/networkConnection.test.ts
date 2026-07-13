@@ -101,6 +101,16 @@ describe('NetworkConnectionService', () => {
     expect(() => normalizeServerUrl('https://network.example/?token=x')).toThrow('INVALID_NETWORK_SERVER_URL');
   });
 
+  it('includes Companion availability in each friend summary', async () => {
+    const db = new TestDb(); db.setAppSetting('network.online-mode-enabled', true);
+    const fetch = vi.fn().mockResolvedValue(response([{ id: 'friend-1', username: 'ann', friendCode: 'ANN12345', hasPublishedCompanion: false }]));
+    const service = new NetworkConnectionService(db as never, undefined, { fetch, createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
+    (service as any).session = { serverOrigin: 'http://localhost:3001', accessToken: 'access', refreshToken: 'refresh' };
+    (service as any).status = { state: 'online', onlineModeEnabled: true, serverUrl: 'http://localhost:3001' };
+
+    await expect(service.getFriends()).resolves.toEqual([{ userId: 'friend-1', username: 'ann', friendCode: 'ANN12345', presence: 'offline', hasPublishedCompanion: false }]);
+  });
+
   it('refreshes and retries a Remove Friend DELETE with the rotated access token', async () => {
     const db = new TestDb();
     db.setAppSetting('network.online-mode-enabled', true);
