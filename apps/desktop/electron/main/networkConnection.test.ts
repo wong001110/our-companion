@@ -132,4 +132,20 @@ describe('NetworkConnectionService', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(db.getAppSetting('network.secure-session')).toBe('');
   });
+
+  it('emits in-app Presence activity only while online and throttles rapid interaction', async () => {
+    const db = new TestDb();
+    db.setAppSetting('network.online-mode-enabled', true);
+    const emit = vi.fn();
+    const service = new NetworkConnectionService(db as never, undefined, { fetch: vi.fn(), createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
+    (service as any).socket = { emit };
+    (service as any).status = { state: 'online', onlineModeEnabled: true, serverUrl: 'http://localhost:3001' };
+    await service.sendPresenceActivity();
+    await service.sendPresenceActivity();
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith('presence.activity');
+    (service as any).status = { state: 'disabled', onlineModeEnabled: false, serverUrl: 'http://localhost:3001' };
+    await service.sendPresenceActivity();
+    expect(emit).toHaveBeenCalledTimes(1);
+  });
 });

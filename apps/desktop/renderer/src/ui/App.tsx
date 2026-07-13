@@ -2184,7 +2184,7 @@ function SocialCard() {
       return () => { if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current); };
     }
     void refresh();
-  }, [available, status?.socialRevision]);
+  }, [available, scope, status?.socialRevision]);
 
   if (!available) return <PaperCard title="Social" tape className="settings-panel"><p>{socialAvailabilityMessage(status)}</p></PaperCard>;
   const action = async (operation: () => Promise<unknown>) => { if (busyAction) return; setBusyAction(true); try { await operation(); await window.ourCompanion.network.presence.sendActivity(); setLookup(undefined); await refresh(); } catch (cause) { setError(messageForSocialError(cause)); } finally { setBusyAction(false); } };
