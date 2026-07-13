@@ -24,6 +24,7 @@ export interface NetworkStatus {
   remoteRevocationConfirmed?: boolean;
   socialRevision?: number;
   socialInvalidation?: SocialInvalidation;
+  features?: { visitInvitations: boolean; visitSessions: boolean; [feature: string]: boolean };
 }
 export interface StoredNetworkSession { serverOrigin: string; accessToken: string; refreshToken: string; }
 
@@ -239,8 +240,9 @@ export class NetworkConnectionService {
   }
 
   private async checkCompatibility(): Promise<void> {
-    const data = await this.request<{ compatible: boolean; reason?: string }>('/api/meta/client-compatibility');
+    const data = await this.request<{ compatible: boolean; reason?: string; features?: NetworkStatus['features'] }>('/api/meta/client-compatibility');
     if (!data.compatible) throw new Error(data.reason ?? 'INCOMPATIBLE_CLIENT');
+    this.setStatus({ features: data.features });
   }
 
   private async acceptAuthentication(result: AuthResult): Promise<void> {

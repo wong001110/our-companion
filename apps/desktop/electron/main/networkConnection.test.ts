@@ -67,6 +67,14 @@ describe('NetworkConnectionService', () => {
     expect((await service.getStatus()).state).toBe('incompatible_client');
   });
 
+  it('retains server Visit capabilities in status so the renderer can disable unavailable actions', async () => {
+    const db = new TestDb();
+    const fetch = vi.fn().mockResolvedValue(response({ compatible: true, features: { visitInvitations: false, visitSessions: false } }));
+    const service = new NetworkConnectionService(db as never, undefined, { fetch, createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
+    await (service as any).checkCompatibility();
+    await expect(service.getStatus()).resolves.toMatchObject({ features: { visitInvitations: false, visitSessions: false } });
+  });
+
   it('clears the encrypted session when changing server origin', async () => {
     const db = new TestDb();
     db.setAppSetting('network.secure-session', Buffer.from(JSON.stringify({ serverOrigin: 'http://localhost:3001', accessToken: 'old', refreshToken: 'refresh' })).toString('base64'));

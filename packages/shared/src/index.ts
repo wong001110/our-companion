@@ -1398,6 +1398,7 @@ export interface NetworkStatus {
   remoteRevocationConfirmed?: boolean;
   socialRevision?: number;
   socialInvalidation?: SocialInvalidation;
+  features?: { visitInvitations: boolean; visitSessions: boolean; [feature: string]: boolean };
 }
 
 export type SocialInvalidation =
