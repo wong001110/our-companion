@@ -3055,6 +3055,77 @@ html.creation-mode #root {
   margin-top: 8px;
 }
 
+/* The settings notebook uses a light page, so it must not inherit the dark
+   companion-selection controls declared earlier in this stylesheet. */
+.settings-panel .online-mode-label,
+.settings-panel .online-auth-form label,
+.settings-panel .online-auth-switch,
+.settings-panel .online-user-info {
+  color: #3c2e3c;
+}
+
+.settings-panel .online-auth-form input {
+  background: #f7eddc;
+  border-color: rgba(116, 80, 148, 0.34);
+  color: #3c2e3c;
+}
+
+.settings-panel .online-auth-form input:disabled {
+  background: #eee4d2;
+  color: #4b3b49;
+  opacity: 1;
+}
+
+.settings-panel .btn-ghost {
+  background: rgba(255, 255, 255, 0.38);
+  border-color: rgba(116, 80, 148, 0.38);
+  color: #604778;
+}
+
+.settings-panel .btn-ghost:hover {
+  background: rgba(221, 196, 236, 0.42);
+  color: #402d54;
+}
+
+.online-account-card {
+  background: rgba(116, 80, 148, 0.11);
+  border: 1px solid rgba(116, 80, 148, 0.2);
+}
+
+.online-friend-code {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 12px 0 10px;
+  padding: 10px;
+  border-radius: 7px;
+  background: #fff8e9;
+  border: 1px dashed rgba(116, 80, 148, 0.45);
+}
+
+.online-friend-code span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #55405b;
+}
+
+.online-friend-code code {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: #4b2e64;
+}
+
+.online-friend-code button {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+}
+
+.online-logout-button {
+  margin-top: 2px;
+}
+
 /* ============================================================================
    Engine Observatory — Companion Shell Overlay
    ============================================================================ */
