@@ -3092,34 +3092,31 @@ html.creation-mode #root {
   border: 1px solid rgba(116, 80, 148, 0.2);
 }
 
-.online-friend-code {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 4px 10px;
-  margin: 12px 0 10px;
-  padding: 10px;
-  border-radius: 7px;
-  background: #fff8e9;
-  border: 1px dashed rgba(116, 80, 148, 0.45);
+.online-account-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
 }
 
-.online-friend-code span {
+.online-friend-code-inline {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: #fff8e9;
+  border: 1px solid rgba(116, 80, 148, 0.34);
   font-size: 12px;
   font-weight: 700;
   color: #55405b;
 }
 
-.online-friend-code code {
-  font-size: 20px;
+.online-friend-code-inline code {
+  font-size: 14px;
   font-weight: 800;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   color: #4b2e64;
-}
-
-.online-friend-code button {
-  grid-row: 1 / span 2;
-  grid-column: 2;
 }
 
 .online-logout-button {

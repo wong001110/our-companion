@@ -2108,13 +2108,9 @@ function OnlineModeCard() {
 
       {networkStatus?.account ? (
         <div className="online-user-info online-account-card">
-          <p><strong>{networkStatus.account.username}</strong> (@{networkStatus.account.username})</p>
+          <p className="online-account-identity"><strong>{networkStatus.account.username}</strong> (@{networkStatus.account.username}) <span className="online-friend-code-inline">Code: <code>{networkStatus.account.friendCode}</code></span></p>
           <p>{networkStatus.account.email}</p>
-          <div className="online-friend-code">
-            <span>Your Friend Code</span>
-            <code>{networkStatus.account.friendCode}</code>
-            <button className="btn-secondary btn-sm" onClick={() => void copyFriendCode()}>{friendCodeCopied ? 'Copied' : 'Copy Code'}</button>
-          </div>
+          <button className="btn-secondary btn-sm" onClick={() => void copyFriendCode()}>{friendCodeCopied ? 'Copied' : 'Copy Code'}</button>
           <button className="btn-ghost btn-sm online-logout-button" onClick={() => void handleLogout()}>Log out</button>
         </div>
       ) : showRegister ? (
