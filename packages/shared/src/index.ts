@@ -1426,11 +1426,12 @@ export interface PublicCompanionProfile {
 export interface CompanionAssetManifestV1 {
   format: 'our-companion-asset-pack';
   schemaVersion: 1;
-  runtime: { defaultAnimation: 'Idle_Neutral'; portraitPath?: string; iconPath?: string; animations: Array<{ name: string; format: 'sprite_sheet' | 'frame_sequence' | 'gif' | 'static'; files: string[]; frameWidth?: number; frameHeight?: number; frameCount?: number; fps?: number; loop: boolean }> };
+  runtime: { defaultAnimation: 'Idle_Neutral'; portraitPath?: string; iconPath?: string; animations: Array<{ name: string; format: 'sprite_sheet' | 'frame_sequence' | 'gif' | 'static'; files: string[]; frameWidth?: number; frameHeight?: number; frameCount?: number; frameDurationMs?: number; loop: boolean }> };
   files: Array<{ relativePath: string; category: 'animation' | 'portrait' | 'icon' | 'voice' | 'metadata'; mimeType: string; sizeBytes: number; sha256: string }>;
 }
 export interface BuiltAssetPack { manifest: CompanionAssetManifestV1; manifestHash: string; totalFiles: number; totalBytes: number; requiredAnimations: Record<'Idle_Neutral' | 'Enter' | 'Leave', boolean>; }
-export interface NetworkAssetPack { id: string; companionId: string; manifestHash: string; schemaVersion: number; status: 'draft' | 'uploading' | 'verifying' | 'active' | 'superseded' | 'failed' | 'abandoned'; totalFiles: number; totalBytes: number; failureCode?: string; createdAt: string; updatedAt: string; completedAt?: string; activatedAt?: string; supersededAt?: string; }
+export interface NetworkAssetPack { id: string; companionId: string; manifestHash: string; schemaVersion: number; status: 'draft' | 'uploading' | 'verifying' | 'active' | 'superseded' | 'deleting' | 'failed' | 'abandoning' | 'abandoned'; totalFiles: number; totalBytes: number; failureCode?: string; createdAt: string; updatedAt: string; completedAt?: string; activatedAt?: string; supersededAt?: string; }
+export interface CompleteAssetPackResult { assetPack: NetworkAssetPack; companion: PublicCompanionProfile; }
 export interface NetworkCompanionLink { serverOrigin: string; networkAccountId: string; localCompanionId: string; networkCompanionId: string; activeAssetPackId?: string; lastPublishedManifestHash?: string; lastPublishedAt?: string; publishStatus?: string; }
 export interface AssetUploadProgress { assetPackId?: string; completedFiles: number; totalFiles: number; uploadedBytes: number; totalBytes: number; currentFile?: string; state: 'preparing' | 'uploading' | 'verifying' | 'completed' | 'failed' | 'cancelled'; failureCode?: string; }
 export interface CachedAssetPack { serverOrigin: string; assetPackId: string; networkCompanionId: string; manifestHash: string; totalBytes: number; downloadedAt: string; lastUsedAt: string; pinned: boolean; verified: boolean; }
@@ -2033,11 +2034,23 @@ export interface CompanionAnimationManifestEntry {
   maxFrames: number;
   minFrameSize: number;
   maxFrameSize: number;
+  frameDurationMs: number;
+  loop: boolean;
 }
 
 const REQUIRED_COMPANION_ANIMATION_KEYS = new Set<CompanionAnimationName>(COMPANION_ANIMATION_NAMES.slice(0, 15));
 
 /** Shared source of truth for creation, editing, and runtime asset names. */
+const COMPANION_ANIMATION_TIMING: Record<CompanionAnimationName, { frameDurationMs: number; loop: boolean }> = {
+  Idle_Neutral: { frameDurationMs: 520, loop: true }, Idle_Breathe: { frameDurationMs: 620, loop: true }, Idle_Sleepy: { frameDurationMs: 520, loop: true }, Idle_Sleeping: { frameDurationMs: 560, loop: true },
+  Walk_Right: { frameDurationMs: 180, loop: true }, Walk_Left: { frameDurationMs: 180, loop: true }, Think: { frameDurationMs: 420, loop: true }, Work_Focus: { frameDurationMs: 220, loop: true },
+  Expedition_Return: { frameDurationMs: 220, loop: false }, Expedition_Present: { frameDurationMs: 260, loop: true }, Talk_Neutral: { frameDurationMs: 280, loop: true }, Talk_Happy: { frameDurationMs: 300, loop: true },
+  Expedition_Prepare: { frameDurationMs: 300, loop: false }, Expedition_Leave: { frameDurationMs: 320, loop: false }, Listening: { frameDurationMs: 360, loop: true }, Waiting_Response: { frameDurationMs: 300, loop: true },
+  Drag_Hold: { frameDurationMs: 180, loop: true }, Drag_Release: { frameDurationMs: 220, loop: false }, Talk_Thinking: { frameDurationMs: 280, loop: true }, Talk_Concerned: { frameDurationMs: 280, loop: true },
+  Walk_Up: { frameDurationMs: 180, loop: true }, Walk_Down: { frameDurationMs: 180, loop: true }, Walk_UpLeft: { frameDurationMs: 180, loop: true }, Walk_UpRight: { frameDurationMs: 180, loop: true },
+  Walk_DownLeft: { frameDurationMs: 180, loop: true }, Walk_DownRight: { frameDurationMs: 180, loop: true }, Enter: { frameDurationMs: 320, loop: false }, Leave: { frameDurationMs: 320, loop: false }, Music_Idle: { frameDurationMs: 400, loop: true },
+};
+
 export const COMPANION_ANIMATION_MANIFEST: readonly CompanionAnimationManifestEntry[] = COMPANION_ANIMATION_NAMES.map((key) => ({
   key,
   fileName: `${key}.png`,
@@ -2047,7 +2060,9 @@ export const COMPANION_ANIMATION_MANIFEST: readonly CompanionAnimationManifestEn
   maxFrames: 120,
   minFrameSize: 300,
   maxFrameSize: 4096,
+  ...COMPANION_ANIMATION_TIMING[key],
 }));
+export const COMPANION_ANIMATION_MANIFEST_BY_NAME: Readonly<Record<CompanionAnimationName, CompanionAnimationManifestEntry>> = Object.fromEntries(COMPANION_ANIMATION_MANIFEST.map(entry => [entry.key, entry])) as Record<CompanionAnimationName, CompanionAnimationManifestEntry>;
 
 export interface CompanionCreationAsset {
   animationKey: CompanionAnimationName;

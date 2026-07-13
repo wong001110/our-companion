@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { safeStorage } from 'electron';
 import { io, type Socket } from 'socket.io-client';
 import type { DatabaseService } from '@our-companion/database';
-import type { BlockedUserSummary, CompanionAssetManifestV1, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile } from '@our-companion/shared';
+import type { BlockedUserSummary, CompanionAssetManifestV1, CompleteAssetPackResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile } from '@our-companion/shared';
 
 export const NETWORK_PROTOCOL_VERSION = '0.2';
 export const NETWORK_CLIENT_VERSION = '0.2.0';
@@ -197,7 +197,7 @@ export class NetworkConnectionService {
   getFriendCompanion = (friendUserId: string) => this.socialRequest<PublicCompanionProfile>(`/api/friends/${friendUserId}/companion`);
   initiateAssetPack = (companionId: string, input: { schemaVersion: 1; manifestHash: string; totalFiles: number; totalBytes: number; manifest: CompanionAssetManifestV1 }) => this.socialRequest<{ reused: boolean; resumed?: boolean; requiresActivation?: boolean; assetPack: NetworkAssetPack; fileIds?: string[] }>(`/api/companions/${companionId}/asset-packs`, input);
   getUploadUrls = (assetPackId: string, fileIds: string[]) => this.socialRequest<{ uploads: Array<{ fileId: string; relativePath: string; uploadUrl: string; expiresAt: string; requiredHeaders: { 'content-type': string; 'x-amz-meta-sha256': string } }> }>(`/api/asset-packs/${assetPackId}/upload-urls`, { fileIds });
-  completeAssetPack = (assetPackId: string) => this.socialRequest<{ assetPack: NetworkAssetPack }>(`/api/asset-packs/${assetPackId}/complete`, {});
+  completeAssetPack = (assetPackId: string) => this.socialRequest<CompleteAssetPackResult>(`/api/asset-packs/${assetPackId}/complete`, {});
   activateAssetPack = (assetPackId: string) => this.socialRequest<PublicCompanionProfile>(`/api/asset-packs/${assetPackId}/activate`, {});
   getAssetPackManifest = (assetPackId: string) => this.socialRequest<{ manifest: CompanionAssetManifestV1; files: Array<{ id: string; relativePath: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/asset-packs/${assetPackId}/manifest`);
   getDownloadUrls = (assetPackId: string, fileIds: string[]) => this.socialRequest<{ downloads: Array<{ fileId: string; relativePath: string; downloadUrl: string; expiresAt: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/asset-packs/${assetPackId}/download-urls`, { fileIds });
@@ -241,7 +241,7 @@ export class NetworkConnectionService {
     this.session = session;
     if (!(await this.refreshSession())) return false;
     try { await this.loadAccount(); return true; }
-    catch { this.clearSession(); return false; }
+    catch { this.handleAuthenticationLoss('session_restoration_rejected'); return false; }
   }
 
   private async refreshSession(): Promise<boolean> {
@@ -253,7 +253,7 @@ export class NetworkConnectionService {
         this.session = { ...this.session, ...result };
         this.writeSession(this.session);
         return true;
-      } catch { this.transferLifecycleHandler?.('session_refresh_failed'); this.stopSocket(); this.clearSession(); return false; }
+      } catch { this.handleAuthenticationLoss('session_refresh_failed'); return false; }
     })().finally(() => { this.refreshPromise = undefined; });
     return this.refreshPromise;
   }
@@ -307,7 +307,7 @@ export class NetworkConnectionService {
       this.setStatus({ state: 'authentication_required', message: undefined });
       return;
     }
-    if (isAuthenticationError(code) && this.socketRefreshAttempted) { this.stopSocket(); this.clearSession(); this.setStatus({ state: 'authentication_required', message: undefined }); return; }
+    if (isAuthenticationError(code) && this.socketRefreshAttempted) { this.handleAuthenticationLoss('socket_authentication_rejected'); return; }
     this.scheduleReconnect(error);
   }
 
@@ -323,6 +323,13 @@ export class NetworkConnectionService {
   private clearReconnectTimer(): void { if (this.reconnectTimer) this.deps.clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; }
   private resetReconnectAttempts(): void { this.clearReconnectTimer(); this.db.setAppSetting(RECONNECT_ATTEMPT_KEY, 0); }
   private stopSocket(): void { this.clearReconnectTimer(); this.socket?.disconnect(); this.socket = undefined; }
+  private handleAuthenticationLoss(reason = 'authentication_lost'): void {
+    this.transferLifecycleHandler?.(reason);
+    this.stopSocket();
+    this.clearSession();
+    this.resetReconnectAttempts();
+    this.setStatus({ state: 'authentication_required', message: undefined });
+  }
   private async authenticatedRequest<T>(path: string, options: { method?: 'GET' | 'POST' | 'DELETE' | 'PATCH'; body?: unknown } = {}): Promise<T> {
     if (!this.session || this.session.serverOrigin !== this.serverUrl) throw new Error('AUTHENTICATION_REQUIRED');
     const { method, body } = options;
@@ -330,7 +337,11 @@ export class NetworkConnectionService {
     catch (error) {
       if (!isAuthenticationError(messageFor(error))) throw error;
       if (!(await this.refreshSession()) || !this.session) throw new Error('AUTHENTICATION_REQUIRED');
-      return this.request<T>(path, body, this.session.accessToken, method);
+      try { return await this.request<T>(path, body, this.session.accessToken, method); }
+      catch (retryError) {
+        if (isAuthenticationError(messageFor(retryError))) { this.handleAuthenticationLoss('rest_authentication_rejected'); throw new Error('AUTHENTICATION_REQUIRED'); }
+        throw retryError;
+      }
     }
   }
   private async socialRequest<T = unknown>(path: string, body?: unknown, method?: 'DELETE' | 'PATCH'): Promise<T> {

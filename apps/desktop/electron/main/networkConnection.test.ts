@@ -133,6 +133,17 @@ describe('NetworkConnectionService', () => {
     expect(db.getAppSetting('network.secure-session')).toBe('');
   });
 
+  it('cancels transfers and clears the session when the retried REST request is still unauthorized', async () => {
+    const db = new TestDb(); db.setAppSetting('network.online-mode-enabled', true); db.setAppSetting('network.device-id', '4ec4643d-b90e-4fe5-9668-1521fb6a0b9d');
+    const fetch = vi.fn().mockResolvedValueOnce(response(null, false, 'TOKEN_EXPIRED')).mockResolvedValueOnce(response({ accessToken: 'new', refreshToken: 'new-refresh' })).mockResolvedValueOnce(response(null, false, 'TOKEN_EXPIRED'));
+    const service = new NetworkConnectionService(db as never, undefined, { fetch, createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: value => Buffer.from(value), decryptString: value => value.toString() }, setTimeout, clearTimeout });
+    const cancelled = vi.fn(); service.setTransferLifecycleHandler(cancelled);
+    (service as any).session = { serverOrigin: 'http://localhost:3001', accessToken: 'old', refreshToken: 'refresh' }; (service as any).status = { state: 'online', onlineModeEnabled: true, serverUrl: 'http://localhost:3001' };
+    await expect(service.removeFriend('6f939bb4-ff6a-4dbb-87b0-e275e25cd744')).rejects.toThrow('AUTHENTICATION_REQUIRED');
+    expect(cancelled).toHaveBeenCalledWith('rest_authentication_rejected');
+    expect((await service.getStatus()).state).toBe('authentication_required');
+  });
+
   it('emits in-app Presence activity only while online and throttles rapid interaction', async () => {
     const db = new TestDb();
     db.setAppSetting('network.online-mode-enabled', true);

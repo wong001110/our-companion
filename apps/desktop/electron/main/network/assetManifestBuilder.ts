@@ -45,7 +45,7 @@ export function buildAssetManifest(input: { companionId: string; includeVoices?:
       const source = files.get(relativePath.slice('assets/'.length));
       if (!source) throw new Error('ASSET_PACK_FILE_MISSING');
       const sprite = readPngSpriteMetadata(source);
-      return { name: definition.key, format: 'sprite_sheet' as const, files: [relativePath], frameWidth: sprite.frameWidth, frameHeight: sprite.frameHeight, frameCount: sprite.frameCount, fps: 1, loop: definition.key !== 'Enter' && definition.key !== 'Leave' };
+      return { name: definition.key, format: 'sprite_sheet' as const, files: [relativePath], frameWidth: sprite.frameWidth, frameHeight: sprite.frameHeight, frameCount: sprite.frameCount, frameDurationMs: definition.frameDurationMs, loop: definition.loop };
     });
   const animationNames = new Set(animations.map(animation => animation.name));
   for (const required of ['Idle_Neutral', 'Enter', 'Leave'] as const) if (!animationNames.has(required)) throw new Error('ASSET_PACK_MANIFEST_INVALID');

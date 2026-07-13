@@ -86,42 +86,45 @@ export class PublicCompanionService {
   getPublishStatus = async () => this.publishProgress ? { ...this.publishProgress } : undefined;
 
   async downloadPack(input: { assetPackId: string; networkCompanionId: string }): Promise<CachedAssetPack> {
-    const scope = await this.scope();
-    const existing = this.db.getCachedNetworkAssetPackWithRoot(scope.serverOrigin, input.assetPackId);
-    if (existing && existing.verified && this.verifyCache(existing.cacheRoot, existing.manifestHash)) {
-      const refreshed = { ...existing, lastUsedAt: new Date().toISOString() };
-      this.db.upsertCachedNetworkAssetPack(refreshed); return withoutRoot(refreshed);
-    }
+    if (this.downloadAbort) throw new Error('ASSET_DOWNLOAD_IN_PROGRESS');
     const abort = new AbortController(); this.downloadAbort = abort;
-    const payload = await this.network.getAssetPackManifest(input.assetPackId);
-    const manifestHash = createHash('sha256').update(canonicalJson(payload.manifest), 'utf8').digest('hex');
-    const originHash = createHash('sha256').update(scope.serverOrigin, 'utf8').digest('hex');
-    const base = path.join(this.userDataDir, 'network-cache', originHash, 'asset-packs');
-    const partial = path.join(base, '.partial', `${input.assetPackId}-${randomUUID()}`);
-    const finalRoot = path.join(base, input.assetPackId);
+    let partial: string | undefined;
     try {
-      fs.mkdirSync(partial, { recursive: true });
+      const scope = await this.scope();
+      const existing = this.db.getCachedNetworkAssetPackWithRoot(scope.serverOrigin, input.assetPackId);
+      if (existing && existing.verified && this.verifyCache(existing.cacheRoot, existing.manifestHash)) {
+        const refreshed = { ...existing, lastUsedAt: new Date().toISOString() };
+        this.db.upsertCachedNetworkAssetPack(refreshed); return withoutRoot(refreshed);
+      }
+      const payload = await this.network.getAssetPackManifest(input.assetPackId);
+      const manifestHash = createHash('sha256').update(canonicalJson(payload.manifest), 'utf8').digest('hex');
+      const originHash = createHash('sha256').update(scope.serverOrigin, 'utf8').digest('hex');
+      const base = path.join(this.userDataDir, 'network-cache', originHash, 'asset-packs');
+      const partialRoot = path.join(base, '.partial', `${input.assetPackId}-${randomUUID()}`);
+      partial = partialRoot;
+      const finalRoot = path.join(base, input.assetPackId);
+      fs.mkdirSync(partialRoot, { recursive: true });
       for (let offset = 0; offset < payload.files.length; offset += 50) {
         const result = await this.network.getDownloadUrls(input.assetPackId, payload.files.slice(offset, offset + 50).map(file => file.id));
         await this.withConcurrency(result.downloads, 3, async record => {
           const file = payload.files.find(item => item.relativePath === record.relativePath);
           if (!file || file.sizeBytes !== record.sizeBytes || file.sha256 !== record.sha256) throw new Error('ASSET_INTEGRITY_FAILED');
-          const destination = safeDestination(partial, record.relativePath);
+          const destination = safeDestination(partialRoot, record.relativePath);
           fs.mkdirSync(path.dirname(destination), { recursive: true });
           const bytes = await this.downloadWithRetry(record, abort.signal, async () => (await this.network.getDownloadUrls(input.assetPackId, [record.fileId])).downloads[0]);
           if (bytes.byteLength !== record.sizeBytes || createHash('sha256').update(bytes).digest('hex') !== record.sha256) throw new Error('ASSET_INTEGRITY_FAILED');
           fs.writeFileSync(destination, bytes, { flag: 'wx' });
         });
       }
-      fs.writeFileSync(path.join(partial, 'manifest.json'), canonicalJson(payload.manifest), { flag: 'wx' });
-      if (!this.verifyCache(partial, manifestHash)) throw new Error('ASSET_INTEGRITY_FAILED');
+      fs.writeFileSync(path.join(partialRoot, 'manifest.json'), canonicalJson(payload.manifest), { flag: 'wx' });
+      if (!this.verifyCache(partialRoot, manifestHash)) throw new Error('ASSET_INTEGRITY_FAILED');
       fs.rmSync(finalRoot, { recursive: true, force: true });
-      fs.mkdirSync(path.dirname(finalRoot), { recursive: true }); fs.renameSync(partial, finalRoot);
+      fs.mkdirSync(path.dirname(finalRoot), { recursive: true }); fs.renameSync(partialRoot, finalRoot);
       const timestamp = new Date().toISOString();
       const cache = { serverOrigin: scope.serverOrigin, assetPackId: input.assetPackId, networkCompanionId: input.networkCompanionId, manifestHash, cacheRoot: finalRoot, totalBytes: payload.files.reduce((sum, file) => sum + file.sizeBytes, 0), downloadedAt: timestamp, lastUsedAt: timestamp, pinned: false, verified: true };
       this.db.upsertCachedNetworkAssetPack(cache);
       return withoutRoot(cache);
-    } finally { if (fs.existsSync(partial)) fs.rmSync(partial, { recursive: true, force: true }); this.downloadAbort = undefined; }
+    } finally { if (partial && fs.existsSync(partial)) fs.rmSync(partial, { recursive: true, force: true }); if (this.downloadAbort === abort) this.downloadAbort = undefined; }
   }
   async getCachedPack(assetPackId: string): Promise<CachedAssetPack | undefined> { const scope = await this.scope(); const cache = this.db.getCachedNetworkAssetPackWithRoot(scope.serverOrigin, assetPackId); return cache?.verified && this.verifyCache(cache.cacheRoot, cache.manifestHash) ? withoutRoot(cache) : undefined; }
   async clearUnusedCache() { let removed = 0; let bytesFreed = 0; let total = 0; const now = Date.now(); const records = this.db.listCachedNetworkAssetPacks(); for (const record of records) total += record.totalBytes; for (const record of records) { if (record.pinned || (total <= CACHE_MAX_BYTES && now - Date.parse(record.lastUsedAt) <= CACHE_MAX_AGE_MS)) continue; fs.rmSync(record.cacheRoot, { recursive: true, force: true }); this.db.deleteCachedNetworkAssetPack(record.serverOrigin, record.assetPackId); total -= record.totalBytes; bytesFreed += record.totalBytes; removed++; } return { removed, bytesFreed }; }

@@ -19,10 +19,18 @@ describe('S3 asset manifest builder', () => {
     const second = buildAssetManifest({ companionId: 'companion-1', pathOptions: options(root) });
     expect(first.manifestHash).toBe(second.manifestHash);
     expect(first.manifest.runtime.animations.map(animation => animation.name)).toEqual(['Enter', 'Idle_Neutral', 'Leave']);
+    expect(first.manifest.runtime.animations.find(animation => animation.name === 'Idle_Neutral')?.frameDurationMs).toBe(520);
   }));
   it('rejects symlinked and unsupported files', () => withAssets(root => {
     const animations = path.join(root, 'companions', 'companion-1', 'assets', 'animations');
     try { fs.symlinkSync(path.join(root, 'outside.png'), path.join(animations, 'escape.png')); } catch { return; }
     expect(() => buildAssetManifest({ companionId: 'companion-1', pathOptions: options(root) })).toThrow('ASSET_PACK_MANIFEST_INVALID');
+  }));
+  it('uses the shared Walk timing in portable metadata', () => withAssets(root => {
+    const animations = path.join(root, 'companions', 'companion-1', 'assets', 'animations');
+    fs.writeFileSync(path.join(animations, 'Walk_Right.png'), pngHeader(600, 300));
+    const pack = buildAssetManifest({ companionId: 'companion-1', pathOptions: options(root) });
+    const walk = pack.manifest.runtime.animations.find(animation => animation.name === 'Walk_Right');
+    expect(walk).toMatchObject({ frameCount: 2, frameDurationMs: 180, loop: true });
   }));
 });

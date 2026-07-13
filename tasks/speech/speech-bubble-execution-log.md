@@ -1,11 +1,12 @@
 # Speech bubble execution log
 
-- Sentence splitting retains closing quotes and brackets with the preceding terminator.
-- Markdown/HTML-only messages complete without rendering a stuck empty bubble.
-- Typewriter completion uses a generation token so stale callbacks cannot complete a newer response.
-- Existing abbreviation, decimal, CJK, emoji, markdown, list, and code-fence behavior remains covered by tests.
+- Baseline: `d02b8fe149516ba3d3a1d68932890f3e54ee15eb`.
+- Empty discovery speech completes its owning command immediately; no completion ref is installed afterward.
+- Generation tokens protect newer speech from stale callbacks.
+- Sentence parsing consumes English and CJK closing marks, including `」』『》〉】〕〗〙〛`.
+- Markdown link scanning handles balanced URL parentheses and does not execute HTML.
 
 ## Verification
 
-- `apps/desktop/renderer/src/companion/typewriterSpeech.test.ts` — 13 tests passed.
-- Full client regression: 54 test files and 402 tests passed.
+- Focused speech tests: 15 passed.
+- Full Node 22 client regression: 55 files / 407 tests passed.

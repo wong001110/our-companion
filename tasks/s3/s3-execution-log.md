@@ -1,14 +1,20 @@
 # S3 execution log
 
-- Implemented idempotent companion activation and reusable active/superseded asset packs.
-- Activation now swaps verified superseded packs atomically and publishes an invalidation.
-- Upload/download work in bounded batches of 50, with concurrency 3 and up to two URL re-signs after 401/403.
-- Transfers cancel on logout, online-mode disable, server change, session refresh failure, and app shutdown.
-- Asset manifests reject unsupported files and include validated portable PNG sprite metadata.
-- Added hourly bounded cleanup for expired uploads and retained superseded packs; storage capability retries every five minutes.
-- UI polls and displays actual publish phase, files, bytes, percentage, and current file.
+- Baseline: `d02b8fe149516ba3d3a1d68932890f3e54ee15eb`.
+- Complete now always returns `{ assetPack, companion }`, including active retry.
+- Cleanup atomically claims `superseded → deleting` and `uploading/verifying → abandoning`; failed object deletion remains claimed for the next cleanup pass.
+- Sprite timing comes from the shared animation definition, used by both the renderer and portable manifest (`Idle_Neutral` 520 ms; `Walk_Right` 180 ms).
+- Transfers use 50-file batches, re-sign 401/403 URLs, reject concurrent downloads, and abort on offline/logout/server change/authentication loss/shutdown.
+- Download ownership is claimed before the first awaited network call; active completion retries return their envelope even when R2 is temporarily unavailable.
+- Retention is `R2_SUPERSEDED_PACK_RETENTION_DAYS`, validated by storage configuration.
 
 ## Verification
 
-- `network: npm test -- --runInBand` — 8 suites passed, 31 tests passed, 1 integration suite skipped.
-- `client: tsc -b`, targeted tests, full Vitest suite (54 files / 402 tests), architecture check, and production renderer build — passed.
+- Node 22.23.1: typecheck, architecture check, build, and full Vitest suite passed: 55 files / 407 tests.
+- Focused asset builder and transfer ownership tests passed.
+- Live R2 integration passed: private upload, HEAD, download/hash, manifest write, delete, and clean test teardown.
+- Two-client desktop smoke test: pending manual execution with separate owner/friend data directories.
+
+## Remaining limitation
+
+The final implementation commit SHA and manual two-client result are recorded after the manual smoke test.

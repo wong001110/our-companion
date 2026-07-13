@@ -313,10 +313,14 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     } else if (displayHint === 'present_discovery' && !presentation.discovery.popup) {
       const next = presentation.discovery.presentNext();
       if (next) {
-        presentation.speech.showTypewriter(next.shareMessage);
+        const completedImmediately = presentation.speech.showTypewriter(next.shareMessage);
         behaviorCommandActionsRef.current.recordDiscoveryPresented();
-        commandCompletionRef.current = { commandId: command.id, complete: completePresentation };
         beginVisiblePresentation();
+        if (completedImmediately) {
+          window.requestAnimationFrame(completePresentation);
+          return { started, completed, cancel };
+        }
+        commandCompletionRef.current = { commandId: command.id, complete: completePresentation };
       } else {
         fail('missing_discovery');
       }
@@ -920,8 +924,9 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
               behavior.setDiscoveryPresentationState('presented');
               const next = discovery.presentNext();
               if (next) {
-                speech.showTypewriter(next.shareMessage);
+                const completedImmediately = speech.showTypewriter(next.shareMessage);
                 behavior.recordDiscoveryPresented();
+                if (completedImmediately) onTypewriterComplete();
               }
             }}>Show me</button>
             <button className="companion-quick-btn soft-hint-dismiss" onClick={() => {

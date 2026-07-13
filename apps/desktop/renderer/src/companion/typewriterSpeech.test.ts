@@ -88,4 +88,15 @@ describe('typewriterSpeech helpers', () => {
     expect(splitIntoChunks('---\n```ts\n```\n<strong></strong>')).toEqual([]);
     expect(splitIntoChunks('> [Read **this**](https://example.test)\n- `now`')).toEqual(['Read this now']);
   });
+
+  it('keeps full CJK closing marks with the sentence terminator', () => {
+    expect(splitIntoChunks('她说：「准备好了。」然后出发。')).toEqual(['她说：「准备好了。」', '然后出发。']);
+    expect(splitIntoChunks('他说『可以！』我们继续。')).toEqual(['他说『可以！』', '我们继续。']);
+    expect(splitIntoChunks('她回答《没问题。》然后离开。')).toEqual(['她回答《没问题。》', '然后离开。']);
+  });
+
+  it('removes links with nested URL parentheses without leaving URL punctuation', () => {
+    expect(stripMarkdown('See [documentation](https://example.com/a_(b)) now.')).toBe('See documentation now.');
+    expect(stripMarkdown('![image](https://x.test/a_(b)) and [**docs**](https://x.test/c_(d))')).toBe('image and docs');
+  });
 });

@@ -14,7 +14,7 @@ export function splitCharacters(message: string): string[] {
 // The companion "speaks", so raw markdown syntax has no place in a speech
 // bubble. Reduce it to plain readable prose: keep the words, drop the markup.
 export function stripMarkdown(text: string): string {
-  return text
+  return stripMarkdownLinks(text)
     .replace(/```[a-zA-Z0-9]*\n?/g, '')          // fenced code delimiters (keep inner text)
     .replace(/`([^`]+)`/g, '$1')                  // inline code
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')     // images -> alt text
@@ -62,7 +62,7 @@ function splitSentences(text: string): string[] {
     let match: RegExpExecArray | null;
     while ((match = boundary.exec(trimmed)) !== null) {
       let end = boundary.lastIndex;
-      while (/["'”’）)\]}]/.test(trimmed[end] ?? '')) end++;
+      while (/["'”’）)\]}」』》〉】〕〗〙〛]/.test(trimmed[end] ?? '')) end++;
       const after = trimmed[end];
       const atEnd = end >= trimmed.length;
       const alwaysBreaks = /[。！？…]/.test(match[0][match[0].length - 1]);
@@ -75,6 +75,33 @@ function splitSentences(text: string): string[] {
     if (tail) out.push(tail);
   }
   return out;
+}
+
+// Markdown URLs can contain balanced parentheses. Scan them instead of using a
+// greedy regular expression so spoken text never inherits a trailing `)`.
+function stripMarkdownLinks(text: string): string {
+  let output = '';
+  for (let index = 0; index < text.length;) {
+    const image = text[index] === '!' && text[index + 1] === '[';
+    if (text[index] !== '[' && !image) { output += text[index++]; continue; }
+    const labelStart = index + (image ? 2 : 1);
+    let cursor = labelStart; let brackets = 1;
+    for (; cursor < text.length && brackets; cursor++) {
+      if (text[cursor] === '[') brackets++;
+      else if (text[cursor] === ']') brackets--;
+    }
+    if (brackets || text[cursor] !== '(') { output += text[index++]; continue; }
+    const label = text.slice(labelStart, cursor - 1);
+    let urlCursor = cursor + 1; let parentheses = 1;
+    for (; urlCursor < text.length && parentheses; urlCursor++) {
+      if (text[urlCursor] === '(') parentheses++;
+      else if (text[urlCursor] === ')') parentheses--;
+    }
+    if (parentheses) { output += text[index++]; continue; }
+    output += label;
+    index = urlCursor;
+  }
+  return output;
 }
 
 const hasWords = (text: string): boolean => /[\p{L}\p{N}]/u.test(text);
@@ -106,7 +133,7 @@ export function splitIntoChunks(message: string, maxChars = MAX_CHUNK_CHARACTERS
 
     const prev = chunks[chunks.length - 1];
     const wordless = !hasWords(sentence); // trailing emoji / punctuation only -> stick to previous
-    const prevTiny = prev !== undefined && displayWidth(prev) < MIN_CHUNK_CHARACTERS && prev.length + 1 + sentence.length <= maxChars;
+    const prevTiny = prev !== undefined && !/[　-鿿＀-￯]/.test(prev) && displayWidth(prev) < MIN_CHUNK_CHARACTERS && prev.length + 1 + sentence.length <= maxChars;
     if (prev !== undefined && (wordless || prevTiny)) {
       chunks[chunks.length - 1] = `${prev} ${sentence}`;
     } else {
