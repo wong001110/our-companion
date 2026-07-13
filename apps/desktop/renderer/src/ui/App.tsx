@@ -345,7 +345,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   });
 
   const handleTypewriterComplete = useCallback(() => {
-    speech.onTypewriterComplete();
+    if (!speech.onTypewriterComplete()) return; // still more chunks to speak
     onTypewriterComplete();
     const completion = commandCompletionRef.current;
     commandCompletionRef.current = null;
