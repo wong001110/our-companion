@@ -8,6 +8,9 @@ export const NETWORK_PROTOCOL_VERSION = '0.1';
 export const NETWORK_CLIENT_VERSION = '0.1.0';
 export type NetworkConnectionState = 'offline' | 'checking_server' | 'authentication_required' | 'connecting' | 'online' | 'reconnecting' | 'incompatible_client' | 'server_unavailable' | 'authentication_failed' | 'disabled';
 export interface NetworkAccount { id: string; email: string; username: string; friendCode: string; }
+export type SocialInvalidation =
+  | { type: 'friends' }
+  | { type: 'presence'; userId: string; status: FriendPresence; updatedAt: string | null };
 export interface NetworkStatus {
   state: NetworkConnectionState;
   onlineModeEnabled: boolean;
@@ -16,6 +19,7 @@ export interface NetworkStatus {
   message?: string;
   remoteRevocationConfirmed?: boolean;
   socialRevision?: number;
+  socialInvalidation?: SocialInvalidation;
 }
 export interface StoredNetworkSession { serverOrigin: string; accessToken: string; refreshToken: string; }
 
@@ -54,6 +58,7 @@ export class NetworkConnectionService {
   private enablePromise?: Promise<NetworkStatus>;
   private socketRefreshAttempted = false;
   private socialRevision = 0;
+  private lastPresenceActivityAt = 0;
 
   constructor(
     private readonly db: DatabaseService,
@@ -135,7 +140,7 @@ export class NetworkConnectionService {
     let remoteRevocationConfirmed = false;
     try {
       if (this.session) {
-        await this.authenticatedRequest('/api/auth/logout', { deviceId: this.deviceId });
+        await this.authenticatedRequest('/api/auth/logout', { body: { deviceId: this.deviceId } });
         remoteRevocationConfirmed = true;
       }
     } catch { /* local logout is allowed, but the result remains explicitly unconfirmed */ }
@@ -171,7 +176,12 @@ export class NetworkConnectionService {
   blockUser = (userId: string) => this.socialRequest('/api/blocks', { userId });
   unblockUser = (userId: string) => this.socialRequest(`/api/blocks/${userId}`, undefined, 'DELETE');
   getFriendPresence = () => this.socialRequest<Array<{ userId: string; status: FriendPresence; updatedAt?: string | null }>>('/api/presence/friends');
-  sendPresenceActivity = async (): Promise<void> => { if (this.enabled && this.status.state === 'online') this.socket?.emit?.('presence.activity'); };
+  sendPresenceActivity = async (): Promise<void> => {
+    const now = Date.now();
+    if (!this.enabled || this.status.state !== 'online' || now - this.lastPresenceActivityAt < 10_000) return;
+    this.lastPresenceActivityAt = now;
+    this.socket?.emit?.('presence.activity');
+  };
 
   dispose(): void { this.stopSocket(); }
 
@@ -247,9 +257,12 @@ export class NetworkConnectionService {
     socket.on('connect_error', (error) => { void this.handleSocketFailure(error); });
     socket.on('disconnect', (reason) => { if (this.enabled && reason !== 'io client disconnect') void this.handleSocketFailure(new Error(String(reason))); });
     for (const event of ['friend.request.created', 'friend.request.updated', 'friendship.created', 'friendship.removed', 'block.created', 'block.removed']) {
-      socket.on(event, () => this.setStatus({ socialRevision: ++this.socialRevision }));
+      socket.on(event, () => this.setStatus({ socialRevision: ++this.socialRevision, socialInvalidation: { type: 'friends' } }));
     }
-    socket.on('presence.updated', () => this.setStatus({ socialRevision: ++this.socialRevision }));
+    socket.on('presence.updated', (payload: Partial<{ userId: string; status: FriendPresence; updatedAt: string }>) => {
+      if (!payload.userId || !payload.status) return;
+      this.setStatus({ socialRevision: ++this.socialRevision, socialInvalidation: { type: 'presence', userId: payload.userId, status: payload.status, updatedAt: payload.updatedAt ?? null } });
+    });
     socket.connect();
   }
 
@@ -278,18 +291,19 @@ export class NetworkConnectionService {
   private clearReconnectTimer(): void { if (this.reconnectTimer) this.deps.clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; }
   private resetReconnectAttempts(): void { this.clearReconnectTimer(); this.db.setAppSetting(RECONNECT_ATTEMPT_KEY, 0); }
   private stopSocket(): void { this.clearReconnectTimer(); this.socket?.disconnect(); this.socket = undefined; }
-  private async authenticatedRequest<T>(path: string, body?: unknown): Promise<T> {
+  private async authenticatedRequest<T>(path: string, options: { method?: 'GET' | 'POST' | 'DELETE'; body?: unknown } = {}): Promise<T> {
     if (!this.session || this.session.serverOrigin !== this.serverUrl) throw new Error('AUTHENTICATION_REQUIRED');
-    try { return await this.request<T>(path, body, this.session.accessToken); }
+    const { method, body } = options;
+    try { return await this.request<T>(path, body, this.session.accessToken, method); }
     catch (error) {
-      if (!isAuthenticationError(messageFor(error)) || !(await this.refreshSession()) || !this.session) throw error;
-      return this.request<T>(path, body, this.session.accessToken);
+      if (!isAuthenticationError(messageFor(error))) throw error;
+      if (!(await this.refreshSession()) || !this.session) throw new Error('AUTHENTICATION_REQUIRED');
+      return this.request<T>(path, body, this.session.accessToken, method);
     }
   }
   private async socialRequest<T = unknown>(path: string, body?: unknown, method?: 'DELETE'): Promise<T> {
     if (!this.enabled || !this.session || this.status.state === 'disabled') throw new Error('ONLINE_MODE_DISABLED');
-    if (!method) return this.authenticatedRequest<T>(path, body);
-    return this.request<T>(path, body, this.session.accessToken, method);
+    return this.authenticatedRequest<T>(path, { method, body });
   }
   private publicRequest<T>(path: string, body: unknown): Promise<T> { return this.request<T>(path, body); }
   private async request<T>(path: string, body?: unknown, accessToken?: string, method?: 'GET' | 'POST' | 'DELETE'): Promise<T> {

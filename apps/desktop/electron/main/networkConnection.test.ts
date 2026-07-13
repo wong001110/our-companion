@@ -100,4 +100,36 @@ describe('NetworkConnectionService', () => {
     expect(() => normalizeServerUrl('https://user:secret@network.example')).toThrow('INVALID_NETWORK_SERVER_URL');
     expect(() => normalizeServerUrl('https://network.example/?token=x')).toThrow('INVALID_NETWORK_SERVER_URL');
   });
+
+  it('refreshes and retries a Remove Friend DELETE with the rotated access token', async () => {
+    const db = new TestDb();
+    db.setAppSetting('network.online-mode-enabled', true);
+    db.setAppSetting('network.device-id', '4ec4643d-b90e-4fe5-9668-1521fb6a0b9d');
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(response(null, false, 'TOKEN_EXPIRED'))
+      .mockResolvedValueOnce(response({ accessToken: 'new-access', refreshToken: 'new-refresh' }))
+      .mockResolvedValueOnce(response({ message: 'Friend removed' }));
+    const service = new NetworkConnectionService(db as never, undefined, { fetch, createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
+    (service as any).session = { serverOrigin: 'http://localhost:3001', accessToken: 'old-access', refreshToken: 'refresh' };
+    (service as any).status = { state: 'online', onlineModeEnabled: true, serverUrl: 'http://localhost:3001' };
+    await service.removeFriend('6f939bb4-ff6a-4dbb-87b0-e275e25cd744');
+    expect(fetch.mock.calls.map(([, options]) => (options as RequestInit).method)).toEqual(['DELETE', 'POST', 'DELETE']);
+    expect((fetch.mock.calls[0][1] as RequestInit).headers).toMatchObject({ authorization: 'Bearer old-access' });
+    expect((fetch.mock.calls[2][1] as RequestInit).headers).toMatchObject({ authorization: 'Bearer new-access' });
+  });
+
+  it('clears the session and does not retry when an Unblock refresh fails', async () => {
+    const db = new TestDb();
+    db.setAppSetting('network.online-mode-enabled', true);
+    db.setAppSetting('network.device-id', '4ec4643d-b90e-4fe5-9668-1521fb6a0b9d');
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(response(null, false, 'TOKEN_EXPIRED'))
+      .mockResolvedValueOnce(response(null, false, 'AUTHENTICATION_FAILED'));
+    const service = new NetworkConnectionService(db as never, undefined, { fetch, createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
+    (service as any).session = { serverOrigin: 'http://localhost:3001', accessToken: 'old-access', refreshToken: 'refresh' };
+    (service as any).status = { state: 'online', onlineModeEnabled: true, serverUrl: 'http://localhost:3001' };
+    await expect(service.unblockUser('6f939bb4-ff6a-4dbb-87b0-e275e25cd744')).rejects.toThrow('AUTHENTICATION_REQUIRED');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(db.getAppSetting('network.secure-session')).toBe('');
+  });
 });

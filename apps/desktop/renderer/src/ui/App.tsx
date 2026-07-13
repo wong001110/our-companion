@@ -77,9 +77,23 @@ type LocalExecutionPhase = 'waiting_to_start' | 'started' | 'completed' | 'cance
 
 export function App() {
   const mode = new URLSearchParams(window.location.search).get('mode');
-  if (mode === 'panel') return <PanelShell />;
-  if (mode === 'creation') return <CreationShell />;
-  return <CompanionEntryShell />;
+  return <><PresenceActivityReporter />{mode === 'panel' ? <PanelShell /> : mode === 'creation' ? <CreationShell /> : <CompanionEntryShell />}</>;
+}
+
+function PresenceActivityReporter() {
+  useEffect(() => {
+    let lastSentAt = 0;
+    const report = () => {
+      const now = Date.now();
+      if (now - lastSentAt < 10_000) return;
+      lastSentAt = now;
+      void window.ourCompanion.network.presence.sendActivity();
+    };
+    window.addEventListener('focus', report);
+    window.addEventListener('pointerdown', report, { passive: true });
+    return () => { window.removeEventListener('focus', report); window.removeEventListener('pointerdown', report); };
+  }, []);
+  return null;
 }
 
 function CompanionEntryShell() {
@@ -2120,38 +2134,85 @@ function SocialCard() {
   const [friendCode, setFriendCode] = useState('');
   const [lookup, setLookup] = useState<{ id: string; username: string; friendCode: string; relationship: string }>();
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [busyAction, setBusyAction] = useState(false);
+  const scopeRef = useRef<string | undefined>(undefined);
+  const lastRevisionRef = useRef<number | undefined>(undefined);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const available = status?.onlineModeEnabled && status.state === 'online' && Boolean(status.account);
+  const scope = status?.account ? `${status.serverUrl}:${status.account.id}` : undefined;
+  const clearSocialState = useCallback(() => {
+    setFriends([]); setIncoming([]); setOutgoing([]); setBlocked([]); setLookup(undefined); setError(''); setFriendCode('');
+  }, []);
   const refresh = async () => {
-    if (!available) return;
+    const scopeAtStart = scopeRef.current;
+    if (!available || !scopeAtStart) return;
+    setLoading(true);
     try {
       const [nextFriends, nextIncoming, nextOutgoing, nextBlocked, presence] = await Promise.all([
         window.ourCompanion.network.friends.getAll(), window.ourCompanion.network.friends.getIncomingRequests(), window.ourCompanion.network.friends.getOutgoingRequests(), window.ourCompanion.network.blocks.getAll(), window.ourCompanion.network.presence.getFriendPresence(),
       ]);
+      if (scopeAtStart !== scopeRef.current) return;
       const presenceByUser = new Map(presence.map((item) => [item.userId, item.status]));
       setFriends(nextFriends.map((friend) => ({ ...friend, presence: presenceByUser.get(friend.userId) ?? 'offline' })));
       setIncoming(nextIncoming); setOutgoing(nextOutgoing); setBlocked(nextBlocked); setError('');
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to synchronize Social.'); }
+    } catch (cause) { if (scopeAtStart === scopeRef.current) setError(messageForSocialError(cause)); }
+    finally { if (scopeAtStart === scopeRef.current) setLoading(false); }
   };
 
   useEffect(() => {
     void window.ourCompanion.network.getStatus().then(setStatus);
     return window.ourCompanion.network.onStatusChanged((next) => setStatus(next));
   }, []);
-  useEffect(() => { void refresh(); }, [available, status?.socialRevision]);
+  useEffect(() => {
+    scopeRef.current = scope;
+    if (!scope || !status?.onlineModeEnabled || ['disabled', 'authentication_required', 'authentication_failed', 'incompatible_client'].includes(status.state)) clearSocialState();
+  }, [scope, status?.onlineModeEnabled, status?.state, clearSocialState]);
+  useEffect(() => {
+    if (!available) return;
+    const revision = status?.socialRevision;
+    if (revision && revision !== lastRevisionRef.current) {
+      lastRevisionRef.current = revision;
+      const invalidation = status?.socialInvalidation;
+      if (invalidation?.type === 'presence') {
+        setFriends((current) => current.map((friend) => friend.userId === invalidation.userId ? { ...friend, presence: invalidation.status } : friend));
+        return;
+      }
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = setTimeout(() => { void refresh(); }, 200);
+      return () => { if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current); };
+    }
+    void refresh();
+  }, [available, status?.socialRevision]);
 
-  if (!available) return <PaperCard title="Social" tape className="settings-panel"><p>Social features are unavailable while Offline Mode is enabled or authentication is required.</p></PaperCard>;
-  const action = async (operation: () => Promise<unknown>) => { try { await operation(); await window.ourCompanion.network.presence.sendActivity(); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Social action failed.'); } };
+  if (!available) return <PaperCard title="Social" tape className="settings-panel"><p>{socialAvailabilityMessage(status)}</p></PaperCard>;
+  const action = async (operation: () => Promise<unknown>) => { if (busyAction) return; setBusyAction(true); try { await operation(); await window.ourCompanion.network.presence.sendActivity(); setLookup(undefined); await refresh(); } catch (cause) { setError(messageForSocialError(cause)); } finally { setBusyAction(false); } };
 
   return <PaperCard title="Social" tape className="settings-panel">
-    <div className="online-auth-form"><label><span>Add Friend by Code</span><input value={friendCode} onChange={(event) => setFriendCode(event.target.value.toUpperCase())} placeholder="ABC12345" /></label><button className="btn-secondary btn-sm" onClick={() => void action(async () => { const result = await window.ourCompanion.network.friends.lookup(friendCode.trim()); setLookup(result); })} disabled={!friendCode.trim()}>Find</button></div>
-    {lookup && <div className="online-user-info"><p><strong>{lookup.username}</strong> · {lookup.friendCode}</p>{lookup.relationship === 'none' && <button className="btn-primary btn-sm" onClick={() => void action(() => window.ourCompanion.network.friends.sendRequest(lookup.id))}>Send Request</button>}<p>{lookup.relationship.replaceAll('_', ' ')}</p></div>}
+    <div className="online-auth-form"><label><span>Add Friend by Code</span><input value={friendCode} onChange={(event) => setFriendCode(event.target.value.toUpperCase())} placeholder="ABC12345" /></label><button className="btn-secondary btn-sm" onClick={() => void action(async () => { const result = await window.ourCompanion.network.friends.lookup(friendCode.trim()); setLookup(result); })} disabled={!friendCode.trim() || busyAction}>Find</button></div>
+    {lookup && <div className="online-user-info"><p><strong>{lookup.username}</strong> · {lookup.friendCode}</p>{lookup.relationship === 'none' && <button className="btn-primary btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.sendRequest(lookup.id))}>Send Request</button>}<p>{lookup.relationship.replaceAll('_', ' ')}</p></div>}
     {error && <p className="creation-error">{error}</p>}
-    <h3>Friends</h3>{friends.length ? friends.map((friend) => <div className="online-user-info" key={friend.userId}><strong>{friend.username}</strong><span> · {friend.presence}</span><div className="action-row"><button className="btn-ghost btn-sm" onClick={() => void action(() => window.ourCompanion.network.friends.remove(friend.userId))}>Remove</button><button className="btn-ghost btn-sm" onClick={() => void action(() => window.ourCompanion.network.blocks.block(friend.userId))}>Block</button></div></div>) : <p>No friends yet.</p>}
-    <h3>Incoming Requests</h3>{incoming.map((request) => <div className="action-row" key={request.id}><span>{request.username}</span><button onClick={() => void action(() => window.ourCompanion.network.friends.acceptRequest(request.id))}>Accept</button><button onClick={() => void action(() => window.ourCompanion.network.friends.rejectRequest(request.id))}>Reject</button></div>)}
-    <h3>Outgoing Requests</h3>{outgoing.map((request) => <div className="action-row" key={request.id}><span>{request.username} · Pending</span><button onClick={() => void action(() => window.ourCompanion.network.friends.cancelRequest(request.id))}>Cancel</button></div>)}
-    <h3>Blocked Users</h3>{blocked.map((user) => <div className="action-row" key={user.userId}><span>{user.username}</span><button onClick={() => void action(() => window.ourCompanion.network.blocks.unblock(user.userId))}>Unblock</button></div>)}
+    {loading && <p>Loading Social data…</p>}
+    <h3>Friends</h3>{friends.length ? friends.map((friend) => <div className="online-user-info" key={friend.userId}><strong>{friend.username}</strong><span> · {friend.presence}</span><div className="action-row"><button className="btn-ghost btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.remove(friend.userId))}>Remove</button><button className="btn-ghost btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.blocks.block(friend.userId))}>Block</button></div></div>) : <p>No friends yet.</p>}
+    <h3>Incoming Requests</h3>{incoming.length ? incoming.map((request) => <div className="action-row" key={request.id}><span>{request.username}</span><button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.acceptRequest(request.id))}>Accept</button><button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.rejectRequest(request.id))}>Reject</button></div>) : <p>No incoming requests.</p>}
+    <h3>Outgoing Requests</h3>{outgoing.length ? outgoing.map((request) => <div className="action-row" key={request.id}><span>{request.username} · Pending</span><button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.cancelRequest(request.id))}>Cancel</button></div>) : <p>No outgoing requests.</p>}
+    <h3>Blocked Users</h3>{blocked.length ? blocked.map((user) => <div className="action-row" key={user.userId}><span>{user.username}</span><button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.blocks.unblock(user.userId))}>Unblock</button></div>) : <p>No blocked users.</p>}
   </PaperCard>;
+}
+
+function socialAvailabilityMessage(status?: NetworkStatus): string {
+  if (!status?.onlineModeEnabled || status.state === 'disabled') return 'Online Mode is disabled.';
+  if (status.state === 'authentication_required' || status.state === 'authentication_failed') return 'Authentication is required to use Social.';
+  if (status.state === 'reconnecting' || status.state === 'connecting' || status.state === 'checking_server') return 'Network is reconnecting.';
+  if (status.state === 'server_unavailable') return 'Network Server is unavailable.';
+  if (status.state === 'incompatible_client') return 'This client needs an update before Social can connect.';
+  return 'Loading Social connection…';
+}
+
+function messageForSocialError(cause: unknown): string {
+  const code = cause instanceof Error ? cause.message : 'SOCIAL_ACTION_NOT_ALLOWED';
+  return ({ INVALID_FRIEND_CODE: 'No account was found with that Friend Code.', FRIEND_REQUEST_ALREADY_EXISTS: 'A request is already pending.', FRIENDSHIP_ALREADY_EXISTS: 'This user is already your friend.', CANNOT_FRIEND_SELF: 'You cannot add your own account.', SOCIAL_ACTION_NOT_ALLOWED: 'This action is not available.', RATE_LIMITED: 'Too many attempts. Try again later.' } as Record<string, string>)[code] ?? 'Unable to synchronize Social.';
 }
 
 const ALL_PERMISSION_SCOPES: PermissionScope[] = ['browser', 'automation', 'files', 'clipboard', 'calendar'];
@@ -2424,5 +2485,3 @@ function DebugAudioTestPanel() {
     </div>
   );
 }
-
-

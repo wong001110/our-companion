@@ -1397,13 +1397,19 @@ export interface NetworkStatus {
   message?: string;
   remoteRevocationConfirmed?: boolean;
   socialRevision?: number;
+  socialInvalidation?: SocialInvalidation;
 }
+
+export type SocialInvalidation =
+  | { type: 'friends' }
+  | { type: 'presence'; userId: string; status: FriendPresence; updatedAt: string | null };
 
 export type FriendPresence = 'online' | 'idle' | 'offline';
 export interface FriendSummary { userId: string; username: string; friendCode: string; presence: FriendPresence; }
 export interface FriendRequestSummary { id: string; direction: 'incoming' | 'outgoing'; userId: string; username: string; friendCode: string; status: 'pending'; createdAt: string; }
 export interface BlockedUserSummary { userId: string; username: string; blockedAt: string; }
 export interface SocialState {
+  scope?: { serverUrl: string; accountId: string };
   friends: FriendSummary[];
   incomingRequests: FriendRequestSummary[];
   outgoingRequests: FriendRequestSummary[];
