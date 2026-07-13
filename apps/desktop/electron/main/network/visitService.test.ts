@@ -17,7 +17,7 @@ function dependencies(accountId = owner) {
     startVisitSession: vi.fn(), endVisitSession: vi.fn(), heartbeatVisitSession: vi.fn().mockResolvedValue(session()),
     listVisitSessions: vi.fn().mockResolvedValue([]), listVisitInvitations: vi.fn(), createVisitInvitation: vi.fn(), acceptVisitInvitation: vi.fn(), declineVisitInvitation: vi.fn(), cancelVisitInvitation: vi.fn(),
   };
-  const companions = { hasNetworkCompanionMapping: vi.fn().mockResolvedValue(true), downloadVisitPack: vi.fn().mockResolvedValue({ verified: true }) };
+  const companions = { hasNetworkCompanionMapping: vi.fn().mockResolvedValue(true), downloadVisitPack: vi.fn().mockResolvedValue({ verified: true }), cancelVisitDownload: vi.fn().mockResolvedValue(undefined) };
   return { network, companions, service: new VisitService(network as never, companions as never) };
 }
 
@@ -68,5 +68,28 @@ describe('VisitService main-process coordinator', () => {
     network.getStatus.mockResolvedValue({ onlineModeEnabled: false, state: 'disabled' });
     await expect(service.prepare('session-1')).rejects.toThrow('ONLINE_MODE_DISABLED');
     expect(network.markVisitReady).not.toHaveBeenCalled();
+  });
+
+  it('coalesces concurrent prepare calls and does not repeat work after this participant is ready', async () => {
+    const { service, network, companions } = dependencies(host);
+    await Promise.all([service.prepare('session-1'), service.prepare('session-1')]);
+    expect(companions.downloadVisitPack).toHaveBeenCalledTimes(1);
+    expect(network.markVisitReady).toHaveBeenCalledTimes(1);
+    network.getVisitSession.mockResolvedValue({ ...session(), hostReady: true });
+    await service.prepare('session-1');
+    expect(companions.downloadVisitPack).toHaveBeenCalledTimes(1);
+    expect(network.markVisitReady).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps heartbeat ownership for a transient failure, but stops on an authoritative terminal error', async () => {
+    vi.useFakeTimers();
+    const { service, network } = dependencies(owner);
+    network.listVisitSessions.mockResolvedValue([session('preparing')]);
+    network.heartbeatVisitSession.mockRejectedValueOnce(new Error('network timeout')).mockRejectedValueOnce(new Error('VISIT_SESSION_STATE_CHANGED'));
+    await service.listSessions();
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(network.heartbeatVisitSession).toHaveBeenCalledTimes(2);
   });
 });

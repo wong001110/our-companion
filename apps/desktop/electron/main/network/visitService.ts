@@ -8,6 +8,8 @@ const LIVE_STATES = new Set<VisitSessionSummary['state']>(['preparing', 'ready',
 /** Main-process-only S4 coordinator. It deliberately returns only sanitized REST summaries. */
 export class VisitService {
   private readonly heartbeatTimers = new Map<string, NodeJS.Timeout>();
+  private readonly heartbeatFailures = new Map<string, number>();
+  private readonly preparePromises = new Map<string, Promise<VisitSessionSummary>>();
   private reconcilePromise?: Promise<void>;
 
   constructor(private readonly network: NetworkConnectionService, private readonly companions: PublicCompanionService) {}
@@ -40,10 +42,20 @@ export class VisitService {
     return session;
   };
 
-  prepare = async (sessionId: string): Promise<VisitSessionSummary> => {
+  prepare = (sessionId: string): Promise<VisitSessionSummary> => {
+    const existing = this.preparePromises.get(sessionId);
+    if (existing) return existing;
+    const prepared = this.prepareOnce(sessionId).finally(() => this.preparePromises.delete(sessionId));
+    this.preparePromises.set(sessionId, prepared);
+    return prepared;
+  };
+
+  private prepareOnce = async (sessionId: string): Promise<VisitSessionSummary> => {
     const session = await this.network.getVisitSession(sessionId);
     const status = await this.network.getStatus();
     if (!status.onlineModeEnabled || status.state !== 'online' || !status.account) throw new Error('ONLINE_MODE_DISABLED');
+    const alreadyReady = status.account.id === session.visitorOwnerUserId ? session.visitorOwnerReady : status.account.id === session.hostUserId ? session.hostReady : undefined;
+    if (alreadyReady) { this.track(session); return session; }
     if (status.account.id === session.visitorOwnerUserId) {
       if (!(await this.companions.hasNetworkCompanionMapping(session.networkCompanionId))) throw new Error('VISIT_PARTICIPANT_UNAVAILABLE');
     } else if (status.account.id === session.hostUserId) {
@@ -70,6 +82,7 @@ export class VisitService {
   stopAll = (): void => {
     for (const timer of this.heartbeatTimers.values()) clearInterval(timer);
     this.heartbeatTimers.clear();
+    this.heartbeatFailures.clear();
   };
 
   private track(session: VisitSessionSummary): void {
@@ -77,12 +90,21 @@ export class VisitService {
       const timer = this.heartbeatTimers.get(session.id);
       if (timer) clearInterval(timer);
       this.heartbeatTimers.delete(session.id);
+      this.heartbeatFailures.delete(session.id);
+      void this.companions.cancelVisitDownload(session.id);
       return;
     }
     if (this.heartbeatTimers.has(session.id)) return;
     const heartbeat = async () => {
-      try { this.track(await this.network.heartbeatVisitSession(session.id)); }
-      catch { this.stop(session.id); }
+      try {
+        this.heartbeatFailures.delete(session.id);
+        this.track(await this.network.heartbeatVisitSession(session.id));
+      } catch (error) {
+        if (this.isTerminalHeartbeatError(error)) { this.stop(session.id); return; }
+        const failures = (this.heartbeatFailures.get(session.id) ?? 0) + 1;
+        this.heartbeatFailures.set(session.id, failures);
+        if (failures >= 3) void this.reconcile().catch(() => undefined);
+      }
     };
     this.heartbeatTimers.set(session.id, setInterval(() => void heartbeat(), HEARTBEAT_MS));
   }
@@ -91,5 +113,12 @@ export class VisitService {
     const timer = this.heartbeatTimers.get(sessionId);
     if (timer) clearInterval(timer);
     this.heartbeatTimers.delete(sessionId);
+    this.heartbeatFailures.delete(sessionId);
+    void this.companions.cancelVisitDownload(sessionId);
+  }
+
+  private isTerminalHeartbeatError(error: unknown): boolean {
+    const code = error instanceof Error ? error.message : String(error);
+    return ['VISIT_SESSION_NOT_FOUND', 'VISIT_SESSION_NOT_PARTICIPANT', 'VISIT_SESSION_STATE_CHANGED', 'AUTHENTICATION_REQUIRED', 'ONLINE_MODE_DISABLED'].some(value => code.includes(value));
   }
 }

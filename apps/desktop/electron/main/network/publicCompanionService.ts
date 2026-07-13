@@ -13,6 +13,7 @@ export class PublicCompanionService {
   private publishProgress?: AssetUploadProgress;
   private publishAbort?: AbortController;
   private downloadAbort?: AbortController;
+  private activeVisitDownload?: { sessionId: string; abort: AbortController };
 
   constructor(private readonly db: DatabaseService, private readonly network: NetworkConnectionService, private readonly userDataDir: string) {}
 
@@ -82,6 +83,7 @@ export class PublicCompanionService {
 
   cancelPublish = async () => { this.publishAbort?.abort(); };
   cancelDownload = async () => { this.downloadAbort?.abort(); };
+  cancelVisitDownload = async (sessionId: string) => { if (this.activeVisitDownload?.sessionId === sessionId) this.activeVisitDownload.abort.abort(); };
   cancelTransfers = () => { this.publishAbort?.abort(); this.downloadAbort?.abort(); };
   getPublishStatus = async () => this.publishProgress ? { ...this.publishProgress } : undefined;
 
@@ -90,7 +92,7 @@ export class PublicCompanionService {
   }
 
   async downloadVisitPack(input: { sessionId: string; assetPackId: string; networkCompanionId: string }): Promise<CachedAssetPack> {
-    return this.downloadPackFromSource(input, () => this.network.getVisitSessionManifest(input.sessionId), (fileIds) => this.network.getVisitSessionDownloadUrls(input.sessionId, fileIds));
+    return this.downloadPackFromSource(input, () => this.network.getVisitSessionManifest(input.sessionId), (fileIds) => this.network.getVisitSessionDownloadUrls(input.sessionId, fileIds), { authorizationFirst: true, sessionId: input.sessionId });
   }
 
   async hasNetworkCompanionMapping(networkCompanionId: string): Promise<boolean> {
@@ -102,19 +104,25 @@ export class PublicCompanionService {
     input: { assetPackId: string; networkCompanionId: string },
     getManifest: () => Promise<{ manifest: import('@our-companion/shared').CompanionAssetManifestV1; files: Array<{ id: string; relativePath: string; sizeBytes: number; sha256: string; mimeType: string }> }>,
     getDownloadUrls: (fileIds: string[]) => Promise<{ downloads: Array<{ fileId: string; relativePath: string; downloadUrl: string; expiresAt: string; sizeBytes: number; sha256: string; mimeType: string }> }>,
+    options?: { authorizationFirst?: boolean; sessionId?: string },
   ): Promise<CachedAssetPack> {
     if (this.downloadAbort) throw new Error('ASSET_DOWNLOAD_IN_PROGRESS');
     const abort = new AbortController(); this.downloadAbort = abort;
+    if (options?.sessionId) this.activeVisitDownload = { sessionId: options.sessionId, abort };
     let partial: string | undefined;
     try {
       const scope = await this.scope();
       const existing = this.db.getCachedNetworkAssetPackWithRoot(scope.serverOrigin, input.assetPackId);
-      if (existing && existing.verified && this.verifyCache(existing.cacheRoot, existing.manifestHash)) {
+      if (!options?.authorizationFirst && existing && existing.verified && this.verifyCache(existing.cacheRoot, existing.manifestHash)) {
         const refreshed = { ...existing, lastUsedAt: new Date().toISOString() };
         this.db.upsertCachedNetworkAssetPack(refreshed); return withoutRoot(refreshed);
       }
       const payload = await getManifest();
       const manifestHash = createHash('sha256').update(canonicalJson(payload.manifest), 'utf8').digest('hex');
+      if (options?.authorizationFirst && existing && existing.verified && existing.manifestHash === manifestHash && this.verifyCache(existing.cacheRoot, manifestHash)) {
+        const refreshed = { ...existing, lastUsedAt: new Date().toISOString() };
+        this.db.upsertCachedNetworkAssetPack(refreshed); return withoutRoot(refreshed);
+      }
       const originHash = createHash('sha256').update(scope.serverOrigin, 'utf8').digest('hex');
       const base = path.join(this.userDataDir, 'network-cache', originHash, 'asset-packs');
       const partialRoot = path.join(base, '.partial', `${input.assetPackId}-${randomUUID()}`);
@@ -141,7 +149,11 @@ export class PublicCompanionService {
       const cache = { serverOrigin: scope.serverOrigin, assetPackId: input.assetPackId, networkCompanionId: input.networkCompanionId, manifestHash, cacheRoot: finalRoot, totalBytes: payload.files.reduce((sum, file) => sum + file.sizeBytes, 0), downloadedAt: timestamp, lastUsedAt: timestamp, pinned: false, verified: true };
       this.db.upsertCachedNetworkAssetPack(cache);
       return withoutRoot(cache);
-    } finally { if (partial && fs.existsSync(partial)) fs.rmSync(partial, { recursive: true, force: true }); if (this.downloadAbort === abort) this.downloadAbort = undefined; }
+    } finally {
+      if (partial && fs.existsSync(partial)) fs.rmSync(partial, { recursive: true, force: true });
+      if (this.downloadAbort === abort) this.downloadAbort = undefined;
+      if (this.activeVisitDownload?.abort === abort) this.activeVisitDownload = undefined;
+    }
   }
   async getCachedPack(assetPackId: string): Promise<CachedAssetPack | undefined> { const scope = await this.scope(); const cache = this.db.getCachedNetworkAssetPackWithRoot(scope.serverOrigin, assetPackId); return cache?.verified && this.verifyCache(cache.cacheRoot, cache.manifestHash) ? withoutRoot(cache) : undefined; }
   async clearUnusedCache() { let removed = 0; let bytesFreed = 0; let total = 0; const now = Date.now(); const records = this.db.listCachedNetworkAssetPacks(); for (const record of records) total += record.totalBytes; for (const record of records) { if (record.pinned || (total <= CACHE_MAX_BYTES && now - Date.parse(record.lastUsedAt) <= CACHE_MAX_AGE_MS)) continue; fs.rmSync(record.cacheRoot, { recursive: true, force: true }); this.db.deleteCachedNetworkAssetPack(record.serverOrigin, record.assetPackId); total -= record.totalBytes; bytesFreed += record.totalBytes; removed++; } return { removed, bytesFreed }; }
