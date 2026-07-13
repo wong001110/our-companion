@@ -1402,12 +1402,38 @@ export interface NetworkStatus {
 
 export type SocialInvalidation =
   | { type: 'friends' }
-  | { type: 'presence'; userId: string; status: FriendPresence; updatedAt: string | null };
+  | { type: 'presence'; userId: string; status: FriendPresence; updatedAt: string | null }
+  | { type: 'companion_profile'; ownerUserId: string; companionId: string; unpublished?: boolean }
+  | { type: 'companion_asset_pack'; ownerUserId: string; companionId: string; assetPackId: string };
 
 export type FriendPresence = 'online' | 'idle' | 'offline';
 export interface FriendSummary { userId: string; username: string; friendCode: string; presence: FriendPresence; }
 export interface FriendRequestSummary { id: string; direction: 'incoming' | 'outgoing'; userId: string; username: string; friendCode: string; status: 'pending'; createdAt: string; }
 export interface BlockedUserSummary { userId: string; username: string; blockedAt: string; }
+export interface PublicCompanionProfile {
+  id: string;
+  ownerUserId: string;
+  name: string;
+  publicDescription?: string;
+  publicTags: string[];
+  visibility: 'friends_only';
+  published: boolean;
+  activeAssetPackId?: string;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt?: string;
+}
+export interface CompanionAssetManifestV1 {
+  format: 'our-companion-asset-pack';
+  schemaVersion: 1;
+  runtime: { defaultAnimation: 'Idle_Neutral'; portraitPath?: string; iconPath?: string; animations: Array<{ name: string; format: 'sprite_sheet' | 'frame_sequence' | 'gif' | 'static'; files: string[]; frameWidth?: number; frameHeight?: number; frameCount?: number; fps?: number; loop: boolean }> };
+  files: Array<{ relativePath: string; category: 'animation' | 'portrait' | 'icon' | 'voice' | 'metadata'; mimeType: string; sizeBytes: number; sha256: string }>;
+}
+export interface BuiltAssetPack { manifest: CompanionAssetManifestV1; manifestHash: string; totalFiles: number; totalBytes: number; requiredAnimations: Record<'Idle_Neutral' | 'Enter' | 'Leave', boolean>; }
+export interface NetworkAssetPack { id: string; companionId: string; manifestHash: string; schemaVersion: number; status: 'draft' | 'uploading' | 'verifying' | 'active' | 'superseded' | 'failed' | 'abandoned'; totalFiles: number; totalBytes: number; failureCode?: string; createdAt: string; updatedAt: string; completedAt?: string; activatedAt?: string; supersededAt?: string; }
+export interface NetworkCompanionLink { serverOrigin: string; networkAccountId: string; localCompanionId: string; networkCompanionId: string; activeAssetPackId?: string; lastPublishedManifestHash?: string; lastPublishedAt?: string; publishStatus?: string; }
+export interface AssetUploadProgress { assetPackId?: string; completedFiles: number; totalFiles: number; uploadedBytes: number; totalBytes: number; currentFile?: string; state: 'preparing' | 'uploading' | 'verifying' | 'completed' | 'failed' | 'cancelled'; failureCode?: string; }
+export interface CachedAssetPack { serverOrigin: string; assetPackId: string; networkCompanionId: string; manifestHash: string; totalBytes: number; downloadedAt: string; lastUsedAt: string; pinned: boolean; verified: boolean; }
 export interface SocialState {
   scope?: { serverUrl: string; accountId: string };
   friends: FriendSummary[];
@@ -1589,6 +1615,24 @@ export interface OurCompanionApi {
     };
     blocks: { getAll(): Promise<BlockedUserSummary[]>; block(userId: string): Promise<unknown>; unblock(userId: string): Promise<unknown>; };
     presence: { getFriendPresence(): Promise<Array<{ userId: string; status: FriendPresence; updatedAt?: string | null }>>; sendActivity(): Promise<void>; };
+    companions: {
+      getMine(): Promise<{ activeNetworkCompanionId?: string; companions: Array<PublicCompanionProfile & { assetPacks: NetworkAssetPack[] }> }>;
+      create(input: { localCompanionId: string; name: string; publicDescription?: string; publicTags?: string[] }): Promise<{ networkCompanionId: string; companion: PublicCompanionProfile }>;
+      update(companionId: string, input: { name: string; publicDescription?: string; publicTags?: string[] }): Promise<PublicCompanionProfile>;
+      activate(companionId: string): Promise<{ activeNetworkCompanionId: string }>;
+      publish(companionId: string): Promise<PublicCompanionProfile>;
+      unpublish(companionId: string): Promise<PublicCompanionProfile>;
+      getFriendCompanion(friendUserId: string): Promise<PublicCompanionProfile>;
+    };
+    assets: {
+      inspectLocalPack(input: { localCompanionId: string; includeVoices?: boolean }): Promise<BuiltAssetPack>;
+      publishPack(input: { localCompanionId: string; networkCompanionId: string; includeVoices?: boolean }): Promise<NetworkAssetPack>;
+      cancelPublish(): Promise<void>;
+      getPublishStatus(): Promise<AssetUploadProgress | undefined>;
+      downloadPack(input: { assetPackId: string; networkCompanionId: string }): Promise<CachedAssetPack>;
+      getCachedPack(assetPackId: string): Promise<CachedAssetPack | undefined>;
+      clearUnusedCache(): Promise<{ removed: number; bytesFreed: number }>;
+    };
   };
   window: {
     openPanel(input?: { companionX?: number; companionY?: number }): Promise<boolean>;

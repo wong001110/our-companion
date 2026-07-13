@@ -36,7 +36,7 @@ import type {
   PendingCompanionAction,
   SessionCloseReason,
   CompanionDecision
-  ,UserTopicPreference
+  ,UserTopicPreference, NetworkCompanionLink, CachedAssetPack
 } from '@our-companion/shared';
 import type { ActionPermissionState } from '@our-companion/shared';
 import { COMPANION_CHAT_RETENTION_DAYS, createId, nowIso } from '@our-companion/shared';
@@ -357,6 +357,44 @@ export class DatabaseService {
       .run(name, personalityDescription, JSON.stringify(personality), assetRoot, timestamp, id);
     return this.getCompanion(id)!;
   }
+
+  getNetworkCompanionLink(serverOrigin: string, networkAccountId: string, localCompanionId: string): NetworkCompanionLink | undefined {
+    const row = this.db.prepare('SELECT * FROM network_companion_links WHERE server_origin = ? AND network_account_id = ? AND local_companion_id = ?').get(serverOrigin, networkAccountId, localCompanionId) as Record<string, unknown> | undefined;
+    return row ? mapNetworkCompanionLink(row) : undefined;
+  }
+
+  upsertNetworkCompanionLink(link: NetworkCompanionLink): NetworkCompanionLink {
+    const timestamp = nowIso();
+    this.db.prepare(`INSERT INTO network_companion_links (server_origin, network_account_id, local_companion_id, network_companion_id, active_asset_pack_id, last_manifest_hash, last_published_at, publish_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(server_origin, network_account_id, local_companion_id) DO UPDATE SET network_companion_id = excluded.network_companion_id, active_asset_pack_id = excluded.active_asset_pack_id, last_manifest_hash = excluded.last_manifest_hash, last_published_at = excluded.last_published_at, publish_status = excluded.publish_status, updated_at = excluded.updated_at`)
+      .run(link.serverOrigin, link.networkAccountId, link.localCompanionId, link.networkCompanionId, link.activeAssetPackId ?? null, link.lastPublishedManifestHash ?? null, link.lastPublishedAt ?? null, link.publishStatus ?? null, timestamp, timestamp);
+    return this.getNetworkCompanionLink(link.serverOrigin, link.networkAccountId, link.localCompanionId)!;
+  }
+
+  getCachedNetworkAssetPack(serverOrigin: string, assetPackId: string): CachedAssetPack | undefined {
+    const row = this.db.prepare('SELECT * FROM network_asset_cache WHERE server_origin = ? AND asset_pack_id = ?').get(serverOrigin, assetPackId) as Record<string, unknown> | undefined;
+    return row ? mapCachedNetworkAssetPack(row) : undefined;
+  }
+
+  upsertCachedNetworkAssetPack(cache: CachedAssetPack & { cacheRoot: string }): CachedAssetPack & { cacheRoot: string } {
+    this.db.prepare(`INSERT INTO network_asset_cache (server_origin, asset_pack_id, network_companion_id, manifest_hash, cache_root, total_bytes, downloaded_at, last_used_at, pinned, verified)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(server_origin, asset_pack_id) DO UPDATE SET network_companion_id = excluded.network_companion_id, manifest_hash = excluded.manifest_hash, cache_root = excluded.cache_root, total_bytes = excluded.total_bytes, downloaded_at = excluded.downloaded_at, last_used_at = excluded.last_used_at, pinned = excluded.pinned, verified = excluded.verified`)
+      .run(cache.serverOrigin, cache.assetPackId, cache.networkCompanionId, cache.manifestHash, cache.cacheRoot, cache.totalBytes, cache.downloadedAt, cache.lastUsedAt, cache.pinned ? 1 : 0, cache.verified ? 1 : 0);
+    return this.getCachedNetworkAssetPackWithRoot(cache.serverOrigin, cache.assetPackId)!;
+  }
+
+  getCachedNetworkAssetPackWithRoot(serverOrigin: string, assetPackId: string): (CachedAssetPack & { cacheRoot: string }) | undefined {
+    const row = this.db.prepare('SELECT * FROM network_asset_cache WHERE server_origin = ? AND asset_pack_id = ?').get(serverOrigin, assetPackId) as Record<string, unknown> | undefined;
+    return row ? mapCachedNetworkAssetPack(row) : undefined;
+  }
+
+  listCachedNetworkAssetPacks(): Array<CachedAssetPack & { cacheRoot: string }> {
+    return (this.db.prepare('SELECT * FROM network_asset_cache ORDER BY last_used_at ASC').all() as Array<Record<string, unknown>>).map(mapCachedNetworkAssetPack);
+  }
+
+  deleteCachedNetworkAssetPack(serverOrigin: string, assetPackId: string): void { this.db.prepare('DELETE FROM network_asset_cache WHERE server_origin = ? AND asset_pack_id = ?').run(serverOrigin, assetPackId); }
 
   deleteCompanion(id: string): { id: string; deleted: true } {
     if (this.listCompanions().length <= 1) {
@@ -1762,6 +1800,23 @@ function mapCompanionProfile(row: Record<string, unknown>): CompanionProfile {
     isBuiltIn: Number(row.is_builtin) === 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
+  };
+}
+
+function mapNetworkCompanionLink(row: Record<string, unknown>): NetworkCompanionLink {
+  return {
+    serverOrigin: String(row.server_origin), networkAccountId: String(row.network_account_id), localCompanionId: String(row.local_companion_id), networkCompanionId: String(row.network_companion_id),
+    activeAssetPackId: row.active_asset_pack_id ? String(row.active_asset_pack_id) : undefined,
+    lastPublishedManifestHash: row.last_manifest_hash ? String(row.last_manifest_hash) : undefined,
+    lastPublishedAt: row.last_published_at ? String(row.last_published_at) : undefined,
+    publishStatus: row.publish_status ? String(row.publish_status) : undefined,
+  };
+}
+
+function mapCachedNetworkAssetPack(row: Record<string, unknown>): CachedAssetPack & { cacheRoot: string } {
+  return {
+    serverOrigin: String(row.server_origin), assetPackId: String(row.asset_pack_id), networkCompanionId: String(row.network_companion_id), manifestHash: String(row.manifest_hash), cacheRoot: String(row.cache_root),
+    totalBytes: Number(row.total_bytes), downloadedAt: String(row.downloaded_at), lastUsedAt: String(row.last_used_at), pinned: Number(row.pinned) === 1, verified: Number(row.verified) === 1,
   };
 }
 

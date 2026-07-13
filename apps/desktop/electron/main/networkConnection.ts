@@ -2,15 +2,17 @@ import { randomUUID } from 'node:crypto';
 import { safeStorage } from 'electron';
 import { io, type Socket } from 'socket.io-client';
 import type { DatabaseService } from '@our-companion/database';
-import type { BlockedUserSummary, FriendPresence, FriendRequestSummary, FriendSummary } from '@our-companion/shared';
+import type { BlockedUserSummary, CompanionAssetManifestV1, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile } from '@our-companion/shared';
 
-export const NETWORK_PROTOCOL_VERSION = '0.1';
-export const NETWORK_CLIENT_VERSION = '0.1.0';
+export const NETWORK_PROTOCOL_VERSION = '0.2';
+export const NETWORK_CLIENT_VERSION = '0.2.0';
 export type NetworkConnectionState = 'offline' | 'checking_server' | 'authentication_required' | 'connecting' | 'online' | 'reconnecting' | 'incompatible_client' | 'server_unavailable' | 'authentication_failed' | 'disabled';
 export interface NetworkAccount { id: string; email: string; username: string; friendCode: string; }
 export type SocialInvalidation =
   | { type: 'friends' }
-  | { type: 'presence'; userId: string; status: FriendPresence; updatedAt: string | null };
+  | { type: 'presence'; userId: string; status: FriendPresence; updatedAt: string | null }
+  | { type: 'companion_profile'; ownerUserId: string; companionId: string; unpublished?: boolean }
+  | { type: 'companion_asset_pack'; ownerUserId: string; companionId: string; assetPackId: string };
 export interface NetworkStatus {
   state: NetworkConnectionState;
   onlineModeEnabled: boolean;
@@ -182,6 +184,18 @@ export class NetworkConnectionService {
     this.lastPresenceActivityAt = now;
     this.socket?.emit?.('presence.activity');
   };
+  getMyCompanions = () => this.socialRequest<{ activeNetworkCompanionId?: string; companions: Array<PublicCompanionProfile & { assetPacks: NetworkAssetPack[] }> }>('/api/companions/mine');
+  createNetworkCompanion = (input: { name: string; publicDescription?: string; publicTags?: string[] }) => this.socialRequest<{ networkCompanionId: string; companion: PublicCompanionProfile }>('/api/companions', input);
+  updateNetworkCompanion = (companionId: string, input: { name: string; publicDescription?: string; publicTags?: string[] }) => this.socialRequest<PublicCompanionProfile>(`/api/companions/${companionId}`, input, 'PATCH');
+  activateNetworkCompanion = (companionId: string) => this.socialRequest<{ activeNetworkCompanionId: string }>(`/api/companions/${companionId}/activate`, {});
+  publishNetworkCompanion = (companionId: string) => this.socialRequest<PublicCompanionProfile>(`/api/companions/${companionId}/publish`, {});
+  unpublishNetworkCompanion = (companionId: string) => this.socialRequest<PublicCompanionProfile>(`/api/companions/${companionId}/unpublish`, {});
+  getFriendCompanion = (friendUserId: string) => this.socialRequest<PublicCompanionProfile>(`/api/friends/${friendUserId}/companion`);
+  initiateAssetPack = (companionId: string, input: { schemaVersion: 1; manifestHash: string; totalFiles: number; totalBytes: number; manifest: CompanionAssetManifestV1 }) => this.socialRequest<{ reused: boolean; assetPack: NetworkAssetPack; fileIds?: string[] }>(`/api/companions/${companionId}/asset-packs`, input);
+  getUploadUrls = (assetPackId: string, fileIds: string[]) => this.socialRequest<{ uploads: Array<{ fileId: string; relativePath: string; uploadUrl: string; expiresAt: string; requiredHeaders: { 'content-type': string; 'x-amz-meta-sha256': string } }> }>(`/api/asset-packs/${assetPackId}/upload-urls`, { fileIds });
+  completeAssetPack = (assetPackId: string) => this.socialRequest<{ assetPack: NetworkAssetPack }>(`/api/asset-packs/${assetPackId}/complete`, {});
+  getAssetPackManifest = (assetPackId: string) => this.socialRequest<{ manifest: CompanionAssetManifestV1; files: Array<{ id: string; relativePath: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/asset-packs/${assetPackId}/manifest`);
+  getDownloadUrls = (assetPackId: string, fileIds: string[]) => this.socialRequest<{ downloads: Array<{ fileId: string; relativePath: string; downloadUrl: string; expiresAt: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/asset-packs/${assetPackId}/download-urls`, { fileIds });
 
   dispose(): void { this.stopSocket(); }
 
@@ -263,6 +277,18 @@ export class NetworkConnectionService {
       if (!payload.userId || !payload.status) return;
       this.setStatus({ socialRevision: ++this.socialRevision, socialInvalidation: { type: 'presence', userId: payload.userId, status: payload.status, updatedAt: payload.updatedAt ?? null } });
     });
+    socket.on('companion.profile.updated', (payload: Partial<{ ownerUserId: string; companionId: string }>) => {
+      if (!payload.ownerUserId || !payload.companionId) return;
+      this.setStatus({ socialRevision: ++this.socialRevision, socialInvalidation: { type: 'companion_profile', ownerUserId: payload.ownerUserId, companionId: payload.companionId } });
+    });
+    socket.on('companion.profile.unpublished', (payload: Partial<{ ownerUserId: string; companionId: string }>) => {
+      if (!payload.ownerUserId || !payload.companionId) return;
+      this.setStatus({ socialRevision: ++this.socialRevision, socialInvalidation: { type: 'companion_profile', ownerUserId: payload.ownerUserId, companionId: payload.companionId, unpublished: true } });
+    });
+    socket.on('companion.asset_pack.activated', (payload: Partial<{ ownerUserId: string; companionId: string; assetPackId: string }>) => {
+      if (!payload.ownerUserId || !payload.companionId || !payload.assetPackId) return;
+      this.setStatus({ socialRevision: ++this.socialRevision, socialInvalidation: { type: 'companion_asset_pack', ownerUserId: payload.ownerUserId, companionId: payload.companionId, assetPackId: payload.assetPackId } });
+    });
     socket.connect();
   }
 
@@ -291,7 +317,7 @@ export class NetworkConnectionService {
   private clearReconnectTimer(): void { if (this.reconnectTimer) this.deps.clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; }
   private resetReconnectAttempts(): void { this.clearReconnectTimer(); this.db.setAppSetting(RECONNECT_ATTEMPT_KEY, 0); }
   private stopSocket(): void { this.clearReconnectTimer(); this.socket?.disconnect(); this.socket = undefined; }
-  private async authenticatedRequest<T>(path: string, options: { method?: 'GET' | 'POST' | 'DELETE'; body?: unknown } = {}): Promise<T> {
+  private async authenticatedRequest<T>(path: string, options: { method?: 'GET' | 'POST' | 'DELETE' | 'PATCH'; body?: unknown } = {}): Promise<T> {
     if (!this.session || this.session.serverOrigin !== this.serverUrl) throw new Error('AUTHENTICATION_REQUIRED');
     const { method, body } = options;
     try { return await this.request<T>(path, body, this.session.accessToken, method); }
@@ -301,12 +327,12 @@ export class NetworkConnectionService {
       return this.request<T>(path, body, this.session.accessToken, method);
     }
   }
-  private async socialRequest<T = unknown>(path: string, body?: unknown, method?: 'DELETE'): Promise<T> {
+  private async socialRequest<T = unknown>(path: string, body?: unknown, method?: 'DELETE' | 'PATCH'): Promise<T> {
     if (!this.enabled || !this.session || this.status.state === 'disabled') throw new Error('ONLINE_MODE_DISABLED');
     return this.authenticatedRequest<T>(path, { method, body });
   }
   private publicRequest<T>(path: string, body: unknown): Promise<T> { return this.request<T>(path, body); }
-  private async request<T>(path: string, body?: unknown, accessToken?: string, method?: 'GET' | 'POST' | 'DELETE'): Promise<T> {
+  private async request<T>(path: string, body?: unknown, accessToken?: string, method?: 'GET' | 'POST' | 'DELETE' | 'PATCH'): Promise<T> {
     const response = await this.deps.fetch(`${this.serverUrl}${path}`, { method: method ?? (body === undefined ? 'GET' : 'POST'), headers: {
       'content-type': 'application/json', 'x-our-companion-client-version': NETWORK_CLIENT_VERSION, 'x-our-companion-protocol-version': NETWORK_PROTOCOL_VERSION, 'x-our-companion-device-id': this.deviceId, ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
     }, body: body === undefined ? undefined : JSON.stringify(body) });

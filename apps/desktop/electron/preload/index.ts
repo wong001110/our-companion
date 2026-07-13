@@ -278,6 +278,18 @@ const api: OurCompanionApi = {
     },
     blocks: { getAll: () => invoke('network:blocks:getAll'), block: (userId) => invoke('network:blocks:block', userId), unblock: (userId) => invoke('network:blocks:unblock', userId) },
     presence: { getFriendPresence: () => invoke('network:presence:getFriendPresence'), sendActivity: () => invoke('network:presence:sendActivity') },
+    companions: {
+      getMine: () => invoke('network:companions:getMine'),
+      create: (input) => invoke('network:companions:create', input),
+      update: (companionId, input) => invoke('network:companions:update', { companionId, profile: input }),
+      activate: (companionId) => invoke('network:companions:activate', companionId),
+      publish: (companionId) => invoke('network:companions:publish', companionId),
+      unpublish: (companionId) => invoke('network:companions:unpublish', companionId),
+      getFriendCompanion: (friendUserId) => invoke('network:companions:getFriend', friendUserId),
+    },
+    assets: {
+      inspectLocalPack: (input) => invoke('network:assets:inspect', input), publishPack: (input) => invoke('network:assets:publish', input), cancelPublish: () => invoke('network:assets:cancelPublish'), getPublishStatus: () => invoke('network:assets:getPublishStatus'), downloadPack: (input) => invoke('network:assets:download', input), getCachedPack: (assetPackId) => invoke('network:assets:getCached', assetPackId), clearUnusedCache: () => invoke('network:assets:clearUnusedCache'),
+    },
   },
   app: {
     quit: () => invoke<boolean>('app:quit'),

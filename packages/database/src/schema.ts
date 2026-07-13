@@ -374,4 +374,33 @@ CREATE TABLE IF NOT EXISTS companions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_companions_primary ON companions(is_primary);
+
+CREATE TABLE IF NOT EXISTS network_companion_links (
+  server_origin TEXT NOT NULL,
+  network_account_id TEXT NOT NULL,
+  local_companion_id TEXT NOT NULL,
+  network_companion_id TEXT NOT NULL,
+  active_asset_pack_id TEXT,
+  last_manifest_hash TEXT,
+  last_published_at TEXT,
+  publish_status TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (server_origin, network_account_id, local_companion_id),
+  UNIQUE (server_origin, network_account_id, network_companion_id)
+);
+CREATE TABLE IF NOT EXISTS network_asset_cache (
+  server_origin TEXT NOT NULL,
+  asset_pack_id TEXT NOT NULL,
+  network_companion_id TEXT NOT NULL,
+  manifest_hash TEXT NOT NULL,
+  cache_root TEXT NOT NULL,
+  total_bytes INTEGER NOT NULL,
+  downloaded_at TEXT NOT NULL,
+  last_used_at TEXT NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  verified INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (server_origin, asset_pack_id)
+);
+CREATE INDEX IF NOT EXISTS idx_network_asset_cache_lru ON network_asset_cache(last_used_at);
 `;

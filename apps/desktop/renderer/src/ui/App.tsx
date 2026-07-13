@@ -1891,6 +1891,7 @@ function SettingsView({ state, behaviorSettings, onRefresh, onLangChange, compan
         <VoiceSettingsCard />
         <OnlineModeCard />
         <SocialCard />
+        <OnlineCompanionCard />
         <PaperCard title="Attention" tape>
           <label><span>Companion initiative</span><select value={attentionMode} onChange={(event) => {
             const mode = event.target.value as 'available' | 'focused' | 'do_not_disturb';
@@ -1983,6 +1984,50 @@ function VoiceSettingsCard() {
       {!loading && !speechStatus?.ready && <p>{t(lang, 'voice_download_hint')}</p>}
     </PaperCard>
   );
+}
+
+function OnlineCompanionCard() {
+  const [companions, setCompanions] = useState<CompanionProfile[]>([]);
+  const [selectedId, setSelectedId] = useState('');
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [tags, setTags] = useState('');
+  const [includeVoices, setIncludeVoices] = useState(false);
+  const [inspection, setInspection] = useState<{ totalFiles: number; totalBytes: number; manifestHash: string }>();
+  const [networkCompanionId, setNetworkCompanionId] = useState<string>();
+  const [status, setStatus] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { void Promise.all([window.ourCompanion.companionNew.list(), window.ourCompanion.network.companions.getMine().catch(() => undefined)]).then(([items, mine]) => { setCompanions(items); const first = items[0]; if (first) { setSelectedId(first.id); setName(first.name); } if (mine?.activeNetworkCompanionId) setNetworkCompanionId(mine.activeNetworkCompanionId); }); }, []);
+  const selected = companions.find((companion) => companion.id === selectedId);
+  async function inspect() { if (!selectedId) return; setBusy(true); try { const result = await window.ourCompanion.network.assets.inspectLocalPack({ localCompanionId: selectedId, includeVoices }); setInspection(result); setStatus('Asset Pack is ready to publish.'); } catch (error) { setStatus(error instanceof Error ? error.message : 'Unable to inspect Asset Pack.'); } finally { setBusy(false); } }
+  async function publish() {
+    if (!selectedId || !name.trim()) return; setBusy(true); setStatus('Preparing public profile…');
+    try {
+      const profile = await window.ourCompanion.network.companions.create({ localCompanionId: selectedId, name: name.trim(), publicDescription: description.trim() || undefined, publicTags: tags.split(',').map(tag => tag.trim()).filter(Boolean) });
+      setNetworkCompanionId(profile.networkCompanionId);
+      await window.ourCompanion.network.companions.activate(profile.networkCompanionId);
+      setStatus('Uploading private Asset Pack…');
+      await window.ourCompanion.network.assets.publishPack({ localCompanionId: selectedId, networkCompanionId: profile.networkCompanionId, includeVoices });
+      await window.ourCompanion.network.companions.publish(profile.networkCompanionId);
+      setStatus('Published for accepted friends only.');
+    } catch (error) { setStatus(error instanceof Error ? error.message : 'Unable to publish Companion.'); } finally { setBusy(false); }
+  }
+  async function cancel() { await window.ourCompanion.network.assets.cancelPublish(); setStatus('Upload cancellation requested.'); }
+  async function unpublish() { if (!networkCompanionId) return; setBusy(true); try { await window.ourCompanion.network.companions.unpublish(networkCompanionId); setStatus('Unpublished. Existing short-lived download URLs can remain valid until they expire.'); } catch (error) { setStatus(error instanceof Error ? error.message : 'Unable to unpublish Companion.'); } finally { setBusy(false); } }
+  return <PaperCard title="Online Companion" tape className="settings-panel">
+    <p>Share only this approved profile and Asset Pack with accepted friends. Local Companion IDs, memories, personality and file paths stay on this device.</p>
+    <label><span>Local Companion</span><select value={selectedId} disabled={busy} onChange={(event) => { const companion = companions.find(item => item.id === event.target.value); setSelectedId(event.target.value); if (companion) setName(companion.name); }}>{companions.map(companion => <option key={companion.id} value={companion.id}>{companion.name}</option>)}</select></label>
+    <label><span>Public name</span><input value={name} maxLength={60} disabled={busy} onChange={(event) => setName(event.target.value)} /></label>
+    <label><span>Public description</span><textarea value={description} maxLength={500} disabled={busy} onChange={(event) => setDescription(event.target.value)} /></label>
+    <label><span>Tags (comma separated)</span><input value={tags} disabled={busy} onChange={(event) => setTags(event.target.value)} placeholder="friendly, curious" /></label>
+    <p><strong>Visibility:</strong> Friends only</p>
+    <label className="checkbox-row"><input type="checkbox" checked={includeVoices} disabled={busy} onChange={(event) => setIncludeVoices(event.target.checked)} /><span>Include voice assets</span></label>
+    {includeVoices && <p>Voice files will be uploaded to private network storage and available to accepted friends.</p>}
+    {inspection && <p>Ready: {inspection.totalFiles} files · {(inspection.totalBytes / 1024 / 1024).toFixed(2)} MB · <code>{inspection.manifestHash}</code></p>}
+    <div className="action-row"><button className="btn-secondary btn-sm" disabled={busy || !selected} onClick={() => void inspect()}>Build Asset Pack</button><button className="btn-primary btn-sm" disabled={busy || !selected || !name.trim()} onClick={() => void publish()}>{busy ? 'Publishing…' : 'Publish'}</button><button className="btn-ghost btn-sm" disabled={!busy} onClick={() => void cancel()}>Cancel Upload</button><button className="btn-ghost btn-sm" disabled={busy || !networkCompanionId} onClick={() => void unpublish()}>Unpublish</button></div>
+    {status && <p>{status}</p>}
+  </PaperCard>;
 }
 
 function OnlineModeCard() {
@@ -2150,6 +2195,8 @@ function SocialCard() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [busyAction, setBusyAction] = useState(false);
+  const [friendCompanion, setFriendCompanion] = useState<{ id: string; ownerUserId: string; name: string; publicDescription?: string; publicTags: string[]; activeAssetPackId?: string }>();
+  const [friendAssetStatus, setFriendAssetStatus] = useState('');
   const scopeRef = useRef<string | undefined>(undefined);
   const lastRevisionRef = useRef<number | undefined>(undefined);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -2157,7 +2204,7 @@ function SocialCard() {
   const available = status?.onlineModeEnabled && status.state === 'online' && Boolean(status.account);
   const scope = status?.account ? `${status.serverUrl}:${status.account.id}` : undefined;
   const clearSocialState = useCallback(() => {
-    setFriends([]); setIncoming([]); setOutgoing([]); setBlocked([]); setLookup(undefined); setError(''); setFriendCode('');
+    setFriends([]); setIncoming([]); setOutgoing([]); setBlocked([]); setLookup(undefined); setFriendCompanion(undefined); setFriendAssetStatus(''); setError(''); setFriendCode('');
   }, []);
   const refresh = async () => {
     const scopeAtStart = scopeRef.current;
@@ -2208,7 +2255,8 @@ function SocialCard() {
     {lookup && <div className="online-user-info"><p><strong>{lookup.username}</strong> · {lookup.friendCode}</p>{lookup.relationship === 'none' && <button className="btn-primary btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.sendRequest(lookup.id))}>Send Request</button>}<p>{lookup.relationship.replaceAll('_', ' ')}</p></div>}
     {error && <p className="creation-error">{error}</p>}
     {loading && <p>Loading Social data…</p>}
-    <h3>Friends</h3>{friends.length ? friends.map((friend) => <div className="online-user-info" key={friend.userId}><strong>{friend.username}</strong><span> · {friend.presence}</span><div className="action-row"><button className="btn-ghost btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.remove(friend.userId))}>Remove</button><button className="btn-ghost btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.blocks.block(friend.userId))}>Block</button></div></div>) : <p>No friends yet.</p>}
+    <h3>Friends</h3>{friends.length ? friends.map((friend) => <div className="online-user-info" key={friend.userId}><strong>{friend.username}</strong><span> · {friend.presence}</span><div className="action-row"><button className="btn-ghost btn-sm" disabled={busyAction} onClick={() => void action(async () => { setFriendCompanion(await window.ourCompanion.network.companions.getFriendCompanion(friend.userId)); setFriendAssetStatus(''); })}>View Companion</button><button className="btn-ghost btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.remove(friend.userId))}>Remove</button><button className="btn-ghost btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.blocks.block(friend.userId))}>Block</button></div></div>) : <p>No friends yet.</p>}
+    {friendCompanion && <div className="online-user-info"><h3>{friendCompanion.name}</h3>{friendCompanion.publicDescription && <p>{friendCompanion.publicDescription}</p>}<p>{friendCompanion.publicTags.join(' · ')}</p>{friendCompanion.activeAssetPackId ? <button className="btn-secondary btn-sm" disabled={busyAction} onClick={() => void action(async () => { await window.ourCompanion.network.assets.downloadPack({ assetPackId: friendCompanion.activeAssetPackId!, networkCompanionId: friendCompanion.id }); setFriendAssetStatus('Asset Pack downloaded and integrity-verified.'); })}>Download Asset Pack</button> : <p>No active Asset Pack.</p>}{friendAssetStatus && <p>{friendAssetStatus}</p>}</div>}
     <h3>Incoming Requests</h3>{incoming.length ? incoming.map((request) => <div className="action-row" key={request.id}><span>{request.username}</span><button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.acceptRequest(request.id))}>Accept</button><button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.rejectRequest(request.id))}>Reject</button></div>) : <p>No incoming requests.</p>}
     <h3>Outgoing Requests</h3>{outgoing.length ? outgoing.map((request) => <div className="action-row" key={request.id}><span>{request.username} · Pending</span><button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.cancelRequest(request.id))}>Cancel</button></div>) : <p>No outgoing requests.</p>}
     <h3>Blocked Users</h3>{blocked.length ? blocked.map((user) => <div className="action-row" key={user.userId}><span>{user.username}</span><button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.blocks.unblock(user.userId))}>Unblock</button></div>) : <p>No blocked users.</p>}
@@ -2226,7 +2274,7 @@ function socialAvailabilityMessage(status?: NetworkStatus): string {
 
 function messageForSocialError(cause: unknown): string {
   const code = cause instanceof Error ? cause.message : 'SOCIAL_ACTION_NOT_ALLOWED';
-  return ({ INVALID_FRIEND_CODE: 'No account was found with that Friend Code.', FRIEND_REQUEST_ALREADY_EXISTS: 'A request is already pending.', FRIENDSHIP_ALREADY_EXISTS: 'This user is already your friend.', CANNOT_FRIEND_SELF: 'You cannot add your own account.', SOCIAL_ACTION_NOT_ALLOWED: 'This action is not available.', RATE_LIMITED: 'Too many attempts. Try again later.' } as Record<string, string>)[code] ?? 'Unable to synchronize Social.';
+  return ({ INVALID_FRIEND_CODE: 'No account was found with that Friend Code.', FRIEND_REQUEST_ALREADY_EXISTS: 'A request is already pending.', FRIENDSHIP_ALREADY_EXISTS: 'This user is already your friend.', CANNOT_FRIEND_SELF: 'You cannot add your own account.', SOCIAL_ACTION_NOT_ALLOWED: 'This action is not available.', COMPANION_NOT_AVAILABLE: 'This Companion is not available.', ASSET_STORAGE_UNAVAILABLE: 'Private asset storage is currently unavailable.', RATE_LIMITED: 'Too many attempts. Try again later.' } as Record<string, string>)[code] ?? 'Unable to synchronize Social.';
 }
 
 const ALL_PERMISSION_SCOPES: PermissionScope[] = ['browser', 'automation', 'files', 'clipboard', 'calendar'];
