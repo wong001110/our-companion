@@ -108,6 +108,7 @@ import {
 } from './platform/companionAssetPaths';
 import { NetworkConnectionService, type NetworkStatus } from './networkConnection';
 import { PublicCompanionService } from './network/publicCompanionService';
+import { VisitService } from './network/visitService';
 
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
@@ -170,6 +171,7 @@ export class AppServices {
   private readonly personalityAnalyses = new Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>();
   readonly network: NetworkConnectionService;
   readonly publicCompanions: PublicCompanionService;
+  readonly visits: VisitService;
   private networkStatusBroadcaster?: (status: NetworkStatus) => void;
 
   constructor(
@@ -231,7 +233,8 @@ export class AppServices {
     );
     this.network = new NetworkConnectionService(this.db, (status) => this.networkStatusBroadcaster?.(status));
     this.publicCompanions = new PublicCompanionService(this.db, this.network, userDataDir);
-    this.network.setTransferLifecycleHandler(() => this.publicCompanions.cancelTransfers());
+    this.visits = new VisitService(this.network, this.publicCompanions);
+    this.network.setTransferLifecycleHandler(() => { this.publicCompanions.cancelTransfers(); this.visits.stopAll(); });
     this.companionRuntime.setExplicitMode(
       this.db.getAppSetting<'available' | 'focused' | 'do_not_disturb'>('attention_mode') ?? 'available'
     );

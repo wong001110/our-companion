@@ -363,6 +363,11 @@ export class DatabaseService {
     return row ? mapNetworkCompanionLink(row) : undefined;
   }
 
+  getNetworkCompanionLinkByNetworkId(serverOrigin: string, networkAccountId: string, networkCompanionId: string): NetworkCompanionLink | undefined {
+    const row = this.db.prepare('SELECT * FROM network_companion_links WHERE server_origin = ? AND network_account_id = ? AND network_companion_id = ?').get(serverOrigin, networkAccountId, networkCompanionId) as Record<string, unknown> | undefined;
+    return row ? mapNetworkCompanionLink(row) : undefined;
+  }
+
   upsertNetworkCompanionLink(link: NetworkCompanionLink): NetworkCompanionLink {
     const timestamp = nowIso();
     this.db.prepare(`INSERT INTO network_companion_links (server_origin, network_account_id, local_companion_id, network_companion_id, active_asset_pack_id, last_manifest_hash, last_published_at, publish_status, created_at, updated_at)

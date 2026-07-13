@@ -1404,7 +1404,9 @@ export type SocialInvalidation =
   | { type: 'friends' }
   | { type: 'presence'; userId: string; status: FriendPresence; updatedAt: string | null }
   | { type: 'companion_profile'; ownerUserId: string; companionId: string; unpublished?: boolean }
-  | { type: 'companion_asset_pack'; ownerUserId: string; companionId: string; assetPackId: string };
+  | { type: 'companion_asset_pack'; ownerUserId: string; companionId: string; assetPackId: string }
+  | { type: 'visit_invitation'; invitationId: string }
+  | { type: 'visit_session'; sessionId: string; state?: VisitSessionState };
 
 export type FriendPresence = 'online' | 'idle' | 'offline';
 export interface FriendSummary { userId: string; username: string; friendCode: string; presence: FriendPresence; hasPublishedCompanion: boolean; }
@@ -1435,6 +1437,42 @@ export interface CompleteAssetPackResult { assetPack: NetworkAssetPack; companio
 export interface NetworkCompanionLink { serverOrigin: string; networkAccountId: string; localCompanionId: string; networkCompanionId: string; activeAssetPackId?: string; lastPublishedManifestHash?: string; lastPublishedAt?: string; publishStatus?: string; }
 export interface AssetUploadProgress { assetPackId?: string; completedFiles: number; totalFiles: number; uploadedBytes: number; totalBytes: number; currentFile?: string; state: 'preparing' | 'uploading' | 'verifying' | 'completed' | 'failed' | 'cancelled'; failureCode?: string; }
 export interface CachedAssetPack { serverOrigin: string; assetPackId: string; networkCompanionId: string; manifestHash: string; totalBytes: number; downloadedAt: string; lastUsedAt: string; pinned: boolean; verified: boolean; }
+export type VisitInvitationStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired';
+export type VisitSessionState = 'preparing' | 'ready' | 'active' | 'ending' | 'ended' | 'cancelled' | 'failed';
+export interface VisitInvitationSummary {
+  id: string;
+  visitorOwnerUserId: string;
+  hostUserId: string;
+  networkCompanionId: string;
+  assetPackId: string;
+  companionName: string;
+  companionDescription?: string;
+  companionTags: string[];
+  status: VisitInvitationStatus;
+  expiresAt: string;
+  respondedAt?: string;
+  cancelledAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface VisitSessionSummary {
+  id: string;
+  invitationId: string;
+  visitorOwnerUserId: string;
+  hostUserId: string;
+  networkCompanionId: string;
+  assetPackId: string;
+  state: VisitSessionState;
+  visitorOwnerReady: boolean;
+  hostReady: boolean;
+  readyAt?: string;
+  startedAt?: string;
+  endedAt?: string;
+  endReason?: string;
+  failureCode?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 export interface SocialState {
   scope?: { serverUrl: string; accountId: string };
   friends: FriendSummary[];
@@ -1634,6 +1672,22 @@ export interface OurCompanionApi {
       downloadPack(input: { assetPackId: string; networkCompanionId: string }): Promise<CachedAssetPack>;
       getCachedPack(assetPackId: string): Promise<CachedAssetPack | undefined>;
       clearUnusedCache(): Promise<{ removed: number; bytesFreed: number }>;
+    };
+    visits: {
+      invitations: {
+        list(input?: { direction?: 'incoming' | 'outgoing'; status?: VisitInvitationStatus }): Promise<VisitInvitationSummary[]>;
+        send(hostUserId: string): Promise<VisitInvitationSummary>;
+        accept(invitationId: string): Promise<{ invitation: VisitInvitationSummary; session: VisitSessionSummary }>;
+        decline(invitationId: string): Promise<VisitInvitationSummary>;
+        cancel(invitationId: string): Promise<VisitInvitationSummary>;
+      };
+      sessions: {
+        list(): Promise<VisitSessionSummary[]>;
+        get(sessionId: string): Promise<VisitSessionSummary>;
+        prepare(sessionId: string): Promise<VisitSessionSummary>;
+        start(sessionId: string): Promise<VisitSessionSummary>;
+        end(sessionId: string): Promise<VisitSessionSummary>;
+      };
     };
   };
   window: {

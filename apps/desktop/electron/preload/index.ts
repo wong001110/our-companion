@@ -290,6 +290,12 @@ const api: OurCompanionApi = {
     assets: {
       inspectLocalPack: (input) => invoke('network:assets:inspect', input), publishPack: (input) => invoke('network:assets:publish', input), cancelPublish: () => invoke('network:assets:cancelPublish'), cancelDownload: () => invoke('network:assets:cancelDownload'), getPublishStatus: () => invoke('network:assets:getPublishStatus'), downloadPack: (input) => invoke('network:assets:download', input), getCachedPack: (assetPackId) => invoke('network:assets:getCached', assetPackId), clearUnusedCache: () => invoke('network:assets:clearUnusedCache'),
     },
+    visits: {
+      invitations: {
+        list: (input) => invoke('network:visits:invitations:list', input), send: (hostUserId) => invoke('network:visits:invitations:send', hostUserId), accept: (invitationId) => invoke('network:visits:invitations:accept', invitationId), decline: (invitationId) => invoke('network:visits:invitations:decline', invitationId), cancel: (invitationId) => invoke('network:visits:invitations:cancel', invitationId),
+      },
+      sessions: { list: () => invoke('network:visits:sessions:list'), get: (sessionId) => invoke('network:visits:sessions:get', sessionId), prepare: (sessionId) => invoke('network:visits:sessions:prepare', sessionId), start: (sessionId) => invoke('network:visits:sessions:start', sessionId), end: (sessionId) => invoke('network:visits:sessions:end', sessionId) },
+    },
   },
   app: {
     quit: () => invoke<boolean>('app:quit'),

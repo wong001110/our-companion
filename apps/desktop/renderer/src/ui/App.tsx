@@ -23,6 +23,8 @@ import type {
   KnowledgeGraph,
   KnowledgeGraphNode,
   NetworkStatus,
+  VisitInvitationSummary,
+  VisitSessionSummary,
   PermissionScope,
   PerformanceScriptV2,
   SpeechSettings,
@@ -2212,6 +2214,9 @@ function SocialCard() {
   const [busyAction, setBusyAction] = useState(false);
   const [friendCompanion, setFriendCompanion] = useState<{ id: string; ownerUserId: string; name: string; publicDescription?: string; publicTags: string[]; activeAssetPackId?: string }>();
   const [friendAssetStatus, setFriendAssetStatus] = useState('');
+  const [visitIncoming, setVisitIncoming] = useState<VisitInvitationSummary[]>([]);
+  const [visitOutgoing, setVisitOutgoing] = useState<VisitInvitationSummary[]>([]);
+  const [visitSessions, setVisitSessions] = useState<VisitSessionSummary[]>([]);
   const scopeRef = useRef<string | undefined>(undefined);
   const lastRevisionRef = useRef<number | undefined>(undefined);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -2219,20 +2224,20 @@ function SocialCard() {
   const available = status?.onlineModeEnabled && status.state === 'online' && Boolean(status.account);
   const scope = status?.account ? `${status.serverUrl}:${status.account.id}` : undefined;
   const clearSocialState = useCallback(() => {
-    setFriends([]); setIncoming([]); setOutgoing([]); setBlocked([]); setLookup(undefined); setFriendCompanion(undefined); setFriendAssetStatus(''); setError(''); setFriendCode('');
+    setFriends([]); setIncoming([]); setOutgoing([]); setBlocked([]); setVisitIncoming([]); setVisitOutgoing([]); setVisitSessions([]); setLookup(undefined); setFriendCompanion(undefined); setFriendAssetStatus(''); setError(''); setFriendCode('');
   }, []);
   const refresh = async () => {
     const scopeAtStart = scopeRef.current;
     if (!available || !scopeAtStart) return;
     setLoading(true);
     try {
-      const [nextFriends, nextIncoming, nextOutgoing, nextBlocked, presence] = await Promise.all([
-        window.ourCompanion.network.friends.getAll(), window.ourCompanion.network.friends.getIncomingRequests(), window.ourCompanion.network.friends.getOutgoingRequests(), window.ourCompanion.network.blocks.getAll(), window.ourCompanion.network.presence.getFriendPresence(),
+      const [nextFriends, nextIncoming, nextOutgoing, nextBlocked, presence, nextVisitIncoming, nextVisitOutgoing, nextVisitSessions] = await Promise.all([
+        window.ourCompanion.network.friends.getAll(), window.ourCompanion.network.friends.getIncomingRequests(), window.ourCompanion.network.friends.getOutgoingRequests(), window.ourCompanion.network.blocks.getAll(), window.ourCompanion.network.presence.getFriendPresence(), window.ourCompanion.network.visits.invitations.list({ direction: 'incoming' }), window.ourCompanion.network.visits.invitations.list({ direction: 'outgoing' }), window.ourCompanion.network.visits.sessions.list(),
       ]);
       if (scopeAtStart !== scopeRef.current) return;
       const presenceByUser = new Map(presence.map((item) => [item.userId, item.status]));
       setFriends(nextFriends.map((friend) => ({ ...friend, presence: presenceByUser.get(friend.userId) ?? 'offline' })));
-      setIncoming(nextIncoming); setOutgoing(nextOutgoing); setBlocked(nextBlocked); setError('');
+      setIncoming(nextIncoming); setOutgoing(nextOutgoing); setBlocked(nextBlocked); setVisitIncoming(nextVisitIncoming); setVisitOutgoing(nextVisitOutgoing); setVisitSessions(nextVisitSessions); setError('');
     } catch (cause) { if (scopeAtStart === scopeRef.current) setError(messageForSocialError(cause)); }
     finally { if (scopeAtStart === scopeRef.current) setLoading(false); }
   };
@@ -2264,14 +2269,21 @@ function SocialCard() {
 
   if (!available) return <PaperCard title="Social" tape className="settings-panel"><p>{socialAvailabilityMessage(status)}</p></PaperCard>;
   const action = async (operation: () => Promise<unknown>) => { if (busyAction) return; setBusyAction(true); try { await operation(); await window.ourCompanion.network.presence.sendActivity(); setLookup(undefined); await refresh(); } catch (cause) { setError(messageForSocialError(cause)); } finally { setBusyAction(false); } };
+  const liveVisit = visitSessions.find((session) => ['preparing', 'ready', 'active', 'ending'].includes(session.state));
+  const userId = status.account!.id;
+  const friendsById = new Map(friends.map((friend) => [friend.userId, friend]));
 
   return <PaperCard title="Social" tape className="settings-panel">
     <div className="online-auth-form"><label><span>Add Friend by Code</span><input value={friendCode} onChange={(event) => setFriendCode(event.target.value.toUpperCase())} placeholder="ABC12345" /></label><button className="btn-secondary btn-sm" onClick={() => void action(async () => { const result = await window.ourCompanion.network.friends.lookup(friendCode.trim()); setLookup(result); })} disabled={!friendCode.trim() || busyAction}>Find</button></div>
     {lookup && <div className="online-user-info"><p><strong>{lookup.username}</strong> · {lookup.friendCode}</p>{lookup.relationship === 'none' && <button className="btn-primary btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.sendRequest(lookup.id))}>Send Request</button>}<p>{lookup.relationship.replaceAll('_', ' ')}</p></div>}
     {error && <p className="creation-error">{error}</p>}
     {loading && <p>Loading Social data…</p>}
-    <h3>Friends</h3>{friends.length ? friends.map((friend) => <div className="online-user-info" key={friend.userId}><strong>{friend.username}</strong><span> · {friend.friendCode} · {friend.presence}</span><div className="action-row"><button className="btn-ghost btn-sm" disabled={busyAction || !friend.hasPublishedCompanion} title={friend.hasPublishedCompanion ? undefined : 'This friend has not published a Companion yet.'} onClick={() => void action(async () => { setFriendCompanion(await window.ourCompanion.network.companions.getFriendCompanion(friend.userId)); setFriendAssetStatus(''); })}>{friend.hasPublishedCompanion ? 'View Companion' : 'No published Companion'}</button><button className="btn-ghost btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.remove(friend.userId))}>Remove</button><button className="btn-ghost btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.blocks.block(friend.userId))}>Block</button></div></div>) : <p>No friends yet.</p>}
+    <h3>Friends</h3>{friends.length ? friends.map((friend) => <div className="online-user-info" key={friend.userId}><strong>{friend.username}</strong><span> · {friend.friendCode} · {friend.presence}</span><div className="action-row"><button className="btn-ghost btn-sm" disabled={busyAction || !friend.hasPublishedCompanion} title={friend.hasPublishedCompanion ? undefined : 'This friend has not published a Companion yet.'} onClick={() => void action(async () => { setFriendCompanion(await window.ourCompanion.network.companions.getFriendCompanion(friend.userId)); setFriendAssetStatus(''); })}>{friend.hasPublishedCompanion ? 'View Companion' : 'No published Companion'}</button><button className="btn-secondary btn-sm" disabled={busyAction || Boolean(liveVisit) || visitOutgoing.some((invite) => invite.status === 'pending' && invite.hostUserId === friend.userId)} title={liveVisit ? 'Finish the current Visit first.' : undefined} onClick={() => void action(() => window.ourCompanion.network.visits.invitations.send(friend.userId))}>Send Visit Invitation</button><button className="btn-ghost btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.remove(friend.userId))}>Remove</button><button className="btn-ghost btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.blocks.block(friend.userId))}>Block</button></div></div>) : <p>No friends yet.</p>}
     {friendCompanion && <div className="online-user-info"><h3>{friendCompanion.name}</h3>{friendCompanion.publicDescription && <p>{friendCompanion.publicDescription}</p>}<p>{friendCompanion.publicTags.join(' · ')}</p>{friendCompanion.activeAssetPackId ? <button className="btn-secondary btn-sm" disabled={busyAction} onClick={() => void action(async () => { await window.ourCompanion.network.assets.downloadPack({ assetPackId: friendCompanion.activeAssetPackId!, networkCompanionId: friendCompanion.id }); setFriendAssetStatus('Asset Pack downloaded and integrity-verified.'); })}>Download Asset Pack</button> : <p>No active Asset Pack.</p>}{friendAssetStatus && <p>{friendAssetStatus}</p>}</div>}
+    <h3>Visit Invitations</h3>
+    {visitIncoming.filter((invite) => invite.status === 'pending').length ? visitIncoming.filter((invite) => invite.status === 'pending').map((invite) => <div className="online-user-info" key={invite.id}><strong>{friendsById.get(invite.visitorOwnerUserId)?.username ?? 'A friend'} would like to visit.</strong><p>{invite.companionName}</p>{invite.companionDescription && <p>{invite.companionDescription}</p>}<p>{invite.companionTags.join(' · ') || 'No public tags'} · Expires {new Date(invite.expiresAt).toLocaleString()}</p><div className="action-row"><button disabled={busyAction || Boolean(liveVisit)} onClick={() => void action(() => window.ourCompanion.network.visits.invitations.accept(invite.id))}>Accept</button><button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.visits.invitations.decline(invite.id))}>Decline</button></div></div>) : <p>No incoming Visit invitations.</p>}
+    {visitOutgoing.filter((invite) => invite.status === 'pending').length ? <><h3>Outgoing Visit Invitations</h3>{visitOutgoing.filter((invite) => invite.status === 'pending').map((invite) => <div className="action-row" key={invite.id}><span>{friendsById.get(invite.hostUserId)?.username ?? 'Friend'} · {invite.companionName} · Pending</span><button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.visits.invitations.cancel(invite.id))}>Cancel</button></div>)}</> : null}
+    <h3>Visit Session</h3>{liveVisit ? <div className="online-user-info"><strong>{visitSessionMessage(liveVisit, userId)}</strong><p>Snapshot pack: {liveVisit.assetPackId}</p><div className="action-row">{liveVisit.state === 'preparing' && <button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.visits.sessions.prepare(liveVisit.id))}>Prepare</button>}{liveVisit.state === 'ready' && liveVisit.hostUserId === userId && <button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.visits.sessions.start(liveVisit.id))}>Start Visit</button>}<button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.visits.sessions.end(liveVisit.id))}>{liveVisit.state === 'preparing' || liveVisit.state === 'ready' ? 'Cancel Visit' : 'End Visit'}</button></div></div> : <p>No current Visit Session.</p>}
     <h3>Incoming Requests</h3>{incoming.length ? incoming.map((request) => <div className="action-row" key={request.id}><span>{request.username}</span><button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.acceptRequest(request.id))}>Accept</button><button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.rejectRequest(request.id))}>Reject</button></div>) : <p>No incoming requests.</p>}
     <h3>Outgoing Requests</h3>{outgoing.length ? outgoing.map((request) => <div className="action-row" key={request.id}><span>{request.username} · Pending</span><button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.cancelRequest(request.id))}>Cancel</button></div>) : <p>No outgoing requests.</p>}
     <h3>Blocked Users</h3>{blocked.length ? blocked.map((user) => <div className="action-row" key={user.userId}><span>{user.username}</span><button disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.blocks.unblock(user.userId))}>Unblock</button></div>) : <p>No blocked users.</p>}
@@ -2285,6 +2297,16 @@ function socialAvailabilityMessage(status?: NetworkStatus): string {
   if (status.state === 'server_unavailable') return 'Network Server is unavailable.';
   if (status.state === 'incompatible_client') return 'This client needs an update before Social can connect.';
   return 'Loading Social connection…';
+}
+
+function visitSessionMessage(session: VisitSessionSummary, userId: string): string {
+  if (session.state === 'preparing') {
+    const mineReady = session.visitorOwnerUserId === userId ? session.visitorOwnerReady : session.hostReady;
+    return mineReady ? 'Waiting for the other participant to prepare.' : 'Preparing Visit assets and consent.';
+  }
+  if (session.state === 'ready') return session.hostUserId === userId ? 'Ready to start the Visit.' : 'Visit is ready; waiting for the host to start.';
+  if (session.state === 'active') return 'Visit active. S4 does not render a remote Companion.';
+  return `Visit ${session.state}.`;
 }
 
 function messageForSocialError(cause: unknown): string {

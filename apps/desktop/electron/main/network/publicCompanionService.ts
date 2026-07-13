@@ -86,6 +86,23 @@ export class PublicCompanionService {
   getPublishStatus = async () => this.publishProgress ? { ...this.publishProgress } : undefined;
 
   async downloadPack(input: { assetPackId: string; networkCompanionId: string }): Promise<CachedAssetPack> {
+    return this.downloadPackFromSource(input, () => this.network.getAssetPackManifest(input.assetPackId), (fileIds) => this.network.getDownloadUrls(input.assetPackId, fileIds));
+  }
+
+  async downloadVisitPack(input: { sessionId: string; assetPackId: string; networkCompanionId: string }): Promise<CachedAssetPack> {
+    return this.downloadPackFromSource(input, () => this.network.getVisitSessionManifest(input.sessionId), (fileIds) => this.network.getVisitSessionDownloadUrls(input.sessionId, fileIds));
+  }
+
+  async hasNetworkCompanionMapping(networkCompanionId: string): Promise<boolean> {
+    const scope = await this.scope();
+    return Boolean(this.db.getNetworkCompanionLinkByNetworkId(scope.serverOrigin, scope.networkAccountId, networkCompanionId));
+  }
+
+  private async downloadPackFromSource(
+    input: { assetPackId: string; networkCompanionId: string },
+    getManifest: () => Promise<{ manifest: import('@our-companion/shared').CompanionAssetManifestV1; files: Array<{ id: string; relativePath: string; sizeBytes: number; sha256: string; mimeType: string }> }>,
+    getDownloadUrls: (fileIds: string[]) => Promise<{ downloads: Array<{ fileId: string; relativePath: string; downloadUrl: string; expiresAt: string; sizeBytes: number; sha256: string; mimeType: string }> }>,
+  ): Promise<CachedAssetPack> {
     if (this.downloadAbort) throw new Error('ASSET_DOWNLOAD_IN_PROGRESS');
     const abort = new AbortController(); this.downloadAbort = abort;
     let partial: string | undefined;
@@ -96,7 +113,7 @@ export class PublicCompanionService {
         const refreshed = { ...existing, lastUsedAt: new Date().toISOString() };
         this.db.upsertCachedNetworkAssetPack(refreshed); return withoutRoot(refreshed);
       }
-      const payload = await this.network.getAssetPackManifest(input.assetPackId);
+      const payload = await getManifest();
       const manifestHash = createHash('sha256').update(canonicalJson(payload.manifest), 'utf8').digest('hex');
       const originHash = createHash('sha256').update(scope.serverOrigin, 'utf8').digest('hex');
       const base = path.join(this.userDataDir, 'network-cache', originHash, 'asset-packs');
@@ -105,13 +122,13 @@ export class PublicCompanionService {
       const finalRoot = path.join(base, input.assetPackId);
       fs.mkdirSync(partialRoot, { recursive: true });
       for (let offset = 0; offset < payload.files.length; offset += 50) {
-        const result = await this.network.getDownloadUrls(input.assetPackId, payload.files.slice(offset, offset + 50).map(file => file.id));
+        const result = await getDownloadUrls(payload.files.slice(offset, offset + 50).map(file => file.id));
         await this.withConcurrency(result.downloads, 3, async record => {
           const file = payload.files.find(item => item.relativePath === record.relativePath);
           if (!file || file.sizeBytes !== record.sizeBytes || file.sha256 !== record.sha256) throw new Error('ASSET_INTEGRITY_FAILED');
           const destination = safeDestination(partialRoot, record.relativePath);
           fs.mkdirSync(path.dirname(destination), { recursive: true });
-          const bytes = await this.downloadWithRetry(record, abort.signal, async () => (await this.network.getDownloadUrls(input.assetPackId, [record.fileId])).downloads[0]);
+          const bytes = await this.downloadWithRetry(record, abort.signal, async () => (await getDownloadUrls([record.fileId])).downloads[0]);
           if (bytes.byteLength !== record.sizeBytes || createHash('sha256').update(bytes).digest('hex') !== record.sha256) throw new Error('ASSET_INTEGRITY_FAILED');
           fs.writeFileSync(destination, bytes, { flag: 'wx' });
         });
