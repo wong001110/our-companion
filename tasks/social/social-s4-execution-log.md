@@ -9,7 +9,7 @@
 ## S4 closure repair (2026-07-13)
 
 - Previous reviewed baseline: `a25526e49973953c54bcf9e38e7efa468722efa3`.
-- Closure commit: `7a0414d` (`fix: harden desktop visit lifecycle`).
+- Closure commits: `7a0414d` (`fix: harden desktop visit lifecycle`) and `1a4cfa6` (`fix: gate visit UI by server capability`).
 - Visit Pack preparation is authorization-first: the session manifest is fetched before reusing a verified cache, so a revoked or ended Session cannot use a cache hit to report Host ready.
 - A Visit download is owned by its Session and is cancelled on a terminal Session state, while unrelated downloads and verified cache entries remain intact.
 - Concurrent preparation is locally coalesced; a participant already marked ready does not redownload or call `markReady` again.
