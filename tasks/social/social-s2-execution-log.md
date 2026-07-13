@@ -1,7 +1,7 @@
 # Social S2 execution log
 
 - Previous baseline: `b02f048237e9e3c5f3542bbb5f03e06d4bf0c555`.
-- Closure-repair commit: pending at log update.
+- Closure-repair commit: `061b5cd8d19ce6b3cb137bb0bc8e953e3b0b0e9e`.
 - Files changed: Main-process network connection and its tests, shared Social contracts, and the Social settings UI.
 - DELETE token-refresh fix: all authenticated Social GET, POST, and DELETE requests use `authenticatedRequest()`. An authentication rejection performs the existing single refresh-lock flow, then retries the same method and body once. Refresh failure clears the session and returns `AUTHENTICATION_REQUIRED` without a retry loop.
 - Activity and invalidation: Main throttles Presence activity to one IPC/socket emission per ten seconds; Renderer reports only in-app focus and pointer interaction. Friend/block invalidations are coalesced for 200 ms, while a typed Presence invalidation updates only that Friend in memory.
