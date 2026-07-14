@@ -25,7 +25,7 @@
 
 .animation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .animation-slot { background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(239, 206, 228, 0.1); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
-.animation-slot-filled { border-color: rgba(129, 201, 149, 0.3); }
+.animation-slot-filled { border-color: rgba(129, 201, 149, 0.3); animation: asset-preview-enter var(--motion-fast) var(--ease-standard) both; }
 .animation-slot-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .animation-slot-name { font-size: 12px; font-weight: 500; color: rgba(248, 237, 245, 0.8); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .animation-slot-check { color: #81c995; margin-right: 4px; }
@@ -34,6 +34,8 @@
 .animation-slot-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .animation-preview-placeholder { width: 100%; aspect-ratio: 1; background: rgba(0, 0, 0, 0.3); border-radius: 6px; }
 .animation-preview-img { width: 100%; aspect-ratio: 1; object-fit: contain; border-radius: 6px; background: rgba(0, 0, 0, 0.2); }
+@keyframes asset-preview-enter { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .animation-slot-filled { animation: none; } }
 
 .asset-upload-zone { border: 2px dashed rgba(239, 206, 228, 0.2); border-radius: 10px; padding: 24px; text-align: center; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
 .asset-upload-zone:hover, .asset-upload-zone-active { border-color: rgba(186, 166, 224, 0.5); background: rgba(186, 166, 224, 0.06); }

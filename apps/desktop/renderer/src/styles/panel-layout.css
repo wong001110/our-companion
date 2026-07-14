@@ -202,6 +202,7 @@
   padding: 10px 12px;
   color: #f4edf5;
   background: rgba(255, 255, 255, 0.02);
+  transition: color var(--motion-fast) ease, background var(--motion-fast) ease, border-color var(--motion-fast) ease, box-shadow var(--motion-normal) var(--ease-standard), transform var(--motion-fast) var(--ease-standard);
 }
 
 .sidebar button.active {
@@ -209,6 +210,7 @@
   background: linear-gradient(135deg, rgba(131, 88, 181, 0.86), rgba(161, 111, 169, 0.72));
   border-color: rgba(246, 206, 229, 0.32);
   box-shadow: 0 10px 24px rgba(94, 54, 132, 0.22);
+  transform: translateX(2px);
 }
 
 .workspace {
@@ -221,6 +223,11 @@
     radial-gradient(circle at 12% 90%, rgba(118, 168, 158, 0.16), transparent 24%),
     radial-gradient(circle at 90% 16%, rgba(230, 170, 196, 0.14), transparent 28%);
 }
+
+.panel-page-transition { animation: panel-page-enter 180ms var(--ease-standard) both; outline: none; }
+@keyframes panel-page-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .panel-page-transition { animation: panel-page-fade var(--motion-fast) ease both; } .sidebar button.active { transform: none; } }
+@keyframes panel-page-fade { from { opacity: 0; } to { opacity: 1; } }
 
 .notebook-page {
   position: relative;

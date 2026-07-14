@@ -448,21 +448,24 @@ function registerIpc(): void {
     });
   }
 
-  ipcMain.handle('window:openPanel', (_event, input?: { companionX?: number; companionY?: number }) => {
+  ipcMain.handle('window:openPanel', (_event, input?: { companionX?: number; companionY?: number; initialTab?: string }) => {
     if (!services.hasActiveCompanion()) {
       createCreationWindow();
       return false;
     }
-    if (!panelWindow || panelWindow.isDestroyed()) {
+    const created = !panelWindow || panelWindow.isDestroyed();
+    if (created) {
       panelWindow = createPanelWindow();
     }
+    const activePanel = panelWindow;
+    if (!activePanel) return false;
 
     if (input?.companionX !== undefined && input?.companionY !== undefined && companionWindow && !companionWindow.isDestroyed()) {
       const compBounds = companionWindow.getBounds();
       const display = screen.getDisplayMatching(compBounds);
       const workArea = display.workArea;
-      const panelWidth = Math.min(panelWindow.getBounds().width || 1180, workArea.width * 0.65);
-      const panelHeight = Math.min(panelWindow.getBounds().height || 760, workArea.height * 0.85);
+      const panelWidth = Math.min(activePanel.getBounds().width || 1180, workArea.width * 0.65);
+      const panelHeight = Math.min(activePanel.getBounds().height || 760, workArea.height * 0.85);
 
       const companionScreenX = compBounds.x + input.companionX;
       const spaceRight = workArea.x + workArea.width - companionScreenX - 220 - 16;
@@ -477,11 +480,15 @@ function registerIpc(): void {
 
       const y = Math.max(workArea.y, Math.min(compBounds.y + input.companionY - 40, workArea.y + workArea.height - panelHeight));
 
-      panelWindow.setBounds({ x: Math.round(x), y: Math.round(y), width: Math.round(panelWidth), height: Math.round(panelHeight) });
+      activePanel.setBounds({ x: Math.round(x), y: Math.round(y), width: Math.round(panelWidth), height: Math.round(panelHeight) });
     }
 
-    panelWindow.show();
-    panelWindow.focus();
+    activePanel.show();
+    activePanel.focus();
+    if (input?.initialTab) {
+      if (created) activePanel.webContents.once('did-finish-load', () => activePanel.webContents.send('panel:navigate', input.initialTab));
+      else activePanel.webContents.send('panel:navigate', input.initialTab);
+    }
     return true;
   });
 
@@ -619,6 +626,10 @@ function registerSmokeIpc(): void {
   });
   ipcMain.handle('smoke:disconnectSocket', () => services.network.disconnectSocketForSmoke());
   ipcMain.handle('smoke:reconcileVisits', async () => { await services.visits.reconcile(); await services.visualVisits.reconcile(); });
+  ipcMain.handle('smoke:setOwnerPresenceMode', (_event, mode: unknown) => {
+    if (mode !== 'home' && mode !== 'away_visiting') throw new Error('SMOKE_OWNER_PRESENCE_MODE_INVALID');
+    services.visualVisits.setOwnerPresenceModeForSmoke(mode);
+  });
   ipcMain.handle('smoke:setVisualWorkArea', (_event, input: unknown) => {
     smokeWorkArea = validateSmokeWorkArea(input);
     for (const window of [companionWindow, panelWindow]) if (window && !window.isDestroyed()) window.webContents.send('smoke:visualWorkAreaChanged', smokeWorkArea);

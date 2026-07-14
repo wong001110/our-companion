@@ -89,6 +89,11 @@ export class VisualVisitService {
 
   stopAll = (_reason?: string): void => this.setState({ ownerPresenceMode: 'home' });
 
+  /** Test-only state injection, exposed exclusively through the smoke IPC surface. */
+  setOwnerPresenceModeForSmoke = (ownerPresenceMode: VisualVisitRendererState['ownerPresenceMode']): void => {
+    this.setState({ ownerPresenceMode });
+  };
+
   private async reconcileOnce(): Promise<void> {
     const status = this.network.getStatusSnapshot();
     if (status.state !== 'online' || !status.account || !status.features?.visualVisits) {

@@ -59,7 +59,9 @@ export function useSettingsViewModel({ lang, onLangChange }: SettingsViewModelOp
     }
   }, [lang]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  // Loading is an entry/retry operation. A language change must not overwrite a
+  // successful Save status with a fresh loading/no-key message.
+  useEffect(() => { void refresh(); }, []);
 
   async function saveSettings(input: UpdateAiSettingsInput = {}) {
     setSaving(true);

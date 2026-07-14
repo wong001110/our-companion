@@ -196,8 +196,14 @@ const api: OurCompanionApi = {
     }
   },
   window: {
-    openPanel: (input?: { companionX?: number; companionY?: number }) => invoke('window:openPanel', input),
+    openPanel: (input?: { companionX?: number; companionY?: number; initialTab?: 'home' | 'chat' | 'discovery' | 'journey' | 'memory' | 'social' | 'settings' }) => invoke('window:openPanel', input),
     openPanelForSwitch: () => invoke('window:openPanelForSwitch'),
+    onPanelNavigate: (listener) => {
+      const channel = 'panel:navigate';
+      const handler = (_event: Electron.IpcRendererEvent, tab: 'home' | 'chat' | 'discovery' | 'journey' | 'memory' | 'social' | 'settings') => listener(tab);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    },
     showCompanion: () => invoke('window:showCompanion'),
     getBounds: () => invoke('window:getBounds'),
     getWorkArea: () => invoke('window:getWorkArea'),
@@ -343,6 +349,7 @@ if (process.env.OUR_COMPANION_SMOKE_TEST === '1') {
     getState: () => invoke('smoke:getState'),
     disconnectSocket: () => invoke('smoke:disconnectSocket'),
     reconcileVisits: () => invoke('smoke:reconcileVisits'),
+    setOwnerPresenceMode: (mode) => invoke('smoke:setOwnerPresenceMode', mode),
     setVisualWorkArea: (input) => invoke('smoke:setVisualWorkArea', input),
     clearVisualWorkArea: () => invoke('smoke:clearVisualWorkArea'),
     reportVisualRuntime: (input) => invoke('smoke:reportVisualRuntime', input),

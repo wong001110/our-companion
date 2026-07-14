@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Presence } from '../motion/Presence';
 import { t } from '../../i18n';
 import { useLang } from '../../ui/NotebookPrimitives';
 
@@ -13,14 +14,47 @@ export function ConfirmDialog({ open, title, description, confirmLabel, busy = f
   onClose(): void;
 }) {
   const lang = useLang();
+  const dialogRef = useRef<HTMLElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const [closing, setClosing] = useState(false);
+  const requestClose = useCallback(() => {
+    setClosing(true);
+    onClose();
+  }, [onClose]);
   useEffect(() => {
-    if (!open) return;
-    cancelRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && !busy) onClose(); };
+    if (open) {
+      setClosing(false);
+      openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      // Presence mounts its children after this effect. Wait for its first paint so
+      // keyboard users land on a real dialog control, not the former opener.
+      let secondFrame: number | undefined;
+      const firstFrame = requestAnimationFrame(() => {
+        secondFrame = requestAnimationFrame(() => cancelRef.current?.focus());
+      });
+      return () => {
+        cancelAnimationFrame(firstFrame);
+        if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
+      };
+    } else if (openerRef.current) {
+      setClosing(true);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open && !closing) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !busy) requestClose();
+      if (event.key !== 'Tab') return;
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [busy, onClose, open]);
-  if (!open) return null;
-  return <div className="confirm-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target && !busy) onClose(); }}><section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-description"><h2 id="confirm-dialog-title">{title}</h2><p id="confirm-dialog-description">{description}</p><div className="action-row"><button ref={cancelRef} type="button" className="btn-secondary" disabled={busy} onClick={onClose}>{t(lang, 'common_cancel')}</button><button type="button" className={danger ? 'btn-danger' : 'btn-primary'} disabled={busy} onClick={onConfirm}>{busy ? t(lang, 'common_working') : (confirmLabel ?? t(lang, 'common_confirm'))}</button></div></section></div>;
+  }, [busy, closing, open, requestClose]);
+  return <Presence present={open} exitDurationMs={150} onExited={() => { setClosing(false); openerRef.current?.focus(); }}>{(state) => <div className="confirm-dialog-backdrop" data-motion-state={state} role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target && !busy) requestClose(); }}><section ref={dialogRef} className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-description"><h2 id="confirm-dialog-title">{title}</h2><p id="confirm-dialog-description">{description}</p><div className="action-row"><button ref={cancelRef} type="button" className="btn-secondary" disabled={busy} onClick={requestClose}>{t(lang, 'common_cancel')}</button><button type="button" className={danger ? 'btn-danger' : 'btn-primary'} disabled={busy} onClick={onConfirm}>{busy ? t(lang, 'common_working') : (confirmLabel ?? t(lang, 'common_confirm'))}</button></div></section></div>}</Presence>;
 }

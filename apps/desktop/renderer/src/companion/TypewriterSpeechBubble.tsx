@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { HOLD_AFTER_COMPLETE_MS, getMsPerCharacter, splitCharacters } from './typewriterSpeech';
+import type { MotionState } from '../components/motion/Presence';
 
 export interface TypewriterSpeechBubbleProps {
   message: string;
@@ -7,9 +8,10 @@ export interface TypewriterSpeechBubbleProps {
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
   style?: React.CSSProperties;
+  motionState?: MotionState;
 }
 
-export function TypewriterSpeechBubble({ message, onComplete, onMouseEnter, onMouseLeave, style }: TypewriterSpeechBubbleProps) {
+export function TypewriterSpeechBubble({ message, onComplete, onMouseEnter, onMouseLeave, style, motionState = 'entered' }: TypewriterSpeechBubbleProps) {
   const [visibleText, setVisibleText] = useState('');
   const [isTyping, setIsTyping] = useState(true);
   const charactersRef = useRef<string[]>([]);
@@ -62,6 +64,7 @@ export function TypewriterSpeechBubble({ message, onComplete, onMouseEnter, onMo
   return (
     <div
       className="speech-bubble speech-bubble-typing"
+      data-motion-state={motionState}
       aria-live="polite"
       style={style}
       onMouseEnter={onMouseEnter}
