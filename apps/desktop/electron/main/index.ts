@@ -626,6 +626,10 @@ function registerSmokeIpc(): void {
   });
   ipcMain.handle('smoke:disconnectSocket', () => services.network.disconnectSocketForSmoke());
   ipcMain.handle('smoke:reconcileVisits', async () => { await services.visits.reconcile(); await services.visualVisits.reconcile(); });
+  ipcMain.handle('smoke:setOwnerPresenceMode', (_event, mode: unknown) => {
+    if (mode !== 'home' && mode !== 'away_visiting') throw new Error('SMOKE_OWNER_PRESENCE_MODE_INVALID');
+    services.visualVisits.setOwnerPresenceModeForSmoke(mode);
+  });
   ipcMain.handle('smoke:setVisualWorkArea', (_event, input: unknown) => {
     smokeWorkArea = validateSmokeWorkArea(input);
     for (const window of [companionWindow, panelWindow]) if (window && !window.isDestroyed()) window.webContents.send('smoke:visualWorkAreaChanged', smokeWorkArea);

@@ -17,6 +17,16 @@ function withinWorkArea(result: ReturnType<typeof layout>, workArea = area) {
   }
 }
 
+function withoutOverlap(result: ReturnType<typeof layout>) {
+  for (let index = 0; index < result.length; index += 1) {
+    const a = result[index].rect;
+    for (const other of result.slice(index + 1)) {
+      const b = other.rect;
+      expect(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y).toBe(true);
+    }
+  }
+}
+
 describe('resolveQuickActionLayout', () => {
   it('keeps all four bubbles at their preferred corners around a centered companion', () => {
     const result = layout(290, 185);
@@ -32,6 +42,7 @@ describe('resolveQuickActionLayout', () => {
   ])('flips and clamps all bubbles at the %s work-area corner', (_corner, x, y) => {
     const result = layout(x, y);
     withinWorkArea(result);
+    withoutOverlap(result);
   });
 
   it('supports mixed bubble sizes without leaking outside a small work area', () => {

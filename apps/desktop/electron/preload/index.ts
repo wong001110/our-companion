@@ -349,6 +349,7 @@ if (process.env.OUR_COMPANION_SMOKE_TEST === '1') {
     getState: () => invoke('smoke:getState'),
     disconnectSocket: () => invoke('smoke:disconnectSocket'),
     reconcileVisits: () => invoke('smoke:reconcileVisits'),
+    setOwnerPresenceMode: (mode) => invoke('smoke:setOwnerPresenceMode', mode),
     setVisualWorkArea: (input) => invoke('smoke:setVisualWorkArea', input),
     clearVisualWorkArea: () => invoke('smoke:clearVisualWorkArea'),
     reportVisualRuntime: (input) => invoke('smoke:reportVisualRuntime', input),

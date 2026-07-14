@@ -65,6 +65,25 @@ function clamp(rect: Rect, area: Rect): Rect {
   };
 }
 
+function overlaps(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+/** Keeps boundary flips from collapsing multiple bubbles into the same corner. */
+function avoidBubbleCollisions(rect: Rect, placed: ResolvedQuickActionPlacement[], area: Rect): Rect {
+  if (!placed.some((item) => overlaps(rect, item.rect))) return rect;
+  const step = 50;
+  const offsets: Array<[number, number]> = [];
+  for (let distance = step; distance <= step * 8; distance += step) {
+    offsets.push([0, distance], [0, -distance], [distance, 0], [-distance, 0]);
+  }
+  for (const [x, y] of offsets) {
+    const candidate = { ...rect, x: rect.x + x, y: rect.y + y };
+    if (fits(candidate, area) && !placed.some((item) => overlaps(candidate, item.rect))) return candidate;
+  }
+  return rect;
+}
+
 /** Places the secondary More menu inside the usable display bounds. */
 export function resolveQuickActionMenuLayout(anchor: Rect, workArea: Rect, size = { width: 176, height: 122 }, gap = 8): QuickActionMenuLayout {
   const opensAbove = anchor.y + anchor.height + gap + size.height > workArea.y + workArea.height;
@@ -91,9 +110,10 @@ export function resolveQuickActionLayout({
   preferredPlacements?: QuickActionPlacement[];
   gap?: number;
 }): ResolvedQuickActionPlacement[] {
-  return preferredPlacements.flatMap((placement) => {
+  const resolved: ResolvedQuickActionPlacement[] = [];
+  for (const placement of preferredPlacements) {
     const size = bubbleSizes[placement.id];
-    if (!size) return [];
+    if (!size) continue;
     const preferred = sideParts(placement.preferredSide);
     let horizontal = preferred.horizontal;
     let vertical = preferred.vertical;
@@ -117,6 +137,8 @@ export function resolveQuickActionLayout({
 
     // A very small work area can make even the flipped direction unavailable.
     if (!fits(rect, workArea)) rect = clamp(rect, workArea);
-    return [{ id: placement.id, side, rect, flippedHorizontally, flippedVertically }];
-  });
+    rect = avoidBubbleCollisions(rect, resolved, workArea);
+    resolved.push({ id: placement.id, side, rect, flippedHorizontally, flippedVertically });
+  }
+  return resolved;
 }

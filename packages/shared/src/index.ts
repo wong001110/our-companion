@@ -1770,6 +1770,7 @@ export interface OurCompanionApi {
     getState(): Promise<SmokeTestState>;
     disconnectSocket(): Promise<void>;
     reconcileVisits(): Promise<void>;
+    setOwnerPresenceMode(mode: 'home' | 'away_visiting'): Promise<void>;
     setVisualWorkArea(input: { x: number; y: number; width: number; height: number }): Promise<void>;
     clearVisualWorkArea(): Promise<void>;
     reportVisualRuntime(input: SmokeVisualRuntimeUpdate): Promise<void>;
