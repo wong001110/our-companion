@@ -60,6 +60,7 @@ test('Quick Actions opens Panel Settings directly and preserves Talk active stat
     await main.getByTestId('quick-action-more').click();
     await expect(main.getByRole('menu')).toBeVisible();
     await main.getByRole('menuitem', { name: 'Settings' }).click();
+    await expect(main.getByRole('menu')).toHaveAttribute('data-motion-state', 'exiting');
     const panel = await device.panelWindow();
     const settings = panel.getByRole('button', { name: 'Settings' });
     await expect(settings).toHaveAttribute('aria-current', 'page');

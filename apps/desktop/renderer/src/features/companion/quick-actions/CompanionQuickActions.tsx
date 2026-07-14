@@ -54,6 +54,7 @@ export function CompanionQuickActions({
   const lang = useLang();
   const [moreOpen, setMoreOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<number | undefined>(undefined);
   const layout = useMemo(() => resolveQuickActionLayout({
     companionBounds: anchorRect,
     workArea: screenWorkArea,
@@ -67,6 +68,10 @@ export function CompanionQuickActions({
   useEffect(() => {
     if (!visible) setMoreOpen(false);
   }, [visible]);
+
+  useEffect(() => () => {
+    if (closeTimerRef.current !== undefined) window.clearTimeout(closeTimerRef.current);
+  }, []);
 
   useEffect(() => {
     onInteractiveLayoutChange?.(visible ? interactiveRegion : undefined);
@@ -92,10 +97,18 @@ export function CompanionQuickActions({
 
   if (!visible) return null;
   const byId = new Map(layout.map((item) => [item.id, item]));
-  const execute = (action: () => void, close = true) => {
+  const execute = (action: () => void, close = true, waitForMenuExit = false) => {
     setMoreOpen(false);
     action();
-    if (close) onClose?.();
+    if (!close) return;
+    if (!waitForMenuExit) {
+      onClose?.();
+      return;
+    }
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = undefined;
+      onClose?.();
+    }, 140);
   };
 
   return (
@@ -109,9 +122,9 @@ export function CompanionQuickActions({
       })}
       <Presence present={moreOpen && Boolean(byId.get('more') && moreMenu)} exitDurationMs={140}>{(state) => moreMenu && (
         <div className={`quick-action-more-menu${moreMenu.opensAbove ? ' opens-above' : ''}`} data-motion-state={state} role="menu" aria-label={t(lang, 'quick_more_actions')} style={{ left: moreMenu.rect.x, top: moreMenu.rect.y, width: moreMenu.rect.width }}>
-          {onSwitchCompanion && <button role="menuitem" type="button" onClick={() => execute(onSwitchCompanion)}>{t(lang, 'quick_switch_companion')}</button>}
-          {onOpenSettings && <button role="menuitem" type="button" onClick={() => execute(onOpenSettings)}>{t(lang, 'quick_settings')}</button>}
-          {onExit && <button role="menuitem" type="button" className="quick-action-danger" onClick={() => execute(onExit)}>{t(lang, 'quick_exit_app')}</button>}
+          {onSwitchCompanion && <button role="menuitem" type="button" onClick={() => execute(onSwitchCompanion, true, true)}>{t(lang, 'quick_switch_companion')}</button>}
+          {onOpenSettings && <button role="menuitem" type="button" onClick={() => execute(onOpenSettings, true, true)}>{t(lang, 'quick_settings')}</button>}
+          {onExit && <button role="menuitem" type="button" className="quick-action-danger" onClick={() => execute(onExit, true, true)}>{t(lang, 'quick_exit_app')}</button>}
         </div>
       )}</Presence>
     </div>

@@ -9,6 +9,7 @@
 @keyframes soft-hint-fade-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 
 .speech-bubble { position: absolute; left: 50%; top: 60px; width: max-content; max-width: 400px; min-height: 86px; transform: translateX(-50%); padding: 18px 26px; border: 26px solid transparent; border-radius: 8px; color: #2a1c2c; border-image: url('/assets/panel/frames/speech-bubble.png') 190 fill / 26px / 0 stretch; background: transparent; font-size: 13px; font-weight: 700; line-height: 1.35; text-align: center; pointer-events: all; z-index: 2; animation: speech-bubble-enter var(--motion-fast) var(--ease-standard) both; }
+.speech-bubble[data-motion-state='exiting'] { animation: none; opacity: 0; transform: translateY(-3px); transition: opacity var(--motion-fast) var(--ease-exit), transform var(--motion-fast) var(--ease-exit); pointer-events: none; }
 .speech-bubble-cursor { display: inline-block; margin-left: 2px; animation: speech-cursor-blink 0.9s step-end infinite; }
 .companion-quick-btn { padding: 6px 12px; border: 1px solid rgba(239, 206, 228, 0.15); border-radius: 16px; background: rgba(75, 58, 101, 0.85); color: #f8edf5; font-size: 12px; font-weight: 600; pointer-events: all; white-space: nowrap; backdrop-filter: blur(6px); transition: background 0.15s ease, transform 0.1s ease; }
 .companion-quick-btn:hover { background: rgba(100, 75, 130, 0.95); transform: scale(1.05); }
@@ -19,7 +20,7 @@
 .companion-text-input input:focus { border-color: rgba(116, 80, 148, 0.6); }
 @keyframes speech-bubble-enter { from { opacity: 0; transform: translateY(4px) scale(.97); } to { opacity: 1; transform: none; } }
 @keyframes companion-composer-enter { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .speech-bubble, .companion-text-input { animation-name: companion-fade-enter; } .companion-text-input[data-motion-state='exiting'] { transform: none; } .speech-bubble-cursor { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .speech-bubble, .companion-text-input { animation-name: companion-fade-enter; } .speech-bubble[data-motion-state='exiting'], .companion-text-input[data-motion-state='exiting'] { transform: none; } .speech-bubble-cursor { animation: none; } }
 @keyframes companion-fade-enter { from { opacity: 0; } to { opacity: 1; } }
 @keyframes speech-cursor-blink { 50% { opacity: 0; } }
 .companion-listening-indicator { position: absolute; top: 8px; right: 72px; width: 12px; height: 12px; border-radius: var(--radius-pill); background: #d4566d; box-shadow: 0 0 0 0 rgba(212, 86, 109, 0.55); animation: companion-listening-pulse 1.4s ease-out infinite; pointer-events: none; z-index: 3; }

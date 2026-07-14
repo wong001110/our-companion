@@ -40,7 +40,7 @@ import { COMPANION_CHAT_RETENTION_DAYS } from '@our-companion/shared';
 import { t, type Lang } from '../i18n';
 import { getWalkDelay, getWalkDelayRange, selectSpeechLine } from '../companion/runtime/companionBehavior';
 import { getIdleRotationDelay, isIdleState, selectWeightedIdleAnimation } from '../companion/runtime/idleBehavior';
-import { TypewriterSpeechBubble } from '../companion/TypewriterSpeechBubble';
+import { SpeechBubbleOverlay } from '../companion/SpeechBubbleOverlay';
 import { DiscoveryPopoutCard } from '../companion/DiscoveryPopoutCard';
 import { useCompanionSession } from '../companion/useCompanionSession';
 import { useSpeech } from '../companion/useSpeech';
@@ -868,37 +868,15 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           onAnimationComplete={handleAnimationComplete}
         />
       </div>
-      {speech.typewriterMessage && (
-        <TypewriterSpeechBubble
-          key={speech.typewriterGeneration}
-          message={speech.typewriterMessage}
-          onComplete={() => handleTypewriterComplete(speech.typewriterGeneration)}
-          onMouseEnter={() => interactive.enter('speech-bubble')}
-          onMouseLeave={() => interactive.leave('speech-bubble')}
-          style={floatingPositions.bubble ? {
-            position: 'absolute',
-            left: floatingPositions.bubble.rect.x,
-            top: floatingPositions.bubble.rect.y,
-            width: floatingPositions.bubble.rect.width,
-            transform: 'none',
-          } : undefined}
-        />
-      )}
-      {!speech.typewriterMessage && speech.speech && (
-        <div
-          className="speech-bubble"
-          onMouseEnter={() => interactive.enter('speech-bubble')}
-          onMouseLeave={() => interactive.leave('speech-bubble')}
-          style={floatingPositions.bubble ? {
-            left: floatingPositions.bubble.rect.x,
-            top: floatingPositions.bubble.rect.y,
-            width: floatingPositions.bubble.rect.width,
-            transform: 'none',
-          } : undefined}
-        >
-          {speech.speech}
-        </div>
-      )}
+      <SpeechBubbleOverlay
+        typewriterMessage={speech.typewriterMessage}
+        typewriterGeneration={speech.typewriterGeneration}
+        speech={speech.speech}
+        onTypewriterComplete={handleTypewriterComplete}
+        onMouseEnter={() => interactive.enter('speech-bubble')}
+        onMouseLeave={() => interactive.leave('speech-bubble')}
+        style={floatingPositions.bubble ? { position: 'absolute', left: floatingPositions.bubble.rect.x, top: floatingPositions.bubble.rect.y, width: floatingPositions.bubble.rect.width, transform: 'none' } : undefined}
+      />
       {discovery.popup && (
         <DiscoveryPopoutCard
           candidate={discovery.popup}
