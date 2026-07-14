@@ -20,6 +20,72 @@ test('Companion quick actions support hover, pin, and Escape dismissal', async (
   } finally { await device.close(); }
 });
 
+test('Quick Actions keep the hover group visible through its grace period', async () => {
+  const device = new UiElectronFixture();
+  try {
+    await device.launch();
+    const main = await device.mainWindow();
+    const companion = main.locator('.companion-canvas');
+    await companion.hover();
+    const actions = main.getByTestId('companion-quick-actions');
+    await expect(actions).toBeVisible();
+
+    await main.getByTestId('quick-action-talk').hover();
+    await expect(actions).toBeVisible();
+
+    const viewport = await main.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    await main.mouse.move(viewport.width - 2, viewport.height - 2);
+    await main.waitForTimeout(260);
+    await expect(actions).toBeVisible();
+    await expect(actions).toHaveCount(0, { timeout: 1_000 });
+  } finally { await device.close(); }
+});
+
+test('Dragging the Companion closes pinned Quick Actions immediately', async () => {
+  const device = new UiElectronFixture();
+  try {
+    await device.launch();
+    const main = await device.mainWindow();
+    const companion = main.locator('.companion-canvas');
+    await companion.click();
+    await expect(main.getByTestId('companion-quick-actions')).toBeVisible();
+    const box = await companion.boundingBox();
+    if (!box) throw new Error('COMPANION_CANVAS_NOT_MEASURABLE');
+    await main.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await main.mouse.down();
+    await main.mouse.move(box.x + box.width / 2 + 12, box.y + box.height / 2 + 12);
+    await expect(main.getByTestId('companion-quick-actions')).toHaveCount(0);
+    await main.mouse.up();
+  } finally { await device.close(); }
+});
+
+test('Listen stays visibly active when Quick Actions are reopened', async () => {
+  const device = new UiElectronFixture();
+  try {
+    await device.launch();
+    const main = await device.mainWindow();
+    await main.evaluate(() => {
+      const context = new AudioContext();
+      const stream = context.createMediaStreamDestination().stream;
+      Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
+        configurable: true,
+        value: async () => stream,
+      });
+    });
+    const companion = main.locator('.companion-canvas');
+    await companion.click();
+    const listen = main.getByTestId('quick-action-listen');
+    await listen.click();
+    await expect(main.getByTestId('companion-quick-actions')).toHaveCount(0);
+    await companion.click();
+    await expect(listen).toHaveAttribute('aria-pressed', 'true');
+    await listen.click();
+    await expect(main.getByTestId('companion-quick-actions')).toHaveCount(0);
+    await companion.click();
+    await expect(listen).toHaveAttribute('aria-pressed', 'false');
+  } finally { await device.close(); }
+});
+
 test('More closes independently on Escape and restores its trigger focus', async () => {
   const device = new UiElectronFixture();
   try {

@@ -53,6 +53,7 @@
 - Electron needs desktop process services and therefore cannot launch from the filesystem sandbox. The focused Quick Actions spec was rerun with desktop access: all four checks passed, including the new More-menu exit-state assertion.
 - Focused Electron Creation and Panel navigation checks passed after their motion-state updates. They assert the final `entered` state and delayed focus placement rather than relying on animation names alone.
 - `qa:ui` now runs dedicated focused scenario specs for each currently covered named claim. It deliberately exits non-zero until the remaining explicit scenarios and screenshot review are complete; this prevents a partially covered run from creating a misleading `passed` report.
+- Real Electron coverage now also verifies Quick Actions hover grace, drag-close, and an active Listen session using a local synthetic media stream. It confirms Listen is `aria-pressed=true` after reopening Quick Actions, then returns to `false` after stopping.
 
 ## Dedicated smoke environment details
 
