@@ -21,3 +21,12 @@
 - Test-only IPC is enabled only by `OUR_COMPANION_SMOKE_TEST=1`; it returns sanitized state and provides narrow reconnect, reconciliation, work-area, renderer-failure, and fixture controls.
 - The full run requires a dedicated Network database and R2 configuration. It is not recorded as passed until that live logical two-device run completes and writes its sanitized artifact report.
 - Local verification: Client full suite (61 files / 441 tests), Playwright harness discovery, Client production build, architecture check, Network full suite (81 tests), Network build, and Network HTTP E2E (3 tests) pass.
+
+## Automated two-device smoke harness closure
+
+- Client implementation commit: `500437f9b6b2fd282823c52aa43811861357bc6c`.
+- Network implementation commit: `717c37e8bd17b8b79a385b7321990160022e0825`.
+- The harness now validates dedicated-test guards, validates/prepares a managed Network Server, token-protects cleanup, removes all Pack file objects plus manifests, and fails its report on cleanup failure.
+- Live managed run passed against the dedicated PostgreSQL/R2 configuration: [sanitized report](/Users/wongjuenan/Desktop/Self%20Project/our-companion/client/artifacts/s5-two-device/1784015385399-f83f5da6b17f/report.json).
+- Automated checks passed: account/device isolation, Visit lifecycle, renderer Enter/Idle/Walk, work-area clamp and bounded movement, host/owner restart recovery, socket reconnect, renderer-failure recovery, active and terminal asset authorization, friendship removal, block, unpublish, and remote cleanup.
+- Remaining work is physical-only verification from `manual-physical-checklist.md` (separate devices, display topology/DPI, sleep/wake, unstable networks, packaged behavior, and long-run visual quality).

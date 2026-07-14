@@ -6,9 +6,9 @@ This harness starts two independent Electron processes on one machine: `visitor_
 
 - Node 22 project runtime and `npm install` in the Client.
 - A dedicated Network PostgreSQL database and dedicated R2 bucket or disposable R2 credentials. Never point this harness at production.
-- The Network Server must set `OUR_COMPANION_SMOKE_TEST=1` and `SMOKE_TEST_ALLOW_DESTRUCTIVE_ENDPOINTS=1`. Those flags expose only `/api/smoke/cleanup`, which accepts a validated run namespace and deletes only matching `*-s5-<run-id>@example.invalid` users and their associated Pack objects.
+- The Network Server must set `OUR_COMPANION_SMOKE_TEST=1`, `SMOKE_TEST_ALLOW_DESTRUCTIVE_ENDPOINTS=1`, and `SMOKE_TEST_DATABASE=1`, with a valid dedicated `DATABASE_URL`. URLs containing `production`, `prod`, `primary`, or `live` are rejected unless `SMOKE_TEST_DATABASE_CONFIRMED=1` is explicitly supplied. These flags expose only `/api/smoke/cleanup`, which requires the matching `X-Smoke-Test-Token` header and deletes only matching `*-s5-<run-id>@example.invalid` users and their associated Pack objects.
 
-Set `OUR_COMPANION_SMOKE_SERVER_URL` to that Server. To have the harness launch the already-built local Network process, also set `OUR_COMPANION_SMOKE_MANAGE_SERVER=1`, `SMOKE_TEST_DATABASE=1`, `DATABASE_URL`, and the dedicated R2 configuration. The managed mode runs `npm run start:prod` from the Network repository.
+Set `OUR_COMPANION_SMOKE_SERVER_URL` to an external dedicated Server. To have the harness prepare and launch a local Network process, set `OUR_COMPANION_SMOKE_MANAGE_SERVER=1` and `OUR_COMPANION_SMOKE_NETWORK_ROOT` to the Network repository. The configured root is validated for `package.json` and `prisma/schema.prisma`; the default fallback is `../our-companion-network`. Managed mode runs dependency installation only when needed, Prisma generation/validation/migration deployment, a production build, health and protocol/R2 preflight, then `npm run start:prod`. `OUR_COMPANION_SMOKE_SKIP_NETWORK_PREP=1` is an explicit fast mode only.
 
 ```bash
 npm run smoke:s5:two-device
@@ -28,7 +28,7 @@ The smoke-only preload API exists only when `OUR_COMPANION_SMOKE_TEST=1`. It pro
 
 Artifacts are written to `artifacts/s5-two-device/<run-id>/` and ignored by Git. They contain role-prefixed/redacted logs, lifecycle screenshots, `report.json`, failure context when needed, and `manual-physical-checklist.md`. Absolute profile paths, email addresses, credentials, tokens, object keys, and presigned URLs are omitted.
 
-The harness always closes both Electron processes, clears the visual override, stops a managed Server, removes the temporary profiles, and calls the flag-gated Network cleanup endpoint. It preserves screenshots and reports for investigation.
+The harness always clears the visual override, closes both Electron processes with bounded termination, calls the token-gated Network cleanup endpoint while the Server is still available, then stops a managed Server and removes temporary profiles. Cleanup deletes every linked Pack file plus each Pack manifest with deduplication. A cleanup failure fails the smoke report even if functional checks passed. Screenshots and reports are preserved for investigation.
 
 ## CI and remaining physical checks
 
