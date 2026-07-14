@@ -337,4 +337,23 @@ const api: OurCompanionApi = {
   }
 };
 
+if (process.env.OUR_COMPANION_SMOKE_TEST === '1') {
+  api.smoke = {
+    getState: () => invoke('smoke:getState'),
+    disconnectSocket: () => invoke('smoke:disconnectSocket'),
+    reconcileVisits: () => invoke('smoke:reconcileVisits'),
+    setVisualWorkArea: (input) => invoke('smoke:setVisualWorkArea', input),
+    clearVisualWorkArea: () => invoke('smoke:clearVisualWorkArea'),
+    reportVisualRuntime: (input) => invoke('smoke:reportVisualRuntime', input),
+    simulateRendererFailure: () => invoke('smoke:simulateRendererFailure'),
+    bootstrapFixtureCompanion: () => invoke('smoke:bootstrapFixtureCompanion'),
+    onVisualWorkAreaChanged: (listener) => {
+      const channel = 'smoke:visualWorkAreaChanged';
+      const handler = (_event: Electron.IpcRendererEvent, workArea: { x: number; y: number; width: number; height: number } | undefined) => listener(workArea);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    },
+  };
+}
+
 contextBridge.exposeInMainWorld('ourCompanion', api);

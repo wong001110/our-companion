@@ -6,7 +6,7 @@ const root = __dirname;
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['packages/**/*.test.ts', 'apps/**/*.test.ts']
+    include: ['packages/**/*.test.ts', 'apps/**/*.test.ts', 'tests/**/*.test.ts']
   },
   resolve: {
     extensions: ['.ts', '.tsx', '.mts', '.mjs', '.js', '.jsx', '.json'],

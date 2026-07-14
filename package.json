@@ -18,6 +18,8 @@
     "test": "vitest run",
     "lint": "tsc -b --pretty false",
     "arch:check": "node scripts/check-architecture-boundaries.mjs",
+    "smoke:s5:two-device": "npm run build && playwright test tests/smoke/s5-two-device.spec.ts",
+    "smoke:s5:two-device:headed": "npm run build && playwright test tests/smoke/s5-two-device.spec.ts --headed",
     "whisper:setup": "node scripts/setup-whisper.mjs"
   },
   "dependencies": {
@@ -28,6 +30,7 @@
     "zod": "^3.25.67"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/node": "^22.15.32",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",

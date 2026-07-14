@@ -11,6 +11,10 @@ import { handleCompanionProtocolRequest } from './platform/companionProtocol';
 import { handleNetworkAssetProtocolRequest } from './platform/networkAssetProtocol';
 import { OnboardingCompletionCoordinator } from './platform/onboardingCompletion';
 import { createOnboardingCompanionWindowAdapter, invalidateFailedCompanionWindow } from './platform/onboardingCompanionWindow';
+import { isSmokeTestRuntime, smokeInstanceRole, smokeUserDataOverride, validateSmokeWorkArea, type SmokeWorkArea } from './platform/smokeRuntime';
+
+const userDataOverride = smokeUserDataOverride();
+if (userDataOverride) app.setPath('userData', userDataOverride);
 
 function registerCompanionProtocol(): void {
   protocol.handle('companion', (request) => {
@@ -34,6 +38,8 @@ let onboardingCompletion: OnboardingCompletionCoordinator;
 let discoveryScheduler: DiscoveryScheduler | undefined;
 let discoveryShareOrchestrator: DiscoveryShareOrchestrator | undefined;
 let companionClickThrough = true;
+let smokeVisualRuntime: { sessionId: string; animationName: string; x: number; y: number } | undefined;
+let smokeWorkArea: SmokeWorkArea | undefined;
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const companionListenHotkey = 'CommandOrControl+Shift+Space';
@@ -509,6 +515,8 @@ function registerIpc(): void {
     return onboardingCompletion.request(primary);
   });
 
+  if (isSmokeTestRuntime()) registerSmokeIpc();
+
   ipcMain.handle('creation:openWindow', () => {
     if (services.hasActiveCompanion()) {
       services.startRuntimeIfReady();
@@ -575,6 +583,56 @@ function registerIpc(): void {
       display: { id: display.id, label: display.label, size: display.size },
       clickThrough: companionClickThrough,
     };
+  });
+}
+
+function registerSmokeIpc(): void {
+  ipcMain.handle('smoke:getState', async () => {
+    const status = services.network.getStatusSnapshot();
+    const visual = services.visualVisits.getState();
+    const sessions = status.account ? await services.visits.listSessions() : [];
+    const session = sessions.find((candidate) => candidate.state === 'active') ?? sessions.find((candidate) => ['preparing', 'ready', 'ending'].includes(candidate.state));
+    const role = session && status.account ? (session.visitorOwnerUserId === status.account.id ? 'visitor_owner' : session.hostUserId === status.account.id ? 'host' : undefined) : undefined;
+    const renderer = visual.visitor && smokeVisualRuntime?.sessionId === visual.visitor.sessionId ? smokeVisualRuntime : undefined;
+    return {
+      instanceRole: smokeInstanceRole(),
+      network: { state: status.state, onlineModeEnabled: status.onlineModeEnabled, accountId: status.account?.id, serverOrigin: status.serverUrl },
+      device: { deviceIdHash: services.network.getSmokeDeviceIdHash() },
+      ...(session && role ? { visit: { sessionId: session.id, state: session.state, role, visitorOwnerReady: session.visitorOwnerReady, hostReady: session.hostReady } } : {}),
+      visual: {
+        ownerPresenceMode: visual.ownerPresenceMode,
+        ...(visual.visitor ? { visitor: { runtimeId: visual.visitor.runtimeId, sessionId: visual.visitor.sessionId, assetPackId: visual.visitor.assetPackId, animationName: renderer?.animationName ?? visual.visitor.animationName, x: renderer?.x, y: renderer?.y } } : {}),
+        ...(visual.error ? { error: visual.error } : {}),
+      },
+    };
+  });
+  ipcMain.handle('smoke:disconnectSocket', () => services.network.disconnectSocketForSmoke());
+  ipcMain.handle('smoke:reconcileVisits', async () => { await services.visits.reconcile(); await services.visualVisits.reconcile(); });
+  ipcMain.handle('smoke:setVisualWorkArea', (_event, input: unknown) => {
+    smokeWorkArea = validateSmokeWorkArea(input);
+    for (const window of [companionWindow, panelWindow]) if (window && !window.isDestroyed()) window.webContents.send('smoke:visualWorkAreaChanged', smokeWorkArea);
+  });
+  ipcMain.handle('smoke:clearVisualWorkArea', () => {
+    smokeWorkArea = undefined;
+    for (const window of [companionWindow, panelWindow]) if (window && !window.isDestroyed()) window.webContents.send('smoke:visualWorkAreaChanged', undefined);
+  });
+  ipcMain.handle('smoke:reportVisualRuntime', (_event, input: unknown) => {
+    const candidate = input as Partial<typeof smokeVisualRuntime>;
+    const visual = services.visualVisits.getState().visitor;
+    if (!visual || candidate.sessionId !== visual.sessionId || typeof candidate.animationName !== 'string' || !Number.isFinite(candidate.x) || !Number.isFinite(candidate.y)) {
+      throw new Error('SMOKE_VISUAL_RUNTIME_INVALID');
+    }
+    smokeVisualRuntime = { sessionId: candidate.sessionId, animationName: candidate.animationName.slice(0, 80), x: Math.round(candidate.x), y: Math.round(candidate.y) };
+  });
+  ipcMain.handle('smoke:simulateRendererFailure', () => {
+    const visitor = services.visualVisits.getState().visitor;
+    if (!visitor) throw new Error('SMOKE_VISUAL_RUNTIME_UNAVAILABLE');
+    services.visualVisits.reportRendererFailure(visitor.sessionId);
+    smokeVisualRuntime = undefined;
+  });
+  ipcMain.handle('smoke:bootstrapFixtureCompanion', () => {
+    const companion = services.createSmokeFixtureCompanion();
+    scheduleOnboardingCompletion(companion);
   });
 }
 

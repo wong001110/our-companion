@@ -1499,6 +1499,19 @@ export interface VisualVisitRendererState {
   visitor?: VisualVisitRenderModel;
   error?: 'VISUAL_VISIT_ASSET_UNAVAILABLE' | 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE' | 'VISUAL_VISIT_RENDERER_UNAVAILABLE';
 }
+/** Sanitized, smoke-runtime-only state. It is unavailable from normal builds. */
+export interface SmokeTestState {
+  instanceRole?: 'visitor_owner' | 'host';
+  network: { state: string; onlineModeEnabled: boolean; accountId?: string; serverOrigin?: string };
+  device: { deviceIdHash: string };
+  visit?: { sessionId: string; state: string; role: 'visitor_owner' | 'host'; visitorOwnerReady: boolean; hostReady: boolean };
+  visual: {
+    ownerPresenceMode: 'home' | 'away_visiting';
+    visitor?: { runtimeId: string; sessionId: string; assetPackId: string; animationName?: string; x?: number; y?: number };
+    error?: string;
+  };
+}
+export interface SmokeVisualRuntimeUpdate { sessionId: string; animationName: string; x: number; y: number; }
 export interface SocialState {
   scope?: { serverUrl: string; accountId: string };
   friends: FriendSummary[];
@@ -1750,6 +1763,18 @@ export interface OurCompanionApi {
     openFiles(): Promise<Array<{ name: string; dataUrl: string }>>;
   };
   companionNew: CompanionApi;
+  /** Present only when OUR_COMPANION_SMOKE_TEST=1 before Electron starts. */
+  smoke?: {
+    getState(): Promise<SmokeTestState>;
+    disconnectSocket(): Promise<void>;
+    reconcileVisits(): Promise<void>;
+    setVisualWorkArea(input: { x: number; y: number; width: number; height: number }): Promise<void>;
+    clearVisualWorkArea(): Promise<void>;
+    reportVisualRuntime(input: SmokeVisualRuntimeUpdate): Promise<void>;
+    simulateRendererFailure(): Promise<void>;
+    bootstrapFixtureCompanion(): Promise<void>;
+    onVisualWorkAreaChanged(listener: (workArea?: { x: number; y: number; width: number; height: number }) => void): () => void;
+  };
 }
 
 export function nowIso(): string {

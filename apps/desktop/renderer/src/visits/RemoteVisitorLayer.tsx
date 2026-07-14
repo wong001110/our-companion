@@ -17,6 +17,7 @@ export function useVisualVisitState(): VisualVisitRendererState {
 export function RemoteVisitorLayer({ visitor }: { visitor?: VisualVisitRenderModel }) {
   const [runtime, setRuntime] = useState<VisualVisitRenderModel | undefined>(undefined);
   const [phase, setPhase] = useState<'entering' | 'idle' | 'walking' | 'leaving'>('entering');
+  const [bounds, setBounds] = useState(() => viewport());
   const [position, setPosition] = useState<VisitorPosition>(() => initialVisitorPosition(viewport()));
   const movementIndex = useRef(0);
   const targetRef = useRef<VisitorPosition | undefined>();
@@ -33,7 +34,7 @@ export function RemoteVisitorLayer({ visitor }: { visitor?: VisualVisitRenderMod
       if (runtime?.runtimeId !== visitor.runtimeId) {
         setRuntime(visitor);
         setPhase('entering');
-        setPosition(initialVisitorPosition(viewport()));
+        setPosition(initialVisitorPosition(bounds));
         movementIndex.current = 0;
         targetRef.current = undefined;
       }
@@ -44,7 +45,7 @@ export function RemoteVisitorLayer({ visitor }: { visitor?: VisualVisitRenderMod
     } else {
       sawNoVisitor.current = true;
     }
-  }, [visitor, runtime]);
+  }, [visitor, runtime, bounds]);
 
   const handleComplete = useCallback(() => {
     if (phase === 'entering') setPhase('idle');
@@ -60,12 +61,18 @@ export function RemoteVisitorLayer({ visitor }: { visitor?: VisualVisitRenderMod
   }, [runtime]);
 
   useEffect(() => {
-    const clamp = () => setPosition((current) => clampVisitorPosition(current, viewport()));
+    const applyBounds = (next: ReturnType<typeof viewport>) => {
+      setBounds(next);
+      setPosition((current) => clampVisitorPosition(current, next));
+    };
+    const clamp = () => applyBounds(viewport());
     window.addEventListener('resize', clamp);
     const unsubscribeDisplay = window.ourCompanion.companion.onDisplayChanged(() => clamp());
+    const unsubscribeSmoke = window.ourCompanion.smoke?.onVisualWorkAreaChanged((workArea) => applyBounds(workArea ?? viewport()));
     return () => {
       window.removeEventListener('resize', clamp);
       unsubscribeDisplay();
+      unsubscribeSmoke?.();
     };
   }, []);
 
@@ -73,14 +80,14 @@ export function RemoteVisitorLayer({ visitor }: { visitor?: VisualVisitRenderMod
     if (!runtime || phase !== 'idle') return;
     const delay = 2000 + Math.round((movementIndex.current % 5) * 1000);
     const timer = window.setTimeout(() => {
-      const target = nextWalkTarget(runtime.sessionId, movementIndex.current++, position, viewport());
+      const target = nextWalkTarget(runtime.sessionId, movementIndex.current++, position, bounds);
       if (target.x !== position.x || target.y !== position.y) {
         targetRef.current = target;
         setPhase('walking');
       }
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [runtime, phase, position]);
+  }, [runtime, phase, position, bounds]);
 
   useEffect(() => {
     if (!runtime || phase !== 'walking') return;
@@ -94,19 +101,25 @@ export function RemoteVisitorLayer({ visitor }: { visitor?: VisualVisitRenderMod
         const dx = target.x - current.x; const dy = target.y - current.y;
         const remaining = Math.hypot(dx, dy); const travel = REMOTE_VISITOR_SPEED_PX_PER_SECOND * (elapsed / 1000);
         if (remaining <= travel || remaining === 0) { targetRef.current = undefined; window.cancelAnimationFrame(frame); window.setTimeout(() => setPhase('idle'), 0); return target; }
-        return clampVisitorPosition({ x: current.x + dx / remaining * travel, y: current.y + dy / remaining * travel }, viewport());
+        return clampVisitorPosition({ x: current.x + dx / remaining * travel, y: current.y + dy / remaining * travel }, bounds);
       });
       frame = window.requestAnimationFrame(step);
     };
     frame = window.requestAnimationFrame(step);
     return () => window.cancelAnimationFrame(frame);
-  }, [runtime, phase]);
+  }, [runtime, phase, bounds]);
 
-  if (!runtime) return null;
   const target = targetRef.current ?? position;
-  const walk = walkSelection(position, target, runtime.assetUrls);
-  const animationName = phase === 'entering' ? 'Enter' : phase === 'leaving' ? 'Leave' : phase === 'walking' ? walk.animationName : 'Idle_Neutral';
-  return <div style={{ position: 'absolute', left: position.x, top: position.y, zIndex: 2, pointerEvents: 'none' }} aria-label={`${runtime.name} is visiting`}>
+  const walk = runtime ? walkSelection(position, target, runtime.assetUrls) : undefined;
+  const animationName = runtime ? (phase === 'entering' ? 'Enter' : phase === 'leaving' ? 'Leave' : phase === 'walking' ? walk!.animationName : 'Idle_Neutral') : undefined;
+
+  useEffect(() => {
+    if (!runtime || !animationName || !window.ourCompanion.smoke) return;
+    void window.ourCompanion.smoke.reportVisualRuntime({ sessionId: runtime.sessionId, animationName, x: position.x, y: position.y }).catch(() => undefined);
+  }, [runtime, animationName, position]);
+
+  if (!runtime || !animationName) return null;
+  return <div data-testid="remote-visual-visitor" data-runtime-id={runtime.runtimeId} data-session-id={runtime.sessionId} data-animation={animationName} style={{ position: 'absolute', left: position.x, top: position.y, zIndex: 2, pointerEvents: 'none' }} aria-label={`${runtime.name} is visiting`}>
     <RemoteVisitorSprite model={runtime} animationName={animationName} onComplete={handleComplete} onFailure={handleFailure} />
   </div>;
 }

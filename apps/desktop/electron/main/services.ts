@@ -110,6 +110,8 @@ import { NetworkConnectionService, type NetworkStatus } from './networkConnectio
 import { PublicCompanionService } from './network/publicCompanionService';
 import { VisitService } from './network/visitService';
 import { VisualVisitService } from './network/visualVisitService';
+import { createSmokeFixturePng } from './platform/smokeFixture';
+import { isSmokeTestRuntime } from './platform/smokeRuntime';
 
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
@@ -267,6 +269,23 @@ export class AppServices {
 
   hasActiveCompanion(): boolean {
     return this.db.tryResolveActiveCompanionId() !== null;
+  }
+
+  /** Narrow smoke-only bootstrap: fixed local visual assets, no caller-controlled filesystem input. */
+  createSmokeFixtureCompanion(): CompanionProfile {
+    if (!isSmokeTestRuntime()) throw new Error('SMOKE_TEST_UNAVAILABLE');
+    const existing = this.db.getPrimaryCompanion();
+    if (existing) return existing;
+    const personality: CompanionPersonality = { energy: 50, curiosity: 50, sociability: 50, diligence: 50, playfulness: 50, confidence: 50, calmness: 50, shyness: 50 };
+    let companion = this.db.createCompanion({ name: 'Smoke Companion', personalityDescription: 'A deterministic smoke-test Companion.', personality, personalityAnalysisId: 'smoke-only', assetRoot: '' });
+    const animationsDir = this.resolveCompanionAssetPath({ companionId: companion.id, relativePath: path.join('assets', 'animations') }).target;
+    fs.mkdirSync(animationsDir, { recursive: true });
+    for (const [index, animation] of COMPANION_ANIMATION_MANIFEST.entries()) {
+      const color: [number, number, number] = [80 + (index * 29) % 140, 70 + (index * 43) % 150, 120 + (index * 19) % 120];
+      fs.writeFileSync(path.join(animationsDir, animation.fileName), createSmokeFixturePng(color), { flag: 'wx' });
+    }
+    companion = this.db.updateCompanion(companion.id, { assetRoot: `companion://${companion.id}/assets` });
+    return this.db.setPrimaryCompanion(companion.id);
   }
 
   private resolveCompanionRoot(companionId: string): string {

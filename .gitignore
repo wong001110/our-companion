@@ -13,6 +13,9 @@ npm-debug.log*
 *.tsbuildinfo
 *.zip
 *.log
+artifacts/
+test-results/
+playwright-report/
 
 # User-generated companion data
 user-data/

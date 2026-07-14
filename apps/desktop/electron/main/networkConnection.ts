@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { safeStorage } from 'electron';
 import { io, type Socket } from 'socket.io-client';
 import type { DatabaseService } from '@our-companion/database';
+import { hashSmokeDeviceId, isSmokeTestRuntime } from './platform/smokeRuntime';
 import type { BlockedUserSummary, CompanionAssetManifestV1, CompleteAssetPackResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile, VisitInvitationStatus, VisitInvitationSummary, VisitRuntimeConfig, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
 
 export const NETWORK_PROTOCOL_VERSION = '0.4';
@@ -77,6 +78,18 @@ export class NetworkConnectionService {
 
   getStatus = async (): Promise<NetworkStatus> => ({ ...this.status });
   getStatusSnapshot = (): NetworkStatus => ({ ...this.status });
+
+  getSmokeDeviceIdHash = (): string => {
+    if (!isSmokeTestRuntime()) throw new Error('SMOKE_TEST_UNAVAILABLE');
+    return hashSmokeDeviceId(this.deviceId);
+  };
+
+  /** Exercises the same compatibility-refresh reconnect path as an unexpected transport drop. */
+  disconnectSocketForSmoke = (): void => {
+    if (!isSmokeTestRuntime()) throw new Error('SMOKE_TEST_UNAVAILABLE');
+    this.socket?.disconnect();
+    this.scheduleReconnect(new Error('smoke_socket_disconnect'));
+  };
 
   configureServer = async (serverUrl: string): Promise<NetworkStatus> => {
     const normalized = normalizeServerUrl(serverUrl);
@@ -227,7 +240,12 @@ export class NetworkConnectionService {
   dispose(): void { this.transferLifecycleHandler?.('app_shutdown'); this.stopSocket(); }
 
   private get enabled(): boolean { return this.db.getAppSetting<boolean>(MODE_KEY) ?? false; }
-  private get serverUrl(): string { return this.db.getAppSetting<string>(URL_KEY) ?? 'http://localhost:3001'; }
+  private get serverUrl(): string {
+    const stored = this.db.getAppSetting<string>(URL_KEY);
+    if (stored) return stored;
+    const smokeUrl = isSmokeTestRuntime() ? process.env.OUR_COMPANION_SMOKE_SERVER_URL : undefined;
+    return smokeUrl ? normalizeServerUrl(smokeUrl) : 'http://localhost:3001';
+  }
   private get deviceId(): string {
     const saved = this.db.getAppSetting<string>(DEVICE_KEY);
     if (saved) return saved;
