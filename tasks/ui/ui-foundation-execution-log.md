@@ -5,6 +5,7 @@
 - UI closure commit: `75994e70b8339bd768f5df9ce1b19a7fd3a54535` (local Client branch; no merged-main or GitHub CI claim).
 - Follow-up localized-settings status fix: `89e863d8faaca9ca477dee7de50df2b3489619b2`.
 - Overlay exit lifecycle completion: `17e99ea` (speech retention, dialog focus restoration, and More-menu exit).
+- Motion-state QA follow-up: pending local commit (Creation and Panel now transition from `entering` to `entered`; the QA report derives covered named checks and fails closed for uncovered ones).
 - Network repository: unchanged for this UI-focused task.
 - Closure patch is local until committed; no GitHub CI claim is made here.
 
@@ -50,6 +51,8 @@
 
 - `npm run typecheck` and `npm run build` passed after `17e99ea`.
 - Electron needs desktop process services and therefore cannot launch from the filesystem sandbox. The focused Quick Actions spec was rerun with desktop access: all four checks passed, including the new More-menu exit-state assertion.
+- Focused Electron Creation and Panel navigation checks passed after their motion-state updates. They assert the final `entered` state and delayed focus placement rather than relying on animation names alone.
+- `qa:ui` now runs dedicated focused scenario specs for each currently covered named claim. It deliberately exits non-zero until the remaining explicit scenarios and screenshot review are complete; this prevents a partially covered run from creating a misleading `passed` report.
 
 ## Dedicated smoke environment details
 

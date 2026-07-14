@@ -15,7 +15,10 @@ test('Panel navigation exposes the complete top-level information architecture',
     const social = panel.getByRole('button', { name: 'Social' });
     await social.click();
     await expect(social).toHaveAttribute('aria-current', 'page');
+    const socialPage = panel.getByTestId('panel-page-social');
+    await expect(socialPage).toHaveAttribute('data-motion-state', 'entered');
     await expect(panel.getByTestId('social-panel')).toBeVisible();
+    await expect(socialPage).toBeFocused();
     await device.screenshot(panel, 'en/social-empty-1180.png');
   } finally { await device.close(); }
 });

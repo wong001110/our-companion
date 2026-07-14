@@ -20,6 +20,7 @@ export function PanelShell() {
 function PanelDashboard() {
   const [tab, setTab] = useState<Tab>('home');
   const [lang, setLang] = useState<Lang>('en');
+  const [pageMotionState, setPageMotionState] = useState<'entering' | 'entered'>('entering');
   const workspaceRef = useRef<HTMLElement>(null);
   const pageHeadingRef = useRef<HTMLDivElement>(null);
   const onInitialLanguage = useCallback((nextLang: Lang) => setLang(nextLang), []);
@@ -27,9 +28,18 @@ function PanelDashboard() {
 
   const selectTab = useCallback((nextTab: Tab) => {
     setTab(nextTab);
-    workspaceRef.current?.scrollTo({ top: 0 });
-    window.setTimeout(() => pageHeadingRef.current?.focus(), 0);
   }, []);
+
+  useEffect(() => {
+    workspaceRef.current?.scrollTo({ top: 0 });
+    setPageMotionState('entering');
+    const enteredFrame = window.requestAnimationFrame(() => setPageMotionState('entered'));
+    const focusFrame = window.requestAnimationFrame(() => window.requestAnimationFrame(() => pageHeadingRef.current?.focus()));
+    return () => {
+      window.cancelAnimationFrame(enteredFrame);
+      window.cancelAnimationFrame(focusFrame);
+    };
+  }, [tab]);
 
   useEffect(() => window.ourCompanion.window.onPanelNavigate(selectTab), [selectTab]);
 
@@ -53,7 +63,7 @@ function PanelDashboard() {
         <ResponsiveNavigation tab={tab} lang={lang} onSelect={selectTab} onExit={() => void window.ourCompanion.app.exitWithAnimation()} />
         <section ref={workspaceRef} className="workspace">
           {loadError && <InlineNotice action={<button onClick={() => void refreshAll()}>{t(lang, 'feedback_retry')}</button>}>{t(lang, 'panel_partial_load_error')}</InlineNotice>}
-          <div key={tab} ref={pageHeadingRef} className="panel-page-transition" tabIndex={-1} data-testid={`panel-page-${tab}`}>
+          <div key={tab} ref={pageHeadingRef} className="panel-page-transition" data-motion-state={pageMotionState} tabIndex={-1} data-testid={`panel-page-${tab}`}>
           {tab === 'home' && (
             <HomePage
               state={state}

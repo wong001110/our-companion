@@ -26,6 +26,7 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
   const lang = useLang();
   const [step, setStep] = useState<number>(1);
   const [stepDirection, setStepDirection] = useState<'forward' | 'back'>('forward');
+  const [stepMotionState, setStepMotionState] = useState<'entering' | 'entered'>('entering');
   const stepRef = useRef<HTMLDivElement>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -45,8 +46,13 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
   };
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => stepRef.current?.querySelector<HTMLElement>('input, textarea, button, [tabindex]')?.focus());
-    return () => window.cancelAnimationFrame(frame);
+    setStepMotionState('entering');
+    const enteredFrame = window.requestAnimationFrame(() => setStepMotionState('entered'));
+    const focusFrame = window.requestAnimationFrame(() => window.requestAnimationFrame(() => stepRef.current?.querySelector<HTMLElement>('input, textarea, button, [tabindex]')?.focus()));
+    return () => {
+      window.cancelAnimationFrame(enteredFrame);
+      window.cancelAnimationFrame(focusFrame);
+    };
   }, [step]);
 
   async function handleBulkUpload() {
@@ -95,7 +101,7 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
         <p className="creation-subtitle">{t(lang, 'creation_subtitle')}</p>
 
         {step === 1 && (
-          <div key={step} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-motion-state="entering">
+          <div key={step} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-motion-state={stepMotionState}>
             <label className="creation-label">{t(lang, 'creation_name_label')}</label>
             <input
               className="creation-input"
@@ -103,7 +109,6 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={t(lang, 'creation_name_placeholder')}
-              autoFocus
               onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) moveToStep(2); }}
             />
             <div className="creation-actions">
@@ -114,7 +119,7 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
         )}
 
         {step === 2 && (
-          <div key={step} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-motion-state="entering">
+          <div key={step} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-motion-state={stepMotionState}>
             <label className="creation-label">{t(lang, 'creation_description_label')}</label>
             <textarea
               className="creation-textarea"
@@ -123,7 +128,6 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t(lang, 'creation_description_placeholder')}
               rows={5}
-              autoFocus
             />
             <div className="creation-actions">
               <button className="btn-secondary" onClick={() => moveToStep(1)}>{t(lang, 'creation_back')}</button>
@@ -136,7 +140,7 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
         )}
 
         {step === 3 && personality && (
-          <div key={step} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-testid="creation-assets" data-motion-state="entering">
+          <div key={step} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-testid="creation-assets" data-motion-state={stepMotionState}>
             <label className="creation-label">{t(lang, 'creation_personality_preview')}</label>
             <div className="personality-bars">
               {(Object.keys(PERSONALITY_LABEL_KEYS) as (keyof CompanionPersonality)[]).map((key) => (
@@ -158,7 +162,7 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
         )}
 
         {step === 4 && (
-          <div key={step} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-motion-state="entering">
+          <div key={step} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-motion-state={stepMotionState}>
             <label className="creation-label">{t(lang, 'creation_upload_assets')}</label>
             <p className="creation-subtitle" style={{ margin: 0 }}>
               {missingCount > 0

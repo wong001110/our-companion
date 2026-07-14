@@ -16,6 +16,7 @@ test('Companion creation has an accessible, usable first-step flow', async () =>
     await name.fill('Nova');
     await creation.getByTestId('creation-next').click();
     const description = creation.getByTestId('creation-description');
+    await expect(description.locator('xpath=..')).toHaveAttribute('data-motion-state', 'entered');
     await expect(description).toBeFocused();
     await description.fill('Quiet, curious, and kind.');
     await expect(creation.getByTestId('creation-analyze')).toBeEnabled();
