@@ -2,22 +2,29 @@
 
 .companion-shell { width: 100vw; height: 100vh; display: grid; align-items: end; justify-items: center; background: transparent; -webkit-app-region: no-drag; pointer-events: none; }
 .companion-soft-hint { position: absolute; background: linear-gradient(135deg, rgba(75, 58, 101, 0.92), rgba(42, 28, 44, 0.95)); border: 1.5px solid rgba(239, 206, 228, 0.2); border-radius: 14px; padding: 14px 16px; z-index: 10; pointer-events: all; box-shadow: 0 4px 20px rgba(87, 59, 37, 0.25), 0 1px 4px rgba(0, 0, 0, 0.15); backdrop-filter: blur(8px); animation: soft-hint-fade-in 0.3s ease; }
+.companion-soft-hint[data-motion-state='exiting'] { animation: none; opacity: 0; transition: opacity var(--motion-fast) var(--ease-exit); pointer-events: none; }
 .companion-soft-hint p { margin: 0 0 10px; font-size: 13px; color: #f8edf5; line-height: 1.4; }
 .soft-hint-actions { display: flex; gap: 8px; }
 .soft-hint-dismiss { background: rgba(255, 255, 255, 0.08); border-color: rgba(239, 206, 228, 0.15); }
 @keyframes soft-hint-fade-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 
-.speech-bubble { position: absolute; left: 50%; top: 60px; width: max-content; max-width: 400px; min-height: 86px; transform: translateX(-50%); padding: 18px 26px; border: 26px solid transparent; border-radius: 8px; color: #2a1c2c; border-image: url('/assets/panel/frames/speech-bubble.png') 190 fill / 26px / 0 stretch; background: transparent; font-size: 13px; font-weight: 700; line-height: 1.35; text-align: center; pointer-events: all; z-index: 2; }
+.speech-bubble { position: absolute; left: 50%; top: 60px; width: max-content; max-width: 400px; min-height: 86px; transform: translateX(-50%); padding: 18px 26px; border: 26px solid transparent; border-radius: 8px; color: #2a1c2c; border-image: url('/assets/panel/frames/speech-bubble.png') 190 fill / 26px / 0 stretch; background: transparent; font-size: 13px; font-weight: 700; line-height: 1.35; text-align: center; pointer-events: all; z-index: 2; animation: speech-bubble-enter var(--motion-fast) var(--ease-standard) both; }
 .speech-bubble-cursor { display: inline-block; margin-left: 2px; animation: speech-cursor-blink 0.9s step-end infinite; }
 .companion-quick-btn { padding: 6px 12px; border: 1px solid rgba(239, 206, 228, 0.15); border-radius: 16px; background: rgba(75, 58, 101, 0.85); color: #f8edf5; font-size: 12px; font-weight: 600; pointer-events: all; white-space: nowrap; backdrop-filter: blur(6px); transition: background 0.15s ease, transform 0.1s ease; }
 .companion-quick-btn:hover { background: rgba(100, 75, 130, 0.95); transform: scale(1.05); }
 .companion-quick-btn:active { transform: scale(0.97); }
-.companion-text-input { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); z-index: 3; pointer-events: all; }
+.companion-text-input { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); z-index: 3; pointer-events: all; animation: companion-composer-enter 160ms var(--ease-standard) both; }
+.companion-text-input[data-motion-state='exiting'] { animation: none; opacity: 0; transform: translateY(4px) scale(.98); transition: opacity var(--motion-fast) var(--ease-exit), transform var(--motion-fast) var(--ease-exit); pointer-events: none; }
 .companion-text-input input { width: 210px; padding: 7px 18px; border: 1.5px solid rgba(116, 80, 148, 0.35); border-radius: var(--radius-pill); background: rgba(255, 247, 229, 0.94); color: #2a1c2c; font-size: 13px; box-shadow: 0 2px 10px rgba(87, 59, 37, 0.14); transition: border-color var(--motion-fast); }
 .companion-text-input input:focus { border-color: rgba(116, 80, 148, 0.6); }
+@keyframes speech-bubble-enter { from { opacity: 0; transform: translateY(4px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes companion-composer-enter { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .speech-bubble, .companion-text-input { animation-name: companion-fade-enter; } .companion-text-input[data-motion-state='exiting'] { transform: none; } .speech-bubble-cursor { animation: none; } }
+@keyframes companion-fade-enter { from { opacity: 0; } to { opacity: 1; } }
 @keyframes speech-cursor-blink { 50% { opacity: 0; } }
 .companion-listening-indicator { position: absolute; top: 8px; right: 72px; width: 12px; height: 12px; border-radius: var(--radius-pill); background: #d4566d; box-shadow: 0 0 0 0 rgba(212, 86, 109, 0.55); animation: companion-listening-pulse 1.4s ease-out infinite; pointer-events: none; z-index: 3; }
 @keyframes companion-listening-pulse { 70% { box-shadow: 0 0 0 10px rgba(212, 86, 109, 0); } 100% { box-shadow: 0 0 0 0 rgba(212, 86, 109, 0); } }
+@media (prefers-reduced-motion: reduce) { .companion-listening-indicator { animation: none; box-shadow: none; } .companion-soft-hint { animation-name: companion-fade-enter; } }
 
 .companion-canvas { position: relative; display: grid; place-items: center; width: 220px; height: 260px; cursor: grab; touch-action: none; -webkit-app-region: no-drag; }
 .companion-canvas:active { cursor: grabbing; }
@@ -61,6 +68,9 @@
   opacity: 0;
   transform: translateY(-6px) scale(0.97);
   transition: opacity 0.3s ease, transform 0.3s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .discovery-popout-card, .discovery-popout-card.card-visible, .discovery-popout-card.card-exiting { transform: none; transition-property: opacity; }
 }
 
 .card-header {

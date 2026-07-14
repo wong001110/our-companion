@@ -32,7 +32,7 @@ export function SpriteAssetSlot({
   const selectFile = () => inputRef.current?.click();
 
   return (
-    <div className={`animation-slot ${hasAsset ? 'animation-slot-filled' : ''}`}>
+    <div className={`animation-slot ${hasAsset ? 'animation-slot-filled' : ''}`} data-motion-state={hasAsset ? 'entered' : 'exited'}>
       {staged ? <SpritePreview dataUrl={staged.dataUrl} alt={t(lang, 'asset_upload_label', { name: animationName })} /> : existing?.preview}
       <div className="animation-slot-header">
         <span className="animation-slot-name">

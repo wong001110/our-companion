@@ -18,6 +18,9 @@
     "test": "vitest run",
     "lint": "tsc -b --pretty false",
     "arch:check": "node scripts/check-architecture-boundaries.mjs",
+    "test:ui": "npm run build && playwright test tests/ui",
+    "test:ui:headed": "npm run build && playwright test tests/ui --headed",
+    "qa:ui": "node scripts/run-ui-qa.mjs",
     "smoke:s5:two-device": "npm run build && playwright test tests/smoke/s5-two-device.spec.ts",
     "smoke:s5:two-device:headed": "npm run build && playwright test tests/smoke/s5-two-device.spec.ts --headed",
     "whisper:setup": "node scripts/setup-whisper.mjs"

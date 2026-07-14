@@ -27,6 +27,10 @@
   --radius-pill: 999px;
   --shadow-card: 0 8px 18px rgba(64, 45, 63, .14);
   --shadow-floating: 0 8px 22px rgba(28, 16, 37, .36);
+  --motion-instant: 80ms;
   --motion-fast: 140ms;
-  --motion-normal: 220ms;
+  --motion-normal: 200ms;
+  --motion-slow: 260ms;
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 }

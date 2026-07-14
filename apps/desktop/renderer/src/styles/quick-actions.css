@@ -49,6 +49,7 @@
 .quick-action-bubble.is-active {
   background: rgba(111, 80, 146, 0.98);
   border-color: rgba(255, 238, 249, 0.58);
+  box-shadow: 0 0 0 2px rgba(255, 225, 247, 0.6), var(--shadow-floating, 0 8px 22px rgba(28, 16, 37, 0.36));
   transform: scale(1.04);
 }
 
@@ -65,16 +66,21 @@
   background: rgba(44, 31, 59, 0.97);
   box-shadow: var(--shadow-floating, 0 8px 22px rgba(28, 16, 37, 0.36));
   pointer-events: auto;
+  transition: opacity var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-standard);
 }
+.quick-action-more-menu[data-motion-state='entering'] { animation: quick-action-menu-enter var(--motion-fast) var(--ease-standard) both; }
+.quick-action-more-menu[data-motion-state='exiting'] { opacity: 0; transform: translateY(4px) scale(.97); pointer-events: none; }
 
 .quick-action-more-menu button { border: 0; border-radius: 7px; padding: 8px 10px; color: #fff7fd; background: transparent; text-align: left; cursor: pointer; font: inherit; }
 .quick-action-more-menu button:hover { background: rgba(255,255,255,.12); }
 .quick-action-more-menu .quick-action-danger { color: #ffd0d5; }
 
 @keyframes quick-action-burst { from { opacity: 0; transform: translate(var(--burst-x, 0), var(--burst-y, 8px)) scale(.82); } to { opacity: 1; transform: translate(0, 0) scale(1); } }
+@keyframes quick-action-menu-enter { from { opacity: 0; transform: translateY(4px) scale(.97); } to { opacity: 1; transform: none; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .quick-action-bubble { animation: quick-action-fade var(--motion-fast, 140ms) both ease; transition: opacity var(--motion-fast, 140ms) ease; }
+  .quick-action-bubble, .quick-action-more-menu { animation: quick-action-fade var(--motion-fast, 140ms) both ease; transition: opacity var(--motion-fast, 140ms) ease; }
+  .quick-action-more-menu[data-motion-state='exiting'] { transform: none; }
   .quick-action-bubble:hover, .quick-action-bubble:focus-visible, .quick-action-bubble.is-active { transform: none; }
 }
 

@@ -1,8 +1,9 @@
 # UI foundation execution log
 
-- Previous Client baseline: `fda756bb2c22d97ebe6bc27c95602b19552d6d20`.
+- Previous Client baseline: `7e6f16622211777564ed4efb7a85d31c508a7007`.
+- Previous UI foundation implementation: `bb117e6fad8f881da04583933f42a5e5748a60d9`.
 - Network repository: unchanged for this UI-focused task.
-- Current implementation is an uncommitted working tree based on that baseline; a new Client SHA must be recorded after the user-approved commit.
+- Closure patch is local until committed; no GitHub CI claim is made here.
 
 ## Implemented
 
@@ -23,6 +24,12 @@
 - `useSettingsViewModel` now owns independent AI settings, language, attention-mode, and queued-action reads with `Promise.allSettled`. It exposes typed data/loading/error/retry actions, and the AI section presents a localized in-context retry while preserving independently loaded settings data.
 
 ## Verified in this working tree
+
+- Closure implementation adds target-tab Panel opening (`Settings` opens Settings directly), visible Talk active state while the composer is open, panel navigation entrance/focus/scroll behavior, lightweight reusable exit presence for dialogs and toasts, and motion/reduced-motion tokens for Panel, Creation, Quick Actions, Composer, Speech Bubble, dialog, and toast surfaces.
+- Quick Actions use the explicit-toggle outside-click strategy: because the transparent Companion window cannot reliably receive desktop clicks, the group closes by Companion toggle, Escape, drag, away mode, Panel opening, or action completion. More closes independently on Escape and restores focus to its trigger.
+- `npm run qa:ui` writes a machine-readable report under `artifacts/ui-qa/<run-id>/qa-report.json` and does not skip failed commands.
+- Local closure verification so far: Typecheck and architecture checks pass; the full unit suite passes under bundled Node 24 (68 files / 463 tests); focused Electron checks pass for Settings navigation, Quick Action hover delay/pin/Escape, independent More Escape/focus restoration, reduced motion, Talk active state, and Composer exit presence. The full serial Playwright run still needs a single uninterrupted executor run before this log can claim the suite as passed.
+- Screenshots reviewed in this closure work: `quick-actions/more-menu.png`, `quick-actions/talk-active.png`, and `reduced-motion/quick-actions.png`. They show the menu within bounds, an accessible Talk/composer arrangement, and no visible reduced-motion spatial burst.
 
 - `npm run typecheck`
 - Full Client suite under bundled Node 24: 68 files / 463 tests passed. The default system Node lacks `node:sqlite`, so its direct `npm test` cannot load database suites.

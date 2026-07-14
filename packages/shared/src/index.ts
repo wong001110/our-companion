@@ -1736,8 +1736,9 @@ export interface OurCompanionApi {
     };
   };
   window: {
-    openPanel(input?: { companionX?: number; companionY?: number }): Promise<boolean>;
+    openPanel(input?: { companionX?: number; companionY?: number; initialTab?: 'home' | 'chat' | 'discovery' | 'journey' | 'memory' | 'social' | 'settings' }): Promise<boolean>;
     openPanelForSwitch(): Promise<boolean>;
+    onPanelNavigate(listener: (tab: 'home' | 'chat' | 'discovery' | 'journey' | 'memory' | 'social' | 'settings') => void): () => void;
     showCompanion(): Promise<void>;
     getBounds(): Promise<WindowBounds>;
     getWorkArea(): Promise<WindowBounds>;

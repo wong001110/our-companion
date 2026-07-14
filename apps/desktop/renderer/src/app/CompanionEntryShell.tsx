@@ -83,6 +83,7 @@ import { getCreationCompletionAction, switchToSelectedCompanion } from '../compa
 import { isCompanionAnimationName, resolveWalkDirection } from '../character/animationSelection';
 import { startPerformancePlayback, type ActivePerformancePlayback } from '../character/performancePlayback';
 import { RemoteVisitorLayer, useVisualVisitState } from '../visits/RemoteVisitorLayer';
+import { Presence } from '../components/motion/Presence';
 
 type LocalExecutionPhase = 'waiting_to_start' | 'started' | 'completed' | 'cancelled' | 'failed';
 
@@ -922,9 +923,10 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           }}
         />
       )}
-      {softHintVisible && !discovery.popup && discovery.hasCandidate() && (
+      <Presence present={softHintVisible && !discovery.popup && discovery.hasCandidate()} exitDurationMs={150}>{(motionState) => (
         <div
           className="companion-soft-hint"
+          data-motion-state={motionState}
           style={floatingPositions.card ? {
             position: 'absolute',
             left: floatingPositions.card.rect.x,
@@ -951,15 +953,15 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
             }}>{t(lang, 'companion_not_now')}</button>
           </div>
         </div>
-      )}
+      )}</Presence>
       <CompanionQuickActions
         visible={quickActions.visible && !isDraggingRef.current && !localCompanionAway}
         anchorRect={quickActionsAnchor}
         screenWorkArea={{ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }}
         listening={phase === 'listening'}
         talkOpen={textOpen}
+        extraInteractiveRects={floatingPositions.textInput ? [floatingPositions.textInput.rect] : []}
         onTextChat={() => {
-          quickActions.close();
           openTextInput();
         }}
         onVoiceChat={() => {
@@ -974,16 +976,17 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           quickActions.close();
           onSwitchCompanion();
         }}
-        onOpenSettings={() => { void window.ourCompanion.window.openPanel({ companionX: companionPositionRef.current.x, companionY: companionPositionRef.current.y }); }}
+        onOpenSettings={() => { void window.ourCompanion.window.openPanel({ companionX: companionPositionRef.current.x, companionY: companionPositionRef.current.y, initialTab: 'settings' }); }}
         onExit={() => { void window.ourCompanion.app.exitWithAnimation(); }}
         onClose={() => { quickActions.close(); setDragHandleVisible(false); }}
         onMouseEnter={handleActionsHoverEnter}
         onMouseLeave={handleActionsHoverLeave}
         onInteractiveLayoutChange={interactive.setLayout}
       />
-      {phase === 'idle' && textOpen && (
+      <Presence present={phase === 'idle' && textOpen} exitDurationMs={150}>{(motionState) => (
         <form
           className="companion-text-input"
+          data-motion-state={motionState}
           style={floatingPositions.textInput ? {
             position: 'absolute',
             left: floatingPositions.textInput.rect.x,
@@ -998,7 +1001,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
             bottom: 'auto',
             transform: 'none',
           }}
-          onSubmit={(e) => { void handleTextSubmit(e); }}
+          onSubmit={(e) => { if (motionState !== 'exiting') void handleTextSubmit(e); }}
         >
           <input
             ref={textInputRef}
@@ -1011,7 +1014,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
             }}
           />
         </form>
-      )}
+      )}</Presence>
       </>}
     </main></LangContext.Provider>
   );
