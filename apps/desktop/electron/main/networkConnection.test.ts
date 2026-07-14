@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('electron', () => ({ safeStorage: { isEncryptionAvailable: () => true, encryptString: (value: string) => Buffer.from(value), decryptString: (value: Buffer) => value.toString() } }));
 
 import { NetworkConnectionService, normalizeServerUrl, sanitizeVisitRuntimeConfig } from './networkConnection';
+import { VisitService } from './network/visitService';
 
 class TestDb {
   readonly values = new Map<string, unknown>();
@@ -81,6 +82,61 @@ describe('NetworkConnectionService', () => {
     const service = new NetworkConnectionService(db as never, undefined, { fetch, createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
     await (service as any).checkCompatibility();
     expect(service.getStatusSnapshot().visit).toEqual({ heartbeatIntervalSeconds: 5, heartbeatTimeoutSeconds: 30 });
+  });
+
+  it('refreshes Visit metadata before an automatic reconnect so the recreated heartbeat uses the new cadence', async () => {
+    vi.useFakeTimers();
+    try {
+      const db = new TestDb();
+      db.setAppSetting('network.online-mode-enabled', true);
+      db.setAppSetting('network.device-id', '4ec4643d-b90e-4fe5-9668-1521fb6a0b9d');
+      db.setAppSetting('network.secure-session', Buffer.from(JSON.stringify({ serverOrigin: 'http://localhost:3001', accessToken: 'old', refreshToken: 'refresh' })).toString('base64'));
+      const session = { id: 'session-1', invitationId: 'invitation-1', visitorOwnerUserId: 'owner', hostUserId: 'host', networkCompanionId: 'companion-1', assetPackId: 'pack-1', state: 'active', visitorOwnerReady: true, hostReady: true, createdAt: '2026-07-14T00:00:00.000Z', updatedAt: '2026-07-14T00:00:00.000Z' };
+      const fetch = vi.fn()
+        .mockResolvedValueOnce(response({ compatible: true, visit: { heartbeatIntervalSeconds: 15, heartbeatTimeoutSeconds: 30 } }))
+        .mockResolvedValueOnce(response({ accessToken: 'new', refreshToken: 'rotated' }))
+        .mockResolvedValueOnce(response({ id: 'owner', email: 'owner@example.com', username: 'owner', friendCode: 'OWNER123' }))
+        .mockResolvedValueOnce(response([session]))
+        .mockResolvedValueOnce(response(session))
+        .mockResolvedValueOnce(response({ compatible: true, visit: { heartbeatIntervalSeconds: 5, heartbeatTimeoutSeconds: 30 } }))
+        .mockResolvedValueOnce(response([session]))
+        .mockResolvedValueOnce(response(session));
+      const listeners = [new Map<string, (...args: any[]) => void>(), new Map<string, (...args: any[]) => void>()];
+      const sockets = listeners.map((socketListeners) => {
+        const socket = {
+          on: vi.fn((event, listener) => { socketListeners.set(event, listener); return socket; }),
+          connect: vi.fn(() => socket),
+          disconnect: vi.fn(() => socket),
+        };
+        return socket;
+      });
+      let visits: VisitService | undefined;
+      let wasOnline = false;
+      const service = new NetworkConnectionService(db as never, (status) => {
+        if (status.state === 'reconnecting') visits?.stopAll();
+        if (status.state === 'online' && !wasOnline) void visits?.reconcile();
+        wasOnline = status.state === 'online';
+      }, { fetch, createSocket: vi.fn(() => sockets.shift()!), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
+      visits = new VisitService(service, { cancelVisitDownload: vi.fn() } as never);
+
+      await service.enableOnlineMode();
+      listeners[0].get('connect')?.();
+      await vi.runAllTicks();
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(fetch).toHaveBeenCalledTimes(5);
+
+      listeners[0].get('disconnect')?.('transport close');
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(fetch.mock.calls[5][0]).toBe('http://localhost:3001/api/meta/client-compatibility');
+      expect(service.getStatusSnapshot().visit?.heartbeatIntervalSeconds).toBe(5);
+
+      listeners[1].get('connect')?.();
+      await vi.runAllTicks();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(fetch).toHaveBeenCalledTimes(8);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([

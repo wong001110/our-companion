@@ -345,7 +345,25 @@ export class NetworkConnectionService {
     this.db.setAppSetting(RECONNECT_ATTEMPT_KEY, attempt);
     this.setStatus({ state: 'reconnecting', message: messageFor(error) });
     const delay = Math.min(30_000, 1_000 * 2 ** (attempt - 1));
-    this.reconnectTimer = this.deps.setTimeout(() => { this.reconnectTimer = undefined; void this.connectSocket(); }, delay);
+    this.reconnectTimer = this.deps.setTimeout(() => {
+      this.reconnectTimer = undefined;
+      void this.reconnectWithCompatibility();
+    }, delay);
+  }
+
+  /**
+   * Re-read server metadata before every automatic reconnect.  VisitService
+   * recreates its heartbeat timers after the socket reports online, so the
+   * fresh runtime configuration is already available at that point.
+   */
+  private async reconnectWithCompatibility(): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      await this.checkCompatibility();
+      await this.connectSocket();
+    } catch (error) {
+      this.scheduleReconnect(error);
+    }
   }
 
   private clearReconnectTimer(): void { if (this.reconnectTimer) this.deps.clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; }
