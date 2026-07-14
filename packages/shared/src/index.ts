@@ -1507,7 +1507,7 @@ export interface SmokeTestState {
   visit?: { sessionId: string; state: string; role: 'visitor_owner' | 'host'; visitorOwnerReady: boolean; hostReady: boolean };
   visual: {
     ownerPresenceMode: 'home' | 'away_visiting';
-    visitor?: { runtimeId: string; sessionId: string; assetPackId: string; animationName?: string; x?: number; y?: number };
+    visitor?: { runtimeId: string; sessionId: string; assetPackId: string; animationName?: string; observedAnimations?: string[]; x?: number; y?: number };
     error?: string;
   };
 }

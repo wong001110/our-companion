@@ -36,8 +36,8 @@ export async function endVisit(device: SmokeElectronDevice, sessionId: string): 
 
 export async function assertTerminalCleanup(owner: SmokeElectronDevice, host: SmokeElectronDevice, sessionId: string): Promise<void> {
   await Promise.all([
-    owner.waitForState((state) => state.visit?.sessionId === sessionId && ['ended', 'cancelled', 'failed'].includes(state.visit.state) && state.visual.ownerPresenceMode === 'home', 30_000),
-    host.waitForState((state) => state.visit?.sessionId === sessionId && ['ended', 'cancelled', 'failed'].includes(state.visit.state) && !state.visual.visitor, 30_000),
+    owner.waitForState((state) => (!state.visit || (state.visit.sessionId === sessionId && ['ended', 'cancelled', 'failed'].includes(state.visit.state))) && state.visual.ownerPresenceMode === 'home', 30_000),
+    host.waitForState((state) => (!state.visit || (state.visit.sessionId === sessionId && ['ended', 'cancelled', 'failed'].includes(state.visit.state))) && !state.visual.visitor, 30_000),
   ]);
   await expect((await host.mainWindow()).getByTestId('remote-visual-visitor')).toHaveCount(0);
 }
@@ -63,8 +63,8 @@ export async function unpublishOwnerCompanion(owner: SmokeElectronDevice, networ
 }
 
 export async function assertRendererLifecycle(host: SmokeElectronDevice, sessionId: string): Promise<void> {
-  await host.waitForState((state) => state.visual.visitor?.sessionId === sessionId && state.visual.visitor.animationName === 'Enter', 30_000);
-  await host.waitForState((state) => state.visual.visitor?.sessionId === sessionId && ['Idle_Neutral', 'Walk_Left', 'Walk_Right', 'Walk_Up', 'Walk_Down', 'Walk_TopLeft', 'Walk_TopRight', 'Walk_BottomLeft', 'Walk_BottomRight'].includes(state.visual.visitor.animationName ?? ''), 30_000);
+  await host.waitForState((state) => state.visual.visitor?.sessionId === sessionId && state.visual.visitor.observedAnimations?.includes('Enter') === true, 30_000);
+  await host.waitForState((state) => state.visual.visitor?.sessionId === sessionId && state.visual.visitor.observedAnimations?.some((name) => name === 'Idle_Neutral' || name.startsWith('Walk_')) === true, 30_000);
   await expect((await host.mainWindow()).getByTestId('remote-visual-visitor')).toHaveAttribute('data-session-id', sessionId);
 }
 

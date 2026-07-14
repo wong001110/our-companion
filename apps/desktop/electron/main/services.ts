@@ -282,7 +282,8 @@ export class AppServices {
     fs.mkdirSync(animationsDir, { recursive: true });
     for (const [index, animation] of COMPANION_ANIMATION_MANIFEST.entries()) {
       const color: [number, number, number] = [80 + (index * 29) % 140, 70 + (index * 43) % 150, 120 + (index * 19) % 120];
-      fs.writeFileSync(path.join(animationsDir, animation.fileName), createSmokeFixturePng(color), { flag: 'wx' });
+      // A few non-looping frames give the harness a real, observable Enter/Leave phase.
+      fs.writeFileSync(path.join(animationsDir, animation.fileName), createSmokeFixturePng(color, animation.loop ? 1 : 3), { flag: 'wx' });
     }
     companion = this.db.updateCompanion(companion.id, { assetRoot: `companion://${companion.id}/assets` });
     return this.db.setPrimaryCompanion(companion.id);

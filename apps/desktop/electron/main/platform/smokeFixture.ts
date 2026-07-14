@@ -1,8 +1,8 @@
 import { deflateSync } from 'node:zlib';
 
-/** A deterministic opaque 300px PNG used only by the smoke-only local Companion bootstrap. */
-export function createSmokeFixturePng(color: readonly [number, number, number] = [123, 82, 176]): Buffer {
-  const width = 300;
+/** A deterministic opaque 300px sprite-sheet PNG used only by smoke bootstrap. */
+export function createSmokeFixturePng(color: readonly [number, number, number] = [123, 82, 176], frames = 1): Buffer {
+  const width = 300 * Math.max(1, Math.min(3, Math.round(frames)));
   const height = 300;
   const raw = Buffer.alloc((width * 4 + 1) * height);
   for (let y = 0; y < height; y++) {
@@ -15,10 +15,18 @@ export function createSmokeFixturePng(color: readonly [number, number, number] =
   }
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    pngChunk('IHDR', Buffer.from([0, 0, 1, 44, 0, 0, 1, 44, 8, 6, 0, 0, 0])),
+    pngChunk('IHDR', pngHeader(width, height)),
     pngChunk('IDAT', deflateSync(raw)),
     pngChunk('IEND', Buffer.alloc(0)),
   ]);
+}
+
+function pngHeader(width: number, height: number): Buffer {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 6, 0, 0, 0], 8);
+  return header;
 }
 
 function pngChunk(name: string, data: Buffer): Buffer {

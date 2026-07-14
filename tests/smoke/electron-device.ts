@@ -30,9 +30,9 @@ export class SmokeElectronDevice {
         OUR_COMPANION_SMOKE_SERVER_URL: this.options.serverUrl,
       },
     });
-    const process = this.app.process();
-    process.stdout?.on('data', (chunk: Buffer) => this.logs.push(`[${this.options.role}] ${redactSmokeText(chunk.toString())}`));
-    process.stderr?.on('data', (chunk: Buffer) => this.logs.push(`[${this.options.role}] ${redactSmokeText(chunk.toString())}`));
+    const electronProcess = this.app.process();
+    electronProcess.stdout?.on('data', (chunk: Buffer) => this.logs.push(`[${this.options.role}] ${redactSmokeText(chunk.toString())}`));
+    electronProcess.stderr?.on('data', (chunk: Buffer) => this.logs.push(`[${this.options.role}] ${redactSmokeText(chunk.toString())}`));
     await this.app.firstWindow();
   }
 
@@ -42,7 +42,19 @@ export class SmokeElectronDevice {
   }
 
   async close(): Promise<void> {
-    try { await this.app?.close(); } catch { this.app?.process().kill('SIGKILL'); }
+    const app = this.app;
+    if (app) {
+      try {
+        await Promise.race([
+          app.close(),
+          new Promise<void>((_, reject) => setTimeout(() => reject(new Error('SMOKE_ELECTRON_CLOSE_TIMEOUT')), 10_000)),
+        ]);
+      } catch {
+        app.process().kill('SIGTERM');
+        await new Promise<void>((resolve) => setTimeout(resolve, 500));
+        if (app.process().exitCode === null) app.process().kill('SIGKILL');
+      }
+    }
     await fs.mkdir(this.options.artifactDir, { recursive: true });
     await fs.writeFile(path.join(this.options.artifactDir, 'logs.txt'), this.logs.join(''), 'utf8');
     this.app = undefined;

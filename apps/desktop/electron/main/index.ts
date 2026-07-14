@@ -13,6 +13,13 @@ import { OnboardingCompletionCoordinator } from './platform/onboardingCompletion
 import { createOnboardingCompanionWindowAdapter, invalidateFailedCompanionWindow } from './platform/onboardingCompanionWindow';
 import { isSmokeTestRuntime, smokeInstanceRole, smokeUserDataOverride, validateSmokeWorkArea, type SmokeWorkArea } from './platform/smokeRuntime';
 
+// Both asset schemes are consumed by renderer <img> elements and fetch().
+// Register them before Electron is ready so they retain normal URL semantics.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'companion', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
+  { scheme: 'companion-network', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
+]);
+
 const userDataOverride = smokeUserDataOverride();
 if (userDataOverride) app.setPath('userData', userDataOverride);
 
@@ -39,6 +46,7 @@ let discoveryScheduler: DiscoveryScheduler | undefined;
 let discoveryShareOrchestrator: DiscoveryShareOrchestrator | undefined;
 let companionClickThrough = true;
 let smokeVisualRuntime: { sessionId: string; animationName: string; x: number; y: number } | undefined;
+let smokeVisualAnimations: { sessionId: string; values: string[] } | undefined;
 let smokeWorkArea: SmokeWorkArea | undefined;
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -601,7 +609,7 @@ function registerSmokeIpc(): void {
       ...(session && role ? { visit: { sessionId: session.id, state: session.state, role, visitorOwnerReady: session.visitorOwnerReady, hostReady: session.hostReady } } : {}),
       visual: {
         ownerPresenceMode: visual.ownerPresenceMode,
-        ...(visual.visitor ? { visitor: { runtimeId: visual.visitor.runtimeId, sessionId: visual.visitor.sessionId, assetPackId: visual.visitor.assetPackId, animationName: renderer?.animationName ?? visual.visitor.animationName, x: renderer?.x, y: renderer?.y } } : {}),
+        ...(visual.visitor ? { visitor: { runtimeId: visual.visitor.runtimeId, sessionId: visual.visitor.sessionId, assetPackId: visual.visitor.assetPackId, animationName: renderer?.animationName ?? visual.visitor.animationName, ...(smokeVisualAnimations?.sessionId === visual.visitor.sessionId ? { observedAnimations: smokeVisualAnimations.values } : {}), x: renderer?.x, y: renderer?.y } } : {}),
         ...(visual.error ? { error: visual.error } : {}),
       },
     };
@@ -623,6 +631,8 @@ function registerSmokeIpc(): void {
       throw new Error('SMOKE_VISUAL_RUNTIME_INVALID');
     }
     smokeVisualRuntime = { sessionId: candidate.sessionId, animationName: candidate.animationName.slice(0, 80), x: Math.round(candidate.x), y: Math.round(candidate.y) };
+    if (smokeVisualAnimations?.sessionId !== candidate.sessionId) smokeVisualAnimations = { sessionId: candidate.sessionId, values: [] };
+    if (!smokeVisualAnimations.values.includes(smokeVisualRuntime.animationName)) smokeVisualAnimations.values.push(smokeVisualRuntime.animationName);
   });
   ipcMain.handle('smoke:simulateRendererFailure', () => {
     const visitor = services.visualVisits.getState().visitor;

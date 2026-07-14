@@ -3,17 +3,19 @@ import type { VisualVisitFacing, VisualVisitRenderModel } from '@our-companion/s
 export const REMOTE_VISITOR_SPEED_PX_PER_SECOND = 60;
 export const REMOTE_VISITOR_SIZE = { width: 220, height: 230 };
 
-export interface VisitorBounds { width: number; height: number; }
+export interface VisitorBounds { x?: number; y?: number; width: number; height: number; }
 export interface VisitorPosition { x: number; y: number; }
 
 export function initialVisitorPosition(bounds: VisitorBounds): VisitorPosition {
-  return clampVisitorPosition({ x: bounds.width - REMOTE_VISITOR_SIZE.width - 32, y: Math.round(bounds.height * 0.6) }, bounds);
+  const x = bounds.x ?? 0; const y = bounds.y ?? 0;
+  return clampVisitorPosition({ x: x + bounds.width - REMOTE_VISITOR_SIZE.width - 32, y: y + Math.round(bounds.height * 0.6) }, bounds);
 }
 
 export function clampVisitorPosition(position: VisitorPosition, bounds: VisitorBounds): VisitorPosition {
+  const x = bounds.x ?? 0; const y = bounds.y ?? 0;
   return {
-    x: Math.max(0, Math.min(Math.round(position.x), Math.max(0, bounds.width - REMOTE_VISITOR_SIZE.width))),
-    y: Math.max(0, Math.min(Math.round(position.y), Math.max(0, bounds.height - REMOTE_VISITOR_SIZE.height))),
+    x: Math.max(x, Math.min(Math.round(position.x), Math.max(x, x + bounds.width - REMOTE_VISITOR_SIZE.width))),
+    y: Math.max(y, Math.min(Math.round(position.y), Math.max(y, y + bounds.height - REMOTE_VISITOR_SIZE.height))),
   };
 }
 
