@@ -60,6 +60,7 @@
 - The QA report now runs those dialog and toast specs as dedicated scenario gates. Their report fields remain false unless those exact Electron commands pass; no current report treats the unverified test source as evidence.
 - Added a dedicated startup-speech lifecycle spec (enter → exit → unmount) and the corresponding QA gate. It remains unverified until desktop-process execution becomes available again.
 - Latest non-desktop verification: the full Client Vitest suite passed under bundled Node 24 (68 files / 463 tests), including Quick Action layout collision coverage and Visual Visit service tests. This does not replace the pending Electron transition checks.
+- Corrected the dialog test to use the fixture-available Companion-selection deletion dialog. The Settings server-change dialog requires a signed-in Network account and is therefore not a valid offline smoke-fixture trigger.
 
 ## Dedicated smoke environment details
 
