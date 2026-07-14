@@ -10,6 +10,22 @@ This harness starts two independent Electron processes on one machine: `visitor_
 
 Set `OUR_COMPANION_SMOKE_SERVER_URL` to an external dedicated Server. To have the harness prepare and launch a local Network process, set `OUR_COMPANION_SMOKE_MANAGE_SERVER=1` and `OUR_COMPANION_SMOKE_NETWORK_ROOT` to the Network repository. The configured root is validated for `package.json` and `prisma/schema.prisma`; the default fallback is `../our-companion-network`. Managed mode runs dependency installation only when needed, Prisma generation/validation/migration deployment, a production build, health and protocol/R2 preflight, then `npm run start:prod`. `OUR_COMPANION_SMOKE_SKIP_NETWORK_PREP=1` is an explicit fast mode only.
 
+For a managed run, keep the dedicated `DATABASE_URL` and R2 configuration in the Network repository's local `.env`; never add real values to this document. Then run:
+
+```bash
+export OUR_COMPANION_SMOKE_NETWORK_ROOT=/path/to/our-companion-network
+export OUR_COMPANION_SMOKE_MANAGE_SERVER=1
+export OUR_COMPANION_SMOKE_TEST=1
+export SMOKE_TEST_ALLOW_DESTRUCTIVE_ENDPOINTS=1
+export SMOKE_TEST_DATABASE=1
+
+# Network .env must provide a dedicated DATABASE_URL and R2_ACCESS_KEY_ID,
+# R2_SECRET_ACCESS_KEY, R2_ENDPOINT, and R2_BUCKET_NAME (or R2_BUCKET).
+npm run smoke:s5:two-device
+```
+
+For an external Server, provide `OUR_COMPANION_SMOKE_SERVER_URL` and the exact `SMOKE_TEST_CLEANUP_TOKEN` configured on that Server. Managed mode generates an ephemeral token and passes it only to its child Server process.
+
 ```bash
 npm run smoke:s5:two-device
 ```

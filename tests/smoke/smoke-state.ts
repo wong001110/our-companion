@@ -32,6 +32,8 @@ export async function waitUntil<T>(read: () => Promise<T>, condition: (value: T)
 
 export function redactSmokeText(value: string): string {
   return value
+    .replace(/file:\/\/\/[^\s"')]+/gi, '[REDACTED_FILE_URL]')
+    .replace(/(?:\/Users\/|\/home\/|\/private\/|\/var\/folders\/)[^\s"')]+/g, '[REDACTED_PATH]')
     .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s"']+/gi, '$1[REDACTED]')
     .replace(/(password\s*[:=]\s*)[^\s"']+/gi, '$1[REDACTED]')
     .replace(/(refreshToken|accessToken|secretAccessKey|accountId)\s*[:=]\s*["']?[^\s,"'}]+/gi, '$1=[REDACTED]')

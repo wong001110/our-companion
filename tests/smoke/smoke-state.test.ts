@@ -14,6 +14,7 @@ describe('S5 smoke harness utilities', () => {
 
   it('redacts credentials and omits private report values', () => {
     expect(redactSmokeText('password=secret authorization: Bearer token')).not.toContain('secret');
+    expect(redactSmokeText('file:///Users/tester/private/log.txt')).not.toContain('/Users/tester');
     expect(sanitizedReport({ result: 'passed', accessToken: 'secret', cacheRoot: '/private', sessionId: 'ok' })).toEqual({ result: 'passed', sessionId: 'ok' });
   });
 });
