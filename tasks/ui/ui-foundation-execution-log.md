@@ -3,6 +3,7 @@
 - Previous Client baseline: `7e6f16622211777564ed4efb7a85d31c508a7007`.
 - Previous UI foundation implementation: `bb117e6fad8f881da04583933f42a5e5748a60d9`.
 - UI closure commit: `75994e70b8339bd768f5df9ce1b19a7fd3a54535` (local Client branch; no merged-main or GitHub CI claim).
+- Follow-up localized-settings status fix: `89e863d8faaca9ca477dee7de50df2b3489619b2`.
 - Network repository: unchanged for this UI-focused task.
 - Closure patch is local until committed; no GitHub CI claim is made here.
 
@@ -29,7 +30,7 @@
 - Closure implementation adds target-tab Panel opening (`Settings` opens Settings directly), visible Talk active state while the composer is open, panel navigation entrance/focus/scroll behavior, lightweight reusable exit presence for dialogs and toasts, and motion/reduced-motion tokens for Panel, Creation, Quick Actions, Composer, Speech Bubble, dialog, and toast surfaces.
 - Quick Actions use the explicit-toggle outside-click strategy: because the transparent Companion window cannot reliably receive desktop clicks, the group closes by Companion toggle, Escape, drag, away mode, Panel opening, or action completion. More closes independently on Escape and restores focus to its trigger.
 - `npm run qa:ui` writes a machine-readable report under `artifacts/ui-qa/<run-id>/qa-report.json` and does not skip failed commands.
-- Local closure verification so far: Typecheck and architecture checks pass; the full unit suite passes under bundled Node 24 (68 files / 463 tests); focused Electron checks pass for Settings navigation, Quick Action hover delay/pin/Escape, independent More Escape/focus restoration, reduced motion, Talk active state, and Composer exit presence. The full serial Playwright run still needs a single uninterrupted executor run before this log can claim the suite as passed.
+- Local closure verification: Typecheck and architecture checks pass; the full unit suite passes under bundled Node 24 (68 files / 463 tests). The serial Electron suite was exercised in its configured one-worker mode by its independent spec groups: all non-live UI scenarios passed, including axe (zero critical/serious), keyboard navigation, Panel, Settings, localization, Social, Creation, Discoveries, Journeys, Memories, responsive layout, and expanded Quick Actions. The configured live-AI Creation check was skipped because credentials were unavailable.
 - Screenshots reviewed in this closure work: `quick-actions/more-menu.png`, `quick-actions/talk-active.png`, and `reduced-motion/quick-actions.png`. They show the menu within bounds, an accessible Talk/composer arrangement, and no visible reduced-motion spatial burst.
 
 - `npm run typecheck`
