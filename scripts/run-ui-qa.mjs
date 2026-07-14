@@ -35,6 +35,8 @@ const scenarioSteps = [
   ['panelPageTransition', ['exec', 'playwright', 'test', 'tests/ui/panel-navigation.spec.ts']],
   ['creationStepTransition', ['exec', 'playwright', 'test', 'tests/ui/companion-creation.spec.ts']],
   ['quickActionScenarios', ['exec', 'playwright', 'test', 'tests/ui/quick-actions.spec.ts']],
+  ['dialogTransition', ['exec', 'playwright', 'test', 'tests/ui/feedback-transitions.spec.ts']],
+  ['toastTransition', ['exec', 'playwright', 'test', 'tests/ui/journeys.spec.ts']],
 ];
 for (const [name, args] of scenarioSteps) run(name, args);
 
@@ -52,8 +54,8 @@ const requiredScenarioChecks = {
   quickActionsBoundaryAware: quickActionsPassed,
   panelPageTransition: checks.panelPageTransition === true,
   creationStepTransition: checks.creationStepTransition === true,
-  dialogTransition: false,
-  toastTransition: false,
+  dialogTransition: checks.dialogTransition === true,
+  toastTransition: checks.toastTransition === true,
   moreMenuTransition: quickActionsPassed,
   composerTransition: quickActionsPassed,
   speechBubbleTransition: false,
