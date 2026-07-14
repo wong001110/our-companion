@@ -14,7 +14,7 @@ const manifest = () => ({
 function dependencies(accountId: 'owner' | 'host' = 'host') {
   const network = { getStatusSnapshot: vi.fn(() => ({ state: 'online', onlineModeEnabled: true, account: { id: accountId }, features: { visualVisits: true } })) };
   const visits = { listSessions: vi.fn().mockResolvedValue([session()]), listInvitations: vi.fn().mockResolvedValue([{ id: 'invitation-1', companionName: 'Ann' }]) };
-  const companions = { getLocalCompanionId: vi.fn().mockResolvedValue('local-ann'), getVerifiedVisitVisualManifest: vi.fn().mockResolvedValue(manifest()) };
+  const companions = { getLocalCompanionId: vi.fn().mockResolvedValue('local-ann'), getVerifiedVisitVisualManifest: vi.fn().mockResolvedValue(manifest()), readVerifiedCachedAsset: vi.fn().mockReturnValue({ bytes: Buffer.from('sprite'), mimeType: 'image/png' }) };
   const publish = vi.fn();
   return { network, visits, companions, publish, service: new VisualVisitService(network as never, visits as never, companions as never, publish) };
 }
@@ -43,5 +43,15 @@ describe('VisualVisitService', () => {
     visits.listSessions.mockResolvedValue([session('ended')]);
     await service.reconcile();
     expect(service.getState()).toEqual({ ownerPresenceMode: 'home' });
+  });
+
+  it('allows safe Pack bytes only while that Pack belongs to the active host Visitor', async () => {
+    const { service, companions } = dependencies('host');
+    await service.reconcile();
+    expect(service.readVerifiedCachedAsset('pack-1', 'assets/animations/Idle_Neutral.png')).toEqual({ bytes: Buffer.from('sprite'), mimeType: 'image/png' });
+    expect(companions.readVerifiedCachedAsset).toHaveBeenCalledWith('pack-1', 'assets/animations/Idle_Neutral.png');
+    expect(() => service.readVerifiedCachedAsset('other-pack', 'assets/animations/Idle_Neutral.png')).toThrow('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    service.stopSession('session-1');
+    expect(() => service.readVerifiedCachedAsset('pack-1', 'assets/animations/Idle_Neutral.png')).toThrow('VISUAL_VISIT_ASSET_UNAVAILABLE');
   });
 });

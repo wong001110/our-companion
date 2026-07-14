@@ -21,7 +21,7 @@ function registerCompanionProtocol(): void {
   });
   protocol.handle('companion-network', (request) => {
     return handleNetworkAssetProtocolRequest(request.url, (assetPackId, relativePath) =>
-      services.publicCompanions.readVerifiedCachedAsset(assetPackId, relativePath),
+      services.visualVisits.readVerifiedCachedAsset(assetPackId, relativePath),
     );
   });
 }

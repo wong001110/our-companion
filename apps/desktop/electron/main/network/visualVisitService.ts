@@ -17,11 +17,20 @@ export class VisualVisitService {
   constructor(
     private readonly network: Pick<NetworkConnectionService, 'getStatusSnapshot'>,
     private readonly visits: Pick<VisitService, 'listSessions' | 'listInvitations'>,
-    private readonly companions: Pick<PublicCompanionService, 'getLocalCompanionId' | 'getVerifiedVisitVisualManifest'>,
+    private readonly companions: Pick<PublicCompanionService, 'getLocalCompanionId' | 'getVerifiedVisitVisualManifest' | 'readVerifiedCachedAsset'>,
     private readonly publish: (state: VisualVisitRendererState) => void = () => {},
   ) {}
 
   getState = (): VisualVisitRendererState => cloneState(this.state);
+
+  /**
+   * The protocol handler delegates here so a stale renderer URL cannot read a
+   * previously cached Pack after its authoritative Visit becomes terminal.
+   */
+  readVerifiedCachedAsset = (assetPackId: string, relativePath: string): { bytes: Buffer; mimeType: string } => {
+    if (this.state.visitor?.assetPackId !== assetPackId) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    return this.companions.readVerifiedCachedAsset(assetPackId, relativePath);
+  };
 
   reconcile = async (): Promise<void> => {
     if (this.reconcilePromise) return this.reconcilePromise;
