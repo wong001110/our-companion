@@ -2,6 +2,7 @@
 
 - Previous Client baseline: `7e6f16622211777564ed4efb7a85d31c508a7007`.
 - Previous UI foundation implementation: `bb117e6fad8f881da04583933f42a5e5748a60d9`.
+- UI closure commit: `75994e70b8339bd768f5df9ce1b19a7fd3a54535` (local Client branch; no merged-main or GitHub CI claim).
 - Network repository: unchanged for this UI-focused task.
 - Closure patch is local until committed; no GitHub CI claim is made here.
 
