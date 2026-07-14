@@ -58,6 +58,7 @@
 - The transparent-window screenshot renderer makes the latest corner captures visually ambiguous against its black background despite measured DOM geometry. These captures are retained as automation artifacts, but `screenshotsReviewed` remains false until an unambiguous manual review is recorded.
 - Feedback follow-up: `Presence` now starts initially-present content in `entering`, restoring the Toast entrance state that had been skipped. Focused Journey-toast and Settings-dialog Electron tests were added, but their final Electron rerun is pending because desktop-process execution approval became unavailable after the account usage limit was reached. Typecheck and architecture checks passed with those additions; the QA report remains fail-closed for dialog and toast until the Electron assertions are rerun.
 - The QA report now runs those dialog and toast specs as dedicated scenario gates. Their report fields remain false unless those exact Electron commands pass; no current report treats the unverified test source as evidence.
+- Added a dedicated startup-speech lifecycle spec (enter → exit → unmount) and the corresponding QA gate. It remains unverified until desktop-process execution becomes available again.
 
 ## Dedicated smoke environment details
 

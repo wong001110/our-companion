@@ -37,6 +37,7 @@ const scenarioSteps = [
   ['quickActionScenarios', ['exec', 'playwright', 'test', 'tests/ui/quick-actions.spec.ts']],
   ['dialogTransition', ['exec', 'playwright', 'test', 'tests/ui/feedback-transitions.spec.ts']],
   ['toastTransition', ['exec', 'playwright', 'test', 'tests/ui/journeys.spec.ts']],
+  ['speechBubbleTransition', ['exec', 'playwright', 'test', 'tests/ui/speech-transitions.spec.ts']],
 ];
 for (const [name, args] of scenarioSteps) run(name, args);
 
@@ -58,7 +59,7 @@ const requiredScenarioChecks = {
   toastTransition: checks.toastTransition === true,
   moreMenuTransition: quickActionsPassed,
   composerTransition: quickActionsPassed,
-  speechBubbleTransition: false,
+  speechBubbleTransition: checks.speechBubbleTransition === true,
   reducedMotion: quickActionsPassed,
 };
 const scenarioComplete = Object.values(requiredScenarioChecks).every(Boolean);
