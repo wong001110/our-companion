@@ -14,6 +14,11 @@ export function isSmokeTestRuntime(env: NodeJS.ProcessEnv = process.env): boolea
   return env.OUR_COMPANION_SMOKE_TEST === '1';
 }
 
+/** Keeps smoke-only controls out of ordinary production processes. */
+export function assertSmokeTestRuntime(env: NodeJS.ProcessEnv = process.env): void {
+  if (!isSmokeTestRuntime(env)) throw new Error('SMOKE_TEST_UNAVAILABLE');
+}
+
 export function smokeInstanceRole(env: NodeJS.ProcessEnv = process.env): SmokeInstanceRole | undefined {
   const value = env.OUR_COMPANION_SMOKE_ROLE;
   return value === 'visitor_owner' || value === 'host' ? value : undefined;

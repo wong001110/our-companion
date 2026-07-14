@@ -1,0 +1,41 @@
+.friend-overflow {
+  position: relative;
+}
+
+.friend-overflow summary {
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid rgba(239, 206, 228, 0.24);
+  border-radius: 8px;
+  color: #f9eef6;
+  background: #342d42;
+  cursor: pointer;
+  list-style: none;
+}
+
+.friend-overflow summary::-webkit-details-marker {
+  display: none;
+}
+
+.friend-overflow-menu {
+  position: absolute;
+  right: 0;
+  z-index: 3;
+  display: grid;
+  gap: 6px;
+  min-width: 150px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-floating);
+}
+
+.social-page {
+  max-width: 1180px;
+}
+
+.social-unavailable {
+  max-width: 680px;
+}

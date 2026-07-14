@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hashSmokeDeviceId, isSmokeTestRuntime, smokeInstanceRole, smokeUserDataOverride, validateSmokeWorkArea } from './smokeRuntime';
+import { assertSmokeTestRuntime, hashSmokeDeviceId, isSmokeTestRuntime, smokeInstanceRole, smokeUserDataOverride, validateSmokeWorkArea } from './smokeRuntime';
 
 describe('smoke runtime guardrails', () => {
   it('requires the explicit smoke flag before applying the profile override', () => {
@@ -7,6 +7,11 @@ describe('smoke runtime guardrails', () => {
     expect(smokeUserDataOverride({ OUR_COMPANION_SMOKE_TEST: '1', OUR_COMPANION_USER_DATA_DIR: '/tmp/owner' })).toBe('/tmp/owner');
     expect(isSmokeTestRuntime({ OUR_COMPANION_SMOKE_TEST: '1' })).toBe(true);
     expect(smokeInstanceRole({ OUR_COMPANION_SMOKE_ROLE: 'host' })).toBe('host');
+  });
+
+  it('rejects smoke-only controls in a production environment', () => {
+    expect(() => assertSmokeTestRuntime({})).toThrow('SMOKE_TEST_UNAVAILABLE');
+    expect(() => assertSmokeTestRuntime({ OUR_COMPANION_SMOKE_TEST: '1' })).not.toThrow();
   });
 
   it('validates narrow work-area controls and never returns a raw device id', () => {

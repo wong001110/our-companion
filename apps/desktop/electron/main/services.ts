@@ -111,7 +111,7 @@ import { PublicCompanionService } from './network/publicCompanionService';
 import { VisitService } from './network/visitService';
 import { VisualVisitService } from './network/visualVisitService';
 import { createSmokeFixturePng } from './platform/smokeFixture';
-import { isSmokeTestRuntime } from './platform/smokeRuntime';
+import { assertSmokeTestRuntime } from './platform/smokeRuntime';
 
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
@@ -273,7 +273,7 @@ export class AppServices {
 
   /** Narrow smoke-only bootstrap: fixed local visual assets, no caller-controlled filesystem input. */
   createSmokeFixtureCompanion(): CompanionProfile {
-    if (!isSmokeTestRuntime()) throw new Error('SMOKE_TEST_UNAVAILABLE');
+    assertSmokeTestRuntime();
     const existing = this.db.getPrimaryCompanion();
     if (existing) return existing;
     const personality: CompanionPersonality = { energy: 50, curiosity: 50, sociability: 50, diligence: 50, playfulness: 50, confidence: 50, calmness: 50, shyness: 50 };
@@ -710,6 +710,7 @@ export class AppServices {
 
   memory = {
     createNode: async (input: CreateMemoryNodeInput) => this.db.insertMemoryNode(createMemoryNode(input)),
+    getNode: async (id: string) => this.db.getMemoryNode(id),
     updateNode: async (input: UpdateMemoryNodeInput) => {
       const existing = this.db.getMemoryNode(input.id);
       if (!existing) throw new Error(`Memory node not found: ${input.id}`);

@@ -1,0 +1,48 @@
+/* Stable controls shared by the notebook panel, creation flows, and dialogs. */
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  min-height: 36px;
+  border: 1px solid rgba(113, 81, 126, 0.26);
+  border-radius: var(--radius-sm);
+  color: #fff7fb;
+  background: var(--color-primary);
+  cursor: pointer;
+  transition: background var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast);
+}
+
+button:hover { background: var(--color-primary-hover); }
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-primary) 58%, white);
+  outline-offset: 2px;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid rgba(122, 91, 97, 0.24);
+  border-radius: var(--radius-sm);
+  color: #382b34;
+  background: rgba(255, 248, 235, 0.8);
+}
+
+input {
+  min-height: 40px;
+  padding: 10px 12px;
+}
+
+textarea {
+  min-height: 130px;
+  padding: 14px;
+  resize: vertical;
+}

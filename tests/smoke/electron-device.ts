@@ -94,6 +94,10 @@ export class SmokeElectronDevice {
     await (await this.anyWindow()).screenshot({ path: path.join(this.options.artifactDir, `${name}.png`) });
   }
 
+  async screenshotPanel(name: string): Promise<void> {
+    await (await this.panelWindow()).screenshot({ path: path.join(this.options.artifactDir, `${name}.png`) });
+  }
+
   async bootstrapFixtureCompanion(): Promise<void> {
     await (await this.anyWindow()).evaluate(async () => window.ourCompanion.smoke?.bootstrapFixtureCompanion());
     await this.mainWindow();

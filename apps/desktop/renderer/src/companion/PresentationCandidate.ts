@@ -19,12 +19,12 @@ export interface QueuedCandidate {
   presentedAt?: string;
 }
 
-export function titleFallback(candidate: PresentationCandidate): string {
-  return candidate.title || `Discovery from ${candidate.sourceName ?? 'unknown'}`;
+export function titleFallback(candidate: PresentationCandidate, fallback: string): string {
+  return candidate.title || fallback;
 }
 
-export function bodyFallback(candidate: PresentationCandidate): string {
-  return candidate.whyYouMightCare || 'Companion found something worth looking at.';
+export function bodyFallback(candidate: PresentationCandidate, fallback: string): string {
+  return candidate.whyYouMightCare || fallback;
 }
 
 export function normalizeUrl(url?: string): string | undefined {

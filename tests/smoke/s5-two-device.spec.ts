@@ -97,6 +97,11 @@ test('S5 logical two-device smoke', async () => {
     let sessionId = await startVisit(owner, host, seeded.hostAccountId);
     checks.invitationCreated = checks.invitationAccepted = checks.bothPrepared = checks.sessionActive = checks.ownerAway = checks.hostVisitorRendered = true;
     await owner.screenshot('away'); await host.screenshot('visitor-active');
+    const hostPanel = await host.panelWindow();
+    await hostPanel.getByRole('button', { name: 'Social' }).click();
+    await expect(hostPanel.getByTestId('social-panel')).toBeVisible();
+    await expect(hostPanel.getByTestId('visit-session-state')).toHaveAttribute('data-state', 'active', { timeout: 30_000 });
+    await host.screenshotPanel('social-active-visit');
     await assertRendererLifecycle(host, sessionId);
     checks.enterObserved = checks.idleOrWalkObserved = true;
     await endVisit(owner, sessionId);

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { safeStorage } from 'electron';
 import { io, type Socket } from 'socket.io-client';
 import type { DatabaseService } from '@our-companion/database';
-import { hashSmokeDeviceId, isSmokeTestRuntime } from './platform/smokeRuntime';
+import { assertSmokeTestRuntime, hashSmokeDeviceId, isSmokeTestRuntime } from './platform/smokeRuntime';
 import type { BlockedUserSummary, CompanionAssetManifestV1, CompleteAssetPackResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile, VisitInvitationStatus, VisitInvitationSummary, VisitRuntimeConfig, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
 
 export const NETWORK_PROTOCOL_VERSION = '0.4';
@@ -80,13 +80,13 @@ export class NetworkConnectionService {
   getStatusSnapshot = (): NetworkStatus => ({ ...this.status });
 
   getSmokeDeviceIdHash = (): string => {
-    if (!isSmokeTestRuntime()) throw new Error('SMOKE_TEST_UNAVAILABLE');
+    assertSmokeTestRuntime();
     return hashSmokeDeviceId(this.deviceId);
   };
 
   /** Exercises the same compatibility-refresh reconnect path as an unexpected transport drop. */
   disconnectSocketForSmoke = (): void => {
-    if (!isSmokeTestRuntime()) throw new Error('SMOKE_TEST_UNAVAILABLE');
+    assertSmokeTestRuntime();
     this.socket?.disconnect();
     this.scheduleReconnect(new Error('smoke_socket_disconnect'));
   };

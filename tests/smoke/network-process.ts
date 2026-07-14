@@ -50,6 +50,26 @@ export function validateDedicatedSmokeEnvironment(env: SmokeEnv): void {
   if (/(production|prod|primary|live)/.test(marker) && env.SMOKE_TEST_DATABASE_CONFIRMED !== '1') throw new Error('SMOKE_DATABASE_SUSPICIOUS');
 }
 
+/**
+ * Legacy Network histories were created with `prisma db push` before migrations
+ * existed. A dedicated smoke database therefore uses the current schema as its
+ * idempotent bootstrap source; it must not rewrite legacy migration history.
+ */
+async function hasInitialPrismaMigration(networkRoot: string): Promise<boolean> {
+  const root = path.join(networkRoot, 'prisma', 'migrations');
+  const entries = await fs.readdir(root, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    try {
+      const sql = await fs.readFile(path.join(root, entry.name, 'migration.sql'), 'utf8');
+      if (/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"User"/i.test(sql)) return true;
+    } catch {
+      // Let Prisma report malformed migrations during a normal deployment.
+    }
+  }
+  return false;
+}
+
 export class ManagedSmokeNetwork {
   private process?: ChildProcess;
   private logs: string[] = [];
@@ -69,7 +89,11 @@ export class ManagedSmokeNetwork {
       if (!(await exists(path.join(this.options.networkRoot, 'node_modules')))) await this.run(['npm', 'install'], 'SMOKE_NETWORK_INSTALL_FAILED');
       await this.run(['npm', 'run', 'prisma:generate'], 'SMOKE_NETWORK_BUILD_FAILED');
       await this.run(['npx', 'prisma', 'validate'], 'SMOKE_DATABASE_UNAVAILABLE');
-      await this.run(['npx', 'prisma', 'migrate', 'deploy'], 'SMOKE_DATABASE_UNAVAILABLE');
+      if (await hasInitialPrismaMigration(this.options.networkRoot)) {
+        await this.run(['npx', 'prisma', 'migrate', 'deploy'], 'SMOKE_DATABASE_UNAVAILABLE');
+      } else {
+        await this.run(['npx', 'prisma', 'db', 'push', '--skip-generate'], 'SMOKE_DATABASE_UNAVAILABLE');
+      }
       await this.run(['npm', 'run', 'build'], 'SMOKE_NETWORK_BUILD_FAILED');
     }
     this.process = spawn('npm', ['run', 'start:prod'], { cwd: this.options.networkRoot, env: this.env, stdio: ['ignore', 'pipe', 'pipe'] });

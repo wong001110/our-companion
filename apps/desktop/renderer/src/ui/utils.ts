@@ -3,7 +3,7 @@ import { t, type Lang } from '../i18n';
 import type { AnimationName } from './CompanionCanvas';
 import type { CompanionAnimationName } from '../companion/runtime/animationRegistry';
 
-export type Tab = 'home' | 'discovery' | 'journey' | 'memory' | 'chat' | 'settings';
+export type Tab = 'home' | 'discovery' | 'journey' | 'memory' | 'chat' | 'social' | 'settings';
 export type DevAnimation = 'live' | AnimationName;
 
 export const devAnimations: DevAnimation[] = [
@@ -37,20 +37,20 @@ export function formatDuration(durationMs?: number): string {
   return `${(durationMs / 1000).toFixed(1)}s`;
 }
 
-export function formatDiscoveryTime(discovery: Discovery): string {
-  return formatRelativeDate(discovery.publishedAt ?? discovery.sharedAt ?? discovery.createdAt);
+export function formatDiscoveryTime(discovery: Discovery, lang: Lang = 'en'): string {
+  return formatRelativeDate(discovery.publishedAt ?? discovery.sharedAt ?? discovery.createdAt, lang);
 }
 
-export function formatRelativeDate(value?: string): string {
-  if (!value) return 'Just now';
+export function formatRelativeDate(value?: string, lang: Lang = 'en'): string {
+  if (!value) return t(lang, 'relative_just_now');
   const time = new Date(value).getTime();
-  if (Number.isNaN(time)) return 'Just now';
+  if (Number.isNaN(time)) return t(lang, 'relative_just_now');
   const diffMs = Date.now() - time;
   const minutes = Math.max(0, Math.round(diffMs / 60000));
-  if (minutes < 60) return minutes <= 1 ? 'Just now' : `${minutes}m ago`;
+  if (minutes < 60) return minutes <= 1 ? t(lang, 'relative_just_now') : t(lang, 'relative_minutes_ago', { count: minutes });
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
+  if (hours < 24) return t(lang, 'relative_hours_ago', { count: hours });
+  return t(lang, 'relative_days_ago', { count: Math.round(hours / 24) });
 }
 
 export function formatShortDate(value: string): string {
@@ -93,22 +93,22 @@ export function easeInOut(progress: number): number {
   return progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
 }
 
-export function companionStatusMessage(state?: CharacterRuntimeState): string {
-  if (!state) return 'Companion is settling in and opening a fresh page.';
-  if (state.intent === 'sharing_discovery' || state.coreState === 'discovering') return 'Companion found something curious and tucked it into the notebook.';
-  if (state.intent === 'reviewing_memory') return 'Companion is reading your notes and thinking about what matters.';
-  if (state.intent === 'reflecting_journey') return 'Companion is connecting the dots across your current journey.';
-  if (state.intent === 'helping_task') return 'Companion is focused beside you and helping with the next step.';
-  if (state.intent === 'wandering') return 'Companion is stretching its legs, then coming back to the page.';
-  return 'Companion is quietly here, keeping an eye on new ideas.';
+export function companionStatusMessage(state?: CharacterRuntimeState, lang: Lang = 'en'): string {
+  if (!state) return t(lang, 'home_status_settling');
+  if (state.intent === 'sharing_discovery' || state.coreState === 'discovering') return t(lang, 'home_status_discovery');
+  if (state.intent === 'reviewing_memory') return t(lang, 'home_status_memory');
+  if (state.intent === 'reflecting_journey') return t(lang, 'home_status_journey');
+  if (state.intent === 'helping_task') return t(lang, 'home_status_helping');
+  if (state.intent === 'wandering') return t(lang, 'home_status_wandering');
+  return t(lang, 'home_status_waiting');
 }
 
-export function companionMoodLabel(state?: CharacterRuntimeState): string {
+export function companionMoodLabel(state?: CharacterRuntimeState, lang: Lang = 'en'): string {
   const emotion = state?.emotion;
-  if (!emotion) return 'Curious & Excited';
+  if (!emotion) return t(lang, 'home_mood_curious_excited');
   const entries = Object.entries(emotion).sort((a, b) => b[1] - a[1]);
   const [first, second] = entries;
-  return `${capitalize(first?.[0] ?? 'curious')} & ${capitalize(second?.[0] ?? 'excited')}`;
+  return `${t(lang, `home_emotion_${first?.[0] ?? 'curious'}` as keyof typeof import('../i18n/en').en)} & ${t(lang, `home_emotion_${second?.[0] ?? 'excited'}` as keyof typeof import('../i18n/en').en)}`;
 }
 
 export function tabLabel(tab: Tab, lang: Lang): string {
@@ -118,6 +118,7 @@ export function tabLabel(tab: Tab, lang: Lang): string {
     journey: t(lang, 'tab_journey'),
     memory: t(lang, 'tab_memory'),
     chat: t(lang, 'tab_chat'),
+    social: t(lang, 'tab_social'),
     settings: t(lang, 'tab_settings')
   };
   return map[tab];

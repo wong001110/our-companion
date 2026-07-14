@@ -1,0 +1,81 @@
+.companion-quick-actions {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.quick-action-bubble {
+  position: absolute;
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 1px solid rgba(248, 221, 238, 0.24);
+  border-radius: var(--radius-pill, 999px);
+  color: var(--color-text-on-dark, #f8edf5);
+  background: rgba(54, 39, 70, 0.92);
+  box-shadow: var(--shadow-floating, 0 8px 22px rgba(28, 16, 37, 0.36));
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+  pointer-events: auto;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  animation: quick-action-burst var(--motion-normal, 220ms) both ease-out;
+  transition: background var(--motion-fast, 140ms) ease, transform var(--motion-fast, 140ms) ease, border-color var(--motion-fast, 140ms) ease;
+}
+
+.quick-action-bubble::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: inherit;
+  border: inherit;
+  transform: rotate(45deg);
+}
+
+.quick-action-bubble-top-left::after,
+.quick-action-bubble-top-right::after { bottom: -5px; }
+.quick-action-bubble-bottom-left::after,
+.quick-action-bubble-bottom-right::after { top: -5px; }
+.quick-action-bubble-top-left::after,
+.quick-action-bubble-bottom-left::after { right: 16px; border-top: 0; border-left: 0; }
+.quick-action-bubble-top-right::after,
+.quick-action-bubble-bottom-right::after { left: 16px; border-right: 0; border-bottom: 0; }
+
+.quick-action-bubble:hover,
+.quick-action-bubble:focus-visible,
+.quick-action-bubble.is-active {
+  background: rgba(111, 80, 146, 0.98);
+  border-color: rgba(255, 238, 249, 0.58);
+  transform: scale(1.04);
+}
+
+.quick-action-bubble:focus-visible,
+.quick-action-more-menu button:focus-visible { outline: 3px solid #f8d8f0; outline-offset: 3px; }
+
+.quick-action-more-menu {
+  position: absolute;
+  display: grid;
+  min-width: 150px;
+  padding: 6px;
+  border: 1px solid rgba(248, 221, 238, 0.28);
+  border-radius: var(--radius-md, 10px);
+  background: rgba(44, 31, 59, 0.97);
+  box-shadow: var(--shadow-floating, 0 8px 22px rgba(28, 16, 37, 0.36));
+  pointer-events: auto;
+}
+
+.quick-action-more-menu button { border: 0; border-radius: 7px; padding: 8px 10px; color: #fff7fd; background: transparent; text-align: left; cursor: pointer; font: inherit; }
+.quick-action-more-menu button:hover { background: rgba(255,255,255,.12); }
+.quick-action-more-menu .quick-action-danger { color: #ffd0d5; }
+
+@keyframes quick-action-burst { from { opacity: 0; transform: translate(var(--burst-x, 0), var(--burst-y, 8px)) scale(.82); } to { opacity: 1; transform: translate(0, 0) scale(1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .quick-action-bubble { animation: quick-action-fade var(--motion-fast, 140ms) both ease; transition: opacity var(--motion-fast, 140ms) ease; }
+  .quick-action-bubble:hover, .quick-action-bubble:focus-visible, .quick-action-bubble.is-active { transform: none; }
+}
+
+@keyframes quick-action-fade { from { opacity: 0; } to { opacity: 1; } }

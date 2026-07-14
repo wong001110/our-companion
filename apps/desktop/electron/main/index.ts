@@ -108,14 +108,14 @@ function createCompanionWindow(): BrowserWindow {
 function createPanelWindow(): BrowserWindow {
   const primaryDisplay = screen.getPrimaryDisplay();
   const workArea = primaryDisplay.workArea;
-  const panelWidth = Math.min(1180, Math.round(workArea.width * 0.65));
-  const panelHeight = Math.min(760, Math.round(workArea.height * 0.85));
+  const panelWidth = Math.max(760, Math.min(1180, Math.round(workArea.width * 0.65)));
+  const panelHeight = Math.max(580, Math.min(760, Math.round(workArea.height * 0.85)));
 
   const window = new BrowserWindow({
     width: panelWidth,
     height: panelHeight,
-    minWidth: 900,
-    minHeight: 620,
+    minWidth: 760,
+    minHeight: 580,
     show: false,
     title: 'Our Companion',
     webPreferences: {
@@ -168,8 +168,8 @@ function createCreationWindow(): BrowserWindow {
 
   const primaryDisplay = screen.getPrimaryDisplay();
   const workArea = primaryDisplay.workArea;
-  const windowWidth = 560;
-  const windowHeight = 680;
+  const windowWidth = Math.min(560, Math.max(480, workArea.width - 48));
+  const windowHeight = Math.min(680, Math.max(560, workArea.height - 48));
 
   const window = new BrowserWindow({
     width: windowWidth,
@@ -177,7 +177,9 @@ function createCreationWindow(): BrowserWindow {
     x: Math.round(workArea.x + (workArea.width - windowWidth) / 2),
     y: Math.round(workArea.y + (workArea.height - windowHeight) / 2),
     frame: false,
-    resizable: false,
+    minWidth: 480,
+    minHeight: 560,
+    resizable: true,
     show: false,
     title: 'Create Companion',
     webPreferences: {
@@ -316,6 +318,7 @@ function registerIpc(): void {
     'autonomy:getCycleHistory': services.autonomy.getCycleHistory,
     'autonomy:submitFeedback': services.autonomy.submitFeedback,
     'memory:createNode': services.memory.createNode,
+    'memory:getNode': services.memory.getNode,
     'memory:updateNode': services.memory.updateNode,
     'memory:deleteNode': services.memory.deleteNode,
     'memory:createEdge': services.memory.createEdge,
@@ -625,13 +628,17 @@ function registerSmokeIpc(): void {
     for (const window of [companionWindow, panelWindow]) if (window && !window.isDestroyed()) window.webContents.send('smoke:visualWorkAreaChanged', undefined);
   });
   ipcMain.handle('smoke:reportVisualRuntime', (_event, input: unknown) => {
-    const candidate = input as Partial<typeof smokeVisualRuntime>;
+    const candidate = input as { sessionId?: string; animationName?: string; x?: number; y?: number };
     const visual = services.visualVisits.getState().visitor;
-    if (!visual || candidate.sessionId !== visual.sessionId || typeof candidate.animationName !== 'string' || !Number.isFinite(candidate.x) || !Number.isFinite(candidate.y)) {
+    if (!visual || typeof candidate.sessionId !== 'string' || candidate.sessionId !== visual.sessionId || typeof candidate.animationName !== 'string' || typeof candidate.x !== 'number' || !Number.isFinite(candidate.x) || typeof candidate.y !== 'number' || !Number.isFinite(candidate.y)) {
       throw new Error('SMOKE_VISUAL_RUNTIME_INVALID');
     }
-    smokeVisualRuntime = { sessionId: candidate.sessionId, animationName: candidate.animationName.slice(0, 80), x: Math.round(candidate.x), y: Math.round(candidate.y) };
-    if (smokeVisualAnimations?.sessionId !== candidate.sessionId) smokeVisualAnimations = { sessionId: candidate.sessionId, values: [] };
+    const sessionId = candidate.sessionId;
+    const animationName = candidate.animationName;
+    const x = candidate.x;
+    const y = candidate.y;
+    smokeVisualRuntime = { sessionId, animationName: animationName.slice(0, 80), x: Math.round(x), y: Math.round(y) };
+    if (smokeVisualAnimations?.sessionId !== sessionId) smokeVisualAnimations = { sessionId, values: [] };
     if (!smokeVisualAnimations.values.includes(smokeVisualRuntime.animationName)) smokeVisualAnimations.values.push(smokeVisualRuntime.animationName);
   });
   ipcMain.handle('smoke:simulateRendererFailure', () => {

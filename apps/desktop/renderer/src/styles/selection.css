@@ -1,0 +1,179 @@
+.companion-selection-page {
+  width: 100%;
+  max-width: 520px;
+  padding: 32px 28px;
+}
+
+.selection-header {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.selection-header h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.selection-header p {
+  margin: 0;
+  color: rgba(248, 237, 245, 0.55);
+  font-size: 13px;
+}
+
+.selection-loading {
+  text-align: center;
+  padding: 48px 0;
+  color: rgba(248, 237, 245, 0.5);
+  font-size: 14px;
+}
+
+.companion-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.companion-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(239, 206, 228, 0.12);
+  border-radius: 12px;
+  padding: 18px 14px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.companion-card:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(239, 206, 228, 0.28);
+}
+
+.companion-card-primary {
+  border-color: rgba(186, 166, 224, 0.45);
+  background: rgba(116, 80, 148, 0.12);
+}
+
+.companion-card-new {
+  border-style: dashed;
+}
+
+.companion-card-new:hover {
+  border-color: rgba(186, 166, 224, 0.5);
+}
+
+.companion-card-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(116, 80, 148, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 10px;
+}
+
+.new-avatar {
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 22px;
+  color: rgba(248, 237, 245, 0.6);
+}
+
+.avatar-emoji {
+  font-size: 20px;
+  font-weight: 700;
+  color: #baa6e0;
+}
+
+.companion-card-sprite {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.15);
+  margin-bottom: 8px;
+}
+
+.companion-card-avatar-missing {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px dashed rgba(239, 206, 228, 0.2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.companion-card-avatar-missing-icon {
+  font-size: 24px;
+  color: rgba(248, 237, 245, 0.3);
+}
+
+.companion-card-avatar-missing-text {
+  font-size: 10px;
+  color: rgba(248, 237, 245, 0.35);
+}
+
+.companion-card-name {
+  margin: 0 0 2px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.companion-card-trait {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: rgba(248, 237, 245, 0.45);
+}
+
+.companion-card-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(116, 80, 148, 0.4);
+  color: #baa6e0;
+  margin-bottom: 8px;
+}
+
+.companion-card-builtin {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(248, 237, 245, 0.5);
+}
+
+.companion-card-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.ai-config-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 18px;
+  border-radius: 10px;
+  background: rgba(220, 160, 60, 0.12);
+  border: 1px solid rgba(220, 160, 60, 0.25);
+  font-size: 12px;
+  color: rgba(248, 237, 245, 0.7);
+}
+
+.ai-config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.selection-footer {
+  margin-top: 20px;
+  text-align: center;
+}

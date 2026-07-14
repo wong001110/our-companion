@@ -1,9 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { COMPANION_ANIMATION_MANIFEST, type
   CompanionPersonality,
   CompanionProfile,
 } from "@our-companion/shared";
 import { useAnalyzePersonality } from "./useAnalyzePersonality";
+import { useSpriteAssetStaging } from "../../features/assets/useSpriteAssetStaging";
+import { BulkAssetUploader } from "../../features/assets/BulkAssetUploader";
+import { SpriteAssetGrid } from "../../features/assets/SpriteAssetGrid";
+import type { ExistingSpriteAsset } from "../../features/assets/SpriteAssetSlot";
+import { formatSpriteAssetError } from '../../features/assets/assetErrorMessage';
+import type { SpriteAssetError } from '../../features/assets/useSpriteAssetStaging';
+import { t, type TranslationKey } from '../../i18n';
+import { useLang } from '../../ui/NotebookPrimitives';
 
 interface CompanionEditPageProps {
   companion: CompanionProfile;
@@ -11,15 +19,9 @@ interface CompanionEditPageProps {
   onCancel?: () => void;
 }
 
-const PERSONALITY_LABELS: Record<keyof CompanionPersonality, string> = {
-  energy: "Energy",
-  curiosity: "Curiosity",
-  sociability: "Sociability",
-  diligence: "Diligence",
-  playfulness: "Playfulness",
-  confidence: "Confidence",
-  calmness: "Calmness",
-  shyness: "Shyness",
+const PERSONALITY_LABEL_KEYS: Record<keyof CompanionPersonality, TranslationKey> = {
+  energy: 'personality_energy', curiosity: 'personality_curiosity', sociability: 'personality_sociability', diligence: 'personality_diligence',
+  playfulness: 'personality_playfulness', confidence: 'personality_confidence', calmness: 'personality_calmness', shyness: 'personality_shyness',
 };
 
 const ALL_ANIMATIONS = COMPANION_ANIMATION_MANIFEST.map((entry) => entry.key);
@@ -30,47 +32,10 @@ interface AssetFile {
   subfolder: string;
 }
 
-interface StagedAsset {
-  file: File;
-  dataUrl: string;
-}
-
-function guessAnimationName(fileName: string): string | null {
-  const base = fileName.replace(/\.[^.]+$/, "").replace(/[- ]/g, "_");
-  const match = ALL_ANIMATIONS.find(
-    (a) => a.toLowerCase() === base.toLowerCase(),
-  );
-  return match ?? null;
-}
-
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function StagedSpritePreview({ dataUrl }: { dataUrl: string }) {
-  const [src, setSrc] = useState<string | null>(null);
-
-  useEffect(() => {
-    const img = new Image();
-    img.onload = () => {
-      const frameW = img.naturalHeight;
-      const frameH = img.naturalHeight;
-      const canvas = document.createElement("canvas");
-      canvas.width = frameW;
-      canvas.height = frameH;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      ctx.clearRect(0, 0, frameW, frameH);
-      ctx.drawImage(img, 0, 0, frameW, frameH, 0, 0, frameW, frameH);
-      setSrc(canvas.toDataURL("image/png"));
-    };
-    img.src = dataUrl;
-  }, [dataUrl]);
-
-  if (!src) return <div className="animation-preview-placeholder" />;
-  return <img className="animation-preview-img" src={src} alt="staged" />;
 }
 
 function DiskSpritePreview({
@@ -126,6 +91,7 @@ export function CompanionEditPage({
   onComplete,
   onCancel,
 }: CompanionEditPageProps) {
+  const lang = useLang();
   const [name, setName] = useState(companion.name);
   const [description, setDescription] = useState(
     companion.personalityDescription,
@@ -139,20 +105,14 @@ export function CompanionEditPage({
   const { analyze, analyzing, error: analyzeError } = useAnalyzePersonality();
 
   const [diskAssets, setDiskAssets] = useState<AssetFile[]>([]);
-  const [stagedAssets, setStagedAssets] = useState<Record<string, StagedAsset>>({});
-  const [assetVersion, setAssetVersion] = useState(0);
-  const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const diskByName = new Map(
     diskAssets
       .filter((a) => a.subfolder === "animations")
       .map((a) => [a.name.replace(/\.[^.]+$/, ""), a]),
   );
-  const allAnimationNames = ALL_ANIMATIONS.map((animName) => ({
-    animName,
-    staged: stagedAssets[animName] ?? null,
-    disk: diskByName.get(animName) ?? null,
-  }));
+  const existingAssets = Object.fromEntries([...diskByName.keys()].map((name) => [name, true]));
+  const { stagedAssets, missingRequired, errors: assetErrors, stageFile, stageBulkFiles, removeStaged, clear } = useSpriteAssetStaging({ animationManifest: ALL_ANIMATIONS, existingAssets });
 
   const loadAssets = useCallback(async () => {
     try {
@@ -160,7 +120,6 @@ export function CompanionEditPage({
         companion.id,
       );
       setDiskAssets(list);
-      setAssetVersion((v) => v + 1);
     } catch {
       /* ignore */
     }
@@ -179,113 +138,11 @@ export function CompanionEditPage({
     }
   }
 
-  function handleFileSelect(
-    animationName: string,
-    e: React.ChangeEvent<HTMLInputElement>,
-  ) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = "";
-
-    if (!file.name.match(/\.png$/i)) {
-      setError(`Only PNG files supported`);
-      return;
-    }
-
-    const img = new Image();
-    const objectUrl = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      if (img.naturalHeight < 300) {
-        setError(
-          `${animationName}: image height must be at least 300px (got ${img.naturalHeight}px)`,
-        );
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = () => {
-        setStagedAssets((prev) => ({
-          ...prev,
-          [animationName]: { file, dataUrl: reader.result as string },
-        }));
-      };
-      reader.readAsDataURL(file);
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      setError(`Failed to load image: ${file.name}`);
-    };
-    img.src = objectUrl;
-  }
-
-  function handleRemoveStaged(animationName: string) {
-    setStagedAssets((prev) => {
-      const next = { ...prev };
-      delete next[animationName];
-      return next;
-    });
-  }
-
-  function guessAnimationName(fileName: string): string | null {
-    const base = fileName.replace(/\.[^.]+$/, "").replace(/[- ]/g, "_");
-    return (
-      ALL_ANIMATIONS.find((a) => a.toLowerCase() === base.toLowerCase()) ?? null
-    );
-  }
-
   async function handleBulkUpload() {
     const selected = await window.ourCompanion.dialog.openFiles();
     if (!selected || selected.length === 0) return;
 
-    const errors: string[] = [];
-
-    for (const { name, dataUrl } of selected) {
-      const animName = guessAnimationName(name);
-      if (!animName) {
-        errors.push(`${name}: no match`);
-        continue;
-      }
-      const height = await getImageHeight(dataUrl);
-      if (height < 300) {
-        errors.push(`${name}: height < 300px`);
-        continue;
-      }
-      setStagedAssets((prev) => ({
-        ...prev,
-        [animName]: { file: new File([dataUrlToBlob(dataUrl)], name, { type: 'image/png' }), dataUrl }
-      }));
-    }
-
-    if (errors.length > 0) {
-      setError(errors.join('; '));
-    }
-  }
-
-  function dataUrlToBlob(dataUrl: string): Blob {
-    const [header, base64] = dataUrl.split(',');
-    const mime = header.match(/:(.*?);/)?.[1] ?? 'image/png';
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return new Blob([bytes], { type: mime });
-  }
-
-  function readFileAsDataUrl(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
-
-  function getImageHeight(dataUrl: string): Promise<number> {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => resolve(img.naturalHeight);
-      img.onerror = () => resolve(0);
-      img.src = dataUrl;
-    });
+    await stageBulkFiles(selected);
   }
 
   async function handleDeleteDiskAsset(subfolder: string, fileName: string) {
@@ -320,7 +177,7 @@ export function CompanionEditPage({
       }
     }
 
-    setStagedAssets({});
+    clear();
     await loadAssets();
     return true;
   }
@@ -329,7 +186,7 @@ export function CompanionEditPage({
     if (!name.trim()) return;
     const personalityChanged = description.trim() !== companion.personalityDescription;
     if (personalityChanged && !personalityAnalysisId) {
-      setError('Analyze the updated personality description with AI before saving.');
+      setError(t(lang, 'edit_analyze_before_save'));
       return;
     }
     setSaving(true);
@@ -354,40 +211,45 @@ export function CompanionEditPage({
     }
   }
 
-  const missingCount = allAnimationNames.filter(
-    (a) => !a.staged && !a.disk,
-  ).length;
+  const missingCount = missingRequired.length;
   const stagedCount = Object.keys(stagedAssets).length;
+  const existingSpriteAssets = useMemo<Record<string, ExistingSpriteAsset>>(() => Object.fromEntries(
+    [...diskByName.entries()].map(([animationName, disk]) => [animationName, {
+      preview: <DiskSpritePreview companionId={companion.id} fileName={disk.name} />,
+      detail: formatSize(disk.size),
+      remove: () => { void handleDeleteDiskAsset(disk.subfolder, disk.name); },
+    }]),
+  ), [companion.id, diskByName]);
 
   return (
     <div className="edit-page">
       <div className="edit-header">
-        <button className="edit-back-btn" onClick={onCancel} title="Back">
+        <button className="edit-back-btn" onClick={onCancel} title={t(lang, 'edit_back')}>
           ←
         </button>
         <div>
-          <h1>Edit {companion.name}</h1>
-          <p className="edit-subtitle">Update your companion&apos;s details</p>
+          <h1>{t(lang, 'edit_title', { name: companion.name })}</h1>
+          <p className="edit-subtitle">{t(lang, 'edit_subtitle')}</p>
         </div>
       </div>
 
       <div className="edit-section">
-        <label className="edit-section-title">Name</label>
+        <label className="edit-section-title">{t(lang, 'edit_name_label')}</label>
         <input
           className="creation-input"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Companion name"
+          placeholder={t(lang, 'edit_name_placeholder')}
         />
       </div>
 
       <div className="edit-section">
-        <label className="edit-section-title">Personality Description</label>
+        <label className="edit-section-title">{t(lang, 'edit_personality_label')}</label>
         <textarea
           className="creation-textarea"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="Describe your companion's personality..."
+          placeholder={t(lang, 'edit_personality_placeholder')}
           rows={4}
         />
         <div className="edit-analyze-row">
@@ -396,7 +258,7 @@ export function CompanionEditPage({
             disabled={!description.trim() || analyzing}
             onClick={() => void handleAnalyze()}
           >
-            {analyzing ? "Analyzing..." : "Re-analyze Personality"}
+            {analyzing ? t(lang, 'creation_analyzing') : t(lang, 'edit_reanalyze')}
           </button>
           {analyzeError && (
             <span className="edit-analyze-error">{analyzeError}</span>
@@ -405,14 +267,14 @@ export function CompanionEditPage({
       </div>
 
       <div className="edit-section">
-        <label className="edit-section-title">Personality Traits</label>
+        <label className="edit-section-title">{t(lang, 'edit_traits')}</label>
         <div className="personality-bars">
           {(
-            Object.keys(PERSONALITY_LABELS) as (keyof CompanionPersonality)[]
+            Object.keys(PERSONALITY_LABEL_KEYS) as (keyof CompanionPersonality)[]
           ).map((key) => (
             <div key={key} className="personality-bar-row">
               <span className="personality-label">
-                {PERSONALITY_LABELS[key]}
+                {t(lang, PERSONALITY_LABEL_KEYS[key])}
               </span>
               <div className="personality-bar-track">
                 <div
@@ -427,124 +289,39 @@ export function CompanionEditPage({
       </div>
 
       <div className="edit-section">
-        <label className="edit-section-title">Sprite Animations</label>
+        <label className="edit-section-title">{t(lang, 'edit_sprite_animations')}</label>
         <p className="edit-section-hint">
           {missingCount > 0
-            ? `${missingCount} of ${ALL_ANIMATIONS.length} animations missing.`
-            : "All animations uploaded!"}
+            ? t(lang, 'creation_missing_animations', { count: missingCount, total: ALL_ANIMATIONS.length })
+            : t(lang, 'creation_all_animations_uploaded')}
           {stagedCount > 0 && (
-            <span className="edit-staged-badge">{stagedCount} staged</span>
+            <span className="edit-staged-badge">{t(lang, 'edit_staged_count', { count: stagedCount })}</span>
           )}
         </p>
+        {assetErrors.map((assetError: SpriteAssetError) => <p className="creation-error" key={`${assetError.code}-${assetError.name}`}>{formatSpriteAssetError(assetError, lang)}</p>)}
 
-        <div className="animation-bulk-row">
-          <button className="btn-secondary btn-sm" onClick={() => void handleBulkUpload()}>
-            Bulk Upload
-          </button>
-          <span className="animation-bulk-hint">Select multiple files — auto-matches by filename</span>
-        </div>
-
-        <div className="animation-grid">
-          {allAnimationNames.map(({ animName, staged, disk }) => {
-            const inputRef = (el: HTMLInputElement | null) => {
-              fileInputRefs.current[animName] = el;
-            };
-            return (
-              <div
-                key={`${animName}-${assetVersion}`}
-                className={`animation-slot ${staged || disk ? "animation-slot-filled" : ""}`}
-              >
-                {staged ? (
-                  <StagedSpritePreview dataUrl={staged.dataUrl} />
-                ) : disk ? (
-                  <DiskSpritePreview
-                    companionId={companion.id}
-                    fileName={disk.name}
-                  />
-                ) : null}
-                <div className="animation-slot-header">
-                  <span className="animation-slot-name">
-                    {(staged || disk) && (
-                      <span className="animation-slot-check">✓</span>
-                    )}
-                    {animName}
-                  </span>
-                  {staged && (
-                    <span className="animation-slot-staged">staged</span>
-                  )}
-                  {disk && !staged && (
-                    <span className="animation-slot-size">
-                      {formatSize(disk.size)}
-                    </span>
-                  )}
-                </div>
-                <div className="animation-slot-actions">
-                  <input
-                    ref={inputRef}
-                    type="file"
-                    accept=".png"
-                    style={{ display: "none" }}
-                    onChange={(e) => handleFileSelect(animName, e)}
-                  />
-                  {staged ? (
-                    <>
-                      <button
-                        className="btn-secondary btn-sm"
-                        onClick={() => fileInputRefs.current[animName]?.click()}
-                      >
-                        Replace
-                      </button>
-                      <button
-                        className="btn-ghost btn-sm"
-                        onClick={() => handleRemoveStaged(animName)}
-                      >
-                        Remove
-                      </button>
-                    </>
-                  ) : disk ? (
-                    <>
-                      <button
-                        className="btn-secondary btn-sm"
-                        onClick={() => fileInputRefs.current[animName]?.click()}
-                      >
-                        Replace
-                      </button>
-                      <button
-                        className="btn-ghost btn-sm"
-                        onClick={() =>
-                          void handleDeleteDiskAsset(disk.subfolder, disk.name)
-                        }
-                      >
-                        Remove
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      className="btn-secondary btn-sm"
-                      onClick={() => fileInputRefs.current[animName]?.click()}
-                    >
-                      Upload
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <BulkAssetUploader onUpload={() => void handleBulkUpload()} />
+        <SpriteAssetGrid
+          animationNames={ALL_ANIMATIONS}
+          stagedAssets={stagedAssets}
+          existingAssets={existingSpriteAssets}
+          onStageFile={(animationName, file) => void stageFile(animationName, file)}
+          onRemoveStaged={removeStaged}
+        />
       </div>
 
       {error && <p className="creation-error">{error}</p>}
 
       <div className="edit-actions">
         <button className="btn-secondary" onClick={onCancel}>
-          Cancel
+          {t(lang, 'creation_cancel')}
         </button>
         <button
           className="btn-primary"
           disabled={saving || !name.trim()}
           onClick={() => void handleSave()}
         >
-          {saving ? "Saving..." : "Save Changes"}
+          {saving ? t(lang, 'edit_saving') : t(lang, 'edit_save_changes')}
         </button>
       </div>
     </div>

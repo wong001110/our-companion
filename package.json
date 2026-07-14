@@ -14,7 +14,7 @@
     "build": "npm run build -w @our-companion/desktop",
     "build:clean": "rm -rf apps/desktop/dist && rm -rf node_modules/.vite && npm run build",
     "start": "npm run start -w @our-companion/desktop",
-    "typecheck": "tsc -b",
+    "typecheck": "tsc -b --force",
     "test": "vitest run",
     "lint": "tsc -b --pretty false",
     "arch:check": "node scripts/check-architecture-boundaries.mjs",
@@ -30,6 +30,7 @@
     "zod": "^3.25.67"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@playwright/test": "^1.61.1",
     "@types/node": "^22.15.32",
     "@types/react": "^19.1.8",
