@@ -5,7 +5,7 @@ export type MotionState = 'entering' | 'entered' | 'exiting';
 /** Keeps children mounted long enough for a CSS exit transition to finish. */
 export function Presence({ present, exitDurationMs = 160, children, onExited }: { present: boolean; exitDurationMs?: number; children: (state: MotionState) => ReactNode; onExited?: () => void }) {
   const [mounted, setMounted] = useState(present);
-  const [state, setState] = useState<MotionState>(present ? 'entered' : 'exiting');
+  const [state, setState] = useState<MotionState>(present ? 'entering' : 'exiting');
   const onExitedRef = useRef(onExited);
   onExitedRef.current = onExited;
 

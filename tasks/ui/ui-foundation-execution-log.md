@@ -56,6 +56,7 @@
 - Real Electron coverage now also verifies Quick Actions hover grace, drag-close, and an active Listen session using a local synthetic media stream. It confirms Listen is `aria-pressed=true` after reopening Quick Actions, then returns to `false` after stopping.
 - Smoke-only visual-presence injection now drives the same renderer publication path used by Visual Visit state, proving that `away_visiting` immediately removes Quick Actions. Five persisted Companion positions are exercised in Electron with measured in-bounds/non-overlap bubbles; the placement resolver now deconflicts bubbles that flip into the same corner.
 - The transparent-window screenshot renderer makes the latest corner captures visually ambiguous against its black background despite measured DOM geometry. These captures are retained as automation artifacts, but `screenshotsReviewed` remains false until an unambiguous manual review is recorded.
+- Feedback follow-up: `Presence` now starts initially-present content in `entering`, restoring the Toast entrance state that had been skipped. Focused Journey-toast and Settings-dialog Electron tests were added, but their final Electron rerun is pending because desktop-process execution approval became unavailable after the account usage limit was reached. Typecheck and architecture checks passed with those additions; the QA report remains fail-closed for dialog and toast until the Electron assertions are rerun.
 
 ## Dedicated smoke environment details
 
