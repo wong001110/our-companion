@@ -2341,6 +2341,7 @@ function visitSessionMessage(session: VisitSessionSummary, userId: string): stri
 
 function visualVisitMessage(visual: import('@our-companion/shared').VisualVisitRendererState, session: VisitSessionSummary, userId: string): string {
   if (visual.error === 'VISUAL_VISIT_ASSET_UNAVAILABLE') return 'Visitor rendering unavailable.';
+  if (visual.error === 'VISUAL_VISIT_RENDERER_UNAVAILABLE') return 'Visitor rendering unavailable.';
   if (visual.error === 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE') return 'Your local Companion could not enter Visit mode.';
   if (session.visitorOwnerUserId === userId && visual.ownerPresenceMode === 'away_visiting') return 'Your Companion is visiting a friend.';
   if (visual.visitor?.sessionId === session.id) return `${visual.visitor.name} is currently visiting your desktop.`;

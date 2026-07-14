@@ -54,4 +54,14 @@ describe('VisualVisitService', () => {
     service.stopSession('session-1');
     expect(() => service.readVerifiedCachedAsset('pack-1', 'assets/animations/Idle_Neutral.png')).toThrow('VISUAL_VISIT_ASSET_UNAVAILABLE');
   });
+
+  it('removes only the failed host renderer while preserving the authoritative session for later reconciliation', async () => {
+    const { service, visits } = dependencies('host');
+    await service.reconcile();
+    service.reportRendererFailure('other-session');
+    expect(service.getState().visitor?.sessionId).toBe('session-1');
+    service.reportRendererFailure('session-1');
+    expect(service.getState()).toEqual({ ownerPresenceMode: 'home', error: 'VISUAL_VISIT_RENDERER_UNAVAILABLE' });
+    expect(visits.listSessions).toHaveBeenCalled();
+  });
 });

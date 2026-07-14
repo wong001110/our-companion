@@ -1497,7 +1497,7 @@ export interface VisualVisitRenderModel {
 export interface VisualVisitRendererState {
   ownerPresenceMode: 'home' | 'away_visiting';
   visitor?: VisualVisitRenderModel;
-  error?: 'VISUAL_VISIT_ASSET_UNAVAILABLE' | 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE';
+  error?: 'VISUAL_VISIT_ASSET_UNAVAILABLE' | 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE' | 'VISUAL_VISIT_RENDERER_UNAVAILABLE';
 }
 export interface SocialState {
   scope?: { serverUrl: string; accountId: string };
@@ -1716,6 +1716,7 @@ export interface OurCompanionApi {
       };
       visual: {
         getState(): Promise<VisualVisitRendererState>;
+        reportRendererFailure(sessionId: string): Promise<void>;
         onChanged(listener: (state: VisualVisitRendererState) => void): () => void;
       };
     };

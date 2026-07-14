@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { VisualVisitRenderModel, VisualVisitRendererState } from '@our-companion/shared';
 import { SpriteAnimator } from '../character/SpriteAnimator';
 import { REMOTE_VISITOR_SIZE, REMOTE_VISITOR_SPEED_PX_PER_SECOND, clampVisitorPosition, initialVisitorPosition, nextWalkTarget, walkSelection, type VisitorPosition } from './remoteVisitorController';
@@ -20,9 +20,16 @@ export function RemoteVisitorLayer({ visitor }: { visitor?: VisualVisitRenderMod
   const [position, setPosition] = useState<VisitorPosition>(() => initialVisitorPosition(viewport()));
   const movementIndex = useRef(0);
   const targetRef = useRef<VisitorPosition | undefined>();
+  const failedRuntimeId = useRef<string | undefined>();
+  const sawNoVisitor = useRef(true);
 
   useEffect(() => {
     if (visitor) {
+      if (sawNoVisitor.current) {
+        failedRuntimeId.current = undefined;
+        sawNoVisitor.current = false;
+      }
+      if (failedRuntimeId.current === visitor.runtimeId) return;
       if (runtime?.runtimeId !== visitor.runtimeId) {
         setRuntime(visitor);
         setPhase('entering');
@@ -31,15 +38,35 @@ export function RemoteVisitorLayer({ visitor }: { visitor?: VisualVisitRenderMod
         targetRef.current = undefined;
       }
     } else if (runtime) {
+      sawNoVisitor.current = true;
       setPhase('leaving');
       targetRef.current = undefined;
+    } else {
+      sawNoVisitor.current = true;
     }
   }, [visitor, runtime]);
+
+  const handleComplete = useCallback(() => {
+    if (phase === 'entering') setPhase('idle');
+    if (phase === 'leaving') setRuntime(undefined);
+  }, [phase]);
+
+  const handleFailure = useCallback((failed: VisualVisitRenderModel) => {
+    if (runtime?.runtimeId !== failed.runtimeId) return;
+    failedRuntimeId.current = failed.runtimeId;
+    targetRef.current = undefined;
+    setRuntime(undefined);
+    void window.ourCompanion.network.visits.visual.reportRendererFailure(failed.sessionId).catch(() => undefined);
+  }, [runtime]);
 
   useEffect(() => {
     const clamp = () => setPosition((current) => clampVisitorPosition(current, viewport()));
     window.addEventListener('resize', clamp);
-    return () => window.removeEventListener('resize', clamp);
+    const unsubscribeDisplay = window.ourCompanion.companion.onDisplayChanged(() => clamp());
+    return () => {
+      window.removeEventListener('resize', clamp);
+      unsubscribeDisplay();
+    };
   }, []);
 
   useEffect(() => {
@@ -80,14 +107,11 @@ export function RemoteVisitorLayer({ visitor }: { visitor?: VisualVisitRenderMod
   const walk = walkSelection(position, target, runtime.assetUrls);
   const animationName = phase === 'entering' ? 'Enter' : phase === 'leaving' ? 'Leave' : phase === 'walking' ? walk.animationName : 'Idle_Neutral';
   return <div style={{ position: 'absolute', left: position.x, top: position.y, zIndex: 2, pointerEvents: 'none' }} aria-label={`${runtime.name} is visiting`}>
-    <RemoteVisitorSprite model={runtime} animationName={animationName} onComplete={() => {
-      if (phase === 'entering') setPhase('idle');
-      if (phase === 'leaving') setRuntime(undefined);
-    }} />
+    <RemoteVisitorSprite model={runtime} animationName={animationName} onComplete={handleComplete} onFailure={handleFailure} />
   </div>;
 }
 
-function RemoteVisitorSprite({ model, animationName, onComplete }: { model: VisualVisitRenderModel; animationName: string; onComplete: () => void }) {
+function RemoteVisitorSprite({ model, animationName, onComplete, onFailure }: { model: VisualVisitRenderModel; animationName: string; onComplete: () => void; onFailure: (model: VisualVisitRenderModel) => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const url = model.assetUrls[animationName] ?? model.assetUrls.Idle_Neutral;
@@ -96,9 +120,9 @@ function RemoteVisitorSprite({ model, animationName, onComplete }: { model: Visu
     if (!url || !timing || !canvas) return;
     const animator = new SpriteAnimator({ sheet: url, frameWidth: REMOTE_VISITOR_SIZE.width, frameHeight: REMOTE_VISITOR_SIZE.height, frameMs: timing.frameDurationMs, loop: timing.loop }, { cacheKey: `${model.runtimeId}:${animationName}`, onComplete });
     let active = true;
-    void animator.load().then(() => { if (active) animator.start(canvas, REMOTE_VISITOR_SIZE); }).catch(() => undefined);
+    void animator.load().then(() => { if (active) animator.start(canvas, REMOTE_VISITOR_SIZE); }).catch(() => { if (active) onFailure(model); });
     return () => { active = false; animator.destroy(); };
-  }, [model, animationName, onComplete]);
+  }, [model, animationName, onComplete, onFailure]);
   return <canvas ref={ref} aria-hidden="true" />;
 }
 

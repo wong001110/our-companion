@@ -32,6 +32,12 @@ export class VisualVisitService {
     return this.companions.readVerifiedCachedAsset(assetPackId, relativePath);
   };
 
+  /** Renderer failures are local-only: remove this runtime but retain the authoritative Visit Session. */
+  reportRendererFailure = (sessionId: string): void => {
+    if (this.state.visitor?.sessionId !== sessionId) return;
+    this.setState({ ownerPresenceMode: 'home', error: 'VISUAL_VISIT_RENDERER_UNAVAILABLE' });
+  };
+
   reconcile = async (): Promise<void> => {
     if (this.reconcilePromise) return this.reconcilePromise;
     this.reconcilePromise = this.reconcileOnce().finally(() => { this.reconcilePromise = undefined; });

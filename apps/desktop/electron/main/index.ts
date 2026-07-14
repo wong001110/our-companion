@@ -400,6 +400,7 @@ function registerIpc(): void {
     'network:visits:sessions:start': (sessionId: string) => services.visits.start(sessionId),
     'network:visits:sessions:end': (sessionId: string) => services.visits.end(sessionId),
     'network:visits:visual:getState': () => services.visualVisits.getState(),
+    'network:visits:visual:reportRendererFailure': (sessionId: string) => services.visualVisits.reportRendererFailure(sessionId),
     'companionNew:create': services.companionNew.create,
     'companionNew:analyzePersonality': services.companionNew.analyzePersonality,
     'companionNew:list': services.companionNew.list,
