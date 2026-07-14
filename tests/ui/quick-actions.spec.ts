@@ -203,6 +203,10 @@ test('Quick Actions opens Panel Settings directly and preserves Talk active stat
     await expect(settings).toHaveAttribute('aria-current', 'page');
     await expect(panel.getByTestId('panel-page-settings')).toBeVisible();
 
+    // The panel is a separate native window; close it before exercising the
+    // underlying Companion window's Talk action.
+    await panel.close();
+
     await main.locator('.companion-canvas').click();
     await main.getByTestId('quick-action-talk').click();
     const composer = main.locator('.companion-text-input');

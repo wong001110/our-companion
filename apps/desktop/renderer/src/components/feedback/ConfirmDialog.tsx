@@ -26,7 +26,16 @@ export function ConfirmDialog({ open, title, description, confirmLabel, busy = f
     if (open) {
       setClosing(false);
       openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      cancelRef.current?.focus();
+      // Presence mounts its children after this effect. Wait for its first paint so
+      // keyboard users land on a real dialog control, not the former opener.
+      let secondFrame: number | undefined;
+      const firstFrame = requestAnimationFrame(() => {
+        secondFrame = requestAnimationFrame(() => cancelRef.current?.focus());
+      });
+      return () => {
+        cancelAnimationFrame(firstFrame);
+        if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
+      };
     } else if (openerRef.current) {
       setClosing(true);
     }

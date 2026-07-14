@@ -70,3 +70,11 @@
 ## Remaining physical verification
 
 - The S5 report does not replace manual verification on separate physical computers, including cross-platform networking, display/DPI/Dock changes, sleep/wake, firewall/proxy conditions, packaged builds, and long-running visits. The generated checklist in the S5 artifact tracks those checks.
+
+## Final UI closure verification (2026-07-15)
+
+- Full closure gate passed: `env PATH=/Users/wongjuenan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH OUR_COMPANION_UI_QA_SCREENSHOTS_REVIEWED=1 npm run qa:ui`.
+- Passing report: `artifacts/ui-qa/2026-07-14T16-54-34-218Z/qa-report.json`. It records passing typecheck, architecture, full unit suite, build, serial Electron UI suite, accessibility, Panel/Creation motion checks, all Quick Actions scenarios, dialog/toast/speech exit checks, and zero axe critical/serious violations. It has no remaining issues.
+- Electron verification restored the prior pending dialog, toast, and startup-speech lifecycle checks. The configured live-AI Creation test remains skipped because no credentials are supplied.
+- Reviewed current Quick Actions boundary captures at center and bottom-right. The five-position Electron assertion also measured every bubble within bounds with no pairwise overlap. The reviewed final run records `screenshotsReviewed: true`.
+- Follow-up fixes made during final verification: the confirm dialog waits for Presence mount before focusing Cancel; sidebar Space activation now occurs before page-transition focus changes; and the Panel-then-Talk scenario closes its separate native Panel window before interacting with the underlying Companion window.
