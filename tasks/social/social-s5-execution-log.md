@@ -10,3 +10,14 @@
 - Verification: focused S5 tests (28 assertions), full Client suite (59 files / 436 tests) using the bundled Node runtime with `node:sqlite`, production build, architecture check, and `git diff --check` pass.
 - The full workspace typecheck remains blocked by pre-existing project-reference declaration/export errors after generated artifacts are cleaned; the desktop production build succeeds.
 - Remaining manual verification: two-client S5 smoke test, host/owner restart recovery, and display-change clamp behavior.
+
+## Automated two-device smoke harness (in progress)
+
+- Previous Client baseline: `c1ab4fef3433f5f17699566124f5836440e7502e`.
+- Previous Network baseline: `f77403d816146919216b9498a90a44facbece592`.
+- Framework: Playwright Electron launches isolated visitor-owner and host profiles using `OUR_COMPANION_USER_DATA_DIR`.
+- Client harness SHA: `74b79ee3b7c256c7a84700be6a65f5444610a1d7`.
+- Network cleanup SHA: `6a5eeaa9b4bb4da744b164d1cb8b4419bb98fcea`.
+- Test-only IPC is enabled only by `OUR_COMPANION_SMOKE_TEST=1`; it returns sanitized state and provides narrow reconnect, reconciliation, work-area, renderer-failure, and fixture controls.
+- The full run requires a dedicated Network database and R2 configuration. It is not recorded as passed until that live logical two-device run completes and writes its sanitized artifact report.
+- Local verification: Client full suite (61 files / 441 tests), Playwright harness discovery, Client production build, architecture check, Network full suite (81 tests), Network build, and Network HTTP E2E (3 tests) pass.
