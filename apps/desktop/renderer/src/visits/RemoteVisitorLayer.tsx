@@ -20,8 +20,8 @@ export function RemoteVisitorLayer({ visitor }: { visitor?: VisualVisitRenderMod
   const [bounds, setBounds] = useState(() => viewport());
   const [position, setPosition] = useState<VisitorPosition>(() => initialVisitorPosition(viewport()));
   const movementIndex = useRef(0);
-  const targetRef = useRef<VisitorPosition | undefined>();
-  const failedRuntimeId = useRef<string | undefined>();
+  const targetRef = useRef<VisitorPosition | undefined>(undefined);
+  const failedRuntimeId = useRef<string | undefined>(undefined);
   const sawNoVisitor = useRef(true);
 
   useEffect(() => {

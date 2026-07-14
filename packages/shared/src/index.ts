@@ -1590,6 +1590,7 @@ export interface OurCompanionApi {
   memory: {
     createNode(input: CreateMemoryNodeInput): Promise<MemoryRecord>;
     updateNode(input: UpdateMemoryNodeInput): Promise<MemoryRecord>;
+    getNode(id: string): Promise<MemoryNode | undefined>;
     deleteNode(id: string): Promise<{ id: string; deleted: true }>;
     createEdge(input: CreateMemoryEdgeInput): Promise<MemoryEdge>;
     getGraph(input?: { query?: string }): Promise<KnowledgeGraph>;

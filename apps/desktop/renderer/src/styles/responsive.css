@@ -1,0 +1,54 @@
+@media (max-width: 900px) {
+  .panel-shell { grid-template-columns: 76px minmax(0, 1fr); }
+  .sidebar .brand-mark small { display: none; }
+  .sidebar nav button { min-height: 44px; font-size: 0; }
+  .sidebar nav button::before { content: attr(data-short-label); font-size: 18px; }
+}
+
+@media (max-width: 760px) {
+  .panel-shell { display: flex; flex-direction: column; min-width: 0; }
+  .sidebar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); }
+  .sidebar nav { display: flex; overflow-x: auto; gap: var(--space-1); }
+  .sidebar nav button { min-width: 48px; }
+  .sidebar-footer { margin-left: auto; }
+  .workspace { min-width: 0; overflow-x: hidden; }
+}
+
+@media (max-width: 900px) {
+  .home-notebook-grid,
+  .memory-layout,
+  .journey-card {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace {
+    padding: 12px;
+  }
+
+  .notebook-page {
+    min-height: calc(100vh - 24px);
+    padding: 18px;
+  }
+
+  .notebook-page::before {
+    display: none;
+  }
+
+  .notebook-header {
+    flex-direction: column;
+  }
+
+  .wide-card {
+    grid-column: auto;
+  }
+
+  .debug-ai-log,
+  .debug-audio-panel,
+  .debug-reset-panel {
+    grid-column: span 1;
+  }
+
+  .debug-reset-item {
+    grid-template-columns: 1fr;
+  }
+}

@@ -96,6 +96,7 @@ const api: OurCompanionApi = {
   },
   memory: {
     createNode: (input: CreateMemoryNodeInput) => invoke('memory:createNode', input),
+    getNode: (id: string) => invoke('memory:getNode', id),
     updateNode: (input: UpdateMemoryNodeInput) => invoke('memory:updateNode', input),
     deleteNode: (id: string) => invoke('memory:deleteNode', id),
     createEdge: (input: CreateMemoryEdgeInput) => invoke('memory:createEdge', input),

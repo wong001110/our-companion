@@ -4,6 +4,8 @@ import { createCompanionAnimations, type AnimationName, type CompanionAnimationC
 import { SpriteAnimator } from '../character/SpriteAnimator';
 import type { CompanionAnimationName } from '../companion/runtime/animationRegistry';
 import { resolveAnimationFallback, resolveCompanionAnimation } from '../character/animationSelection';
+import { t, type Lang } from '../i18n';
+import { useLang } from './NotebookPrimitives';
 
 export type { AnimationName };
 
@@ -26,6 +28,7 @@ interface CompanionCanvasProps {
   isListening?: boolean;
   userIsTyping?: boolean;
   onPointerHitChange?: (isHit: boolean) => void;
+  onActivate?: () => void;
   onOpenPanel?: () => void;
   onToggleListen?: () => void;
   onDragStart?: (point: CompanionDragPoint) => void;
@@ -51,6 +54,7 @@ export function CompanionCanvas({
   isListening = false,
   userIsTyping = false,
   onPointerHitChange,
+  onActivate,
   onOpenPanel,
   onToggleListen,
   onDragStart,
@@ -58,6 +62,7 @@ export function CompanionCanvas({
   onDragEnd,
   onAnimationComplete
 }: CompanionCanvasProps) {
+  const lang = useLang();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const isPointerHitRef = useRef(false);
@@ -237,6 +242,7 @@ export function CompanionCanvas({
       suppressClickRef.current = false;
       return;
     }
+    if (isPointerHitRef.current) onActivate?.();
   }
 
   function handleDoubleClick() {
@@ -293,15 +299,15 @@ export function CompanionCanvas({
       onPointerLeave={handlePointerLeave}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
-      aria-label="Companion"
+      aria-label={t(lang, 'aria_companion')}
     >
-      {isListening && <div className="companion-listening-indicator" aria-label="Listening" />}
+      {isListening && <div className="companion-listening-indicator" aria-label={t(lang, 'aria_listening')} />}
       {!assetFailed && (
         <figure
           className={`canvas-companion canvas-companion-${animation.name} ${usesDirectionalAsset ? 'canvas-companion-directional' : `canvas-companion-facing-${facing}`} ${compact ? 'canvas-companion-compact' : ''}`}
         >
           <canvas ref={canvasRef} />
-          <figcaption>{intentLabel(intent)}</figcaption>
+          <figcaption>{intentLabel(intent, lang)}</figcaption>
         </figure>
       )}
     </div>
@@ -316,16 +322,16 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function intentLabel(intent: string): string {
-  const labels: Record<string, string> = {
-    waiting: 'quietly here',
-    wandering: 'wandering',
-    sharing_discovery: 'found something',
-    helping_task: 'on task',
-    asking_permission: 'listening',
-    reviewing_memory: 'notebook',
-    reflecting_journey: 'reflecting',
-    organizing_backpack: 'packing notes'
+function intentLabel(intent: string, lang: Lang): string {
+  const labels: Record<string, import('../i18n').TranslationKey> = {
+    waiting: 'companion_intent_waiting',
+    wandering: 'companion_intent_wandering',
+    sharing_discovery: 'companion_intent_sharing_discovery',
+    helping_task: 'companion_intent_helping_task',
+    asking_permission: 'companion_intent_asking_permission',
+    reviewing_memory: 'companion_intent_reviewing_memory',
+    reflecting_journey: 'companion_intent_reflecting_journey',
+    organizing_backpack: 'companion_intent_organizing_backpack'
   };
-  return labels[intent] ?? intent;
+  return t(lang, labels[intent] ?? 'companion_intent_waiting');
 }
