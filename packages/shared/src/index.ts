@@ -1476,6 +1476,29 @@ export interface VisitSessionSummary {
   createdAt: string;
   updatedAt: string;
 }
+export type VisualVisitState = 'entering' | 'idle' | 'walking' | 'leaving';
+export type VisualVisitFacing = 'left' | 'right' | 'up' | 'down' | 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right';
+/** Sanitized, renderer-safe description of one remote visual-only Visit participant. */
+export interface VisualVisitRenderModel {
+  runtimeId: string;
+  sessionId: string;
+  networkCompanionId: string;
+  assetPackId: string;
+  name: string;
+  role: 'remote_visitor';
+  state: VisualVisitState;
+  animationName: string;
+  x: number;
+  y: number;
+  facing: VisualVisitFacing;
+  assetUrls: Record<string, string>;
+  frameTiming: Record<string, { frameDurationMs: number; loop: boolean }>;
+}
+export interface VisualVisitRendererState {
+  ownerPresenceMode: 'home' | 'away_visiting';
+  visitor?: VisualVisitRenderModel;
+  error?: 'VISUAL_VISIT_ASSET_UNAVAILABLE' | 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE';
+}
 export interface SocialState {
   scope?: { serverUrl: string; accountId: string };
   friends: FriendSummary[];
@@ -1690,6 +1713,10 @@ export interface OurCompanionApi {
         prepare(sessionId: string): Promise<VisitSessionSummary>;
         start(sessionId: string): Promise<VisitSessionSummary>;
         end(sessionId: string): Promise<VisitSessionSummary>;
+      };
+      visual: {
+        getState(): Promise<VisualVisitRendererState>;
+        onChanged(listener: (state: VisualVisitRendererState) => void): () => void;
       };
     };
   };

@@ -8,6 +8,7 @@ import { DiscoveryScheduler } from './discoveryScheduler';
 import { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 import { ElectronIpcBroadcaster } from './adapters/electronIpcBroadcaster';
 import { handleCompanionProtocolRequest } from './platform/companionProtocol';
+import { handleNetworkAssetProtocolRequest } from './platform/networkAssetProtocol';
 import { OnboardingCompletionCoordinator } from './platform/onboardingCompletion';
 import { createOnboardingCompanionWindowAdapter, invalidateFailedCompanionWindow } from './platform/onboardingCompanionWindow';
 
@@ -17,6 +18,11 @@ function registerCompanionProtocol(): void {
       userDataDir: app.getPath('userData'),
       companionExists: (id) => Boolean(services.db.getCompanion(id)),
     });
+  });
+  protocol.handle('companion-network', (request) => {
+    return handleNetworkAssetProtocolRequest(request.url, (assetPackId, relativePath) =>
+      services.publicCompanions.readVerifiedCachedAsset(assetPackId, relativePath),
+    );
   });
 }
 
@@ -393,6 +399,7 @@ function registerIpc(): void {
     'network:visits:sessions:prepare': (sessionId: string) => services.visits.prepare(sessionId),
     'network:visits:sessions:start': (sessionId: string) => services.visits.start(sessionId),
     'network:visits:sessions:end': (sessionId: string) => services.visits.end(sessionId),
+    'network:visits:visual:getState': () => services.visualVisits.getState(),
     'companionNew:create': services.companionNew.create,
     'companionNew:analyzePersonality': services.companionNew.analyzePersonality,
     'companionNew:list': services.companionNew.list,
@@ -710,7 +717,7 @@ app.whenReady().then(async () => {
     }
 
     services = new AppServices();
-    services.attachNetworkStatusBroadcaster((status) => {
+  services.attachNetworkStatusBroadcaster((status) => {
       for (const win of [companionWindow, panelWindow]) {
         if (win && !win.isDestroyed()) win.webContents.send('network:statusChanged', status);
       }
@@ -748,6 +755,10 @@ app.whenReady().then(async () => {
         createCreationWindow();
       }
     }
+  });
+  services.attachVisualVisitBroadcaster((state) => {
+    companionWindow?.webContents.send('network:visits:visualChanged', state);
+    panelWindow?.webContents.send('network:visits:visualChanged', state);
   });
 });
 

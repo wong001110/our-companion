@@ -17,7 +17,7 @@ import { collectWorkspaceStatus, type WorkspaceStatusSnapshot } from './workspac
 import { generateCuriosityTargets } from '@our-companion/curiosity-engine';
 import { assessCuriosity } from '@our-companion/curiosity-engine';
 import { DatabaseService } from '@our-companion/database';
-import type { CommandAckStatus, CompanionDecision, CompanionCommand, CompanionCommandAck } from '@our-companion/shared';
+import type { CommandAckStatus, CompanionDecision, CompanionCommand, CompanionCommandAck, VisualVisitRendererState } from '@our-companion/shared';
 import { generateDailyDiary } from '@our-companion/diary-engine';
 import {
   createFallbackConnector,
@@ -109,6 +109,7 @@ import {
 import { NetworkConnectionService, type NetworkStatus } from './networkConnection';
 import { PublicCompanionService } from './network/publicCompanionService';
 import { VisitService } from './network/visitService';
+import { VisualVisitService } from './network/visualVisitService';
 
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
@@ -172,7 +173,10 @@ export class AppServices {
   readonly network: NetworkConnectionService;
   readonly publicCompanions: PublicCompanionService;
   readonly visits: VisitService;
+  readonly visualVisits: VisualVisitService;
   private networkStatusBroadcaster?: (status: NetworkStatus) => void;
+  private visualVisitBroadcaster?: (state: VisualVisitRendererState) => void;
+  private localCompanionAway = false;
 
   constructor(
     dbPath = path.join(app.getPath('userData'), 'our-companion.db'),
@@ -232,20 +236,30 @@ export class AppServices {
       }
     );
     let visits: VisitService | undefined;
+    let visualVisits: VisualVisitService | undefined;
     let wasOnline = false;
     let lastVisitRevision: number | undefined;
     this.network = new NetworkConnectionService(this.db, (status) => {
       const visitInvalidated = status.socialInvalidation?.type === 'visit_session' && status.socialRevision !== lastVisitRevision;
       if (visitInvalidated) lastVisitRevision = status.socialRevision;
-      if (status.state === 'reconnecting') visits?.stopAll();
-      if (status.state === 'online' && (!wasOnline || visitInvalidated)) void visits?.reconcile();
+      if (status.state === 'reconnecting') { visits?.stopAll(); visualVisits?.pauseForReconnect(); }
+      if (status.state === 'online' && (!wasOnline || visitInvalidated)) {
+        void visits?.reconcile();
+        void visualVisits?.reconcile();
+      }
       wasOnline = status.state === 'online';
       this.networkStatusBroadcaster?.(status);
     });
     this.publicCompanions = new PublicCompanionService(this.db, this.network, userDataDir);
     this.visits = new VisitService(this.network, this.publicCompanions);
     visits = this.visits;
-    this.network.setTransferLifecycleHandler(() => { this.publicCompanions.cancelTransfers(); this.visits.stopAll(); });
+    this.visualVisits = new VisualVisitService(this.network, this.visits, this.publicCompanions, (state) => {
+      this.localCompanionAway = state.ownerPresenceMode === 'away_visiting';
+      this.companionRuntime.setVisualPresenceMode(state.ownerPresenceMode);
+      this.visualVisitBroadcaster?.(state);
+    });
+    visualVisits = this.visualVisits;
+    this.network.setTransferLifecycleHandler(() => { this.publicCompanions.cancelTransfers(); this.visits.stopAll(); this.visualVisits.stopAll('network_lifecycle_ended'); });
     this.companionRuntime.setExplicitMode(
       this.db.getAppSetting<'available' | 'focused' | 'do_not_disturb'>('attention_mode') ?? 'available'
     );
@@ -953,6 +967,7 @@ export class AppServices {
 
   companion = {
     turn: async (input: CompanionTurnInput) => {
+      if (this.localCompanionAway) throw new Error('COMPANION_AWAY_VISITING');
       const characterId = this.db.resolveActiveCompanionId(input.characterId);
       const source = input.source === 'voice' ? 'voice' : 'companion_text';
       const sessionId = this.companionRuntime.getActiveSessionId() ?? undefined;
@@ -1034,6 +1049,7 @@ export class AppServices {
 
   /** Keeps one authoritative command record; the renderer is never sent a predictable busy conflict. */
   private tryActivateCommand(command: CompanionCommand): boolean {
+    if (this.localCompanionAway) return false;
     if (this.activeCommand && !this.activeCommand.terminal) {
       this.emitFoundationEvent('CompanionCommandDeferred', 'companion', {
         commandId: command.id,
@@ -1135,6 +1151,10 @@ export class AppServices {
 
   attachNetworkStatusBroadcaster(broadcaster: (status: NetworkStatus) => void): void {
     this.networkStatusBroadcaster = broadcaster;
+  }
+
+  attachVisualVisitBroadcaster(broadcaster: (state: VisualVisitRendererState) => void): void {
+    this.visualVisitBroadcaster = broadcaster;
   }
 
   private tryPresentPendingDiscovery(command: CompanionCommand): void {
@@ -1527,6 +1547,7 @@ export class AppServices {
   }
 
   canAnnounceDiscovery(): boolean {
+    if (this.localCompanionAway) return false;
     this.companionRuntime.reevaluatePendingActions();
 
     if (this.companionSessionPhase !== 'idle' && this.companionSessionPhase !== 'inactive') return false;
@@ -1543,7 +1564,7 @@ export class AppServices {
   }
 
   shouldInterruptShare(): boolean {
-    return (this.companionSessionPhase !== 'idle' && this.companionSessionPhase !== 'inactive') || this.companionDragging;
+    return this.localCompanionAway || (this.companionSessionPhase !== 'idle' && this.companionSessionPhase !== 'inactive') || this.companionDragging;
   }
 
   countAutonomousCyclesToday(): number {

@@ -42,6 +42,7 @@ export class CompanionRuntime {
   private explicitMode?: 'available' | 'focused' | 'do_not_disturb';
   private lastCompanionId: string | null = null;
   private pendingReevaluationScheduled = false;
+  private visualPresenceMode: 'home' | 'away_visiting' = 'home';
 
   private readonly conversation: ConversationCoordinator;
   private readonly decisions: DecisionCoordinator;
@@ -90,6 +91,17 @@ export class CompanionRuntime {
     }
   }
 
+  /** Local-only presentation state; never persisted or synchronized remotely. */
+  setVisualPresenceMode(mode: 'home' | 'away_visiting'): void {
+    if (this.visualPresenceMode === mode) return;
+    this.visualPresenceMode = mode;
+    if (mode === 'away_visiting') {
+      this.stopLifeScheduler();
+      return;
+    }
+    this.startLifeScheduler();
+  }
+
   private scheduleLifeTick(delayMs: number): void {
     if (this.lifeTimer !== undefined) clearTimeout(this.lifeTimer);
     this.lifeTimer = setTimeout(() => {
@@ -100,6 +112,7 @@ export class CompanionRuntime {
   }
 
   private tickLife(): void {
+    if (this.visualPresenceMode === 'away_visiting') return;
     const companionId = this.resolveCompanionId();
     const state = this.db.getCharacterState(companionId);
     if (state.coreState !== 'idle' || state.intent !== 'waiting') return;

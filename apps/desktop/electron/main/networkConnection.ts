@@ -4,8 +4,8 @@ import { io, type Socket } from 'socket.io-client';
 import type { DatabaseService } from '@our-companion/database';
 import type { BlockedUserSummary, CompanionAssetManifestV1, CompleteAssetPackResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile, VisitInvitationStatus, VisitInvitationSummary, VisitRuntimeConfig, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
 
-export const NETWORK_PROTOCOL_VERSION = '0.3';
-export const NETWORK_CLIENT_VERSION = '0.3.0';
+export const NETWORK_PROTOCOL_VERSION = '0.4';
+export const NETWORK_CLIENT_VERSION = '0.4.0';
 export type NetworkConnectionState = 'offline' | 'checking_server' | 'authentication_required' | 'connecting' | 'online' | 'reconnecting' | 'incompatible_client' | 'server_unavailable' | 'authentication_failed' | 'disabled';
 export interface NetworkAccount { id: string; email: string; username: string; friendCode: string; }
 export type SocialInvalidation =

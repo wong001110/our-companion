@@ -295,6 +295,15 @@ const api: OurCompanionApi = {
         list: (input) => invoke('network:visits:invitations:list', input), send: (hostUserId) => invoke('network:visits:invitations:send', hostUserId), accept: (invitationId) => invoke('network:visits:invitations:accept', invitationId), decline: (invitationId) => invoke('network:visits:invitations:decline', invitationId), cancel: (invitationId) => invoke('network:visits:invitations:cancel', invitationId),
       },
       sessions: { list: () => invoke('network:visits:sessions:list'), get: (sessionId) => invoke('network:visits:sessions:get', sessionId), prepare: (sessionId) => invoke('network:visits:sessions:prepare', sessionId), start: (sessionId) => invoke('network:visits:sessions:start', sessionId), end: (sessionId) => invoke('network:visits:sessions:end', sessionId) },
+      visual: {
+        getState: () => invoke('network:visits:visual:getState'),
+        onChanged: (listener) => {
+          const channel = 'network:visits:visualChanged';
+          const handler = (_event: Electron.IpcRendererEvent, state: import('@our-companion/shared').VisualVisitRendererState) => listener(state);
+          ipcRenderer.on(channel, handler);
+          return () => ipcRenderer.removeListener(channel, handler);
+        },
+      },
     },
   },
   app: {

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { DatabaseService } from '@our-companion/database';
-import type { AssetUploadProgress, BuiltAssetPack, CachedAssetPack, NetworkAssetPack, PublicCompanionProfile } from '@our-companion/shared';
+import type { AssetUploadProgress, BuiltAssetPack, CachedAssetPack, CompanionAssetManifestV1, NetworkAssetPack, PublicCompanionProfile } from '@our-companion/shared';
 import type { NetworkConnectionService } from '../networkConnection';
 import { buildAssetManifest, canonicalJson } from './assetManifestBuilder';
 
@@ -95,9 +95,35 @@ export class PublicCompanionService {
     return this.downloadPackFromSource(input, () => this.network.getVisitSessionManifest(input.sessionId), (fileIds) => this.network.getVisitSessionDownloadUrls(input.sessionId, fileIds), { authorizationFirst: true, sessionId: input.sessionId });
   }
 
+  /** Returns only the verified immutable manifest used to construct a remote visual runtime. */
+  async getVerifiedVisitVisualManifest(input: { sessionId: string; assetPackId: string; networkCompanionId: string }): Promise<CompanionAssetManifestV1> {
+    await this.downloadVisitPack(input);
+    return this.readVerifiedCachedManifest(input.assetPackId);
+  }
+
   async hasNetworkCompanionMapping(networkCompanionId: string): Promise<boolean> {
     const scope = await this.scope();
     return Boolean(this.db.getNetworkCompanionLinkByNetworkId(scope.serverOrigin, scope.networkAccountId, networkCompanionId));
+  }
+
+  async getLocalCompanionId(networkCompanionId: string): Promise<string | undefined> {
+    const scope = await this.scope();
+    return this.db.getNetworkCompanionLinkByNetworkId(scope.serverOrigin, scope.networkAccountId, networkCompanionId)?.localCompanionId;
+  }
+
+  /** Used exclusively by the safe `companion-network:` protocol handler. Never returns a path. */
+  readVerifiedCachedAsset(assetPackId: string, relativePath: string): { bytes: Buffer; mimeType: string } {
+    const status = this.network.getStatusSnapshot();
+    if (!status.account || !status.onlineModeEnabled) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    const cache = this.db.getCachedNetworkAssetPackWithRoot(status.serverUrl, assetPackId);
+    if (!cache?.verified || !this.verifyCache(cache.cacheRoot, cache.manifestHash)) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    const manifest = this.readManifest(cache.cacheRoot);
+    const declared = manifest.files.find((file) => file.relativePath === relativePath);
+    if (!declared || !declared.mimeType.startsWith('image/')) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    const source = safeDestination(cache.cacheRoot, relativePath);
+    const stat = fs.lstatSync(source);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    return { bytes: fs.readFileSync(source), mimeType: declared.mimeType };
   }
 
   private async downloadPackFromSource(
@@ -165,6 +191,16 @@ export class PublicCompanionService {
   private async uploadWithRetry(record: { uploadUrl: string; requiredHeaders: Record<string, string> }, body: Buffer, signal: AbortSignal, reSign: () => Promise<{ uploadUrl: string; requiredHeaders: Record<string, string> }>) { let current = record; let resigns = 0; const bytes = body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer; for (let attempt = 0; attempt < 3; attempt++) { const response = await fetch(current.uploadUrl, { method: 'PUT', headers: current.requiredHeaders, body: bytes, signal }); if (response.ok) return; if ((response.status === 401 || response.status === 403) && resigns++ < 2) { current = await reSign(); continue; } if (response.status >= 400 && response.status < 500) throw new Error('ASSET_INTEGRITY_FAILED'); await waitForRetry(250 * 2 ** attempt, signal); } throw new Error('ASSET_INTEGRITY_FAILED'); }
   private async downloadWithRetry(record: { downloadUrl: string }, signal: AbortSignal, reSign: () => Promise<{ downloadUrl: string }>): Promise<Buffer> { let current = record; let resigns = 0; for (let attempt = 0; attempt < 3; attempt++) { const response = await fetch(current.downloadUrl, { signal }); if (response.ok) return Buffer.from(await response.arrayBuffer()); if ((response.status === 401 || response.status === 403) && resigns++ < 2) { current = await reSign(); continue; } if (response.status >= 400 && response.status < 500) throw new Error('ASSET_INTEGRITY_FAILED'); await waitForRetry(250 * 2 ** attempt, signal); } throw new Error('ASSET_INTEGRITY_FAILED'); }
   private async withConcurrency<T>(items: T[], concurrency: number, task: (item: T) => Promise<void>) { let cursor = 0; await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => { while (cursor < items.length) { const index = cursor++; await task(items[index]); } })); }
+  private readVerifiedCachedManifest(assetPackId: string): CompanionAssetManifestV1 {
+    const status = this.network.getStatusSnapshot();
+    if (!status.account || !status.onlineModeEnabled) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    const cache = this.db.getCachedNetworkAssetPackWithRoot(status.serverUrl, assetPackId);
+    if (!cache?.verified || !this.verifyCache(cache.cacheRoot, cache.manifestHash)) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    return this.readManifest(cache.cacheRoot);
+  }
+  private readManifest(root: string): CompanionAssetManifestV1 {
+    return JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8')) as CompanionAssetManifestV1;
+  }
   private verifyCache(root: string, expectedManifestHash: string) { try { const manifestPath = path.join(root, 'manifest.json'); const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); if (createHash('sha256').update(canonicalJson(manifest), 'utf8').digest('hex') !== expectedManifestHash) return false; for (const file of manifest.files) { const source = safeDestination(root, file.relativePath); const bytes = fs.readFileSync(source); if (bytes.byteLength !== file.sizeBytes || createHash('sha256').update(bytes).digest('hex') !== file.sha256) return false; } return true; } catch { return false; } }
 }
 

@@ -74,6 +74,7 @@ import { CompanionSelectionPage } from '../companion/selection/CompanionSelectio
 import { getCreationCompletionAction, switchToSelectedCompanion } from '../companion/creation/creationCompletionFlow';
 import { isCompanionAnimationName, resolveWalkDirection } from '../character/animationSelection';
 import { startPerformancePlayback, type ActivePerformancePlayback } from '../character/performancePlayback';
+import { RemoteVisitorLayer, useVisualVisitState } from '../visits/RemoteVisitorLayer';
 
 type LocalExecutionPhase = 'waiting_to_start' | 'started' | 'completed' | 'cancelled' | 'failed';
 
@@ -168,6 +169,18 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const [engineSnapshot, setEngineSnapshot] = useState<EngineSnapshot>();
 
   const speech = useSpeech();
+  const visualVisit = useVisualVisitState();
+  const localCompanionAway = visualVisit.ownerPresenceMode === 'away_visiting';
+  const [ownerVisualPhase, setOwnerVisualPhase] = useState<'home' | 'leaving' | 'hidden' | 'entering'>('home');
+  const localCompanionVisible = !localCompanionAway || ownerVisualPhase !== 'hidden';
+
+  useEffect(() => {
+    if (localCompanionAway) {
+      setOwnerVisualPhase((current) => current === 'hidden' || current === 'leaving' ? current : 'leaving');
+      return;
+    }
+    setOwnerVisualPhase((current) => current === 'home' || current === 'entering' ? current : 'entering');
+  }, [localCompanionAway]);
 
   useEffect(() => {
     setPerformanceAnimation('Enter');
@@ -501,13 +514,20 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   }
 
   const handleAnimationComplete = useCallback((name: AnimationName) => {
+    if (name === 'Leave' && localCompanionAway) {
+      setOwnerVisualPhase('hidden');
+      return;
+    }
+    if (name === 'Enter' && !localCompanionAway && ownerVisualPhase === 'entering') {
+      setOwnerVisualPhase('home');
+    }
     if (name === 'Leave' && exitRequestedRef.current) {
       exitRequestedRef.current = false;
       void window.ourCompanion.app.quit();
       return;
     }
     if (name === performanceAnimation) setPerformanceAnimation(undefined);
-  }, [performanceAnimation]);
+  }, [performanceAnimation, localCompanionAway, ownerVisualPhase]);
 
   function handleCompanionHoverEnter() {
     isHoveringCompanionRef.current = true;
@@ -818,6 +838,8 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           )}
         </>
       )}
+      <RemoteVisitorLayer visitor={visualVisit.visitor} />
+      {localCompanionVisible && <>
       <div
         style={{
           position: 'absolute',
@@ -843,7 +865,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           companionId={companion.id}
           movementAnimation={movementAnimation}
           idleAnimation={idleAnimation}
-          animationOverride={performanceAnimation}
+          animationOverride={ownerVisualPhase === 'leaving' ? 'Leave' : ownerVisualPhase === 'entering' ? 'Enter' : performanceAnimation}
           onPointerHitChange={handlePointerHitChange}
           onOpenPanel={() => undefined}
           onToggleListen={toggleListening}
@@ -993,6 +1015,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           />
         </form>
       )}
+      </>}
     </main>
   );
 }
