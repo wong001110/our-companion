@@ -4,6 +4,7 @@
 - Previous UI foundation implementation: `bb117e6fad8f881da04583933f42a5e5748a60d9`.
 - UI closure commit: `75994e70b8339bd768f5df9ce1b19a7fd3a54535` (local Client branch; no merged-main or GitHub CI claim).
 - Follow-up localized-settings status fix: `89e863d8faaca9ca477dee7de50df2b3489619b2`.
+- Overlay exit lifecycle completion: `17e99ea` (speech retention, dialog focus restoration, and More-menu exit).
 - Network repository: unchanged for this UI-focused task.
 - Closure patch is local until committed; no GitHub CI claim is made here.
 
@@ -32,6 +33,7 @@
 - `npm run qa:ui` writes a machine-readable report under `artifacts/ui-qa/<run-id>/qa-report.json` and does not skip failed commands.
 - Local closure verification: Typecheck and architecture checks pass; the full unit suite passes under bundled Node 24 (68 files / 463 tests). The serial Electron suite was exercised in its configured one-worker mode by its independent spec groups: all non-live UI scenarios passed, including axe (zero critical/serious), keyboard navigation, Panel, Settings, localization, Social, Creation, Discoveries, Journeys, Memories, responsive layout, and expanded Quick Actions. The configured live-AI Creation check was skipped because credentials were unavailable.
 - Screenshots reviewed in this closure work: `quick-actions/more-menu.png`, `quick-actions/talk-active.png`, and `reduced-motion/quick-actions.png`. They show the menu within bounds, an accessible Talk/composer arrangement, and no visible reduced-motion spatial burst.
+- Focused Quick Actions Electron verification was rerun after the overlay-exit patch: hover/pin/Escape, independent More Escape/focus restoration, reduced-motion behavior, and Settings/Talk all passed. The Settings flow now asserts that the More menu is in its `exiting` state before the Quick Actions group closes.
 
 - `npm run typecheck`
 - Full Client suite under bundled Node 24: 68 files / 463 tests passed. The default system Node lacks `node:sqlite`, so its direct `npm test` cannot load database suites.
@@ -43,6 +45,11 @@
 - A real configured DeepSeek analysis run reached the shared sprite-asset upload stage and produced the reviewed capture at `artifacts/ui-qa/ui-foundation-20260714/en/creation-assets-live-ai.png`. No API value was written to Client configuration, source, logs, or artifacts.
 - A managed S5 run used an isolated PostgreSQL database derived from the Network local configuration and the existing configured R2/Cloudflare storage. It passed every automated check and cleanup in `artifacts/s5-two-device/1784037422633-3037390cb469/report.json`. The corresponding active Social capture is `artifacts/s5-two-device/1784037422633-3037390cb469/host/social-active-visit.png`.
 - `git diff --check`
+
+## Latest focused verification
+
+- `npm run typecheck` and `npm run build` passed after `17e99ea`.
+- Electron needs desktop process services and therefore cannot launch from the filesystem sandbox. The focused Quick Actions spec was rerun with desktop access: all four checks passed, including the new More-menu exit-state assertion.
 
 ## Dedicated smoke environment details
 
