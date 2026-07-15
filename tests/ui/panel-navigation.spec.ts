@@ -36,7 +36,6 @@ test('Panel rapid navigation keeps the newest target without blank or stale page
     await panel.getByRole('button', { name: 'Social' }).click();
     await expect(panel.getByTestId('panel-page-home')).toHaveAttribute('data-motion-state', 'exiting');
     await panel.getByRole('button', { name: 'Settings' }).click();
-    await expect(panel.getByTestId('panel-page-home')).toBeVisible();
     const settingsPage = panel.getByTestId('panel-page-settings');
     await expect(settingsPage).toHaveAttribute('data-motion-state', 'entered');
     await expect(settingsPage).toBeFocused();

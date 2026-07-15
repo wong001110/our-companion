@@ -80,6 +80,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .quick-action-bubble, .quick-action-more-menu { animation: quick-action-fade var(--motion-fast, 140ms) both ease; transition: opacity var(--motion-fast, 140ms) ease; }
+  .quick-action-more-menu[data-motion-state='entering'] { animation-name: quick-action-fade; transform: none; }
   .quick-action-more-menu[data-motion-state='exiting'] { transform: none; }
   .quick-action-bubble:hover, .quick-action-bubble:focus-visible, .quick-action-bubble.is-active { transform: none; }
 }
