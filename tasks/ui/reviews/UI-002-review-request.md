@@ -115,3 +115,11 @@ None.
 ## Reviewer Questions
 
 None.
+
+## Reviewer Verdict
+
+PASS — ChatGPT reviewer, 2026-07-15.
+
+Reviewed main commit: `da53ae042798f3171a2cc8db28a3f1f9feb6f2c1`.
+
+The reviewer confirmed that `PaperCard` tape is explicitly opt-in, the CSS selector no longer decorates every paper card, Settings and Published Companion operational cards are untaped, Social and narrative treatments are preserved, and the focused tests and five runtime captures satisfy the task. No blocking or required repair findings were reported.
