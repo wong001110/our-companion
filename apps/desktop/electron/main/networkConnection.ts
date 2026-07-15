@@ -3,7 +3,7 @@ import { safeStorage } from 'electron';
 import { io, type Socket } from 'socket.io-client';
 import type { DatabaseService } from '@our-companion/database';
 import { assertSmokeTestRuntime, hashSmokeDeviceId, isSmokeTestRuntime } from './platform/smokeRuntime';
-import type { BlockedUserSummary, CompanionAssetManifestV1, CompleteAssetPackResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile, VisitInvitationStatus, VisitInvitationSummary, VisitRuntimeConfig, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
+import type { BlockedUserSummary, CompanionAssetManifestV1, CompleteAssetPackResult, FriendLookupRelationship, FriendLookupResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile, VisitInvitationStatus, VisitInvitationSummary, VisitRuntimeConfig, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
 
 export const NETWORK_PROTOCOL_VERSION = '0.4';
 export const NETWORK_CLIENT_VERSION = '0.4.0';
@@ -67,6 +67,7 @@ export class NetworkConnectionService {
   private socialRevision = 0;
   private lastPresenceActivityAt = 0;
   private transferLifecycleHandler?: (reason: string) => void;
+  private smokeFriendLookupFixture?: FriendLookupResult;
 
   constructor(
     private readonly db: DatabaseService,
@@ -90,6 +91,18 @@ export class NetworkConnectionService {
     this.socket?.disconnect();
     this.scheduleReconnect(new Error('smoke_socket_disconnect'));
   };
+
+  setFriendLookupFixtureForSmoke(input: unknown): void {
+    assertSmokeTestRuntime();
+    this.smokeFriendLookupFixture = parseFriendLookupResult(input);
+    this.setStatus({
+      state: 'online',
+      onlineModeEnabled: true,
+      account: { id: 'smoke-account', email: 'smoke@example.invalid', username: 'Smoke User', friendCode: 'SMOKE001' },
+      features: { visitInvitations: false, visitSessions: false },
+      message: undefined,
+    });
+  }
 
   configureServer = async (serverUrl: string): Promise<NetworkStatus> => {
     const normalized = normalizeServerUrl(serverUrl);
@@ -187,26 +200,26 @@ export class NetworkConnectionService {
     return this.enableOnlineMode();
   };
 
-  lookupFriend = (friendCode: string) => this.socialRequest<{ id: string; username: string; friendCode: string; relationship: string }>(`/api/friends/lookup/${encodeURIComponent(friendCode)}`);
-  getFriends = async (): Promise<FriendSummary[]> => (await this.socialRequest<Array<{ id: string; username: string; friendCode: string; hasPublishedCompanion: boolean }>>('/api/friends')).map((friend) => ({ userId: friend.id, username: friend.username, friendCode: friend.friendCode, presence: 'offline', hasPublishedCompanion: friend.hasPublishedCompanion }));
-  getIncomingRequests = async (): Promise<FriendRequestSummary[]> => (await this.socialRequest<Array<any>>('/api/friends/requests/incoming')).map((request) => ({ id: request.id, direction: 'incoming', userId: request.sender.id, username: request.sender.username, friendCode: request.sender.friendCode, status: 'pending', createdAt: request.createdAt }));
-  getOutgoingRequests = async (): Promise<FriendRequestSummary[]> => (await this.socialRequest<Array<any>>('/api/friends/requests/outgoing')).map((request) => ({ id: request.id, direction: 'outgoing', userId: request.receiver.id, username: request.receiver.username, friendCode: request.receiver.friendCode, status: 'pending', createdAt: request.createdAt }));
+  lookupFriend = async (friendCode: string): Promise<FriendLookupResult> => this.smokeFriendLookupFixture ?? parseFriendLookupResult(await this.socialRequest<unknown>(`/api/friends/lookup/${encodeURIComponent(friendCode)}`));
+  getFriends = async (): Promise<FriendSummary[]> => this.smokeFriendLookupFixture ? [] : (await this.socialRequest<Array<{ id: string; username: string; friendCode: string; hasPublishedCompanion: boolean }>>('/api/friends')).map((friend) => ({ userId: friend.id, username: friend.username, friendCode: friend.friendCode, presence: 'offline', hasPublishedCompanion: friend.hasPublishedCompanion }));
+  getIncomingRequests = async (): Promise<FriendRequestSummary[]> => this.smokeFriendLookupFixture ? [] : (await this.socialRequest<Array<any>>('/api/friends/requests/incoming')).map((request) => ({ id: request.id, direction: 'incoming', userId: request.sender.id, username: request.sender.username, friendCode: request.sender.friendCode, status: 'pending', createdAt: request.createdAt }));
+  getOutgoingRequests = async (): Promise<FriendRequestSummary[]> => this.smokeFriendLookupFixture ? [] : (await this.socialRequest<Array<any>>('/api/friends/requests/outgoing')).map((request) => ({ id: request.id, direction: 'outgoing', userId: request.receiver.id, username: request.receiver.username, friendCode: request.receiver.friendCode, status: 'pending', createdAt: request.createdAt }));
   sendFriendRequest = (userId: string) => this.socialRequest('/api/friends/requests', { receiverId: userId });
   acceptFriendRequest = (requestId: string) => this.socialRequest(`/api/friends/requests/${requestId}/accept`, {});
   rejectFriendRequest = (requestId: string) => this.socialRequest(`/api/friends/requests/${requestId}/reject`, {});
   cancelFriendRequest = (requestId: string) => this.socialRequest(`/api/friends/requests/${requestId}/cancel`, {});
   removeFriend = (userId: string) => this.socialRequest(`/api/friends/${userId}`, undefined, 'DELETE');
-  getBlocks = () => this.socialRequest<BlockedUserSummary[]>('/api/blocks');
+  getBlocks = () => this.smokeFriendLookupFixture ? Promise.resolve<BlockedUserSummary[]>([]) : this.socialRequest<BlockedUserSummary[]>('/api/blocks');
   blockUser = (userId: string) => this.socialRequest('/api/blocks', { userId });
   unblockUser = (userId: string) => this.socialRequest(`/api/blocks/${userId}`, undefined, 'DELETE');
-  getFriendPresence = () => this.socialRequest<Array<{ userId: string; status: FriendPresence; updatedAt?: string | null }>>('/api/presence/friends');
+  getFriendPresence = () => this.smokeFriendLookupFixture ? Promise.resolve<Array<{ userId: string; status: FriendPresence; updatedAt?: string | null }>>([]) : this.socialRequest<Array<{ userId: string; status: FriendPresence; updatedAt?: string | null }>>('/api/presence/friends');
   sendPresenceActivity = async (): Promise<void> => {
     const now = Date.now();
     if (!this.enabled || this.status.state !== 'online' || now - this.lastPresenceActivityAt < 10_000) return;
     this.lastPresenceActivityAt = now;
     this.socket?.emit?.('presence.activity');
   };
-  getMyCompanions = () => this.socialRequest<{ activeNetworkCompanionId?: string; companions: Array<PublicCompanionProfile & { assetPacks: NetworkAssetPack[] }> }>('/api/companions/mine');
+  getMyCompanions = () => this.smokeFriendLookupFixture ? Promise.resolve<{ activeNetworkCompanionId?: string; companions: Array<PublicCompanionProfile & { assetPacks: NetworkAssetPack[] }> }>({ companions: [] }) : this.socialRequest<{ activeNetworkCompanionId?: string; companions: Array<PublicCompanionProfile & { assetPacks: NetworkAssetPack[] }> }>('/api/companions/mine');
   createNetworkCompanion = (input: { name: string; publicDescription?: string; publicTags?: string[] }) => this.socialRequest<{ networkCompanionId: string; companion: PublicCompanionProfile }>('/api/companions', input);
   updateNetworkCompanion = (companionId: string, input: { name: string; publicDescription?: string; publicTags?: string[] }) => this.socialRequest<PublicCompanionProfile>(`/api/companions/${companionId}`, input, 'PATCH');
   activateNetworkCompanion = (companionId: string) => this.socialRequest<{ activeNetworkCompanionId: string; changed: boolean }>(`/api/companions/${companionId}/activate`, {});
@@ -432,6 +445,26 @@ export class NetworkConnectionService {
   private clearSession(): void { this.session = undefined; this.db.setAppSetting(SESSION_KEY, ''); this.setStatus({ account: undefined }); }
   private setStatus(update: Partial<NetworkStatus>): void { this.status = { ...this.status, ...update, serverUrl: this.serverUrl }; this.notify({ ...this.status }); }
   private statusFor(error: unknown, fallback: NetworkConnectionState): NetworkConnectionState { const code = messageFor(error); return isIncompatible(code) ? 'incompatible_client' : code === 'AUTHENTICATION_FAILED' ? 'authentication_failed' : fallback; }
+}
+
+const FRIEND_LOOKUP_RELATIONSHIPS = new Set<FriendLookupRelationship>(['none', 'friend', 'incoming_request', 'outgoing_request']);
+
+export function parseFriendLookupResult(input: unknown): FriendLookupResult {
+  if (!input || typeof input !== 'object') throw new Error('SOCIAL_DATA_OUT_OF_SYNC');
+  const value = input as Record<string, unknown>;
+  if (
+    typeof value.id !== 'string'
+    || typeof value.username !== 'string'
+    || typeof value.friendCode !== 'string'
+    || typeof value.relationship !== 'string'
+    || !FRIEND_LOOKUP_RELATIONSHIPS.has(value.relationship as FriendLookupRelationship)
+  ) throw new Error('SOCIAL_DATA_OUT_OF_SYNC');
+  return {
+    id: value.id,
+    username: value.username,
+    friendCode: value.friendCode,
+    relationship: value.relationship as FriendLookupRelationship,
+  };
 }
 
 export function normalizeServerUrl(value: string): string {

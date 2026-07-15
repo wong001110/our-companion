@@ -682,6 +682,7 @@ function registerSmokeIpc(): void {
     const companion = services.createSmokeFixtureCompanion();
     scheduleOnboardingCompletion(companion);
   });
+  ipcMain.handle('smoke:setFriendLookupFixture', (_event, input: unknown) => services.network.setFriendLookupFixtureForSmoke(input));
 }
 
 function getSenderWindow(event: IpcMainInvokeEvent): BrowserWindow {

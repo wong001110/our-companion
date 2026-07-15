@@ -46,8 +46,8 @@ export class UiElectronFixture {
     return this.waitForWindow('mode=creation');
   }
 
-  async screenshot(page: Page, name: string): Promise<string> {
-    const output = path.join(this.artifactDir, name);
+  async screenshot(page: Page, name: string, artifactDir = this.artifactDir): Promise<string> {
+    const output = path.join(artifactDir, name);
     const candidates: Buffer[] = [];
     for (let attempt = 0; attempt < 3; attempt += 1) {
       candidates.push(await page.screenshot({ fullPage: true, animations: 'disabled' }));

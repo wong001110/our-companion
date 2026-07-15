@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({ safeStorage: { isEncryptionAvailable: () => true, encryptString: (value: string) => Buffer.from(value), decryptString: (value: Buffer) => value.toString() } }));
 
-import { NetworkConnectionService, normalizeServerUrl, sanitizeVisitRuntimeConfig } from './networkConnection';
+import { NetworkConnectionService, normalizeServerUrl, parseFriendLookupResult, sanitizeVisitRuntimeConfig } from './networkConnection';
 import { VisitService } from './network/visitService';
 
 class TestDb {
@@ -16,6 +16,14 @@ function response(data: unknown, ok = true, code = 'NETWORK_ERROR') {
 }
 
 describe('NetworkConnectionService', () => {
+  it.each(['none', 'friend', 'incoming_request', 'outgoing_request'] as const)('accepts the authoritative friend lookup relationship %s', (relationship) => {
+    expect(parseFriendLookupResult({ id: 'friend-1', username: 'ann', friendCode: 'ANN12345', relationship })).toEqual({ id: 'friend-1', username: 'ann', friendCode: 'ANN12345', relationship });
+  });
+
+  it.each(['friends', 'blocked', 'unexpected'])('rejects renderer-unsafe friend lookup relationship %s', (relationship) => {
+    expect(() => parseFriendLookupResult({ id: 'friend-1', username: 'ann', friendCode: 'ANN12345', relationship })).toThrow('SOCIAL_DATA_OUT_OF_SYNC');
+  });
+
   it('does not perform network activity while Online Mode is disabled', async () => {
     const fetch = vi.fn();
     const createSocket = vi.fn();

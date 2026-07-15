@@ -1428,6 +1428,8 @@ export type SocialInvalidation =
   | { type: 'visit_session'; sessionId: string; state?: VisitSessionState };
 
 export type FriendPresence = 'online' | 'idle' | 'offline';
+export type FriendLookupRelationship = 'none' | 'friend' | 'incoming_request' | 'outgoing_request';
+export interface FriendLookupResult { id: string; username: string; friendCode: string; relationship: FriendLookupRelationship; }
 export interface FriendSummary { userId: string; username: string; friendCode: string; presence: FriendPresence; hasPublishedCompanion: boolean; }
 export interface FriendRequestSummary { id: string; direction: 'incoming' | 'outgoing'; userId: string; username: string; friendCode: string; status: 'pending'; createdAt: string; }
 export interface BlockedUserSummary { userId: string; username: string; blockedAt: string; }
@@ -1698,7 +1700,7 @@ export interface OurCompanionApi {
     retryConnection(): Promise<NetworkStatus>;
     onStatusChanged(listener: (status: NetworkStatus) => void): () => void;
     friends: {
-      lookup(friendCode: string): Promise<{ id: string; username: string; friendCode: string; relationship: string }>;
+      lookup(friendCode: string): Promise<FriendLookupResult>;
       getAll(): Promise<FriendSummary[]>;
       getIncomingRequests(): Promise<FriendRequestSummary[]>;
       getOutgoingRequests(): Promise<FriendRequestSummary[]>;
@@ -1792,6 +1794,7 @@ export interface OurCompanionApi {
     reportVisualRuntime(input: SmokeVisualRuntimeUpdate): Promise<void>;
     simulateRendererFailure(): Promise<void>;
     bootstrapFixtureCompanion(): Promise<void>;
+    setFriendLookupFixture(input: FriendLookupResult): Promise<void>;
     onVisualWorkAreaChanged(listener: (workArea?: { x: number; y: number; width: number; height: number }) => void): () => void;
   };
 }

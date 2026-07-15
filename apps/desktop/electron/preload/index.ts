@@ -22,6 +22,7 @@ import type {
   DiscoverySource,
   EngineSnapshotInput,
   FoundationEventLogInput,
+  FriendLookupResult,
   LoginUserInput,
   NetworkStatus,
   OnlineMode,
@@ -274,7 +275,7 @@ const api: OurCompanionApi = {
       return () => ipcRenderer.removeListener(channel, handler);
     },
     friends: {
-      lookup: (friendCode) => invoke('network:friends:lookup', friendCode),
+      lookup: (friendCode) => invoke<FriendLookupResult>('network:friends:lookup', friendCode),
       getAll: () => invoke('network:friends:getAll'),
       getIncomingRequests: () => invoke('network:friends:getIncomingRequests'),
       getOutgoingRequests: () => invoke('network:friends:getOutgoingRequests'),
@@ -356,6 +357,7 @@ if (process.env.OUR_COMPANION_SMOKE_TEST === '1') {
     reportVisualRuntime: (input) => invoke('smoke:reportVisualRuntime', input),
     simulateRendererFailure: () => invoke('smoke:simulateRendererFailure'),
     bootstrapFixtureCompanion: () => invoke('smoke:bootstrapFixtureCompanion'),
+    setFriendLookupFixture: (input) => invoke('smoke:setFriendLookupFixture', input),
     onVisualWorkAreaChanged: (listener) => {
       const channel = 'smoke:visualWorkAreaChanged';
       const handler = (_event: Electron.IpcRendererEvent, workArea: { x: number; y: number; width: number; height: number } | undefined) => listener(workArea);

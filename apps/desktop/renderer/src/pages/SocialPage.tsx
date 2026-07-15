@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { NetworkStatus, VisitSessionSummary } from '@our-companion/shared';
+import type { FriendLookupResult, NetworkStatus, VisitSessionSummary } from '@our-companion/shared';
 import { PaperCard } from '../ui/NotebookPrimitives';
 import { useVisualVisitState } from '../visits/RemoteVisitorLayer';
 import { PublishedCompanionSection } from '../features/social/PublishedCompanionSection';
@@ -8,6 +8,7 @@ import { EmptyState } from '../components/feedback/EmptyState';
 import { t, type Lang } from '../i18n';
 import { useLang } from '../ui/NotebookPrimitives';
 import { useSocialViewModel } from '../features/social/useSocialViewModel';
+import { canSendFriendRequest, friendLookupRelationshipMessage } from '../features/social/friendLookup';
 
 export function SocialPage() {
   const lang = useLang();
@@ -15,7 +16,7 @@ export function SocialPage() {
   const { status, available, visitsAvailable, friends, incoming, outgoing, blocked, error, setError, loading, busyAction, setBusyAction, friendCompanion, setFriendCompanion, friendAssetStatus, setFriendAssetStatus, visitIncoming, visitOutgoing, visitSessions, canSendVisit, refresh } = useSocialViewModel(lang);
   const [friendCode, setFriendCode] = useState('');
   const [copiedFriendCode, setCopiedFriendCode] = useState(false);
-  const [lookup, setLookup] = useState<{ id: string; username: string; friendCode: string; relationship: string }>();
+  const [lookup, setLookup] = useState<FriendLookupResult>();
   const [pendingDestructiveAction, setPendingDestructiveAction] = useState<{ title: string; description: string; confirmLabel: string; operation: () => Promise<unknown> }>();
 
   if (!available || !status?.account) return <div data-testid="social-panel" className="social-page"><PaperCard title={t(lang, 'social_title')} tape className="settings-panel social-unavailable"><EmptyState title={t(lang, 'social_unavailable')}>{socialAvailabilityMessage(status, lang)}</EmptyState></PaperCard></div>;
@@ -44,8 +45,8 @@ export function SocialPage() {
     </section>
     <CurrentVisitSection lang={lang} liveVisit={liveVisit} latestTerminalVisit={latestTerminalVisit} userId={userId} currentUserReadyForVisit={currentUserReadyForVisit} visualVisit={visualVisit} busyAction={busyAction} action={action} />
     <section aria-labelledby="published-companion-heading"><h3 id="published-companion-heading">{t(lang, 'social_published_companion')}</h3><PublishedCompanionSection /></section>
-    <div className="online-auth-form"><label><span>{t(lang, 'social_add_friend_by_code')}</span><input value={friendCode} onChange={(event) => setFriendCode(event.target.value.toUpperCase())} placeholder="ABC12345" /></label><button className="btn-secondary btn-sm" onClick={() => void action(async () => { const result = await window.ourCompanion.network.friends.lookup(friendCode.trim()); setLookup(result); }, { clearLookup: false })} disabled={!friendCode.trim() || busyAction}>{t(lang, 'social_find')}</button></div>
-    {lookup && <div className="online-user-info"><p><strong>{lookup.username}</strong> · {lookup.friendCode}</p>{lookup.relationship === 'none' && <button className="btn-primary btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.sendRequest(lookup.id))}>{t(lang, 'social_send_request')}</button>}<p>{relationshipMessage(lookup.relationship, lang)}</p></div>}
+    <div className="online-auth-form"><label><span>{t(lang, 'social_add_friend_by_code')}</span><input value={friendCode} onChange={(event) => setFriendCode(event.target.value.toUpperCase())} placeholder="ABC12345" /></label><button className="btn-secondary btn-sm" onClick={() => { setLookup(undefined); setError(''); void action(async () => { const result = await window.ourCompanion.network.friends.lookup(friendCode.trim()); setLookup(result); }, { clearLookup: false }); }} disabled={!friendCode.trim() || busyAction}>{t(lang, 'social_find')}</button></div>
+    {lookup && <div data-testid="friend-lookup-result" className="online-user-info"><p><strong>{lookup.username}</strong> · {lookup.friendCode}</p>{canSendFriendRequest(lookup.relationship) && <button data-testid="send-friend-request" className="btn-primary btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.sendRequest(lookup.id))}>{t(lang, 'social_send_request')}</button>}<p data-testid="friend-lookup-relationship" aria-live="polite">{friendLookupRelationshipMessage(lookup.relationship, lang)}</p></div>}
     {error && <p className="creation-error" role="alert">{error}</p>}
     {loading && <p aria-live="polite">{t(lang, 'social_loading')}</p>}
     <h3>{t(lang, 'social_friends')}</h3>{friends.length ? friends.map((friend) => <div data-testid="friend-row" className="online-user-info" key={friend.userId}><strong>{friend.username}</strong><span> · {friend.friendCode} · {presenceMessage(friend.presence, lang)}</span><div className="action-row"><button className="btn-ghost btn-sm" disabled={busyAction || !friend.hasPublishedCompanion} title={friend.hasPublishedCompanion ? undefined : t(lang, 'social_friend_unpublished_hint')} onClick={() => void action(async () => { setFriendCompanion(await window.ourCompanion.network.companions.getFriendCompanion(friend.userId)); setFriendAssetStatus(''); })}>{friend.hasPublishedCompanion ? t(lang, 'social_view_companion') : t(lang, 'social_no_published_companion')}</button><button data-testid="send-visit-invitation" className="btn-secondary btn-sm" disabled={busyAction || !canSendVisit || Boolean(liveVisit) || visitOutgoing.some((invite) => invite.status === 'pending' && invite.hostUserId === friend.userId)} title={!canSendVisit ? t(lang, 'social_publish_before_visit_hint') : liveVisit ? t(lang, 'social_finish_visit_hint') : undefined} onClick={() => void action(() => window.ourCompanion.network.visits.invitations.send(friend.userId))}>{t(lang, 'social_send_visit')}</button><details className="friend-overflow"><summary aria-label={t(lang, 'social_more_actions', { username: friend.username })}>{t(lang, 'social_more')}</summary><div className="friend-overflow-menu"><button className="btn-ghost btn-sm" disabled={busyAction} onClick={() => setPendingDestructiveAction({ title: t(lang, 'social_remove_friend_title'), description: t(lang, 'social_remove_friend_desc', { username: friend.username }), confirmLabel: t(lang, 'social_remove_friend'), operation: () => window.ourCompanion.network.friends.remove(friend.userId) })}>{t(lang, 'social_remove_friend')}</button><button className="btn-danger btn-sm" disabled={busyAction} onClick={() => setPendingDestructiveAction({ title: t(lang, 'social_block_user_title'), description: t(lang, 'social_block_user_desc', { username: friend.username }), confirmLabel: t(lang, 'social_block_user'), operation: () => window.ourCompanion.network.blocks.block(friend.userId) })}>{t(lang, 'social_block_user')}</button></div></details></div></div>) : <p>{t(lang, 'social_no_friends')}</p>}
@@ -102,11 +103,6 @@ function presenceMessage(presence: string, lang: Lang): string {
   return t(lang, key);
 }
 
-function relationshipMessage(relationship: string, lang: Lang): string {
-  const key = ({ none: 'social_relationship_none', incoming_request: 'social_relationship_incoming_request', outgoing_request: 'social_relationship_outgoing_request', friends: 'social_relationship_friends', blocked: 'social_relationship_blocked' } as const)[relationship as 'none' | 'incoming_request' | 'outgoing_request' | 'friends' | 'blocked'] ?? 'social_relationship_none';
-  return t(lang, key);
-}
-
 function visitSessionMessage(session: VisitSessionSummary, userId: string, lang: Lang): string {
   if (session.state === 'preparing') {
     const mineReady = session.visitorOwnerUserId === userId ? session.visitorOwnerReady : session.hostReady;
@@ -127,6 +123,6 @@ function visualVisitMessage(visual: import('@our-companion/shared').VisualVisitR
 
 function messageForSocialError(cause: unknown, lang: Lang = 'en'): string {
   const code = cause instanceof Error ? cause.message : 'SOCIAL_ACTION_NOT_ALLOWED';
-  const key = ({ INVALID_FRIEND_CODE: 'social_error_invalid_code', FRIEND_REQUEST_ALREADY_EXISTS: 'social_error_request_exists', FRIENDSHIP_ALREADY_EXISTS: 'social_error_friendship_exists', CANNOT_FRIEND_SELF: 'social_error_self', SOCIAL_ACTION_NOT_ALLOWED: 'social_error_action_unavailable', COMPANION_NOT_AVAILABLE: 'social_error_companion_unavailable', ASSET_STORAGE_UNAVAILABLE: 'social_error_storage_unavailable', RATE_LIMITED: 'social_error_rate_limited' } as const)[code] ?? 'social_error_sync';
+  const key = ({ INVALID_FRIEND_CODE: 'social_error_invalid_code', FRIEND_REQUEST_ALREADY_EXISTS: 'social_error_request_exists', FRIENDSHIP_ALREADY_EXISTS: 'social_error_friendship_exists', CANNOT_FRIEND_SELF: 'social_error_self', SOCIAL_ACTION_NOT_ALLOWED: 'social_error_action_unavailable', SOCIAL_DATA_OUT_OF_SYNC: 'social_error_sync', COMPANION_NOT_AVAILABLE: 'social_error_companion_unavailable', ASSET_STORAGE_UNAVAILABLE: 'social_error_storage_unavailable', RATE_LIMITED: 'social_error_rate_limited' } as const)[code] ?? 'social_error_sync';
   return t(lang, key);
 }
