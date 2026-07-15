@@ -92,13 +92,24 @@ html.creation-mode #root {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  animation: creation-step-enter 180ms var(--ease-standard) both;
 }
-@keyframes creation-step-enter { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
-.creation-step-back { animation-name: creation-step-enter-back; }
-@keyframes creation-step-enter-back { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .creation-step { animation-name: creation-step-fade; } }
-@keyframes creation-step-fade { from { opacity: 0; } to { opacity: 1; } }
+.creation-step[data-motion-state='entering'] { opacity: 0; transform: translateX(8px); }
+.creation-step-back[data-motion-state='entering'] { transform: translateX(-8px); }
+.creation-step[data-motion-state='entered'] {
+  opacity: 1;
+  transform: none;
+  transition: opacity 180ms var(--ease-standard), transform 180ms var(--ease-standard);
+}
+.creation-step[data-motion-state='exiting'] {
+  opacity: 0;
+  transform: translateX(-8px);
+  transition: opacity 140ms var(--ease-exit), transform 140ms var(--ease-exit);
+  pointer-events: none;
+}
+.creation-step-back[data-motion-state='exiting'] { transform: translateX(8px); }
+@media (prefers-reduced-motion: reduce) {
+  .creation-step { transform: none !important; transition-property: opacity; }
+}
 
 .creation-label {
   font-size: 13px;

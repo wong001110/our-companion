@@ -12,7 +12,7 @@
   border: 1px solid rgba(248, 221, 238, 0.24);
   border-radius: var(--radius-pill, 999px);
   color: var(--color-text-on-dark, #f8edf5);
-  background: rgba(54, 39, 70, 0.92);
+  background: #362746;
   box-shadow: var(--shadow-floating, 0 8px 22px rgba(28, 16, 37, 0.36));
   backdrop-filter: blur(10px);
   cursor: pointer;
@@ -47,7 +47,7 @@
 .quick-action-bubble:hover,
 .quick-action-bubble:focus-visible,
 .quick-action-bubble.is-active {
-  background: rgba(111, 80, 146, 0.98);
+  background: #5a3f78;
   border-color: rgba(255, 238, 249, 0.58);
   box-shadow: 0 0 0 2px rgba(255, 225, 247, 0.6), var(--shadow-floating, 0 8px 22px rgba(28, 16, 37, 0.36));
   transform: scale(1.04);

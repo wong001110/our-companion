@@ -224,10 +224,23 @@
     radial-gradient(circle at 90% 16%, rgba(230, 170, 196, 0.14), transparent 28%);
 }
 
-.panel-page-transition { animation: panel-page-enter 180ms var(--ease-standard) both; outline: none; }
-@keyframes panel-page-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .panel-page-transition { animation: panel-page-fade var(--motion-fast) ease both; } .sidebar button.active { transform: none; } }
-@keyframes panel-page-fade { from { opacity: 0; } to { opacity: 1; } }
+.panel-page-transition { outline: none; }
+.panel-page-transition[data-motion-state='entering'] { opacity: 0; transform: translateY(4px); }
+.panel-page-transition[data-motion-state='entered'] {
+  opacity: 1;
+  transform: none;
+  transition: opacity 180ms var(--ease-standard), transform 180ms var(--ease-standard);
+}
+.panel-page-transition[data-motion-state='exiting'] {
+  opacity: 0;
+  transform: translateY(-3px);
+  transition: opacity 140ms var(--ease-exit), transform 140ms var(--ease-exit);
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel-page-transition { transform: none !important; transition-property: opacity; }
+  .sidebar button.active { transform: none; }
+}
 
 .notebook-page {
   position: relative;

@@ -44,6 +44,11 @@ export class QuickActionVisibilityMachine {
     this.setState(this.state.pinned ? { visible: false, pinned: false } : { visible: true, pinned: true });
   }
 
+  pin(): void {
+    this.clearTimers();
+    this.setState({ visible: true, pinned: true });
+  }
+
   close(): void {
     this.clearTimers();
     this.setState({ visible: false, pinned: false });

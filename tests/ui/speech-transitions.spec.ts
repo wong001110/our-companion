@@ -10,6 +10,7 @@ test('Startup speech bubble enters, exits, and unmounts after its exit duration'
     const bubble = main.locator('.speech-bubble');
     await expect(bubble).toBeVisible();
     await expect(bubble).toHaveAttribute('data-motion-state', 'entered');
+    await device.screenshot(main, 'feedback/speech-bubble.png');
     const text = (await bubble.textContent()) ?? '';
     const durationMs = Math.round(Array.from(text.replace('▍', '')).length * 45);
     await main.waitForTimeout(Math.max(0, durationMs - 70));

@@ -12,6 +12,7 @@ test('Panel navigation remains available at the supported widths', async () => {
       await expect(panel.locator('nav[aria-label="Primary navigation"]')).toBeVisible();
       await expect(panel.getByRole('button', { name: 'Settings' })).toBeVisible();
       await device.screenshot(panel, `responsive/panel-${width}.png`);
+      if (width === 760) await device.screenshot(panel, 'panel/narrow.png');
     }
   } finally { await device.close(); }
 });

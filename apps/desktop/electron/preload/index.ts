@@ -26,6 +26,7 @@ import type {
   NetworkStatus,
   OnlineMode,
   OurCompanionApi,
+  PanelTab,
   PerformanceScriptV2,
   RegisterUserInput,
   StartExplorationInput,
@@ -196,11 +197,11 @@ const api: OurCompanionApi = {
     }
   },
   window: {
-    openPanel: (input?: { companionX?: number; companionY?: number; initialTab?: 'home' | 'chat' | 'discovery' | 'journey' | 'memory' | 'social' | 'settings' }) => invoke('window:openPanel', input),
+    openPanel: (input?: { companionX?: number; companionY?: number; initialTab?: PanelTab }) => invoke('window:openPanel', input),
     openPanelForSwitch: () => invoke('window:openPanelForSwitch'),
     onPanelNavigate: (listener) => {
       const channel = 'panel:navigate';
-      const handler = (_event: Electron.IpcRendererEvent, tab: 'home' | 'chat' | 'discovery' | 'journey' | 'memory' | 'social' | 'settings') => listener(tab);
+      const handler = (_event: Electron.IpcRendererEvent, tab: unknown) => listener(tab);
       ipcRenderer.on(channel, handler);
       return () => ipcRenderer.removeListener(channel, handler);
     },

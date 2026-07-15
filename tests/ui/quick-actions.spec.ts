@@ -41,6 +41,33 @@ test('Quick Actions keep the hover group visible through its grace period', asyn
   } finally { await device.close(); }
 });
 
+test('Hover to Talk explicitly pins Quick Actions until the Composer closes', async () => {
+  const device = new UiElectronFixture();
+  try {
+    await device.launch();
+    const main = await device.mainWindow();
+    await main.locator('.companion-canvas').hover();
+    const actions = main.getByTestId('companion-quick-actions');
+    await expect(actions).toBeVisible();
+
+    const talk = main.getByTestId('quick-action-talk');
+    await talk.click();
+    const composer = main.locator('.companion-text-input');
+    await expect(composer).toBeVisible();
+    await expect(talk).toHaveAttribute('aria-pressed', 'true');
+    await composer.hover();
+    await main.waitForTimeout(550);
+    await expect(actions).toBeVisible();
+    await expect(talk).toHaveAttribute('aria-pressed', 'true');
+    await device.screenshot(main, 'quick-actions/talk-active.png');
+
+    await main.keyboard.press('Escape');
+    await expect(composer).toHaveAttribute('data-motion-state', 'exiting');
+    await expect(composer).toHaveCount(0, { timeout: 1_000 });
+    await expect(actions).toHaveCount(0);
+  } finally { await device.close(); }
+});
+
 test('Dragging the Companion closes pinned Quick Actions immediately', async () => {
   const device = new UiElectronFixture();
   try {
@@ -150,6 +177,7 @@ test('Listen stays visibly active when Quick Actions are reopened', async () => 
     await expect(main.getByTestId('companion-quick-actions')).toHaveCount(0);
     await companion.click();
     await expect(listen).toHaveAttribute('aria-pressed', 'true');
+    await device.screenshot(main, 'quick-actions/listen-active.png');
     await listen.click();
     await expect(main.getByTestId('companion-quick-actions')).toHaveCount(0);
     await companion.click();

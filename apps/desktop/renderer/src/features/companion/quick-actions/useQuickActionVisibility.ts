@@ -6,6 +6,7 @@ export interface QuickActionVisibility {
   pinned: boolean;
   enterGroup(): void;
   leaveGroup(): void;
+  pin(): void;
   togglePinned(): void;
   close(): void;
 }
@@ -25,9 +26,10 @@ export function useQuickActionVisibility({ showDelayMs = 220, hideGraceMs = 420 
 
   const enterGroup = useCallback(() => machine.current!.enterGroup(), []);
   const leaveGroup = useCallback(() => machine.current!.leaveGroup(), []);
+  const pin = useCallback(() => machine.current!.pin(), []);
   const togglePinned = useCallback(() => machine.current!.togglePinned(), []);
   const close = useCallback(() => machine.current!.close(), []);
 
   useEffect(() => () => machine.current?.destroy(), []);
-  return { visible, pinned, enterGroup, leaveGroup, togglePinned, close };
+  return { visible, pinned, enterGroup, leaveGroup, pin, togglePinned, close };
 }

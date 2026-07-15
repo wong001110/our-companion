@@ -388,10 +388,11 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const closeTextInput = useCallback(() => {
     setTextOpen(false);
     setTextInput('');
+    quickActions.close();
     interactive.leave('chat-input');
     interactive.leave('companion-hover');
     interactive.leave('quick-actions');
-  }, [interactive]);
+  }, [interactive, quickActions.close]);
 
   const handleTextSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -940,6 +941,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
         talkOpen={textOpen}
         extraInteractiveRects={floatingPositions.textInput ? [floatingPositions.textInput.rect] : []}
         onTextChat={() => {
+          quickActions.pin();
           openTextInput();
         }}
         onVoiceChat={() => {

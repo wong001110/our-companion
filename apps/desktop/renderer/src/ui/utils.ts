@@ -1,9 +1,9 @@
-import type { ActionResult, AiDebugEntry, CharacterRuntimeState, CompanionReplyLanguage, DebugDataResetTarget, Discovery, PermissionScope, ToolExecutionResult, ToolPreview, UiLang, UpdateAiSettingsInput, UpdateSpeechSettingsInput } from '@our-companion/shared';
+import type { ActionResult, AiDebugEntry, CharacterRuntimeState, CompanionReplyLanguage, DebugDataResetTarget, Discovery, PanelTab, PermissionScope, ToolExecutionResult, ToolPreview, UiLang, UpdateAiSettingsInput, UpdateSpeechSettingsInput } from '@our-companion/shared';
 import { t, type Lang } from '../i18n';
 import type { AnimationName } from './CompanionCanvas';
 import type { CompanionAnimationName } from '../companion/runtime/animationRegistry';
 
-export type Tab = 'home' | 'discovery' | 'journey' | 'memory' | 'chat' | 'social' | 'settings';
+export type Tab = PanelTab;
 export type DevAnimation = 'live' | AnimationName;
 
 export const devAnimations: DevAnimation[] = [

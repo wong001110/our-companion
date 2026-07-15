@@ -34,4 +34,15 @@ describe('QuickActionVisibilityMachine', () => {
     expect(states.at(-1)).toEqual({ visible: false, pinned: false });
     vi.useRealTimers();
   });
+
+  it('pins explicitly without toggling an already pinned group closed', () => {
+    const states: QuickActionVisibilityState[] = [];
+    const machine = new QuickActionVisibilityMachine((state) => states.push(state), { showDelayMs: 220, hideGraceMs: 420 });
+    machine.pin();
+    machine.pin();
+    expect(states).toEqual([
+      { visible: true, pinned: true },
+      { visible: true, pinned: true },
+    ]);
+  });
 });

@@ -157,6 +157,22 @@ export interface TimingFeedback {
   retryAfter?: string;
 }
 
+export const PANEL_TABS = [
+  'home',
+  'chat',
+  'discovery',
+  'journey',
+  'memory',
+  'social',
+  'settings',
+] as const;
+
+export type PanelTab = typeof PANEL_TABS[number];
+
+export function isPanelTab(value: unknown): value is PanelTab {
+  return typeof value === 'string' && PANEL_TABS.includes(value as PanelTab);
+}
+
 export interface InteractionFeedback {
   userId: string;
   companionId: string;
@@ -1736,9 +1752,9 @@ export interface OurCompanionApi {
     };
   };
   window: {
-    openPanel(input?: { companionX?: number; companionY?: number; initialTab?: 'home' | 'chat' | 'discovery' | 'journey' | 'memory' | 'social' | 'settings' }): Promise<boolean>;
+    openPanel(input?: { companionX?: number; companionY?: number; initialTab?: PanelTab }): Promise<boolean>;
     openPanelForSwitch(): Promise<boolean>;
-    onPanelNavigate(listener: (tab: 'home' | 'chat' | 'discovery' | 'journey' | 'memory' | 'social' | 'settings') => void): () => void;
+    onPanelNavigate(listener: (tab: unknown) => void): () => void;
     showCompanion(): Promise<void>;
     getBounds(): Promise<WindowBounds>;
     getWorkArea(): Promise<WindowBounds>;

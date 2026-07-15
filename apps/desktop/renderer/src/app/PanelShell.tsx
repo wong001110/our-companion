@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isPanelTab, type PanelTab } from '@our-companion/shared';
 import { t, type Lang } from '../i18n';
 import { LangContext } from '../ui/NotebookPrimitives';
 import { type Tab } from '../ui/utils';
@@ -18,30 +19,42 @@ export function PanelShell() {
 }
 
 function PanelDashboard() {
-  const [tab, setTab] = useState<Tab>('home');
+  const [selectedTab, setSelectedTab] = useState<PanelTab>('home');
+  const [displayedTab, setDisplayedTab] = useState<PanelTab>('home');
   const [lang, setLang] = useState<Lang>('en');
-  const [pageMotionState, setPageMotionState] = useState<'entering' | 'entered'>('entering');
+  const [pageMotionState, setPageMotionState] = useState<'entering' | 'entered' | 'exiting'>('entered');
   const workspaceRef = useRef<HTMLElement>(null);
   const pageHeadingRef = useRef<HTMLDivElement>(null);
   const onInitialLanguage = useCallback((nextLang: Lang) => setLang(nextLang), []);
   const { state, behaviorSettings, characters, primaryCompanion, discoveries, journeys, timeline, memoryGraph, diary, exploration, explorationEvents, exploring, onboardingRequired, loadError, refreshAll, sendCompanionExploring, submitExplorationFeedback } = usePanelDashboardViewModel(onInitialLanguage);
 
   const selectTab = useCallback((nextTab: Tab) => {
-    setTab(nextTab);
+    setSelectedTab(nextTab);
   }, []);
 
   useEffect(() => {
+    if (selectedTab === displayedTab) return;
+    setPageMotionState('exiting');
+    const exitTimer = window.setTimeout(() => {
+      setDisplayedTab(selectedTab);
+      setPageMotionState('entering');
+    }, 140);
+    return () => window.clearTimeout(exitTimer);
+  }, [displayedTab, selectedTab]);
+
+  useEffect(() => {
     workspaceRef.current?.scrollTo({ top: 0 });
-    setPageMotionState('entering');
     const enteredFrame = window.requestAnimationFrame(() => setPageMotionState('entered'));
     const focusFrame = window.requestAnimationFrame(() => window.requestAnimationFrame(() => pageHeadingRef.current?.focus()));
     return () => {
       window.cancelAnimationFrame(enteredFrame);
       window.cancelAnimationFrame(focusFrame);
     };
-  }, [tab]);
+  }, [displayedTab]);
 
-  useEffect(() => window.ourCompanion.window.onPanelNavigate(selectTab), [selectTab]);
+  useEffect(() => window.ourCompanion.window.onPanelNavigate((value) => {
+    if (isPanelTab(value)) selectTab(value);
+  }), [selectTab]);
 
   if (onboardingRequired !== false) {
     return (
@@ -60,11 +73,11 @@ function PanelDashboard() {
   return (
     <LangContext.Provider value={lang}>
       <main className="panel-shell">
-        <ResponsiveNavigation tab={tab} lang={lang} onSelect={selectTab} onExit={() => void window.ourCompanion.app.exitWithAnimation()} />
+        <ResponsiveNavigation tab={selectedTab} lang={lang} onSelect={selectTab} onExit={() => void window.ourCompanion.app.exitWithAnimation()} />
         <section ref={workspaceRef} className="workspace">
           {loadError && <InlineNotice action={<button onClick={() => void refreshAll()}>{t(lang, 'feedback_retry')}</button>}>{t(lang, 'panel_partial_load_error')}</InlineNotice>}
-          <div key={tab} ref={pageHeadingRef} className="panel-page-transition" data-motion-state={pageMotionState} tabIndex={-1} data-testid={`panel-page-${tab}`}>
-          {tab === 'home' && (
+          <div key={displayedTab} ref={pageHeadingRef} className="panel-page-transition" data-motion-state={pageMotionState} tabIndex={-1} data-testid={`panel-page-${displayedTab}`}>
+          {displayedTab === 'home' && (
             <HomePage
               state={state}
               character={characters[0]}
@@ -80,7 +93,7 @@ function PanelDashboard() {
               onRefresh={refreshAll}
             />
           )}
-          {tab === 'discovery' && (
+          {displayedTab === 'discovery' && (
             <DiscoveriesPage
               discoveries={discoveries}
               exploration={exploration}
@@ -90,11 +103,11 @@ function PanelDashboard() {
               onRefresh={refreshAll}
             />
           )}
-          {tab === 'journey' && <JourneysPage journeys={journeys} timeline={timeline} onRefresh={refreshAll} />}
-          {tab === 'memory' && <MemoriesPage graph={memoryGraph} onRefresh={refreshAll} />}
-          {tab === 'chat' && <ChatPage />}
-          {tab === 'social' && <SocialPage />}
-          {tab === 'settings' && <SettingsPage state={state} behaviorSettings={behaviorSettings} onRefresh={refreshAll} onLangChange={setLang} companionId={primaryCompanion?.id} assetRoot={primaryCompanion?.assetRoot} />}
+          {displayedTab === 'journey' && <JourneysPage journeys={journeys} timeline={timeline} onRefresh={refreshAll} />}
+          {displayedTab === 'memory' && <MemoriesPage graph={memoryGraph} onRefresh={refreshAll} />}
+          {displayedTab === 'chat' && <ChatPage />}
+          {displayedTab === 'social' && <SocialPage />}
+          {displayedTab === 'settings' && <SettingsPage state={state} behaviorSettings={behaviorSettings} onRefresh={refreshAll} onLangChange={setLang} companionId={primaryCompanion?.id} assetRoot={primaryCompanion?.assetRoot} />}
           </div>
         </section>
       </main>

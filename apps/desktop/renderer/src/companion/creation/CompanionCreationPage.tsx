@@ -24,9 +24,11 @@ const REQUIRED_ANIMATIONS = COMPANION_ANIMATION_MANIFEST
 
 export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreationPageProps) {
   const lang = useLang();
-  const [step, setStep] = useState<number>(1);
+  const [currentStep, setCurrentStep] = useState<number>(1);
+  const [displayedStep, setDisplayedStep] = useState<number>(1);
+  const [pendingStep, setPendingStep] = useState<number | null>(null);
   const [stepDirection, setStepDirection] = useState<'forward' | 'back'>('forward');
-  const [stepMotionState, setStepMotionState] = useState<'entering' | 'entered'>('entering');
+  const [stepMotionState, setStepMotionState] = useState<'entering' | 'entered' | 'exiting'>('entered');
   const stepRef = useRef<HTMLDivElement>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -39,21 +41,34 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
   const { stagedAssets, missingRequired, errors: assetErrors, stageFile, stageBulkFiles, removeStaged } = useSpriteAssetStaging({ animationManifest: REQUIRED_ANIMATIONS });
 
   const missingCount = missingRequired.length;
+  const transitionLocked = pendingStep !== null || stepMotionState !== 'entered';
 
   const moveToStep = (nextStep: number) => {
-    setStepDirection(nextStep < step ? 'back' : 'forward');
-    setStep(nextStep);
+    if (transitionLocked || nextStep === currentStep) return;
+    setStepDirection(nextStep < currentStep ? 'back' : 'forward');
+    setCurrentStep(nextStep);
+    setPendingStep(nextStep);
+    setStepMotionState('exiting');
   };
 
   useEffect(() => {
-    setStepMotionState('entering');
+    if (pendingStep === null) return;
+    const exitTimer = window.setTimeout(() => {
+      setDisplayedStep(pendingStep);
+      setPendingStep(null);
+      setStepMotionState('entering');
+    }, 140);
+    return () => window.clearTimeout(exitTimer);
+  }, [pendingStep]);
+
+  useEffect(() => {
     const enteredFrame = window.requestAnimationFrame(() => setStepMotionState('entered'));
     const focusFrame = window.requestAnimationFrame(() => window.requestAnimationFrame(() => stepRef.current?.querySelector<HTMLElement>('input, textarea, button, [tabindex]')?.focus()));
     return () => {
       window.cancelAnimationFrame(enteredFrame);
       window.cancelAnimationFrame(focusFrame);
     };
-  }, [step]);
+  }, [displayedStep]);
 
   async function handleBulkUpload() {
     const selected = await window.ourCompanion.dialog.openFiles();
@@ -100,8 +115,8 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
         <h1>{t(lang, 'creation_title')}</h1>
         <p className="creation-subtitle">{t(lang, 'creation_subtitle')}</p>
 
-        {step === 1 && (
-          <div key={step} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-motion-state={stepMotionState}>
+        {displayedStep === 1 && (
+          <div key={displayedStep} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-motion-state={stepMotionState} data-step="1">
             <label className="creation-label">{t(lang, 'creation_name_label')}</label>
             <input
               className="creation-input"
@@ -109,17 +124,17 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={t(lang, 'creation_name_placeholder')}
-              onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) moveToStep(2); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && name.trim() && !transitionLocked) moveToStep(2); }}
             />
             <div className="creation-actions">
-              {onCancel && <button className="btn-secondary" onClick={onCancel}>{t(lang, 'creation_cancel')}</button>}
-              <button className="btn-primary" data-testid="creation-next" disabled={!name.trim()} onClick={() => moveToStep(2)}>{t(lang, 'creation_next')}</button>
+              {onCancel && <button className="btn-secondary" disabled={transitionLocked} onClick={onCancel}>{t(lang, 'creation_cancel')}</button>}
+              <button className="btn-primary" data-testid="creation-next" disabled={!name.trim() || transitionLocked} onClick={() => moveToStep(2)}>{t(lang, 'creation_next')}</button>
             </div>
           </div>
         )}
 
-        {step === 2 && (
-          <div key={step} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-motion-state={stepMotionState}>
+        {displayedStep === 2 && (
+          <div key={displayedStep} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-motion-state={stepMotionState} data-step="2">
             <label className="creation-label">{t(lang, 'creation_description_label')}</label>
             <textarea
               className="creation-textarea"
@@ -130,8 +145,8 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
               rows={5}
             />
             <div className="creation-actions">
-              <button className="btn-secondary" onClick={() => moveToStep(1)}>{t(lang, 'creation_back')}</button>
-              <button className="btn-primary" data-testid="creation-analyze" disabled={!description.trim() || analyzing} onClick={() => void handleAnalyze()}>
+              <button className="btn-secondary" data-testid="creation-back" disabled={transitionLocked} onClick={() => moveToStep(1)}>{t(lang, 'creation_back')}</button>
+              <button className="btn-primary" data-testid="creation-analyze" disabled={!description.trim() || analyzing || transitionLocked} onClick={() => void handleAnalyze()}>
                 {analyzing ? t(lang, 'creation_analyzing') : t(lang, 'creation_analyze')}
               </button>
             </div>
@@ -139,8 +154,8 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
           </div>
         )}
 
-        {step === 3 && personality && (
-          <div key={step} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-testid="creation-assets" data-motion-state={stepMotionState}>
+        {displayedStep === 3 && personality && (
+          <div key={displayedStep} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-testid="creation-assets" data-motion-state={stepMotionState} data-step="3">
             <label className="creation-label">{t(lang, 'creation_personality_preview')}</label>
             <div className="personality-bars">
               {(Object.keys(PERSONALITY_LABEL_KEYS) as (keyof CompanionPersonality)[]).map((key) => (
@@ -154,15 +169,15 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
               ))}
             </div>
             <div className="creation-actions">
-              <button className="btn-secondary" onClick={() => moveToStep(2)}>{t(lang, 'creation_reanalyze')}</button>
-              <button className="btn-primary" onClick={() => { setError(null); moveToStep(4); }}>{t(lang, 'creation_next')}</button>
+              <button className="btn-secondary" disabled={transitionLocked} onClick={() => moveToStep(2)}>{t(lang, 'creation_reanalyze')}</button>
+              <button className="btn-primary" disabled={transitionLocked} onClick={() => { setError(null); moveToStep(4); }}>{t(lang, 'creation_next')}</button>
             </div>
             {error && <p className="creation-error">{error}</p>}
           </div>
         )}
 
-        {step === 4 && (
-          <div key={step} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-motion-state={stepMotionState}>
+        {displayedStep === 4 && (
+          <div key={displayedStep} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-motion-state={stepMotionState} data-step="4">
             <label className="creation-label">{t(lang, 'creation_upload_assets')}</label>
             <p className="creation-subtitle" style={{ margin: 0 }}>
               {missingCount > 0
@@ -183,8 +198,8 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
             </div>
 
             <div className="creation-actions">
-              <button className="btn-secondary" onClick={() => moveToStep(3)}>{t(lang, 'creation_back')}</button>
-              <button className="btn-primary" disabled={creating || missingCount > 0} onClick={() => void handleCreate()}>
+              <button className="btn-secondary" disabled={transitionLocked} onClick={() => moveToStep(3)}>{t(lang, 'creation_back')}</button>
+              <button className="btn-primary" disabled={creating || missingCount > 0 || transitionLocked} onClick={() => void handleCreate()}>
                 {creating ? t(lang, 'creation_creating') : t(lang, 'creation_create')}
               </button>
             </div>

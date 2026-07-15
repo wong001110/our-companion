@@ -27,12 +27,14 @@
 @media (prefers-reduced-motion: reduce) { .action-progress-value { transition: none; } }
 
 .toast-region { position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: 100; display: grid; gap: var(--space-2); max-width: min(360px, calc(100vw - var(--space-8))); }
-.toast { padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); color: var(--color-text-primary); background: var(--color-bg-elevated); box-shadow: var(--shadow-floating); transition: opacity var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-standard); }
+.toast { padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); color: var(--color-text-on-dark); background: var(--color-bg-elevated); box-shadow: var(--shadow-floating); transition: opacity var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-standard); }
 .toast[data-motion-state='entering'], .toast[data-motion-state='exiting'] { opacity: 0; transform: translateY(6px); }
 .toast-success { border-color: var(--color-success); }
 .toast-error { border-color: var(--color-danger); }
 .confirm-dialog-backdrop { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: var(--space-4); background: rgba(12, 9, 16, 0.64); transition: opacity var(--motion-fast) var(--ease-standard); }
-.confirm-dialog { width: min(420px, 100%); padding: var(--space-6); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); color: var(--color-text-primary); background: var(--color-bg-elevated); box-shadow: var(--shadow-floating); transition: opacity var(--motion-normal) var(--ease-standard), transform var(--motion-normal) var(--ease-standard); }
+.confirm-dialog { width: min(420px, 100%); padding: var(--space-6); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); color: var(--color-text-on-dark); background: var(--color-bg-elevated); box-shadow: var(--shadow-floating); transition: opacity var(--motion-normal) var(--ease-standard), transform var(--motion-normal) var(--ease-standard); }
+.confirm-dialog .btn-secondary { background: #604478; }
+.confirm-dialog .btn-secondary:hover { background: #513765; }
 .confirm-dialog-backdrop[data-motion-state='entering'], .confirm-dialog-backdrop[data-motion-state='exiting'] { opacity: 0; }
 .confirm-dialog-backdrop[data-motion-state='entering'] .confirm-dialog, .confirm-dialog-backdrop[data-motion-state='exiting'] .confirm-dialog { opacity: 0; transform: translateY(6px) scale(.97); }
 @media (prefers-reduced-motion: reduce) { .toast, .confirm-dialog-backdrop, .confirm-dialog { transition-property: opacity; } .toast[data-motion-state='entering'], .toast[data-motion-state='exiting'], .confirm-dialog-backdrop[data-motion-state='entering'] .confirm-dialog, .confirm-dialog-backdrop[data-motion-state='exiting'] .confirm-dialog { transform: none; } }

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeImage, protocol, screen, session } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
+import { isPanelTab } from '@our-companion/shared';
 import { loadEnv } from './env';
 import { AppServices } from './services';
 import { DiscoveryScheduler } from './discoveryScheduler';
@@ -419,7 +420,17 @@ function registerIpc(): void {
     'network:visits:visual:getState': () => services.visualVisits.getState(),
     'network:visits:visual:reportRendererFailure': (sessionId: string) => services.visualVisits.reportRendererFailure(sessionId),
     'companionNew:create': services.companionNew.create,
-    'companionNew:analyzePersonality': services.companionNew.analyzePersonality,
+    'companionNew:analyzePersonality': isSmokeTestRuntime()
+      ? async (description: string) => ({
+          analysisId: 'personality_analysis_ui_fixture',
+          description,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          personality: {
+            energy: 58, curiosity: 82, sociability: 46, diligence: 72,
+            playfulness: 64, confidence: 55, calmness: 76, shyness: 32,
+          },
+        })
+      : services.companionNew.analyzePersonality,
     'companionNew:list': services.companionNew.list,
     'companionNew:get': services.companionNew.get,
     'companionNew:update': services.companionNew.update,
@@ -448,7 +459,16 @@ function registerIpc(): void {
     });
   }
 
-  ipcMain.handle('window:openPanel', (_event, input?: { companionX?: number; companionY?: number; initialTab?: string }) => {
+  ipcMain.handle('window:openPanel', (_event, input: unknown) => {
+    const panelInput = input && typeof input === 'object'
+      ? input as { companionX?: unknown; companionY?: unknown; initialTab?: unknown }
+      : undefined;
+    if (panelInput?.initialTab !== undefined && !isPanelTab(panelInput.initialTab)) {
+      throw new Error('PANEL_TAB_INVALID');
+    }
+    const initialTab = isPanelTab(panelInput?.initialTab) ? panelInput.initialTab : undefined;
+    const companionX = typeof panelInput?.companionX === 'number' ? panelInput.companionX : undefined;
+    const companionY = typeof panelInput?.companionY === 'number' ? panelInput.companionY : undefined;
     if (!services.hasActiveCompanion()) {
       createCreationWindow();
       return false;
@@ -460,14 +480,14 @@ function registerIpc(): void {
     const activePanel = panelWindow;
     if (!activePanel) return false;
 
-    if (input?.companionX !== undefined && input?.companionY !== undefined && companionWindow && !companionWindow.isDestroyed()) {
+    if (companionX !== undefined && companionY !== undefined && companionWindow && !companionWindow.isDestroyed()) {
       const compBounds = companionWindow.getBounds();
       const display = screen.getDisplayMatching(compBounds);
       const workArea = display.workArea;
       const panelWidth = Math.min(activePanel.getBounds().width || 1180, workArea.width * 0.65);
       const panelHeight = Math.min(activePanel.getBounds().height || 760, workArea.height * 0.85);
 
-      const companionScreenX = compBounds.x + input.companionX;
+      const companionScreenX = compBounds.x + companionX;
       const spaceRight = workArea.x + workArea.width - companionScreenX - 220 - 16;
 
       let x: number;
@@ -478,16 +498,16 @@ function registerIpc(): void {
       }
       x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - panelWidth));
 
-      const y = Math.max(workArea.y, Math.min(compBounds.y + input.companionY - 40, workArea.y + workArea.height - panelHeight));
+      const y = Math.max(workArea.y, Math.min(compBounds.y + companionY - 40, workArea.y + workArea.height - panelHeight));
 
       activePanel.setBounds({ x: Math.round(x), y: Math.round(y), width: Math.round(panelWidth), height: Math.round(panelHeight) });
     }
 
     activePanel.show();
     activePanel.focus();
-    if (input?.initialTab) {
-      if (created) activePanel.webContents.once('did-finish-load', () => activePanel.webContents.send('panel:navigate', input.initialTab));
-      else activePanel.webContents.send('panel:navigate', input.initialTab);
+    if (initialTab) {
+      if (created) activePanel.webContents.once('did-finish-load', () => activePanel.webContents.send('panel:navigate', initialTab));
+      else activePanel.webContents.send('panel:navigate', initialTab);
     }
     return true;
   });
