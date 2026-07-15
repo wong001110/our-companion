@@ -48,7 +48,14 @@ export class UiElectronFixture {
 
   async screenshot(page: Page, name: string): Promise<string> {
     const output = path.join(this.artifactDir, name);
-    await page.screenshot({ path: output, fullPage: true });
+    const candidates: Buffer[] = [];
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      candidates.push(await page.screenshot({ fullPage: true, animations: 'disabled' }));
+      if (attempt < 2) await page.waitForTimeout(80);
+    }
+    const best = candidates.reduce((largest, candidate) => candidate.byteLength > largest.byteLength ? candidate : largest);
+    await fs.mkdir(path.dirname(output), { recursive: true });
+    await fs.writeFile(output, best);
     return output;
   }
 
