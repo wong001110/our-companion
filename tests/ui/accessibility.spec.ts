@@ -35,11 +35,13 @@ test('All required application surfaces have no critical or serious axe violatio
 
     await panel.getByRole('button', { name: 'Social' }).click();
     await expect(panel.getByTestId('panel-page-social')).toHaveAttribute('data-motion-state', 'entered');
+    await panel.waitForTimeout(250);
     surfaces.panelSocial = await scan(panel, '.panel-shell');
     await device.screenshot(panel, 'accessibility/panel-social.png');
 
     await panel.getByRole('button', { name: 'Settings' }).click();
     await expect(panel.getByTestId('panel-page-settings')).toHaveAttribute('data-motion-state', 'entered');
+    await panel.waitForTimeout(250);
     surfaces.panelSettings = await scan(panel, '.panel-shell');
     await device.screenshot(panel, 'accessibility/panel-settings.png');
 
