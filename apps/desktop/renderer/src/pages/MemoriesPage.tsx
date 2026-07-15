@@ -23,7 +23,7 @@ export function MemoriesPage({ graph, onRefresh }: { graph: KnowledgeGraph; onRe
         </PaperCard>
         <div className="memory-list">
           {graph.nodes.map((node) => (
-            <article className="memory-card paper-card" key={node.id}>
+            <article className="memory-card paper-card paper-card-taped" key={node.id}>
               <h3>{node.title}</h3>
               <div className="tag-row"><span>{node.kind}</span></div>
               <div className="action-row"><button disabled={busy} onClick={() => void editMemory(node)}>{t(lang, 'memory_edit')}</button></div>

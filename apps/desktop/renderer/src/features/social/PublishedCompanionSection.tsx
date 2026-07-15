@@ -44,7 +44,7 @@ export function PublishedCompanionSection() {
   async function cancel() { await window.ourCompanion.network.assets.cancelPublish(); setStatus(t(lang, 'publish_cancel_requested')); }
   async function unpublish() { if (!networkCompanionId) return; setBusy(true); try { await window.ourCompanion.network.companions.unpublish(networkCompanionId); setStatus(t(lang, 'publish_unpublished')); } catch { setStatus(t(lang, 'publish_unpublish_failed')); } finally { setBusy(false); } }
   const percent = publishProgress?.totalBytes ? Math.round((publishProgress.uploadedBytes / publishProgress.totalBytes) * 100) : 0;
-  return <PaperCard title={t(lang, 'publish_title')} tape className="settings-panel">
+  return <PaperCard title={t(lang, 'publish_title')} className="settings-panel">
     <p>{t(lang, 'publish_privacy_note')}</p>
     <label><span>{t(lang, 'publish_local_companion')}</span><select value={selectedId} disabled={busy} onChange={(event) => { const companion = companions.find(item => item.id === event.target.value); setSelectedId(event.target.value); if (companion) setName(companion.name); }}>{companions.map(companion => <option key={companion.id} value={companion.id}>{companion.name}</option>)}</select></label>
     <label><span>{t(lang, 'publish_public_name')}</span><input value={name} maxLength={60} disabled={busy} onChange={(event) => setName(event.target.value)} /></label>

@@ -111,24 +111,24 @@ export function SettingsPage({ state, behaviorSettings, onRefresh, onLangChange,
         {(['companion', 'ai', 'voice', 'privacy', 'appearance', 'online', 'advanced', 'developer'] as const).map((item) => <button key={item} type="button" role="tab" aria-selected={category === item} className={category === item ? 'active' : ''} onClick={() => setCategory(item)}>{t(lang, `settings_category_${item}` as keyof typeof import('../i18n/en').en)}</button>)}
       </div>
       <div className="settings-layout">
-        {category === 'companion' && <><PaperCard title={t(lang, 'settings_companion_behavior_title')} tape><p>{t(lang, 'settings_companion_behavior_desc')}</p></PaperCard>
-        <PaperCard title={t(lang, 'settings_attention_title')} tape>
+        {category === 'companion' && <><PaperCard title={t(lang, 'settings_companion_behavior_title')}><p>{t(lang, 'settings_companion_behavior_desc')}</p></PaperCard>
+        <PaperCard title={t(lang, 'settings_attention_title')}>
           <label><span>{t(lang, 'settings_initiative_label')}</span><select value={attentionMode} onChange={(event) => {
             const mode = event.target.value as 'available' | 'focused' | 'do_not_disturb';
             setAttentionMode(mode);
             void window.ourCompanion.companion.setAttentionMode(mode);
           }}><option value="available">{t(lang, 'settings_attention_available')}</option><option value="focused">{t(lang, 'settings_attention_focused')}</option><option value="do_not_disturb">{t(lang, 'settings_attention_do_not_disturb')}</option></select></label>
         </PaperCard>
-        <PaperCard title={t(lang, 'settings_queued_discoveries')} tape>
+        <PaperCard title={t(lang, 'settings_queued_discoveries')}>
           {pendingActions.length === 0 ? <p>{t(lang, 'settings_no_queued_discoveries')}</p> : pendingActions.map((action) => <div key={action.id} className="action-row"><span>{action.deferReason ?? t(lang, 'settings_deferred_discovery')} — {t(lang, 'settings_expires', { time: new Date(action.expiresAt).toLocaleTimeString() })}</span><button onClick={() => void window.ourCompanion.companion.cancelPendingAction(action.id).then(() => setPendingActions((items) => items.filter((item) => item.id !== action.id)))}>{t(lang, 'social_cancel')}</button></div>)}
         </PaperCard>
         </>}
-        {category === 'appearance' && <PaperCard title={t(lang, 'settings_appearance_title')} tape><p>{t(lang, 'settings_appearance_desc')}</p><p>{t(lang, 'settings_appearance_language_note')}</p></PaperCard>}
-        {category === 'privacy' && <><PaperCard title={t(lang, 'settings_privacy_title')} tape><p>{t(lang, 'settings_privacy_desc')}</p></PaperCard><ActionPermissionsCard /></>}
+        {category === 'appearance' && <PaperCard title={t(lang, 'settings_appearance_title')}><p>{t(lang, 'settings_appearance_desc')}</p><p>{t(lang, 'settings_appearance_language_note')}</p></PaperCard>}
+        {category === 'privacy' && <><PaperCard title={t(lang, 'settings_privacy_title')}><p>{t(lang, 'settings_privacy_desc')}</p></PaperCard><ActionPermissionsCard /></>}
         {category === 'voice' && <VoiceSettingsCard />}
         {category === 'online' && <OnlineModeCard />}
-        {category === 'advanced' && <PaperCard title={t(lang, 'settings_advanced_title')} tape className="settings-panel"><p>{t(lang, 'settings_advanced_desc')}</p></PaperCard>}
-        {category === 'ai' && <PaperCard title={t(lang, 'settings_ai_title')} tape className="settings-panel">
+        {category === 'advanced' && <PaperCard title={t(lang, 'settings_advanced_title')} className="settings-panel"><p>{t(lang, 'settings_advanced_desc')}</p></PaperCard>}
+        {category === 'ai' && <PaperCard title={t(lang, 'settings_ai_title')} className="settings-panel">
           <h2>{t(lang, 'settings_ai_provider')}</h2>
           <label><span>{t(lang, 'settings_ai_model_label')}</span><input value={model} onChange={(event) => setModel(event.target.value)} placeholder="deepseek-v4-flash" /></label>
           <label><span>{t(lang, 'settings_ai_endpoint_label')}</span><input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="https://api.deepseek.com" /></label>
@@ -143,7 +143,7 @@ export function SettingsPage({ state, behaviorSettings, onRefresh, onLangChange,
           <p aria-live="polite">{message}</p>
         </PaperCard>
         }
-        {category === 'developer' && <PaperCard title={t(lang, 'settings_developer_title')} tape className="developer-card">
+        {category === 'developer' && <PaperCard title={t(lang, 'settings_developer_title')} className="developer-card">
           <button onClick={() => setDeveloperOpen((open) => { const next = !open; localStorage.setItem('companion:developer:enabled', String(next)); return next; })}>
             {developerOpen ? t(lang, 'settings_developer_hide') : t(lang, 'settings_developer_show')}
           </button>
@@ -195,7 +195,7 @@ function VoiceSettingsCard() {
   useEffect(() => { void refreshStatus(); }, []);
 
   return (
-    <PaperCard title={t(lang, 'voice_title')} tape className="settings-panel">
+    <PaperCard title={t(lang, 'voice_title')} className="settings-panel">
       <p>{t(lang, 'voice_intro')}</p>
       <p><strong>{t(lang, 'voice_hotkey')}</strong> Ctrl+Shift+Space</p>
       <p><strong>{t(lang, 'voice_model')}</strong> {speechStatus?.model ?? 'ggml-small.bin'}</p>
@@ -323,11 +323,11 @@ function OnlineModeCard() {
   const label = networkStatus ? networkStateLabel(networkStatus.state, lang) : t(lang, 'online_offline');
 
   if (loading) {
-    return <PaperCard title={t(lang, 'online_title')} tape className="settings-panel"><p>{t(lang, 'online_loading')}</p></PaperCard>;
+    return <PaperCard title={t(lang, 'online_title')} className="settings-panel"><p>{t(lang, 'online_loading')}</p></PaperCard>;
   }
 
   return (
-    <PaperCard title={t(lang, 'online_title')} tape className="settings-panel">
+    <PaperCard title={t(lang, 'online_title')} className="settings-panel">
       <div className="online-mode-header">
         <div className="online-mode-status">
           <span className={`online-mode-dot ${networkStatus?.state === 'online' ? 'online-mode-dot-active' : ''}`} />
@@ -418,7 +418,7 @@ function ActionPermissionsCard() {
   if (!permissions) return null;
 
   return (
-    <PaperCard title={t(lang, 'permissions_title')} tape className="settings-panel">
+    <PaperCard title={t(lang, 'permissions_title')} className="settings-panel">
       <p>{t(lang, 'permissions_desc')}</p>
       {ALL_PERMISSION_SCOPES.map((scope) => (
         <label key={scope} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>

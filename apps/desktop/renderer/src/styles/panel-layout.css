@@ -362,7 +362,7 @@
   background: transparent;
 }
 
-.paper-card::after,
+.paper-card-taped::after,
 .paper-photo-card::after {
   content: "";
   position: absolute;

@@ -40,7 +40,7 @@ export function PaperCard({
   children: ReactNode;
 }) {
   return (
-    <section className={`paper-card ${compact ? 'paper-card-compact' : ''} ${className}`}>
+    <section className={['paper-card', tape ? 'paper-card-taped' : '', compact ? 'paper-card-compact' : '', className].filter(Boolean).join(' ')}>
       {title && (tape ? <NotebookSectionTitle>{title}</NotebookSectionTitle> : <h2>{title}</h2>)}
       {children}
     </section>
