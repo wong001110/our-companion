@@ -47,7 +47,7 @@ function collectPassedTitles(value) {
 
 function runPlaywright(name, specs) {
   const jsonReport = join(resultsDir, `${name}.json`);
-  run(name, ['exec', 'playwright', 'test', ...specs, '--reporter=json'], {
+  run(name, ['exec', '--', 'playwright', 'test', ...specs, '--reporter=json'], {
     ...qaEnvironment,
     PLAYWRIGHT_JSON_OUTPUT_NAME: jsonReport,
   });

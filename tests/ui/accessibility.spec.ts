@@ -52,6 +52,7 @@ test('All required application surfaces have no critical or serious axe violatio
     await creation.getByRole('button', { name: 'Cancel' }).click();
     await creation.getByRole('button', { name: 'Delete' }).click();
     await expect(creation.getByRole('alertdialog')).toBeVisible();
+    await creation.waitForTimeout(300);
     surfaces.confirmDialog = await scan(creation, '.confirm-dialog-backdrop');
     await device.screenshot(creation, 'accessibility/dialog.png');
 
