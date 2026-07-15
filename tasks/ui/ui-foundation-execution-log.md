@@ -78,3 +78,17 @@
 - Electron verification restored the prior pending dialog, toast, and startup-speech lifecycle checks. The configured live-AI Creation test remains skipped because no credentials are supplied.
 - Reviewed current Quick Actions boundary captures at center and bottom-right. The five-position Electron assertion also measured every bubble within bounds with no pairwise overlap. The reviewed final run records `screenshotsReviewed: true`.
 - Follow-up fixes made during final verification: the confirm dialog waits for Presence mount before focusing Cancel; sidebar Space activation now occurs before page-transition focus changes; and the Panel-then-Talk scenario closes its separate native Panel window before interacting with the underlying Companion window.
+
+## Final UI/UX QA closure patch (2026-07-15)
+
+- Previous Client baseline: `1f9fb15`; previous closure reference: `410b`.
+- New Client closure commit verified by the final QA run: `d36fd094aaf43d727abac30c80e704d6276bb62e`. The work was committed directly to `main`, so a separate merged-main SHA is not applicable.
+- Runtime: Node `22.23.1`, npm `10.9.8`, Electron `37.10.3`, macOS `arm64`.
+- Local QA passed: typecheck, architecture boundaries, 69 Vitest files / 469 tests, production build, and the serial Electron UI suite (29 passed, 1 credential-gated live-AI check skipped).
+- Accessibility passed on the required Panel, Creation, dialog, Quick Actions, More menu, and Composer surfaces with `0` critical and `0` serious axe violations.
+- Reduced Motion passed for Quick Actions, Panel navigation, Creation, feedback, and Companion overlays. The final report also records passing runtime tab validation, rapid navigation, focus restoration, exit-before-removal lifecycles, boundary placement, hover/grace/pinning, active Talk/Listen, and away-state removal.
+- QA run ID: `2026-07-15T04-45-11-510Z`. Authoritative evidence: `artifacts/ui-qa/2026-07-15T04-45-11-510Z/qa-report.json`, `artifacts/ui-qa/2026-07-15T04-45-11-510Z/screenshot-review.json`, and `artifacts/ui-qa/2026-07-15T04-45-11-510Z/accessibility/report.json`.
+- Codex inspected all 29 canonical screenshots. It repaired the Talk Composer/status-label overlap and regenerated two transparent-window captures with fresh Electron processes after detecting compositor-only frame loss; the final reviewed images are readable, in bounds, and non-overlapping.
+- S5 Playwright discovery passed (`1` test in `tests/smoke/s5-two-device.spec.ts`). A new live S5 run was not attempted because this closure environment did not provide the dedicated PostgreSQL/R2 configuration; the previously accepted managed S5 report remains `artifacts/s5-two-device/1784037422633-3037390cb469/report.json`.
+- Network repository: unchanged.
+- Verification status: Local QA passed. GitHub Actions were not run. User visual acceptance and separate physical-device/network checks remain pending.
