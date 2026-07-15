@@ -37,12 +37,20 @@ test('Reduced Motion Creation lifecycle is opacity-only and preserves focus', as
     await creation.getByTestId('create-new-companion').click();
     const name = creation.getByTestId('creation-name');
     await name.fill('Nova');
-    await creation.getByTestId('creation-next').click();
     const outgoing = creation.locator('.creation-step[data-step="1"]');
-    await expect(outgoing).toHaveAttribute('data-motion-state', 'exiting');
-    expect(await outgoing.evaluate((element) => getComputedStyle(element).transform)).toBe('none');
+    await outgoing.evaluate((element) => {
+      const target = window as typeof window & { __reducedCreationExit?: Array<{ state: string | null; transform: string }> };
+      target.__reducedCreationExit = [];
+      new MutationObserver(() => target.__reducedCreationExit?.push({
+        state: element.getAttribute('data-motion-state'),
+        transform: getComputedStyle(element).transform,
+      })).observe(element, { attributes: true, attributeFilter: ['data-motion-state'] });
+    });
+    await creation.getByTestId('creation-next').click();
     const description = creation.getByTestId('creation-description');
     await expect(description).toBeFocused();
+    expect(await creation.evaluate(() => (window as typeof window & { __reducedCreationExit?: Array<{ state: string | null; transform: string }> }).__reducedCreationExit))
+      .toContainEqual({ state: 'exiting', transform: 'none' });
     expect(await description.locator('xpath=..').evaluate((element) => getComputedStyle(element).transform)).toBe('none');
     await device.screenshot(creation, 'reduced-motion/creation.png');
   } finally { await device.close(); }
