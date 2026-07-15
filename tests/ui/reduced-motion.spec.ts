@@ -7,13 +7,21 @@ test('Reduced Motion Panel lifecycle is opacity-only and keeps focus meaningful'
     await device.launch();
     const panel = await device.panelWindow();
     await panel.emulateMedia({ reducedMotion: 'reduce' });
-    await panel.getByRole('button', { name: 'Social' }).click();
     const outgoing = panel.getByTestId('panel-page-home');
-    await expect(outgoing).toHaveAttribute('data-motion-state', 'exiting');
-    expect(await outgoing.evaluate((element) => getComputedStyle(element).transform)).toBe('none');
+    await outgoing.evaluate((element) => {
+      const target = window as typeof window & { __reducedPanelExit?: Array<{ state: string | null; transform: string }> };
+      target.__reducedPanelExit = [];
+      new MutationObserver(() => target.__reducedPanelExit?.push({
+        state: element.getAttribute('data-motion-state'),
+        transform: getComputedStyle(element).transform,
+      })).observe(element, { attributes: true, attributeFilter: ['data-motion-state'] });
+    });
+    await panel.getByRole('button', { name: 'Social' }).click();
     const incoming = panel.getByTestId('panel-page-social');
     await expect(incoming).toHaveAttribute('data-motion-state', 'entered');
     await expect(incoming).toBeFocused();
+    expect(await panel.evaluate(() => (window as typeof window & { __reducedPanelExit?: Array<{ state: string | null; transform: string }> }).__reducedPanelExit))
+      .toContainEqual({ state: 'exiting', transform: 'none' });
     expect(await incoming.evaluate((element) => getComputedStyle(element).transform)).toBe('none');
     expect(await panel.getByRole('button', { name: 'Social' }).evaluate((element) => getComputedStyle(element).transform)).toBe('none');
     await device.screenshot(panel, 'reduced-motion/panel.png');
