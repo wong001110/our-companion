@@ -4,7 +4,7 @@
 
 - Task: `UI-003 — Establish Panel Typography Roles`
 - Main starting commit: `c24a4460cb82d7c6d82177230e199071c86c3d2b`
-- Implementation commit: pending initial implementation commit
+- Implementation commit: `968a02bf7e3e16a4d038a7aac907f3f3ee7bf59a`
 - Runtime: Node `v22.23.1`, Electron smoke fixture, software rendering
 - Motion preference: default; the unchanged reduced-motion lifecycle passed in the full Electron suite
 - Computed-style evidence: `computed-fonts.json`
