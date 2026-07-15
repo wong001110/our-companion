@@ -154,10 +154,15 @@
   display: grid;
   grid-template-columns: 180px minmax(0, 1fr);
   min-height: 100vh;
+  font-family: var(--font-ui);
   color: #2c2431;
   background:
     linear-gradient(135deg, rgba(18, 16, 28, 0.96), rgba(43, 34, 55, 0.94)),
     #17131f;
+}
+
+.panel-shell :where(button, input, textarea, select) {
+  font-family: var(--font-ui);
 }
 
 .sidebar {
@@ -320,6 +325,12 @@
   color: #352539;
   font-size: 34px;
   line-height: 1.05;
+}
+
+.panel-shell .notebook-header h1,
+.panel-shell .notebook-section-title,
+.panel-shell .sticky-note h3 {
+  font-family: var(--font-handwritten);
 }
 
 .notebook-header p {

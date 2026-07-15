@@ -1,4 +1,6 @@
 :root {
+  --font-ui: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-handwritten: "Xiaolai", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --color-bg-app: #111019;
   --color-bg-sidebar: #21182d;
   --color-bg-paper: #fff7e6;
