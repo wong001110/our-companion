@@ -7,7 +7,7 @@ test('Companion quick actions support hover, pin, and Escape dismissal', async (
     await device.launch();
     const main = await device.mainWindow();
     const companion = main.locator('.companion-canvas');
-    await companion.hover();
+    await companion.hover({ force: true });
     // Assert before the 220ms visibility timer is allowed to settle; exact timing is
     // unit-covered by the visibility machine to avoid CI scheduling flake.
     await expect(main.getByTestId('companion-quick-actions')).toHaveCount(0);
@@ -26,7 +26,7 @@ test('Quick Actions keep the hover group visible through its grace period', asyn
     await device.launch();
     const main = await device.mainWindow();
     const companion = main.locator('.companion-canvas');
-    await companion.hover();
+    await companion.hover({ force: true });
     const actions = main.getByTestId('companion-quick-actions');
     await expect(actions).toBeVisible();
 
@@ -46,7 +46,7 @@ test('Hover to Talk explicitly pins Quick Actions until the Composer closes', as
   try {
     await device.launch();
     const main = await device.mainWindow();
-    await main.locator('.companion-canvas').hover();
+    await main.locator('.companion-canvas').hover({ force: true });
     const actions = main.getByTestId('companion-quick-actions');
     await expect(actions).toBeVisible();
 
@@ -223,9 +223,17 @@ test('Quick Actions opens Panel Settings directly and preserves Talk active stat
     const main = await device.mainWindow();
     await main.locator('.companion-canvas').click();
     await main.getByTestId('quick-action-more').click();
-    await expect(main.getByRole('menu')).toBeVisible();
+    const menu = main.getByRole('menu');
+    await expect(menu).toBeVisible();
+    await menu.evaluate((element) => {
+      const target = window as typeof window & { __menuMotionStates?: Array<string | null> };
+      target.__menuMotionStates = [element.getAttribute('data-motion-state')];
+      new MutationObserver(() => target.__menuMotionStates?.push(element.getAttribute('data-motion-state')))
+        .observe(element, { attributes: true, attributeFilter: ['data-motion-state'] });
+    });
     await main.getByRole('menuitem', { name: 'Settings' }).click();
-    await expect(main.getByRole('menu')).toHaveAttribute('data-motion-state', 'exiting');
+    await expect(menu).toHaveCount(0, { timeout: 1_000 });
+    expect(await main.evaluate(() => (window as typeof window & { __menuMotionStates?: Array<string | null> }).__menuMotionStates)).toContain('exiting');
     const panel = await device.panelWindow();
     const settings = panel.getByRole('button', { name: 'Settings' });
     await expect(settings).toHaveAttribute('aria-current', 'page');

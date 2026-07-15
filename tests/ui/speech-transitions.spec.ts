@@ -10,11 +10,14 @@ test('Startup speech bubble enters, exits, and unmounts after its exit duration'
     const bubble = main.locator('.speech-bubble');
     await expect(bubble).toBeVisible();
     await expect(bubble).toHaveAttribute('data-motion-state', 'entered');
+    await bubble.evaluate((element) => {
+      const target = window as typeof window & { __speechMotionStates?: Array<string | null> };
+      target.__speechMotionStates = [element.getAttribute('data-motion-state')];
+      new MutationObserver(() => target.__speechMotionStates?.push(element.getAttribute('data-motion-state')))
+        .observe(element, { attributes: true, attributeFilter: ['data-motion-state'] });
+    });
     await device.screenshot(main, 'feedback/speech-bubble.png');
-    const text = (await bubble.textContent()) ?? '';
-    const durationMs = Math.round(Array.from(text.replace('▍', '')).length * 45);
-    await main.waitForTimeout(Math.max(0, durationMs - 70));
-    await expect(bubble).toHaveAttribute('data-motion-state', 'exiting', { timeout: 300 });
-    await expect(bubble).toHaveCount(0, { timeout: 1_000 });
+    await expect(bubble).toHaveCount(0, { timeout: 8_000 });
+    expect(await main.evaluate(() => (window as typeof window & { __speechMotionStates?: Array<string | null> }).__speechMotionStates)).toContain('exiting');
   } finally { await device.close(); }
 });

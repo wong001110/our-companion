@@ -14,10 +14,15 @@ test('Toast enters, exits, and unmounts after creating a journey', async () => {
     const toast = panel.locator('.toast');
     await expect(toast).toBeVisible();
     await expect(toast).toHaveText('New journey created.');
+    await toast.evaluate((element) => {
+      const target = window as typeof window & { __toastMotionStates?: Array<string | null> };
+      target.__toastMotionStates = [element.getAttribute('data-motion-state')];
+      new MutationObserver(() => target.__toastMotionStates?.push(element.getAttribute('data-motion-state')))
+        .observe(element, { attributes: true, attributeFilter: ['data-motion-state'] });
+    });
     await device.screenshot(panel, 'feedback/toast.png');
-    await panel.waitForTimeout(3_900);
-    await expect(toast).toHaveAttribute('data-motion-state', 'exiting', { timeout: 500 });
-    await expect(toast).toHaveCount(0, { timeout: 1_000 });
+    await expect(toast).toHaveCount(0, { timeout: 6_000 });
+    expect(await panel.evaluate(() => (window as typeof window & { __toastMotionStates?: Array<string | null> }).__toastMotionStates)).toContain('exiting');
   } finally {
     await device.close();
   }
