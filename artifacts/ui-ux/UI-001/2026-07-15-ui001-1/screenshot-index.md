@@ -3,6 +3,7 @@
 ## Run
 
 - Run ID: `2026-07-15-ui001-1`
+- Implementation commit: `6576eb2f39d877793d29957ef9626d8c2cefc330`
 - Runtime: packaged Electron build launched by Playwright with `OUR_COMPANION_SMOKE_TEST=1`
 - Fixture source: smoke-runtime-only friend lookup fixture; no personal account or live Network data
 - Node: `v22.23.1`

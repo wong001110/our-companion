@@ -23,7 +23,9 @@ Align the Social friend-code lookup UI and Client type boundary with the authori
 
 ## Branch
 
-`codex/ui-ui-001`
+`main`
+
+The implementation was integrated directly into `main` under the repository owner's direct-to-main authorization.
 
 ## Relevant Specifications
 
