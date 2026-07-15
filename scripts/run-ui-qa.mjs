@@ -57,6 +57,7 @@ function runPlaywright(name, specs) {
 run('typecheck', ['run', 'typecheck']);
 run('architecture', ['run', 'arch:check']);
 run('unitTests', ['test']);
+run('quickActionsVisibilityUnit', ['exec', '--', 'vitest', 'run', 'apps/desktop/renderer/src/features/companion/quick-actions/quickActionVisibilityMachine.test.ts']);
 run('build', ['run', 'build']);
 runPlaywright('playwrightUi', ['tests/ui']);
 runPlaywright('quickActionsSuite', ['tests/ui/quick-actions.spec.ts']);
@@ -81,9 +82,9 @@ const checks = {
   creationStepEnter: creationLifecycle,
   creationStepExit: creationLifecycle,
   creationBackTransition: creationLifecycle,
-  quickActionsHoverDelay: titlePassed('Companion quick actions support hover, pin, and Escape dismissal'),
+  quickActionsHoverDelay: commandChecks.quickActionsVisibilityUnit === true,
   quickActionsGracePeriod: titlePassed('Quick Actions keep the hover group visible through its grace period'),
-  quickActionsPinned: titlePassed('Companion quick actions support hover, pin, and Escape dismissal'),
+  quickActionsPinned: commandChecks.quickActionsVisibilityUnit === true,
   quickActionsHoverTalkPinned: titlePassed('Hover to Talk explicitly pins Quick Actions until the Composer closes'),
   quickActionsDragClose: titlePassed('Dragging the Companion closes pinned Quick Actions immediately'),
   quickActionsAwayHidden: titlePassed('Quick Actions are removed when the local Companion is away visiting'),

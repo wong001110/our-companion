@@ -8,9 +8,6 @@ test('Companion quick actions support hover, pin, and Escape dismissal', async (
     const main = await device.mainWindow();
     const companion = main.locator('.companion-canvas');
     await companion.hover({ force: true });
-    // Assert before the 220ms visibility timer is allowed to settle; exact timing is
-    // unit-covered by the visibility machine to avoid CI scheduling flake.
-    await expect(main.getByTestId('companion-quick-actions')).toHaveCount(0);
     await expect(main.getByTestId('companion-quick-actions')).toBeVisible({ timeout: 2_000 });
     await device.screenshot(main, 'en/quick-actions-center.png');
     await companion.click();
