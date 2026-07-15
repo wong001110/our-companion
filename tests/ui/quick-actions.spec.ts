@@ -52,6 +52,13 @@ test('Hover to Talk explicitly pins Quick Actions until the Composer closes', as
     const composer = main.locator('.companion-text-input');
     await expect(composer).toBeVisible();
     await expect(talk).toHaveAttribute('aria-pressed', 'true');
+    const [composerBox, statusBox] = await Promise.all([
+      composer.boundingBox(),
+      main.locator('.canvas-companion figcaption').boundingBox(),
+    ]);
+    expect(composerBox).not.toBeNull();
+    expect(statusBox).not.toBeNull();
+    expect(composerBox!.y).toBeGreaterThanOrEqual(statusBox!.y + statusBox!.height + 8);
     await composer.hover();
     await main.waitForTimeout(550);
     await expect(actions).toBeVisible();

@@ -10,6 +10,7 @@ const CANVAS_SIZE = { width: 220, height: 230 };
 const BUBBLE_SIZE = { width: 360, height: 120 };
 const CARD_SIZE = { width: 320, height: 260 };
 const TEXT_INPUT_SIZE = { width: 210, height: 40 };
+const TEXT_INPUT_GAP = 32;
 
 export type FloatingPositions = {
   anchor: AnchorRect;
@@ -75,6 +76,7 @@ export function useFloatingPlacement(opts: {
           floatingSize: TEXT_INPUT_SIZE,
           screenWorkArea: workArea,
           preferredPlacements: ['bottom', 'top', 'right', 'left'],
+          gap: TEXT_INPUT_GAP,
           obstacles,
         })
       : null;
