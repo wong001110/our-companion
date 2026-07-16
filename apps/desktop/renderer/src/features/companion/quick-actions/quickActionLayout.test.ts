@@ -31,6 +31,12 @@ describe('resolveQuickActionLayout', () => {
   it('keeps all four bubbles at their preferred corners around a centered companion', () => {
     const result = layout(290, 185);
     expect(result.map((item) => item.side)).toEqual(['top-left', 'top-right', 'bottom-left', 'bottom-right']);
+    expect(Object.fromEntries(result.map(({ id, rect }) => [id, rect]))).toEqual({
+      talk: { x: 202, y: 159, width: 100, height: 38 },
+      listen: { x: 498, y: 159, width: 108, height: 38 },
+      panel: { x: 174, y: 403, width: 128, height: 38 },
+      more: { x: 498, y: 403, width: 94, height: 38 },
+    });
     withinWorkArea(result);
   });
 

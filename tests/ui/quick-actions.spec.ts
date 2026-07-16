@@ -154,6 +154,26 @@ test('Quick Action bubbles stay inside the work area at five Companion positions
         });
       }));
       expect(nonOverlapping).toBe(true);
+      if (name === 'center') {
+        const bubbleBoxes = await Promise.all([
+          main.getByTestId('quick-action-talk').boundingBox(),
+          main.getByTestId('quick-action-listen').boundingBox(),
+          main.getByTestId('quick-action-panel').boundingBox(),
+          main.getByTestId('quick-action-more').boundingBox(),
+        ]);
+        if (bubbleBoxes.some((box) => !box)) throw new Error('QUICK_ACTION_NOT_MEASURABLE');
+        const [talk, listen, panel, more] = bubbleBoxes as NonNullable<(typeof bubbleBoxes)[number]>[];
+        const runtimeRight = positioned.x + positioned.width;
+        const runtimeBottom = positioned.y + positioned.height;
+        expect(Math.max(0, positioned.x - (talk.x + talk.width))).toBeLessThanOrEqual(24);
+        expect(Math.max(0, positioned.y - (talk.y + talk.height))).toBeLessThanOrEqual(24);
+        expect(Math.max(0, listen.x - runtimeRight)).toBeLessThanOrEqual(24);
+        expect(Math.max(0, positioned.y - (listen.y + listen.height))).toBeLessThanOrEqual(24);
+        expect(Math.max(0, positioned.x - (panel.x + panel.width))).toBeLessThanOrEqual(24);
+        expect(Math.max(0, panel.y - runtimeBottom)).toBeLessThanOrEqual(24);
+        expect(Math.max(0, more.x - runtimeRight)).toBeLessThanOrEqual(24);
+        expect(Math.max(0, more.y - runtimeBottom)).toBeLessThanOrEqual(24);
+      }
       await device.screenshot(main, `quick-actions/${name}.png`);
       await main.keyboard.press('Escape');
       await expect(main.getByTestId('companion-quick-actions')).toHaveCount(0);

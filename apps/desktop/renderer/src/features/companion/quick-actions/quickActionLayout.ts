@@ -29,7 +29,10 @@ export const DEFAULT_QUICK_ACTION_PLACEMENTS: QuickActionPlacement[] = [
   { id: 'more', preferredSide: 'bottom-right' },
 ];
 
-const DEFAULT_GAP = 12;
+// The Companion interaction bounds include transparent sprite padding. A small
+// negative gap pulls the bubbles toward the rendered character while keeping
+// their existing boundary-aware placement behavior.
+const DEFAULT_GAP = -12;
 
 function sideParts(side: QuickActionSide) {
   return {
