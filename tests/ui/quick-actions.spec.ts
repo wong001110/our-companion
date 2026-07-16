@@ -142,14 +142,17 @@ test('Quick Action bubbles stay inside the work area at five Companion positions
       await Promise.all(Array.from({ length: 4 }, (_, index) => expect(bubbles.nth(index)).toBeVisible()));
       await main.waitForTimeout(300);
       const inBounds = await bubbles.evaluateAll((elements) => elements.every((element) => {
-        const rect = element.getBoundingClientRect();
+        const rect = element.querySelector('.quick-action-bubble-surface')?.getBoundingClientRect();
+        if (!rect) return false;
         return rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight;
       }));
       expect(inBounds).toBe(true);
       const nonOverlapping = await bubbles.evaluateAll((elements) => elements.every((element, index) => {
-        const a = element.getBoundingClientRect();
+        const a = element.querySelector('.quick-action-bubble-surface')?.getBoundingClientRect();
+        if (!a) return false;
         return elements.slice(index + 1).every((other) => {
-          const b = other.getBoundingClientRect();
+          const b = other.querySelector('.quick-action-bubble-surface')?.getBoundingClientRect();
+          if (!b) return false;
           return a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top;
         });
       }));
@@ -236,7 +239,43 @@ test('Quick Actions use opacity-only motion when reduced motion is requested', a
     const talk = main.getByTestId('quick-action-talk');
     await expect(talk).toBeVisible();
     expect(await talk.evaluate((element) => getComputedStyle(element).animationName)).toBe('quick-action-fade');
+    expect(await talk.locator('.quick-action-bubble-float').evaluate((element) => getComputedStyle(element).animationName)).toBe('none');
     await device.screenshot(main, 'reduced-motion/quick-actions.png');
+  } finally { await device.close(); }
+});
+
+test('Quick Action bubbles settle into a gentle staggered float', async () => {
+  const device = new UiElectronFixture();
+  try {
+    await device.launch();
+    const main = await device.mainWindow();
+    await main.locator('.companion-canvas').click();
+    const bubbles = main.locator('[data-testid^="quick-action-"]');
+    await expect(bubbles).toHaveCount(4);
+
+    const floatLayers = main.locator('.quick-action-bubble-float');
+    await expect(floatLayers).toHaveCount(4);
+    expect(await floatLayers.evaluateAll((elements) => elements.map((element) => ({
+      animationName: getComputedStyle(element).animationName,
+      animationDuration: getComputedStyle(element).animationDuration,
+      animationDelay: getComputedStyle(element).animationDelay,
+    })))).toEqual([
+      { animationName: 'quick-action-float', animationDuration: '2.6s', animationDelay: '0s' },
+      { animationName: 'quick-action-float', animationDuration: '2.6s', animationDelay: '-0.24s' },
+      { animationName: 'quick-action-float', animationDuration: '2.6s', animationDelay: '-0.48s' },
+      { animationName: 'quick-action-float', animationDuration: '2.6s', animationDelay: '-0.72s' },
+    ]);
+
+    const samples: number[][] = [];
+    for (let sample = 0; sample < 4; sample += 1) {
+      samples.push(await floatLayers.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().y)));
+      await main.waitForTimeout(220);
+    }
+    for (let index = 0; index < 4; index += 1) {
+      const positions = samples.map((sample) => sample[index]);
+      expect(Math.max(...positions) - Math.min(...positions)).toBeGreaterThan(0.5);
+    }
+    await device.screenshot(main, 'quick-actions/floating.png');
   } finally { await device.close(); }
 });
 

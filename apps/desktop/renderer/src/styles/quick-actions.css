@@ -5,8 +5,39 @@
   pointer-events: none;
 }
 
-.quick-action-bubble {
+.quick-action-bubble-position {
   position: absolute;
+  display: inline-flex;
+  pointer-events: none;
+  animation: quick-action-burst var(--motion-normal, 220ms) both ease-out;
+}
+
+.quick-action-bubble-float {
+  display: inline-flex;
+  pointer-events: none;
+  animation: quick-action-float 2600ms var(--ease-standard, ease-in-out) var(--quick-action-float-delay, 0ms) infinite;
+  will-change: transform;
+}
+
+.quick-action-bubble {
+  position: relative;
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.quick-action-bubble-surface {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
   min-height: 38px;
   padding: 7px 12px;
   border: 1px solid rgba(248, 221, 238, 0.24);
@@ -15,17 +46,10 @@
   background: #362746;
   box-shadow: var(--shadow-floating, 0 8px 22px rgba(28, 16, 37, 0.36));
   backdrop-filter: blur(10px);
-  cursor: pointer;
-  pointer-events: auto;
-  white-space: nowrap;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 650;
-  animation: quick-action-burst var(--motion-normal, 220ms) both ease-out;
   transition: background var(--motion-fast, 140ms) ease, transform var(--motion-fast, 140ms) ease, border-color var(--motion-fast, 140ms) ease;
 }
 
-.quick-action-bubble::after {
+.quick-action-bubble-surface::after {
   content: '';
   position: absolute;
   width: 8px;
@@ -44,16 +68,17 @@
 .quick-action-bubble-top-right::after,
 .quick-action-bubble-bottom-right::after { left: 16px; border-right: 0; border-bottom: 0; }
 
-.quick-action-bubble:hover,
-.quick-action-bubble:focus-visible,
-.quick-action-bubble.is-active {
+.quick-action-bubble:hover .quick-action-bubble-surface,
+.quick-action-bubble:focus-visible .quick-action-bubble-surface,
+.quick-action-bubble.is-active .quick-action-bubble-surface {
   background: #5a3f78;
   border-color: rgba(255, 238, 249, 0.58);
   box-shadow: 0 0 0 2px rgba(255, 225, 247, 0.6), var(--shadow-floating, 0 8px 22px rgba(28, 16, 37, 0.36));
   transform: scale(1.04);
 }
 
-.quick-action-bubble:focus-visible,
+.quick-action-bubble:focus-visible { outline: none; }
+.quick-action-bubble:focus-visible .quick-action-bubble-surface,
 .quick-action-more-menu button:focus-visible { outline: 3px solid #f8d8f0; outline-offset: 3px; }
 
 .quick-action-more-menu {
@@ -76,13 +101,15 @@
 .quick-action-more-menu .quick-action-danger { color: #ffd0d5; }
 
 @keyframes quick-action-burst { from { opacity: 0; transform: translate(var(--burst-x, 0), var(--burst-y, 8px)) scale(.82); } to { opacity: 1; transform: translate(0, 0) scale(1); } }
+@keyframes quick-action-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
 @keyframes quick-action-menu-enter { from { opacity: 0; transform: translateY(4px) scale(.97); } to { opacity: 1; transform: none; } }
 
 @media (prefers-reduced-motion: reduce) {
+  .quick-action-bubble-position, .quick-action-bubble-float { animation: none; }
   .quick-action-bubble, .quick-action-more-menu { animation: quick-action-fade var(--motion-fast, 140ms) both ease; transition: opacity var(--motion-fast, 140ms) ease; }
   .quick-action-more-menu[data-motion-state='entering'] { animation-name: quick-action-fade; transform: none; }
   .quick-action-more-menu[data-motion-state='exiting'] { transform: none; }
-  .quick-action-bubble:hover, .quick-action-bubble:focus-visible, .quick-action-bubble.is-active { transform: none; }
+  .quick-action-bubble:hover .quick-action-bubble-surface, .quick-action-bubble:focus-visible .quick-action-bubble-surface, .quick-action-bubble.is-active .quick-action-bubble-surface { transform: none; }
 }
 
 @keyframes quick-action-fade { from { opacity: 0; } to { opacity: 1; } }

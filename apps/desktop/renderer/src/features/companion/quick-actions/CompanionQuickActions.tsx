@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Rect } from '../../../companion/floatingPlacement';
 import { QuickActionBubble } from './QuickActionBubble';
 import { DEFAULT_QUICK_ACTION_PLACEMENTS, resolveQuickActionLayout, resolveQuickActionMenuLayout } from './quickActionLayout';
@@ -32,6 +32,7 @@ const BUBBLE_SIZES = {
   panel: { width: 128, height: 38 },
   more: { width: 94, height: 38 },
 };
+const FLOAT_TRAVEL_PX = 4;
 
 export function CompanionQuickActions({
   visible,
@@ -57,7 +58,12 @@ export function CompanionQuickActions({
   const closeTimerRef = useRef<number | undefined>(undefined);
   const layout = useMemo(() => resolveQuickActionLayout({
     companionBounds: anchorRect,
-    workArea: screenWorkArea,
+    workArea: {
+      x: screenWorkArea.x + FLOAT_TRAVEL_PX,
+      y: screenWorkArea.y + FLOAT_TRAVEL_PX,
+      width: Math.max(0, screenWorkArea.width - FLOAT_TRAVEL_PX * 2),
+      height: Math.max(0, screenWorkArea.height - FLOAT_TRAVEL_PX * 2),
+    },
     bubbleSizes: BUBBLE_SIZES,
     preferredPlacements: DEFAULT_QUICK_ACTION_PLACEMENTS,
   }), [anchorRect, screenWorkArea]);
@@ -114,7 +120,13 @@ export function CompanionQuickActions({
   return (
     <div ref={rootRef} className="companion-quick-actions" data-testid="companion-quick-actions" data-interactive-region-count={interactiveRegion.bubbles.length + interactiveRegion.safePaths.length + 1} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
       {layout.map(({ id, side, rect }, index) => {
-        const common = { side, style: { left: rect.x, top: rect.y, animationDelay: `${index * 42}ms` } };
+        const style = {
+          left: rect.x,
+          top: rect.y,
+          animationDelay: `${index * 42}ms`,
+          '--quick-action-float-delay': `${index * -240}ms`,
+        } as CSSProperties;
+        const common = { side, style };
         if (id === 'talk') return <QuickActionBubble key={id} {...common} active={talkOpen} data-testid="quick-action-talk" aria-pressed={talkOpen} onClick={() => execute(onTextChat, false)}>💬 {t(lang, 'quick_talk')}</QuickActionBubble>;
         if (id === 'listen') return <QuickActionBubble key={id} {...common} active={listening} data-testid="quick-action-listen" aria-pressed={listening} onClick={() => execute(onVoiceChat)}>🎙 {t(lang, 'quick_listen')}</QuickActionBubble>;
         if (id === 'panel') return <QuickActionBubble key={id} {...common} data-testid="quick-action-panel" onClick={() => execute(onOpenPanel)}>📖 {t(lang, 'quick_open_panel')}</QuickActionBubble>;
