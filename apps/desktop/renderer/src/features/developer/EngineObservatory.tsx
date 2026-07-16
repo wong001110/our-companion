@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import type {
   BaseEvent,
   EmotionState,
@@ -604,13 +604,14 @@ function SnapshotPanel({
   onToggle: () => void;
   children: ReactNode;
 }) {
+  const bodyId = useId();
   return (
     <section className="engine-snapshot-panel">
-      <button className="engine-snapshot-header" onClick={onToggle} aria-expanded={open}>
+      <button className="engine-snapshot-header" onClick={onToggle} aria-expanded={open} aria-controls={bodyId}>
         <strong>{title}</strong>
         <span>{open ? '▲' : '▼'}</span>
       </button>
-      {open && <div className="engine-snapshot-body">{children}</div>}
+      {open && <div id={bodyId} className="engine-snapshot-body" role="region" aria-label={`${title} details`}>{children}</div>}
     </section>
   );
 }

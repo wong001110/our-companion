@@ -58,6 +58,53 @@ test('Developer animation review matches the current Companion assets', async ()
   } finally { await device.close(); }
 });
 
+test('Engine Observatory panels have bounded independently scrollable content', async () => {
+  const device = new UiElectronFixture();
+  try {
+    await device.launch();
+    const panel = await device.panelWindow();
+    await panel.getByRole('button', { name: 'Settings' }).click();
+    await panel.getByRole('tab', { name: 'Developer' }).click();
+    await panel.getByRole('button', { name: 'Show developer tools' }).click();
+
+    const characterHeader = panel.getByRole('button', { name: /Character/ });
+    const characterPanel = characterHeader.locator('..');
+    const characterBody = panel.getByRole('region', { name: 'Character details' });
+    await expect(characterBody).toBeVisible();
+    expect(await characterBody.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        minHeight: style.minHeight,
+        maxHeight: style.maxHeight,
+        overflowY: style.overflowY,
+        overscrollBehavior: style.overscrollBehaviorY,
+      };
+    })).toEqual({ minHeight: '160px', maxHeight: '320px', overflowY: 'auto', overscrollBehavior: 'contain' });
+
+    const scrollProbe = await characterBody.evaluate((element) => {
+      const probe = document.createElement('div');
+      probe.style.height = '640px';
+      element.append(probe);
+      const result = { clientHeight: element.clientHeight, scrollHeight: element.scrollHeight };
+      probe.remove();
+      return result;
+    });
+    expect(scrollProbe.clientHeight).toBeLessThanOrEqual(320);
+    expect(scrollProbe.scrollHeight).toBeGreaterThan(scrollProbe.clientHeight);
+
+    await characterHeader.click();
+    await expect(characterBody).toHaveCount(0);
+    const collapsedHeights = await characterPanel.evaluate((element) => ({
+      panel: element.getBoundingClientRect().height,
+      header: element.querySelector('button')?.getBoundingClientRect().height ?? 0,
+    }));
+    expect(Math.abs(collapsedHeights.panel - collapsedHeights.header)).toBeLessThanOrEqual(2);
+    expect(collapsedHeights.panel).toBeGreaterThanOrEqual(44);
+    expect(collapsedHeights.panel).toBeLessThan(60);
+    await device.screenshot(panel, 'developer/engine-observatory-bounded-panels.png');
+  } finally { await device.close(); }
+});
+
 test('PaperCard tape is intentional across operational and narrative surfaces', async () => {
   test.setTimeout(90_000);
   const device = new UiElectronFixture();

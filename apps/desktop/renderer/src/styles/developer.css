@@ -500,9 +500,12 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 10px;
+  align-items: start;
 }
 
 .engine-snapshot-panel {
+  min-width: 0;
+  align-self: start;
   border: 1px solid rgba(120, 72, 48, 0.14);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.55);
@@ -511,6 +514,7 @@
 
 .engine-snapshot-header {
   width: 100%;
+  min-height: 44px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -522,7 +526,12 @@
 }
 
 .engine-snapshot-body {
+  min-height: 160px;
+  max-height: 320px;
   padding: 10px 12px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .engine-empty,
