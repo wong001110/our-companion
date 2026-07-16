@@ -9,6 +9,7 @@
 - Operational/interactions commit: `be79f8b`
 - Narrative-assets commit: `96e661f`
 - QA/evidence commit: `30fd32f`
+- Review-package commit: `96352e1`
 - Implementation range: `d2b1d31b453177324cfe807c648a7c763c998cc6..30fd32f`
 - Current implementation main commit when this package was prepared: `30fd32f`
 - Task record: `tasks/ui/active/UI-BETA-001.md`
