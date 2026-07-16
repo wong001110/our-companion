@@ -89,10 +89,12 @@ Evidence index:
 
 - `be79f8b` — operational state foundation, Social/publishing lifecycle, Chat, Settings, and smoke-only evidence fixture.
 - `96e661f` — narrative Notebook assets, integration, provenance manifest, and focused policy tests.
-- QA/evidence record commit: pending.
+- `30fd32f` — smoke/runtime portability diagnostics, responsive and lifecycle evidence matrices, committed screenshots, and task records.
 
 ## Final Review Commit Range
 
 Starting baseline: `d2b1d31b453177324cfe807c648a7c763c998cc6`
 
-Final main commit: pending.
+Implementation/evidence head: `30fd32f`.
+
+Final review-package commit: pending.
