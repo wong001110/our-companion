@@ -1,4 +1,5 @@
 import type { ActionResult, AiDebugEntry, CharacterRuntimeState, CompanionReplyLanguage, DebugDataResetTarget, Discovery, PanelTab, PermissionScope, ToolExecutionResult, ToolPreview, UiLang, UpdateAiSettingsInput, UpdateSpeechSettingsInput } from '@our-companion/shared';
+import { COMPANION_ANIMATION_NAMES } from '@our-companion/shared';
 import { t, type Lang } from '../i18n';
 import type { AnimationName } from './CompanionCanvas';
 import type { CompanionAnimationName } from '../companion/runtime/animationRegistry';
@@ -6,23 +7,14 @@ import type { CompanionAnimationName } from '../companion/runtime/animationRegis
 export type Tab = PanelTab;
 export type DevAnimation = 'live' | AnimationName;
 
-export const devAnimations: DevAnimation[] = [
-  'live',
-  'Idle_Neutral',
-  'Idle_Breathe',
-  'Idle_Sleepy',
-  'Idle_Sleeping',
-  'Walk_Left',
-  'Walk_Right',
-  'Think',
-  'Work_Focus',
-  'Expedition_Present',
-  'Talk_Neutral',
-  'Talk_Happy',
-  'Expedition_Prepare',
-  'Expedition_Leave',
-  'Expedition_Return',
-];
+export function getDevAnimationsForAssets(assets: readonly { name: string; subfolder: string }[]): DevAnimation[] {
+  const availableFiles = new Set(
+    assets
+      .filter((asset) => asset.subfolder === 'animations')
+      .map((asset) => asset.name),
+  );
+  return ['live', ...COMPANION_ANIMATION_NAMES.filter((name) => availableFiles.has(`${name}.png`))];
+}
 
 export function formatJson(value: unknown): string {
   try {

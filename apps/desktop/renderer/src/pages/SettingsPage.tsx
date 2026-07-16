@@ -49,7 +49,7 @@ import { EngineObservatoryToolbar, loadObservatoryState, type EnginePanelKey } f
 import { EngineSnapshotCard } from '../features/developer/EngineSnapshotCard';
 import { useAudioCapture } from '../companion/useAudioCapture';
 import {
-  type Tab, type DevAnimation, devAnimations, formatJson, formatDuration,
+  type Tab, type DevAnimation, getDevAnimationsForAssets, formatJson, formatDuration,
   formatDiscoveryTime, formatRelativeDate, formatShortDate, formatAskResult,
   readable, capitalize, randomBetween, clamp, easeInOut,
   companionStatusMessage, companionMoodLabel, debugPreview,
@@ -479,6 +479,26 @@ function DeveloperPreview({ state, devAnimation, animationOverride, onAnimationC
   companionId?: string;
   assetRoot?: string;
 }) {
+  const [availableAnimations, setAvailableAnimations] = useState<DevAnimation[]>(['live']);
+
+  useEffect(() => {
+    let active = true;
+    setAvailableAnimations(['live']);
+    if (!companionId) return () => { active = false; };
+    void window.ourCompanion.companionNew.listAssets(companionId)
+      .then((assets) => {
+        if (active) setAvailableAnimations(getDevAnimationsForAssets(assets));
+      })
+      .catch(() => {
+        if (active) setAvailableAnimations(['live']);
+      });
+    return () => { active = false; };
+  }, [companionId]);
+
+  useEffect(() => {
+    if (!availableAnimations.includes(devAnimation)) onAnimationChange('live');
+  }, [availableAnimations, devAnimation, onAnimationChange]);
+
   return (
     <div className="developer-tools">
       <div className="developer-preview-canvas">
@@ -488,8 +508,8 @@ function DeveloperPreview({ state, devAnimation, animationOverride, onAnimationC
         <p className="eyebrow">Developer use</p>
         <h2>Animation review</h2>
         <div className="segmented-control" aria-label="Preview companion animation">
-          {devAnimations.map((animation) => (
-            <button key={animation} className={devAnimation === animation ? 'active' : ''} onClick={() => onAnimationChange(animation)}>
+          {availableAnimations.map((animation) => (
+            <button key={animation} data-animation-name={animation} className={devAnimation === animation ? 'active' : ''} onClick={() => onAnimationChange(animation)}>
               {animation === 'live' ? 'Live' : readable(animation)}
             </button>
           ))}

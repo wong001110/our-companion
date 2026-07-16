@@ -53,7 +53,7 @@ import { EngineObservatoryToolbar, loadObservatoryState, type EnginePanelKey } f
 import { EngineSnapshotCard } from '../features/developer/EngineSnapshotCard';
 import { useAudioCapture } from '../companion/useAudioCapture';
 import {
-  type Tab, type DevAnimation, devAnimations, formatJson, formatDuration,
+  type Tab, type DevAnimation, formatJson, formatDuration,
   formatDiscoveryTime, formatRelativeDate, formatShortDate, formatAskResult,
   readable, capitalize, randomBetween, clamp, easeInOut,
   companionStatusMessage, companionMoodLabel, debugPreview,

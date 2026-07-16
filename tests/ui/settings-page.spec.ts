@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import path from 'node:path';
 import axe from 'axe-core';
 import { UiElectronFixture } from './ui-fixture';
+import { COMPANION_ANIMATION_NAMES } from '@our-companion/shared';
 
 const runId = process.env.OUR_COMPANION_UI_QA_RUN_ID?.replace(/[^a-zA-Z0-9_-]/g, '') || 'local';
 const ui002ArtifactDir = path.resolve(import.meta.dirname, '../..', 'artifacts', 'ui-ux', 'UI-002', runId);
@@ -33,6 +34,27 @@ test('Settings organizes controls into explicit categories', async () => {
     await panel.getByRole('tab', { name: 'Voice' }).click();
     await expect(panel.getByText('Voice', { exact: true }).last()).toBeVisible();
     await device.screenshot(panel, 'en/settings-1180.png');
+  } finally { await device.close(); }
+});
+
+test('Developer animation review matches the current Companion assets', async () => {
+  const device = new UiElectronFixture();
+  try {
+    await device.launch();
+    const panel = await device.panelWindow();
+    await panel.getByRole('button', { name: 'Settings' }).click();
+    await panel.getByRole('tab', { name: 'Developer' }).click();
+    await panel.getByRole('button', { name: 'Show developer tools' }).click();
+
+    const controls = panel.locator('.dev-animation-panel .segmented-control button');
+    await expect(controls).toHaveCount(COMPANION_ANIMATION_NAMES.length + 1);
+    await expect(controls.first()).toHaveAttribute('data-animation-name', 'live');
+    expect(await controls.evaluateAll((buttons) => buttons.map((button) => button.getAttribute('data-animation-name')))).toEqual(['live', ...COMPANION_ANIMATION_NAMES]);
+
+    await panel.getByRole('button', { name: 'Talk Thinking', exact: true }).click();
+    await expect(panel.locator('.developer-preview-canvas .canvas-companion-Talk_Thinking')).toBeVisible();
+    await expect(panel.getByText('Previewing: Talk Thinking', { exact: true })).toBeVisible();
+    await device.screenshot(panel, 'developer/animation-review-current-assets.png');
   } finally { await device.close(); }
 });
 
