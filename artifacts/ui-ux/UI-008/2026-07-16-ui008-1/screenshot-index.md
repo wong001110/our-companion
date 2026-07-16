@@ -3,7 +3,7 @@
 - Task: UI-008 — Replace Inline Chat History Confirmation with a Destructive Dialog
 - Starting commit: `5703f1f85edf8d9b1cbfdc990f4414e3fd3defa6`
 - Shared prerequisite commit: `fa62f08f37a855a70792999b3769194eb541a710`
-- Implementation commit: the UI-008 implementation commit containing this index; exact SHA is recorded in the review request.
+- Implementation commit: `a00cf78cb6389c353b38dab58d2f84032c6e4d10`
 - Runtime: Windows, Node 22.23.1, Electron 37.10.3, deterministic smoke fixture, no live AI or Network.
 - Focused Electron result: 4 passed, 0 failed, 0 skipped.
 - Focus: Cancel received initial focus; Tab/Shift+Tab stayed inside the dialog; Cancel and Escape restored focus to Clear history.
