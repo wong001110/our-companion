@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import path from 'node:path';
 import { resolveSmokeNetworkRoot, validateDedicatedSmokeEnvironment } from './network-process';
 
 describe('managed smoke Network guards', () => {
   it('uses the configurable Network root and never retains the old network fallback', () => {
-    expect(resolveSmokeNetworkRoot('/work/client', { OUR_COMPANION_SMOKE_NETWORK_ROOT: '/tmp/network' })).toBe('/tmp/network');
-    expect(resolveSmokeNetworkRoot('/work/our-companion', {})).toBe('/work/our-companion-network');
+    const clientRoot = '/work/our-companion';
+    const configuredRoot = '/tmp/network';
+    expect(resolveSmokeNetworkRoot('/work/client', { OUR_COMPANION_SMOKE_NETWORK_ROOT: configuredRoot })).toBe(path.resolve(configuredRoot));
+    const fallback = resolveSmokeNetworkRoot(clientRoot, {});
+    expect(fallback).toBe(path.resolve(clientRoot, '../our-companion-network'));
+    expect(path.basename(fallback)).toBe('our-companion-network');
+    expect(path.dirname(fallback)).toBe(path.dirname(path.resolve(clientRoot)));
   });
 
   it('requires dedicated flags and rejects obvious production markers without confirmation', () => {

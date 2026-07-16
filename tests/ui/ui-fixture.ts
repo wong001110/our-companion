@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -48,19 +49,14 @@ export class UiElectronFixture {
 
   async screenshot(page: Page, name: string, artifactDir = this.artifactDir): Promise<string> {
     const output = path.join(artifactDir, name);
-    const candidates: Buffer[] = [];
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      candidates.push(await page.screenshot({ fullPage: true, animations: 'disabled' }));
-      if (attempt < 2) await page.waitForTimeout(80);
-    }
-    const best = candidates.reduce((largest, candidate) => candidate.byteLength > largest.byteLength ? candidate : largest);
     await fs.mkdir(path.dirname(output), { recursive: true });
-    await fs.writeFile(output, best);
+    await page.screenshot({ path: output, animations: 'disabled', fullPage: false, timeout: 15_000 });
     return output;
   }
 
   async close(): Promise<void> {
     const app = this.app;
+    let closeFailure: Error | undefined;
     if (app) {
       const exited = new Promise<void>((resolve) => app.process().once('exit', () => resolve()));
       try {
@@ -68,15 +64,31 @@ export class UiElectronFixture {
           app.close(),
           new Promise<void>((_, reject) => setTimeout(() => reject(new Error('UI_ELECTRON_CLOSE_TIMEOUT')), 5_000)),
         ]);
-      } catch {
-        app.process().kill('SIGTERM');
-        await new Promise((resolve) => setTimeout(resolve, 300));
-        if (app.process().exitCode === null) app.process().kill('SIGKILL');
+      } catch (cause) {
+        closeFailure = cause instanceof Error ? cause : new Error('UI_ELECTRON_CLOSE_TIMEOUT');
+        try {
+          await Promise.race([
+            app.evaluate(({ BrowserWindow, app: electronApp }) => {
+              for (const window of BrowserWindow.getAllWindows()) window.destroy();
+              electronApp.exit(1);
+            }),
+            new Promise<void>((_, reject) => setTimeout(() => reject(new Error('UI_ELECTRON_DIAGNOSTIC_EXIT_TIMEOUT')), 1_000)),
+          ]);
+        } catch {
+          // The test is already failed. A bounded tree termination is diagnostic cleanup only.
+        }
+        if (app.process().exitCode === null) await terminateProcessTree(app.process().pid);
       }
-      await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 2_000))]);
+      const exitedNaturally = await Promise.race([exited.then(() => true), new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2_000))]);
+      if (!exitedNaturally && !closeFailure) closeFailure = new Error('UI_ELECTRON_PROCESS_EXIT_TIMEOUT');
     }
-    await fs.rm(this.userDataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    try {
+      await fs.rm(this.userDataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch (cause) {
+      closeFailure ??= cause instanceof Error ? cause : new Error('UI_ELECTRON_PROFILE_CLEANUP_FAILED');
+    }
     this.app = undefined;
+    if (closeFailure) throw closeFailure;
   }
 
   private async waitForWindow(mode: string): Promise<Page> {
@@ -88,4 +100,16 @@ export class UiElectronFixture {
     }
     throw new Error(`UI_WINDOW_TIMEOUT:${mode}`);
   }
+}
+
+async function terminateProcessTree(pid: number): Promise<void> {
+  if (process.platform === 'win32') {
+    await new Promise<void>((resolve) => {
+      const child = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+      child.once('exit', () => resolve());
+      child.once('error', () => resolve());
+    });
+    return;
+  }
+  try { process.kill(pid, 'SIGKILL'); } catch { /* already exited */ }
 }

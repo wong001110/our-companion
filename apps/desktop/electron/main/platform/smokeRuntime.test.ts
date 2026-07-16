@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import path from 'node:path';
 import { assertSmokeTestRuntime, hashSmokeDeviceId, isSmokeTestRuntime, smokeInstanceRole, smokeUserDataOverride, validateSmokeWorkArea } from './smokeRuntime';
 
 describe('smoke runtime guardrails', () => {
   it('requires the explicit smoke flag before applying the profile override', () => {
     expect(smokeUserDataOverride({ OUR_COMPANION_USER_DATA_DIR: '/tmp/owner' })).toBeUndefined();
-    expect(smokeUserDataOverride({ OUR_COMPANION_SMOKE_TEST: '1', OUR_COMPANION_USER_DATA_DIR: '/tmp/owner' })).toBe('/tmp/owner');
+    const configuredProfile = '/tmp/owner';
+    expect(smokeUserDataOverride({ OUR_COMPANION_SMOKE_TEST: '1', OUR_COMPANION_USER_DATA_DIR: configuredProfile })).toBe(path.resolve(configuredProfile));
     expect(isSmokeTestRuntime({ OUR_COMPANION_SMOKE_TEST: '1' })).toBe(true);
     expect(smokeInstanceRole({ OUR_COMPANION_SMOKE_ROLE: 'host' })).toBe('host');
   });

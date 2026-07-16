@@ -1,0 +1,103 @@
+{
+  "report": {
+    "online-disabled": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "online-connecting": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "online-reconnecting": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "online-incompatible": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "social-populated": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "social-partial-error": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "social-requests": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "social-reconnecting-read-only": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "publishing-draft": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "publishing-uploading": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "publishing-verifying": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "publishing-failed": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "publishing-published": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "visit-invitation": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "visit-preparing": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "visit-active": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "visit-terminal": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "chat-loading": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "chat-send-failure": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    }
+  },
+  "totals": {
+    "critical": 0,
+    "serious": 0
+  }
+}

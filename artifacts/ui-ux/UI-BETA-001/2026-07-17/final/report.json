@@ -1,0 +1,78 @@
+{
+  "report": {
+    "en-home-1180": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "en-chat-1180": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "en-discoveries-1180": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "en-journeys-1180": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "en-memories-1180": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "en-social-1180": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "en-settings-1180": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "zh-CN-home-760-reduced-motion": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "zh-CN-chat-760-reduced-motion": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "zh-CN-discoveries-760-reduced-motion": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "zh-CN-journeys-760-reduced-motion": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "zh-CN-memories-760-reduced-motion": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "zh-CN-social-760-reduced-motion": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    },
+    "zh-CN-settings-760-reduced-motion": {
+      "critical": 0,
+      "serious": 0,
+      "details": []
+    }
+  },
+  "totals": {
+    "critical": 0,
+    "serious": 0
+  }
+}
