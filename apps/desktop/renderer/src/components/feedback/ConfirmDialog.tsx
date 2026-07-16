@@ -17,7 +17,14 @@ export function ConfirmDialog({ open, title, description, confirmLabel, busy = f
   const dialogRef = useRef<HTMLElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
+  const initialFocusPendingRef = useRef(false);
   const [closing, setClosing] = useState(false);
+  const setCancelRef = useCallback((node: HTMLButtonElement | null) => {
+    cancelRef.current = node;
+    if (!node || !initialFocusPendingRef.current) return;
+    initialFocusPendingRef.current = false;
+    node.focus();
+  }, []);
   const requestClose = useCallback(() => {
     setClosing(true);
     onClose();
@@ -26,17 +33,13 @@ export function ConfirmDialog({ open, title, description, confirmLabel, busy = f
     if (open) {
       setClosing(false);
       openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      // Presence mounts its children after this effect. Wait for its first paint so
-      // keyboard users land on a real dialog control, not the former opener.
-      let secondFrame: number | undefined;
-      const firstFrame = requestAnimationFrame(() => {
-        secondFrame = requestAnimationFrame(() => cancelRef.current?.focus());
-      });
-      return () => {
-        cancelAnimationFrame(firstFrame);
-        if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
-      };
+      initialFocusPendingRef.current = true;
+      if (cancelRef.current) {
+        initialFocusPendingRef.current = false;
+        cancelRef.current.focus();
+      }
     } else if (openerRef.current) {
+      initialFocusPendingRef.current = false;
       setClosing(true);
     }
   }, [open]);
@@ -56,5 +59,5 @@ export function ConfirmDialog({ open, title, description, confirmLabel, busy = f
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [busy, closing, open, requestClose]);
-  return <Presence present={open} exitDurationMs={150} onExited={() => { setClosing(false); openerRef.current?.focus(); }}>{(state) => <div className="confirm-dialog-backdrop" data-motion-state={state} role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target && !busy) requestClose(); }}><section ref={dialogRef} className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-description"><h2 id="confirm-dialog-title">{title}</h2><p id="confirm-dialog-description">{description}</p><div className="action-row"><button ref={cancelRef} type="button" className="btn-secondary" disabled={busy} onClick={requestClose}>{t(lang, 'common_cancel')}</button><button type="button" className={danger ? 'btn-danger' : 'btn-primary'} disabled={busy} onClick={onConfirm}>{busy ? t(lang, 'common_working') : (confirmLabel ?? t(lang, 'common_confirm'))}</button></div></section></div>}</Presence>;
+  return <Presence present={open} exitDurationMs={150} onExited={() => { setClosing(false); openerRef.current?.focus(); }}>{(state) => <div className="confirm-dialog-backdrop" data-motion-state={state} role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target && !busy) requestClose(); }}><section ref={dialogRef} className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-description"><h2 id="confirm-dialog-title">{title}</h2><p id="confirm-dialog-description">{description}</p><div className="action-row"><button ref={setCancelRef} type="button" className="btn-secondary" disabled={busy} onClick={requestClose}>{t(lang, 'common_cancel')}</button><button type="button" className={danger ? 'btn-danger' : 'btn-primary'} disabled={busy} onClick={onConfirm}>{busy ? t(lang, 'common_working') : (confirmLabel ?? t(lang, 'common_confirm'))}</button></div></section></div>}</Presence>;
 }

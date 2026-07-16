@@ -13,11 +13,22 @@ test('Confirm dialog exits before removal and restores focus to its opener', asy
     const dialog = creation.getByRole('alertdialog');
     await expect(dialog).toBeVisible();
     await expect(creation.getByRole('button', { name: 'Cancel' })).toBeFocused();
-    await device.screenshot(creation, 'feedback/dialog.png');
+    await creation.screenshot({ animations: 'disabled' });
     await creation.keyboard.press('Escape');
     await expect(backdrop).toHaveAttribute('data-motion-state', 'exiting');
     await creation.keyboard.press('Tab');
     await expect(dialog.locator(':focus')).toHaveCount(1);
+    await expect(backdrop).toHaveCount(0, { timeout: 1_000 });
+    await expect(opener).toBeFocused();
+
+    await opener.click();
+    await expect(creation.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await creation.keyboard.press('Tab');
+    const confirm = creation.getByRole('alertdialog').getByRole('button', { name: 'Delete' });
+    await expect(confirm).toBeFocused();
+    await creation.waitForTimeout(250);
+    await expect(confirm).toBeFocused();
+    await creation.keyboard.press('Escape');
     await expect(backdrop).toHaveCount(0, { timeout: 1_000 });
     await expect(opener).toBeFocused();
   } finally { await device.close(); }

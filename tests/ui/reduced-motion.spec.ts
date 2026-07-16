@@ -62,12 +62,21 @@ test('Reduced Motion feedback surfaces use opacity-only transitions', async () =
     await device.launch();
     const creation = await device.creationWindow();
     await creation.emulateMedia({ reducedMotion: 'reduce' });
-    await creation.getByRole('button', { name: 'Delete' }).click();
+    const deleteOpener = creation.getByRole('button', { name: 'Delete' });
+    await deleteOpener.click();
     const dialog = creation.getByRole('alertdialog');
     await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
     expect(await dialog.evaluate((element) => getComputedStyle(element).transform)).toBe('none');
+    await creation.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(deleteOpener).toBeFocused();
 
     const main = await device.mainWindow();
+    await main.evaluate(async () => {
+      await window.ourCompanion.creation.closeWindow();
+      await window.ourCompanion.window.showCompanion();
+    });
     await main.emulateMedia({ reducedMotion: 'reduce' });
     await main.locator('.companion-canvas').click();
     await main.getByTestId('quick-action-more').click();
@@ -82,7 +91,6 @@ test('Reduced Motion feedback surfaces use opacity-only transitions', async () =
     const toast = panel.locator('.toast');
     await expect(toast).toBeVisible();
     expect(await toast.evaluate((element) => getComputedStyle(element).transform)).toBe('none');
-    await device.screenshot(creation, 'reduced-motion/feedback.png');
   } finally { await device.close(); }
 });
 
