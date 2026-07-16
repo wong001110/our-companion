@@ -6,7 +6,30 @@ import { formatShortDate } from './utils';
 export const LangContext = createContext<Lang>('en');
 export function useLang(): Lang { return useContext(LangContext); }
 
-export function NotebookPage({ eyebrow, title, note, children }: { eyebrow: string; title: string; note?: string; children: ReactNode }) {
+export const NOTEBOOK_DOODLE_ASSETS = {
+  authorship: './assets/panel/generated/notebook/authorship-pencil.png',
+  conversation: './assets/panel/generated/notebook/conversation-letter.png',
+  discovery: './assets/panel/doodles/sparkle.png',
+  journey: './assets/panel/doodles/map.png',
+  memory: './assets/panel/doodles/heart.png',
+} as const;
+
+export type NotebookDoodleRole = keyof typeof NOTEBOOK_DOODLE_ASSETS;
+
+export function NotebookDoodle({ role }: { role: NotebookDoodleRole }) {
+  return (
+    <img
+      className={`notebook-doodle notebook-doodle-${role}`}
+      src={NOTEBOOK_DOODLE_ASSETS[role]}
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+      onError={(event) => { event.currentTarget.hidden = true; }}
+    />
+  );
+}
+
+export function NotebookPage({ eyebrow, title, note, marker, children }: { eyebrow: string; title: string; note?: string; marker?: NotebookDoodleRole; children: ReactNode }) {
   return (
     <div className="notebook-page">
       <header className="notebook-header">
@@ -15,7 +38,12 @@ export function NotebookPage({ eyebrow, title, note, children }: { eyebrow: stri
           <h1>{title}</h1>
           {note && <p>{note}</p>}
         </div>
-        <span className="notebook-date">{formatShortDate(new Date().toISOString())}</span>
+        {marker ? (
+          <div className="notebook-header-meta">
+            <NotebookDoodle role={marker} />
+            <span className="notebook-date">{formatShortDate(new Date().toISOString())}</span>
+          </div>
+        ) : <span className="notebook-date">{formatShortDate(new Date().toISOString())}</span>}
       </header>
       {children}
     </div>

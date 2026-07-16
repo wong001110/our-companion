@@ -25,7 +25,7 @@ export function HomePage({ state, character, companion, discoveries, journeys, d
   const currentFocus = journeys[0]?.title ?? discoveries[0]?.title ?? t(lang, 'home_focus_empty_title');
   const diaryHighlight = diary[0]?.content ?? t(lang, 'home_diary_default');
   const companionName = companion?.name ?? character?.name ?? t(lang, 'home_default_companion_name');
-  return <NotebookPage eyebrow={t(lang, 'home_eyebrow')} title={t(lang, 'home_title')} note={t(lang, 'home_note').replace('{name}', companionName)}>
+  return <NotebookPage eyebrow={t(lang, 'home_eyebrow')} title={t(lang, 'home_title')} note={t(lang, 'home_note').replace('{name}', companionName)} marker="authorship">
     <div className="home-notebook-grid">
       <PaperCard className="companion-status-card" title={t(lang, 'home_companion_status_card')} tape><div className="companion-status-content">{companion ? <CompanionCanvas compact state={state} assetRoot={companion.assetRoot} companionId={companion.id} /> : <div className="companion-asset-placeholder" aria-label={t(lang, 'home_asset_unavailable')}>✦</div>}<div><p>{companionStatusMessage(state, lang)}</p><span className="soft-pill">{companionMoodLabel(state, lang)}</span></div></div></PaperCard>
       <StickyNote title={t(lang, 'home_companion_message_title')} className="companion-message-note"><p>{t(lang, 'home_companion_message_body')}</p><button onClick={() => void onStartExploration()} disabled={exploring} className="primary-notebook-action">{exploring ? t(lang, 'home_exploring') : t(lang, 'home_send_exploring')}</button></StickyNote>

@@ -36,7 +36,7 @@ describe('PaperCard tape policy', () => {
   it('keeps photo-card tape while removing the unconditional paper-card selector', () => {
     const stylesheet = readFileSync(new URL('../styles/panel-layout.css', import.meta.url), 'utf8');
 
-    expect(stylesheet).toContain('.paper-card-taped::after,\n.paper-photo-card::after');
+    expect(stylesheet).toMatch(/\.paper-card-taped::after,\r?\n\.paper-photo-card::after/);
     expect(stylesheet).not.toContain('.paper-card::after');
   });
 

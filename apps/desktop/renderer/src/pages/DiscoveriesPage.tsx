@@ -19,7 +19,7 @@ export function DiscoveriesPage({ discoveries, exploration, exploring, onStartEx
   const { addToJourney, busy, error, filters, markNotInterested, refreshDiscovery, selectedFilter, setSelectedFilter, visibleDiscoveries } = useDiscoveriesViewModel({ discoveries, lang, onRefresh });
 
   return (
-    <NotebookPage eyebrow={t(lang, 'discovery_eyebrow')} title={t(lang, 'discovery_title')} note={t(lang, 'discovery_note')}>
+    <NotebookPage eyebrow={t(lang, 'discovery_eyebrow')} title={t(lang, 'discovery_title')} note={t(lang, 'discovery_note')} marker="discovery">
       <div className="toolbar notebook-toolbar">
         <div className="soft-filter-row" aria-label={t(lang, 'discovery_filters_label')}>
           {filters.map(({ key, label }) => (

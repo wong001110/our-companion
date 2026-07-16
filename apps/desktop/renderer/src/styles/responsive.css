@@ -38,6 +38,23 @@
     flex-direction: column;
   }
 
+  .notebook-header-meta {
+    width: 100%;
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+  }
+
+  .notebook-doodle {
+    width: 42px;
+    height: 42px;
+  }
+
+  .notebook-doodle-conversation { width: 38px; height: 38px; }
+  .notebook-doodle-discovery,
+  .notebook-doodle-memory { width: 40px; height: 40px; }
+  .notebook-doodle-journey { width: 44px; height: 44px; }
+
   .wide-card {
     grid-column: auto;
   }

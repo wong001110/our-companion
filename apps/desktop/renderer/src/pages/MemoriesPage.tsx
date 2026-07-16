@@ -9,7 +9,7 @@ export function MemoriesPage({ graph, onRefresh }: { graph: KnowledgeGraph; onRe
   const { busy, cancelEditing, draft, editMemory, editing, error, saveMemory, setDraft } = useMemoriesViewModel({ lang, onRefresh });
 
   return (
-    <NotebookPage eyebrow={t(lang, 'memory_eyebrow')} title={t(lang, 'memory_title')} note={t(lang, 'memory_note')}>
+    <NotebookPage eyebrow={t(lang, 'memory_eyebrow')} title={t(lang, 'memory_title')} note={t(lang, 'memory_note')} marker="memory">
       <div className="memory-layout">
         <PaperCard title={t(lang, 'memory_add_card')} tape>
           <label><span>{t(lang, 'memory_title_label')}</span><input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder={t(lang, 'memory_title_placeholder')} /></label>
