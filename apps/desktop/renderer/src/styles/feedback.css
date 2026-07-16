@@ -13,6 +13,33 @@
 .inline-notice-error, .section-error { border-color: color-mix(in srgb, var(--color-danger), transparent 30%); }
 .inline-notice-success { border-color: color-mix(in srgb, var(--color-success), transparent 30%); }
 .inline-notice button { margin-left: auto; }
+.status-badge { display: inline-flex; align-items: center; gap: var(--space-1); width: fit-content; max-width: 100%; padding: 3px 8px; border: 1px solid var(--border-subtle); border-radius: var(--radius-pill); color: var(--color-text-primary); background: color-mix(in srgb, var(--color-bg-paper), transparent 8%); font-size: 0.78rem; font-weight: 750; line-height: 1.25; }
+.status-badge-marker { flex: 0 0 auto; width: 0.62em; height: 0.62em; border: 2px solid currentColor; border-radius: 50%; background: transparent; }
+.status-badge-success { color: color-mix(in srgb, var(--color-success), #183225 24%); }
+.status-badge-success .status-badge-marker { background: currentColor; }
+.status-badge-info { color: var(--color-primary); }
+.status-badge-info .status-badge-marker { border-radius: 2px; }
+.status-badge-warning { color: color-mix(in srgb, var(--color-warning), #38230d 24%); }
+.status-badge-warning .status-badge-marker { border-radius: 2px; transform: rotate(45deg); }
+.status-badge-danger { color: var(--color-danger); }
+.status-badge-danger .status-badge-marker { border-radius: 1px; }
+.status-badge-neutral { color: var(--color-text-secondary); }
+.connection-banner { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-4); border: 1px solid var(--border-strong); border-radius: var(--radius-md); color: var(--color-text-primary); background: color-mix(in srgb, var(--color-bg-paper), transparent 4%); }
+.connection-banner-copy { display: grid; gap: var(--space-2); min-width: 0; }
+.connection-banner-heading { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.connection-banner p { margin: 0; }
+.connection-banner-stale { color: var(--color-warning); font-weight: 700; }
+.connection-banner-success { border-color: color-mix(in srgb, var(--color-success), transparent 42%); }
+.connection-banner-warning { border-color: color-mix(in srgb, var(--color-warning), transparent 34%); }
+.connection-banner-danger { border-color: color-mix(in srgb, var(--color-danger), transparent 30%); }
+.state-reason { margin: 0; color: var(--color-text-secondary); font-size: 0.8rem; }
+.operational-row { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-bg-paper), transparent 22%); }
+.operational-row-main { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
+.operational-row-identity, .operational-row-supporting { min-width: 0; overflow-wrap: anywhere; }
+.operational-row-supporting { color: var(--color-text-secondary); }
+.operational-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.section-feedback { padding-block: var(--space-2); }
+.section-partial-error { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-3); border: 1px solid color-mix(in srgb, var(--color-warning), transparent 35%); border-radius: var(--radius-md); color: var(--color-text-primary); background: color-mix(in srgb, var(--color-bg-paper), transparent 8%); }
 .empty-state, .loading-state, .section-error { padding: var(--space-5); border: 1px dashed var(--border-strong); border-radius: var(--radius-md); color: var(--color-text-secondary); background: var(--color-bg-paper); }
 .empty-state h2 { margin: 0 0 var(--space-2); color: var(--color-text-primary); font-size: 1.1rem; }
 .empty-state p, .section-error p { margin: 0 0 var(--space-3); }
@@ -20,6 +47,11 @@
 .loading-state-spinner { width: 1em; height: 1em; border: 2px solid var(--border-subtle); border-top-color: var(--color-primary); border-radius: 50%; animation: loading-spin .8s linear infinite; }
 @keyframes loading-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .loading-state-spinner { animation: none; } }
+
+@media (max-width: 760px) {
+  .connection-banner { align-items: stretch; flex-direction: column; }
+  .connection-banner > button { align-self: flex-start; }
+}
 
 .action-progress { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); color: var(--color-text-primary); background: var(--color-bg-paper); }
 .action-progress-track { display: block; height: 8px; overflow: hidden; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-primary), transparent 82%); }

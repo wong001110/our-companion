@@ -358,6 +358,7 @@ if (process.env.OUR_COMPANION_SMOKE_TEST === '1') {
     simulateRendererFailure: () => invoke('smoke:simulateRendererFailure'),
     bootstrapFixtureCompanion: () => invoke('smoke:bootstrapFixtureCompanion'),
     setFriendLookupFixture: (input) => invoke('smoke:setFriendLookupFixture', input),
+    setUiBetaFixture: (input) => invoke('smoke:setUiBetaFixture', input),
     onVisualWorkAreaChanged: (listener) => {
       const channel = 'smoke:visualWorkAreaChanged';
       const handler = (_event: Electron.IpcRendererEvent, workArea: { x: number; y: number; width: number; height: number } | undefined) => listener(workArea);

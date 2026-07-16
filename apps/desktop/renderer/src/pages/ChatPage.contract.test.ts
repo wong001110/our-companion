@@ -38,3 +38,30 @@ describe('Chat clear-history confirmation contract', () => {
     expect(zhCNSource).toContain('所有已保存的聊天记录');
   });
 });
+
+describe('Chat operational-state contract', () => {
+  it('distinguishes loading, history failure, and send failure', () => {
+    expect(chatSource).toContain("<LoadingState label={t(lang, 'chat_loading')} />");
+    expect(chatSource).toContain("setHistoryError(t(lang, 'chat_history_error'))");
+    expect(chatSource).toContain("setSendError(t(lang, 'chat_send_error'))");
+    expect(chatSource).toContain("onClick={() => void loadHistory({ initial: true })}");
+  });
+
+  it('keeps the submitted draft on rejection and does not erase newer edits', () => {
+    expect(chatSource).toContain("setInput((current) => current === draft ? '' : current)");
+    expect(chatSource).not.toContain("setSending(true); setInput('')");
+    expect(chatSource).not.toMatch(/catch\s*\{[^}]*setInput/s);
+  });
+
+  it('does not clear history while a send is in flight', () => {
+    expect(chatSource).toContain('disabled={sending || clearing}');
+    expect(chatSource).toContain('disabled={sending || clearing || !input.trim()}');
+  });
+
+  it('provides matching localized loading and failure keys', () => {
+    for (const key of ['chat_loading', 'chat_history_error', 'chat_send_error']) {
+      expect(enSource).toContain(`${key}:`);
+      expect(zhCNSource).toContain(`"${key}":`);
+    }
+  });
+});

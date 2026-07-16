@@ -67,6 +67,8 @@ import { ChatPage } from '../pages/ChatPage';
 import { SocialPage } from '../pages/SocialPage';
 import { InlineNotice } from '../components/feedback/InlineNotice';
 import { ConfirmDialog } from '../components/feedback/ConfirmDialog';
+import { ConnectionBanner } from '../components/feedback/OperationalState';
+import { LoadingState } from '../components/feedback/LoadingState';
 import { ResponsiveNavigation } from '../layouts/ResponsiveNavigation';
 import { CompanionEntryShell, PresenceActivityReporter } from '../app/CompanionEntryShell';
 import { CreationShell } from '../app/CreationShell';
@@ -83,6 +85,7 @@ import { isCompanionAnimationName, resolveWalkDirection } from '../character/ani
 import { startPerformancePlayback, type ActivePerformancePlayback } from '../character/performancePlayback';
 import { RemoteVisitorLayer, useVisualVisitState } from '../visits/RemoteVisitorLayer';
 import { useSettingsViewModel } from '../features/settings/useSettingsViewModel';
+import { SETTINGS_CATEGORIES, settingsCategoryForKey, type SettingsCategory } from '../features/settings/settingsCategoryNavigation';
 
 export function SettingsPage({ state, behaviorSettings, onRefresh, onLangChange, companionId, assetRoot }: {
   state?: CharacterRuntimeState;
@@ -101,16 +104,46 @@ export function SettingsPage({ state, behaviorSettings, onRefresh, onLangChange,
   } = useSettingsViewModel({ lang, onLangChange });
   const [developerOpen, setDeveloperOpen] = useState(() => localStorage.getItem('companion:developer:enabled') === 'true');
   const [devAnimation, setDevAnimation] = useState<DevAnimation>('live');
-  const [category, setCategory] = useState<'companion' | 'ai' | 'voice' | 'privacy' | 'appearance' | 'online' | 'advanced' | 'developer'>('companion');
+  const [category, setCategory] = useState<SettingsCategory>('companion');
+  const categoryTabsRef = useRef(new Map<SettingsCategory, HTMLButtonElement>());
   const previewState = devAnimation === 'live' ? state : createDevAnimationState(devAnimation);
   const animationOverride = devAnimation === 'live' ? undefined : devAnimation;
+
+  function handleCategoryKeyDown(current: SettingsCategory, key: string) {
+    const next = settingsCategoryForKey(current, key);
+    if (!next) return false;
+    setCategory(next);
+    categoryTabsRef.current.get(next)?.focus();
+    return true;
+  }
 
   return (
     <NotebookPage eyebrow={t(lang, 'settings_eyebrow')} title={t(lang, 'settings_title')} note={t(lang, 'settings_note')}>
       <div className="soft-filter-row settings-category-nav" role="tablist" aria-label={t(lang, 'settings_categories_label')}>
-        {(['companion', 'ai', 'voice', 'privacy', 'appearance', 'online', 'advanced', 'developer'] as const).map((item) => <button key={item} type="button" role="tab" aria-selected={category === item} className={category === item ? 'active' : ''} onClick={() => setCategory(item)}>{t(lang, `settings_category_${item}` as keyof typeof import('../i18n/en').en)}</button>)}
+        {SETTINGS_CATEGORIES.map((item) => <button
+          key={item}
+          ref={(element) => { if (element) categoryTabsRef.current.set(item, element); else categoryTabsRef.current.delete(item); }}
+          id={`settings-tab-${item}`}
+          type="button"
+          role="tab"
+          aria-selected={category === item}
+          aria-controls={`settings-panel-${item}`}
+          tabIndex={category === item ? 0 : -1}
+          className={category === item ? 'active' : ''}
+          onClick={() => setCategory(item)}
+          onKeyDown={(event) => { if (handleCategoryKeyDown(item, event.key)) event.preventDefault(); }}
+        >{t(lang, `settings_category_${item}` as keyof typeof import('../i18n/en').en)}</button>)}
       </div>
-      <div className="settings-layout">
+      {SETTINGS_CATEGORIES.map((panelCategory) => <div
+        key={panelCategory}
+        className="settings-layout"
+        id={`settings-panel-${panelCategory}`}
+        role="tabpanel"
+        aria-labelledby={`settings-tab-${panelCategory}`}
+        tabIndex={0}
+        hidden={category !== panelCategory}
+      >
+        {category === panelCategory && <>
         {category === 'companion' && <><PaperCard title={t(lang, 'settings_companion_behavior_title')}><p>{t(lang, 'settings_companion_behavior_desc')}</p></PaperCard>
         <PaperCard title={t(lang, 'settings_attention_title')}>
           <label><span>{t(lang, 'settings_initiative_label')}</span><select value={attentionMode} onChange={(event) => {
@@ -150,7 +183,8 @@ export function SettingsPage({ state, behaviorSettings, onRefresh, onLangChange,
           {developerOpen && <DeveloperPreview state={previewState} devAnimation={devAnimation} animationOverride={animationOverride} onAnimationChange={setDevAnimation} settings={behaviorSettings} onRefresh={onRefresh} companionId={companionId} assetRoot={assetRoot} />}
         </PaperCard>
         }
-      </div>
+        </>}
+      </div>)}
     </NotebookPage>
   );
 }
@@ -303,6 +337,13 @@ function OnlineModeCard() {
 
   async function handleLogout() { await window.ourCompanion.network.logout(); }
 
+  async function retryConnection() {
+    setSaving(true); setAuthError('');
+    try { setNetworkStatus(await window.ourCompanion.network.retryConnection()); }
+    catch { setAuthError(t(lang, 'online_retry_failed')); }
+    finally { setSaving(false); }
+  }
+
   async function copyFriendCode() {
     const friendCode = networkStatus?.account?.friendCode;
     if (!friendCode) return;
@@ -320,19 +361,17 @@ function OnlineModeCard() {
   }
 
   const busy = saving || ['checking_server', 'connecting'].includes(networkStatus?.state ?? '');
-  const label = networkStatus ? networkStateLabel(networkStatus.state, lang) : t(lang, 'online_offline');
+  const canShowAuthentication = Boolean(networkStatus && ['authentication_required', 'authentication_failed'].includes(networkStatus.state));
 
   if (loading) {
-    return <PaperCard title={t(lang, 'online_title')} className="settings-panel"><p>{t(lang, 'online_loading')}</p></PaperCard>;
+    return <PaperCard title={t(lang, 'online_title')} className="settings-panel"><LoadingState label={t(lang, 'online_loading')} /></PaperCard>;
   }
 
   return (
     <PaperCard title={t(lang, 'online_title')} className="settings-panel">
+      {networkStatus && <ConnectionBanner status={networkStatus} onRetry={() => void retryConnection()} />}
       <div className="online-mode-header">
-        <div className="online-mode-status">
-          <span className={`online-mode-dot ${networkStatus?.state === 'online' ? 'online-mode-dot-active' : ''}`} />
-          <span className="online-mode-label">{label}</span>
-        </div>
+        <p className="online-mode-label">{networkStatus?.onlineModeEnabled ? t(lang, 'online_mode_enabled') : t(lang, 'online_mode_disabled')}</p>
         <button className="btn-secondary btn-sm" onClick={() => void handleModeToggle()} disabled={busy}>
           {networkStatus?.onlineModeEnabled ? t(lang, 'online_go_offline') : t(lang, 'online_go_online')}
         </button>
@@ -343,7 +382,8 @@ function OnlineModeCard() {
         <p>{t(lang, 'online_server_hint')}</p>
         {serverError && <p className="creation-error" role="alert">{serverError}</p>}
       </div>
-      {networkStatus?.message && <p className="creation-error" role="alert">{label}</p>}
+      {networkStatus?.remoteRevocationConfirmed === false && <InlineNotice tone="warning">{t(lang, 'online_logout_unconfirmed')}</InlineNotice>}
+      {authError && !showRegister && !showLogin && <InlineNotice tone="error">{authError}</InlineNotice>}
 
       {networkStatus?.account ? (
         <div className="online-user-info online-account-card">
@@ -352,7 +392,7 @@ function OnlineModeCard() {
           <button className="btn-secondary btn-sm" onClick={() => void copyFriendCode()}>{friendCodeCopied ? t(lang, 'online_copied') : t(lang, 'online_copy_code')}</button>
           <button className="btn-ghost btn-sm online-logout-button" onClick={() => void handleLogout()}>{t(lang, 'online_logout')}</button>
         </div>
-      ) : showRegister ? (
+      ) : canShowAuthentication && showRegister ? (
         <div className="online-auth-form">
           <h3>{t(lang, 'online_create_account')}</h3>
           <label><span>{t(lang, 'online_username')}</span><input value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t(lang, 'online_username')} autoFocus /></label>
@@ -362,7 +402,7 @@ function OnlineModeCard() {
           <div className="action-row"><button className="btn-secondary btn-sm" onClick={() => { setShowRegister(false); resetForm(); }}>{t(lang, 'social_cancel')}</button><button className="btn-primary btn-sm" disabled={saving || !username.trim() || !password.trim() || !email.trim()} onClick={() => void handleRegister()}>{saving ? t(lang, 'online_creating') : t(lang, 'online_create_account')}</button></div>
           <p className="online-auth-switch">{t(lang, 'online_already_account')} <button className="btn-ghost btn-sm" onClick={() => { setShowRegister(false); setShowLogin(true); resetForm(); }}>{t(lang, 'online_login')}</button></p>
         </div>
-      ) : showLogin ? (
+      ) : canShowAuthentication && showLogin ? (
         <div className="online-auth-form">
           <h3>{t(lang, 'online_login_title')}</h3>
           <label><span>{t(lang, 'online_email')}</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t(lang, 'online_email')} autoFocus /></label>
@@ -371,9 +411,9 @@ function OnlineModeCard() {
           <div className="action-row"><button className="btn-secondary btn-sm" onClick={() => { setShowLogin(false); resetForm(); }}>{t(lang, 'social_cancel')}</button><button className="btn-primary btn-sm" disabled={saving || !email.trim() || !password.trim()} onClick={() => void handleLogin()}>{saving ? t(lang, 'online_logging_in') : t(lang, 'online_login_title')}</button></div>
           <p className="online-auth-switch">{t(lang, 'online_no_account')} <button className="btn-ghost btn-sm" onClick={() => { setShowLogin(false); setShowRegister(true); resetForm(); }}>{t(lang, 'online_create_one')}</button></p>
         </div>
-      ) : (
+      ) : canShowAuthentication ? (
         <div className="online-auth-buttons"><button className="btn-secondary btn-sm" onClick={() => setShowLogin(true)}>{t(lang, 'online_login_title')}</button><button className="btn-primary btn-sm" onClick={() => setShowRegister(true)}>{t(lang, 'online_create_account')}</button></div>
-      )}
+      ) : null}
       <ConfirmDialog
         open={confirmServerChange}
         title={t(lang, 'online_change_server')}
@@ -388,10 +428,6 @@ function OnlineModeCard() {
       />
     </PaperCard>
   );
-}
-
-function networkStateLabel(state: NetworkStatus['state'], lang: Lang): string {
-  return t(lang, `online_state_${state}` as import('../i18n').TranslationKey);
 }
 
 const ALL_PERMISSION_SCOPES: PermissionScope[] = ['browser', 'automation', 'files', 'clipboard', 'calendar'];

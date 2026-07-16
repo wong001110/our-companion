@@ -1,0 +1,26 @@
+.published-companion-card { gap: var(--space-5); }
+.published-companion-status,
+.published-section-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
+.published-companion-status > div,
+.published-section-heading > div { display: grid; gap: var(--space-1); min-width: min(100%, 280px); }
+.published-companion-kicker { color: var(--color-text-secondary); font-size: .78rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.published-companion-editor,
+.published-companion-summary { display: grid; gap: var(--space-3); padding-block: var(--space-4); border-top: 1px solid var(--border-subtle); }
+.published-section-heading h3,
+.published-pack-history h4 { margin: 0; color: var(--color-text-primary); font-family: var(--font-ui); }
+.published-section-heading p { margin: 0; color: var(--color-text-secondary); }
+.published-pack-inspection { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-3); border: 1px solid color-mix(in srgb, var(--color-success), transparent 45%); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-bg-paper), transparent 8%); }
+.published-indeterminate-progress,
+.published-terminal-progress { display: grid; gap: var(--space-2); }
+.published-companion-summary .operational-row-supporting { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+.published-profile-tags { font-weight: 700; }
+.published-pack-history { display: grid; gap: var(--space-2); }
+.published-pack-history > summary { cursor: pointer; color: var(--color-text-primary); }
+.published-pack-history > summary h4 { display: inline; }
+.published-pack-history[open] > summary { margin-bottom: var(--space-2); }
+.published-companion-actions { display: flex; justify-content: flex-end; }
+.published-visit-snapshot-note { padding: var(--space-3); border-left: 3px solid var(--color-primary); color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-primary), transparent 92%); }
+
+@media (max-width: 620px) {
+  .published-companion-actions { justify-content: flex-start; }
+}

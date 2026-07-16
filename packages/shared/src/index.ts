@@ -1795,6 +1795,7 @@ export interface OurCompanionApi {
     simulateRendererFailure(): Promise<void>;
     bootstrapFixtureCompanion(): Promise<void>;
     setFriendLookupFixture(input: FriendLookupResult): Promise<void>;
+    setUiBetaFixture(input: unknown): Promise<void>;
     onVisualWorkAreaChanged(listener: (workArea?: { x: number; y: number; width: number; height: number }) => void): () => void;
   };
 }

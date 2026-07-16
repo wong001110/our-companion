@@ -340,6 +340,36 @@
   line-height: 1.5;
 }
 
+.notebook-header > div:first-child {
+  min-width: 0;
+}
+
+.notebook-header-meta {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.notebook-doodle {
+  display: block;
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+
+.notebook-doodle-conversation { width: 42px; height: 42px; }
+.notebook-doodle-discovery,
+.notebook-doodle-memory { width: 44px; height: 44px; }
+.notebook-doodle-journey { width: 50px; height: 50px; }
+
+.notebook-doodle[hidden] {
+  display: none;
+}
+
 .notebook-date {
   white-space: nowrap;
   color: #816f68;
@@ -590,8 +620,7 @@
   align-items: center;
 }
 
-.doodle-face,
-.doodle-icon {
+.doodle-face {
   display: inline-grid;
   place-items: center;
   width: 46px;
@@ -624,7 +653,7 @@
 
 .soft-filter-row button.active {
   color: #fff8fc;
-  background: #9062c3;
+  background: #7447a0;
 }
 
 .discovery-grid {
@@ -695,17 +724,7 @@
 }
 
 .journey-main {
-  display: grid;
-  grid-template-columns: 54px minmax(0, 1fr);
-  gap: 16px;
-  align-items: center;
-}
-
-.doodle-icon {
-  width: 50px;
-  height: 50px;
-  border-radius: 8px;
-  font-size: 12px;
+  min-width: 0;
 }
 
 .memory-layout {

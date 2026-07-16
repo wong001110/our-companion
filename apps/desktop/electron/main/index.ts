@@ -49,6 +49,24 @@ let companionClickThrough = true;
 let smokeVisualRuntime: { sessionId: string; animationName: string; x: number; y: number } | undefined;
 let smokeVisualAnimations: { sessionId: string; values: string[] } | undefined;
 let smokeWorkArea: SmokeWorkArea | undefined;
+type UiBetaSmokeFixture = {
+  status: Record<string, unknown>;
+  friends?: unknown[];
+  incomingRequests?: unknown[];
+  outgoingRequests?: unknown[];
+  blockedUsers?: unknown[];
+  presence?: unknown[];
+  incomingInvitations?: unknown[];
+  outgoingInvitations?: unknown[];
+  sessions?: unknown[];
+  publication?: Record<string, unknown>;
+  localCompanions?: unknown[];
+  failures?: string[];
+  publishAction?: 'uploading' | 'verifying' | 'failed' | 'success';
+  historyMode?: 'ready' | 'loading' | 'failed';
+  chatSendFails?: boolean;
+};
+let smokeUiBetaFixture: UiBetaSmokeFixture | undefined;
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const companionListenHotkey = 'CommandOrControl+Shift+Space';
@@ -446,6 +464,8 @@ function registerIpc(): void {
 
   for (const [channel, handler] of Object.entries(routes)) {
     ipcMain.handle(channel, async (_event, input) => {
+      const uiBetaFixtureResult = resolveUiBetaSmokeRoute(channel, input);
+      if (uiBetaFixtureResult.handled) return uiBetaFixtureResult.result;
       const onboardingAllowed = channel.startsWith('companionNew:') || channel === 'ai:getSettings' ||
         channel === 'ai:updateSettings' || channel.startsWith('user:') || channel.startsWith('network:') || channel.startsWith('workspace:');
       if (!onboardingAllowed && !services.hasActiveCompanion()) {
@@ -683,6 +703,63 @@ function registerSmokeIpc(): void {
     scheduleOnboardingCompletion(companion);
   });
   ipcMain.handle('smoke:setFriendLookupFixture', (_event, input: unknown) => services.network.setFriendLookupFixtureForSmoke(input));
+  ipcMain.handle('smoke:setUiBetaFixture', (_event, input: unknown) => {
+    if (!input || typeof input !== 'object' || !('status' in input) || !(input as { status?: unknown }).status || typeof (input as { status?: unknown }).status !== 'object') {
+      throw new Error('SMOKE_UI_BETA_FIXTURE_INVALID');
+    }
+    smokeUiBetaFixture = input as UiBetaSmokeFixture;
+    for (const window of [companionWindow, panelWindow]) {
+      if (window && !window.isDestroyed()) window.webContents.send('network:statusChanged', smokeUiBetaFixture.status);
+    }
+  });
+}
+
+function resolveUiBetaSmokeRoute(channel: string, input: unknown): { handled: false } | { handled: true; result: unknown } {
+  const fixture = smokeUiBetaFixture;
+  if (!isSmokeTestRuntime() || !fixture) return { handled: false };
+  const failure = (domain: string): void => {
+    if (fixture.failures?.includes(domain)) throw new Error(`SMOKE_UI_BETA_${domain.toUpperCase()}_FAILED`);
+  };
+  const companions = fixture.publication?.companions as Array<Record<string, unknown>> | undefined;
+  const firstProfile = companions?.[0];
+  const firstPack = (firstProfile?.assetPacks as unknown[] | undefined)?.[0];
+  switch (channel) {
+    case 'network:getStatus':
+    case 'network:retryConnection': return { handled: true, result: fixture.status };
+    case 'network:friends:getAll': failure('friends'); return { handled: true, result: fixture.friends ?? [] };
+    case 'network:friends:getIncomingRequests': failure('incomingRequests'); return { handled: true, result: fixture.incomingRequests ?? [] };
+    case 'network:friends:getOutgoingRequests': failure('outgoingRequests'); return { handled: true, result: fixture.outgoingRequests ?? [] };
+    case 'network:blocks:getAll': failure('blockedUsers'); return { handled: true, result: fixture.blockedUsers ?? [] };
+    case 'network:presence:getFriendPresence': failure('presence'); return { handled: true, result: fixture.presence ?? [] };
+    case 'network:visits:invitations:list': {
+      const outgoing = (input as { direction?: string } | undefined)?.direction === 'outgoing';
+      failure(outgoing ? 'outgoingInvitations' : 'incomingInvitations');
+      return { handled: true, result: outgoing ? fixture.outgoingInvitations ?? [] : fixture.incomingInvitations ?? [] };
+    }
+    case 'network:visits:sessions:list': failure('sessions'); return { handled: true, result: fixture.sessions ?? [] };
+    case 'network:visits:visual:getState': return { handled: true, result: { state: 'idle', ownerPresenceMode: 'present' } };
+    case 'network:companions:getMine': failure('publication'); return { handled: true, result: fixture.publication ?? { companions: [] } };
+    case 'companionNew:list': return { handled: true, result: fixture.localCompanions ?? [] };
+    case 'network:assets:inspect': return { handled: true, result: { totalFiles: 12, totalBytes: 3145728, manifestHash: 'fixture-hash' } };
+    case 'network:companions:create': return { handled: true, result: { networkCompanionId: 'network-companion-1' } };
+    case 'network:companions:activate':
+    case 'network:companions:publish': return { handled: true, result: firstProfile };
+    case 'network:assets:getPublishStatus': return { handled: true, result: fixture.publishAction === 'verifying'
+      ? { assetPackId: 'pack-1', completedFiles: 12, totalFiles: 12, uploadedBytes: 3145728, totalBytes: 3145728, state: 'verifying' }
+      : { assetPackId: 'pack-1', completedFiles: 5, totalFiles: 12, uploadedBytes: 1310720, totalBytes: 3145728, state: 'uploading' } };
+    case 'network:assets:publish':
+      if (fixture.publishAction === 'failed') throw new Error('ASSET_INTEGRITY_FAILED');
+      if (fixture.publishAction === 'uploading' || fixture.publishAction === 'verifying') return { handled: true, result: new Promise(() => undefined) };
+      return { handled: true, result: firstPack };
+    case 'companion:getHistory':
+      if (fixture.historyMode === 'loading') return { handled: true, result: new Promise(() => undefined) };
+      if (fixture.historyMode === 'failed') throw new Error('SMOKE_UI_BETA_HISTORY_FAILED');
+      return { handled: true, result: [{ id: 'message-1', role: 'assistant', source: 'panel', content: 'I saved a small thought from our last conversation.', status: 'ok', createdAt: '2026-07-17T09:30:00.000Z' }] };
+    case 'ai:chat':
+      if (fixture.chatSendFails) throw new Error('SMOKE_UI_BETA_CHAT_FAILED');
+      return { handled: true, result: { content: 'fixture' } };
+    default: return { handled: false };
+  }
 }
 
 function getSenderWindow(event: IpcMainInvokeEvent): BrowserWindow {

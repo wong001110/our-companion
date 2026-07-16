@@ -4,7 +4,9 @@ import { COMPANION_CHAT_RETENTION_DAYS } from '@our-companion/shared';
 import { t } from '../i18n';
 import { ConfirmDialog } from '../components/feedback/ConfirmDialog';
 import { InlineNotice } from '../components/feedback/InlineNotice';
+import { LoadingState } from '../components/feedback/LoadingState';
 import { NotebookChatBubble, NotebookPage, useLang } from '../ui/NotebookPrimitives';
+import { chatScrollBehavior, isChatNearBottom } from './chatScroll';
 
 type ChatFilter = 'all' | CompanionMessageSource | 'errors';
 
@@ -14,15 +16,34 @@ export function ChatPage() {
   const [filter, setFilter] = useState<ChatFilter>('all');
   const [search, setSearch] = useState('');
   const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [sendError, setSendError] = useState('');
   const [clearError, setClearError] = useState('');
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const followMessagesRef = useRef(true);
 
-  async function loadHistory() { setMessages(await window.ourCompanion.companion.getHistory({ limit: 200 })); }
-  useEffect(() => { void loadHistory(); }, []);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  async function loadHistory({ initial = false }: { initial?: boolean } = {}) {
+    if (initial) setLoading(true);
+    setHistoryError('');
+    try {
+      setMessages(await window.ourCompanion.companion.getHistory({ limit: 200 }));
+    } catch {
+      setHistoryError(t(lang, 'chat_history_error'));
+    } finally {
+      if (initial) setLoading(false);
+    }
+  }
+  useEffect(() => { void loadHistory({ initial: true }); }, []);
+  useEffect(() => {
+    const container = messagesRef.current;
+    if (!container || !followMessagesRef.current) return;
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    container.scrollTo({ top: container.scrollHeight, behavior: chatScrollBehavior(reducedMotion) });
+  }, [messages]);
   const filtered = useMemo(() => {
     let list = messages;
     if (filter === 'errors') list = list.filter((message) => message.status !== 'ok');
@@ -31,10 +52,20 @@ export function ChatPage() {
     return list;
   }, [messages, filter, search]);
   async function sendMessage() {
-    const message = input.trim();
+    const draft = input;
+    const message = draft.trim();
     if (!message || sending) return;
-    setSending(true); setInput('');
-    try { await window.ourCompanion.ai.chat({ message }); await loadHistory(); } finally { setSending(false); }
+    setSending(true);
+    setSendError('');
+    try {
+      await window.ourCompanion.ai.chat({ message });
+      setInput((current) => current === draft ? '' : current);
+      await loadHistory();
+    } catch {
+      setSendError(t(lang, 'chat_send_error'));
+    } finally {
+      setSending(false);
+    }
   }
   async function clearHistory() {
     setClearing(true);
@@ -58,17 +89,23 @@ export function ChatPage() {
   const formatTime = (iso: string) => { const date = new Date(iso); return `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`; };
   return (
     <>
-      <NotebookPage eyebrow={t(lang, 'chat_eyebrow')} title={t(lang, 'chat_title')} note={t(lang, 'chat_note')}>
+      <NotebookPage eyebrow={t(lang, 'chat_eyebrow')} title={t(lang, 'chat_title')} note={t(lang, 'chat_note')} marker="conversation">
         <section className="chat-paper chat-view">
           <div className="chat-toolbar"><div className="chat-filter-chips">{filters.map(({ key, label }) => <button key={key} className={`chip${filter === key ? ' active' : ''}`} aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</button>)}</div><input className="chat-search" placeholder={t(lang, 'chat_search_placeholder')} value={search} onChange={(event) => setSearch(event.target.value)} /></div>
-          <div className="chat-messages">
-            {filtered.length === 0 && <p className="chat-empty">{t(lang, 'chat_empty')}</p>}
+          <div
+            className="chat-messages"
+            ref={messagesRef}
+            onScroll={(event) => { followMessagesRef.current = isChatNearBottom(event.currentTarget); }}
+          >
+            {loading && <LoadingState label={t(lang, 'chat_loading')} />}
+            {historyError && <InlineNotice tone="error" action={<button type="button" onClick={() => void loadHistory({ initial: true })}>{t(lang, 'feedback_retry')}</button>}>{historyError}</InlineNotice>}
+            {!loading && !historyError && filtered.length === 0 && <p className="chat-empty">{t(lang, 'chat_empty')}</p>}
             {filtered.map((message) => { const badge = sourceBadge(message); return <NotebookChatBubble key={message.id} speaker={bubbleSpeaker(message)} time={formatTime(message.createdAt)} meta={badge ? <span className={`source-badge ${message.status !== 'ok' ? 'error' : message.source}`}>{badge}</span> : undefined}>{message.source === 'voice' && message.role === 'user' && <span className="voice-transcription-label">{t(lang, 'voice_transcribed')}</span>}{message.content}</NotebookChatBubble>; })}
-            <div ref={bottomRef} />
           </div>
           <div className="chat-composer">
             <textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder={t(lang, 'chat_composer_placeholder')} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} />
-            <div className="action-row"><button onClick={() => void sendMessage()} disabled={sending || !input.trim()}>{sending ? t(lang, 'chat_sending') : t(lang, 'chat_send')}</button><button className="btn-ghost" onClick={() => { setClearError(''); setConfirmClear(true); }}>{t(lang, 'chat_clear')}</button></div>
+            <div className="action-row"><button onClick={() => void sendMessage()} disabled={sending || clearing || !input.trim()}>{sending ? t(lang, 'chat_sending') : t(lang, 'chat_send')}</button><button className="btn-ghost" disabled={sending || clearing} onClick={() => { setClearError(''); setConfirmClear(true); }}>{t(lang, 'chat_clear')}</button></div>
+            {sendError && <InlineNotice tone="error">{sendError}</InlineNotice>}
             {clearError && <InlineNotice tone="error">{clearError}</InlineNotice>}
             <p className="chat-retention-note">{t(lang, 'chat_retention_note', { days: COMPANION_CHAT_RETENTION_DAYS })}</p>
           </div>
