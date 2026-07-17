@@ -2,6 +2,87 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PresentationCandidate } from './PresentationCandidate';
 import { DiscoveryQueueManager } from './DiscoveryQueueManager';
 
+export const DISCOVERY_PAYLOAD_TIMEOUT_MS = 30_000;
+
+export function findDiscoveryCandidate(
+  queue: DiscoveryQueueManager,
+  discoveryId?: string
+): PresentationCandidate | null {
+  const current = queue.getCurrent();
+  if (current && (discoveryId === undefined || current.candidate.id === discoveryId)) {
+    return current.candidate;
+  }
+  const queued = discoveryId === undefined ? queue.getNext() : queue.getQueued(discoveryId);
+  return queued?.candidate ?? null;
+}
+
+export function waitForDiscoveryCandidate(
+  queue: DiscoveryQueueManager,
+  discoveryId: string | undefined,
+  onAvailable: (candidate: PresentationCandidate) => void,
+  onTimeout?: () => void,
+  timeoutMs = DISCOVERY_PAYLOAD_TIMEOUT_MS
+): () => void {
+  let active = true;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let unsubscribe: () => void = () => undefined;
+  const stop = () => {
+    if (!active) return;
+    active = false;
+    unsubscribe();
+    if (timeout !== undefined) clearTimeout(timeout);
+  };
+  const check = () => {
+    if (!active) return;
+    const candidate = findDiscoveryCandidate(queue, discoveryId);
+    if (!candidate) return;
+    stop();
+    onAvailable(candidate);
+  };
+  unsubscribe = queue.subscribe(check);
+  timeout = setTimeout(() => {
+    if (!active) return;
+    stop();
+    onTimeout?.();
+  }, timeoutMs);
+  check();
+  return stop;
+}
+
+export function presentDiscoveryWhenAvailable(
+  queue: DiscoveryQueueManager,
+  discoveryId: string | undefined,
+  onPresented: (candidate: PresentationCandidate) => void,
+  onAnnounce?: (candidate: PresentationCandidate) => void
+): () => void {
+  let active = true;
+  let unsubscribe: () => void = () => undefined;
+  const tryPresent = () => {
+    if (!active) return;
+    const current = queue.getCurrent();
+    if (current && (discoveryId === undefined || current.candidate.id === discoveryId)) {
+      active = false;
+      unsubscribe();
+      onPresented(current.candidate);
+      return;
+    }
+    const queued = discoveryId === undefined ? queue.getNext() : queue.getQueued(discoveryId);
+    if (!queued) return;
+    active = false;
+    unsubscribe();
+    const next = queue.present(discoveryId);
+    if (!next) return;
+    onAnnounce?.(next.candidate);
+    onPresented(next.candidate);
+  };
+  unsubscribe = queue.subscribe(tryPresent);
+  tryPresent();
+  return () => {
+    active = false;
+    unsubscribe();
+  };
+}
+
 export interface DiscoveryDebugInfo {
   lastAction?: string;
   lastStatus?: 'success' | 'error';
@@ -91,35 +172,23 @@ export function useDiscoveryPresentation(opts: {
   const presentWhenAvailable = useCallback((
     discoveryId: string | undefined,
     onPresented: (candidate: PresentationCandidate) => void
-  ): (() => void) => {
-    const queue = queueRef.current;
-    let active = true;
-    let unsubscribe: () => void = () => undefined;
-    const tryPresent = () => {
-      if (!active) return;
-      const current = queue.getCurrent();
-      if (current && (discoveryId === undefined || current.candidate.id === discoveryId)) {
-        active = false;
-        unsubscribe();
-        onPresented(current.candidate);
-        return;
-      }
-      const queued = discoveryId === undefined ? queue.getNext() : queue.getQueued(discoveryId);
-      if (!queued) return;
-      active = false;
-      unsubscribe();
-      const next = queue.present(discoveryId);
-      if (!next) return;
-      onAnnounce?.(next.candidate);
-      onPresented(next.candidate);
-    };
-    unsubscribe = queue.subscribe(tryPresent);
-    tryPresent();
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [onAnnounce]);
+  ): (() => void) => presentDiscoveryWhenAvailable(
+    queueRef.current,
+    discoveryId,
+    onPresented,
+    onAnnounce
+  ), [onAnnounce]);
+
+  const waitForCandidate = useCallback((
+    discoveryId: string,
+    onAvailable: (candidate: PresentationCandidate) => void,
+    onTimeout?: () => void
+  ): (() => void) => waitForDiscoveryCandidate(
+    queueRef.current,
+    discoveryId,
+    onAvailable,
+    onTimeout
+  ), []);
 
   const save = useCallback(async (candidate: PresentationCandidate) => {
     if (actionLoading) return;
@@ -204,7 +273,10 @@ export function useDiscoveryPresentation(opts: {
 
   const getQueue = useCallback(() => queueRef.current, []);
 
-  const hasCandidate = useCallback(() => !!queueRef.current.getNext(), []);
+  const hasCandidate = useCallback(
+    (discoveryId?: string) => findDiscoveryCandidate(queueRef.current, discoveryId) !== null,
+    []
+  );
 
   return {
     popup,
@@ -215,6 +287,7 @@ export function useDiscoveryPresentation(opts: {
     present,
     presentNext,
     presentWhenAvailable,
+    waitForCandidate,
     save,
     addToJourney,
     ignore,

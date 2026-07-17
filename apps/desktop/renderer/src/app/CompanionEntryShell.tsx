@@ -74,6 +74,7 @@ import { ResponsiveNavigation } from '../layouts/ResponsiveNavigation';
 import { DragHandle } from '../companion/DragHandle';
 import { useCompanionBehavior } from '../companion/behavior/useCompanionBehavior';
 import type { CommandExecutionHandle } from '../companion/behavior/commandLifecycle';
+import { createDiscoveryCommandPresentationHandle } from '../companion/behavior/discoveryCommandPresentation';
 import { useInteractiveRegion } from '../companion/useInteractiveRegion';
 import type { CompanionProfile } from '@our-companion/shared';
 import { CompanionCreationPage } from '../companion/creation/CompanionCreationPage';
@@ -84,8 +85,6 @@ import { isCompanionAnimationName, resolveWalkDirection } from '../character/ani
 import { startPerformancePlayback, type ActivePerformancePlayback } from '../character/performancePlayback';
 import { RemoteVisitorLayer, useVisualVisitState } from '../visits/RemoteVisitorLayer';
 import { Presence } from '../components/motion/Presence';
-
-type LocalExecutionPhase = 'waiting_to_start' | 'started' | 'completed' | 'cancelled' | 'failed';
 
 export function PresenceActivityReporter() {
   useEffect(() => {
@@ -296,65 +295,27 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
 
   const handleCompanionCommand = useCallback((command: import('@our-companion/shared').CompanionCommand): CommandExecutionHandle => {
     const presentation = commandPresentationRef.current;
-    let resolveStarted!: () => void;
-    let rejectStarted!: (reason: Error) => void;
-    let resolveCompleted!: () => void;
-    let rejectCompleted!: (reason: Error) => void;
-    const started = new Promise<void>((resolve, reject) => { resolveStarted = resolve; rejectStarted = reject; });
-    const completed = new Promise<void>((resolve, reject) => { resolveCompleted = resolve; rejectCompleted = reject; });
-    let phase: LocalExecutionPhase = 'waiting_to_start';
-    let stopWaitingForDiscovery: () => void = () => undefined;
-    const fail = (reason: string) => {
-      if (phase === 'completed' || phase === 'cancelled' || phase === 'failed') return;
-      const wasWaitingToStart = phase === 'waiting_to_start';
-      phase = 'failed';
-      if (commandCompletionRef.current?.commandId === command.id) commandCompletionRef.current = null;
-      if (wasWaitingToStart) rejectStarted(new Error(reason));
-      rejectCompleted(new Error(reason));
-    };
-    const beginVisiblePresentation = () => window.requestAnimationFrame(() => {
-      if (phase !== 'waiting_to_start') return;
-      phase = 'started';
-      resolveStarted();
+    return createDiscoveryCommandPresentationHandle({
+      command,
+      popup: presentation.discovery.popup,
+      softHintVisible: presentation.softHintVisible,
+      companionName: presentation.companionName,
+      waitForCandidate: presentation.discovery.waitForCandidate,
+      presentWhenAvailable: presentation.discovery.presentWhenAvailable,
+      setSoftHintVisible,
+      setSoftHintDiscoveryId,
+      showInstant: presentation.speech.showInstant,
+      showTypewriter: presentation.speech.showTypewriter,
+      recordSpeech: behaviorCommandActionsRef.current.recordSpeech,
+      recordDiscoveryPresented: behaviorCommandActionsRef.current.recordDiscoveryPresented,
+      scheduleFrame: (callback) => { window.requestAnimationFrame(callback); },
+      registerCommandCompletion: (commandId, complete) => {
+        commandCompletionRef.current = { commandId, complete };
+      },
+      clearCommandCompletion: (commandId) => {
+        if (commandCompletionRef.current?.commandId === commandId) commandCompletionRef.current = null;
+      },
     });
-    const completePresentation = () => {
-      if (phase !== 'started') return;
-      phase = 'completed';
-      if (commandCompletionRef.current?.commandId === command.id) commandCompletionRef.current = null;
-      resolveCompleted();
-    };
-    const cancel = (reason: string) => {
-      if (phase === 'completed' || phase === 'cancelled' || phase === 'failed') return;
-      stopWaitingForDiscovery();
-      const wasWaitingToStart = phase === 'waiting_to_start';
-      phase = 'cancelled';
-      if (commandCompletionRef.current?.commandId === command.id) commandCompletionRef.current = null;
-      if (wasWaitingToStart) rejectStarted(new Error(reason));
-      rejectCompleted(new Error(reason));
-    };
-    const displayHint = command.decision.displayHint;
-    if (displayHint === 'show_soft_hint' && !presentation.discovery.popup && !presentation.softHintVisible) {
-      setSoftHintDiscoveryId(command.discoveryId);
-      setSoftHintVisible(true);
-      behaviorCommandActionsRef.current.recordSpeech();
-      presentation.speech.showInstant(`${presentation.companionName} found something interesting. Want to see it?`);
-      beginVisiblePresentation();
-      window.requestAnimationFrame(completePresentation);
-    } else if (displayHint === 'present_discovery') {
-      stopWaitingForDiscovery = presentation.discovery.presentWhenAvailable(command.discoveryId, (next) => {
-        const completedImmediately = presentation.speech.showTypewriter(next.shareMessage);
-        behaviorCommandActionsRef.current.recordDiscoveryPresented();
-        beginVisiblePresentation();
-        if (completedImmediately) {
-          window.requestAnimationFrame(completePresentation);
-          return;
-        }
-        commandCompletionRef.current = { commandId: command.id, complete: completePresentation };
-      });
-    } else {
-      fail('unsupported_command');
-    }
-    return { started, completed, cancel };
   }, [speech.showInstant]);
 
   const behavior = useCompanionBehavior({ companionId: companion.id, onCommand: handleCompanionCommand });
@@ -905,7 +866,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           }}
         />
       )}
-      <Presence present={softHintVisible && !discovery.popup && discovery.hasCandidate()} exitDurationMs={150}>{(motionState) => (
+      <Presence present={softHintVisible && !discovery.popup && discovery.hasCandidate(softHintDiscoveryId)} exitDurationMs={150}>{(motionState) => (
         <div
           className="companion-soft-hint"
           data-motion-state={motionState}
