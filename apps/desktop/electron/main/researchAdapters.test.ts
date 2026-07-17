@@ -123,6 +123,14 @@ describe('SafeWebPageFetcher', () => {
 });
 
 describe('BraveWebSearchProvider', () => {
+  it('is unavailable without a key and never makes a request', async () => {
+    const request = vi.fn<typeof fetch>();
+    const provider = new BraveWebSearchProvider({ fetch: request as typeof fetch });
+    expect(provider.mode).toBe('unavailable');
+    await expect(provider.search({ query: 'test', limit: 1 })).resolves.toEqual([]);
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it('uses the constrained Brave request contract without placing the key in the URL', async () => {
     const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
       web: { results: [
@@ -159,6 +167,25 @@ describe('BraveWebSearchProvider', () => {
   ])('maps Brave HTTP %i to the safe adapter error %s', async (status, code) => {
     const provider = new BraveWebSearchProvider({ apiKey: 'brave-secret', fetch: async () => new Response('', { status }) });
     await expect(provider.search({ query: 'test', limit: 1 })).rejects.toMatchObject({ code });
+  });
+
+  it('maps 5xx and malformed provider responses without a retry', async () => {
+    const failed = vi.fn<typeof fetch>(async () => new Response('', { status: 503 }));
+    const failedProvider = new BraveWebSearchProvider({ apiKey: 'brave-secret', fetch: failed as typeof fetch });
+    await expect(failedProvider.search({ query: 'test', limit: 1 })).rejects.toMatchObject({ code: 'provider_error' });
+    expect(failed).toHaveBeenCalledTimes(1);
+
+    const malformed = new BraveWebSearchProvider({ apiKey: 'brave-secret', fetch: async () => new Response('{', { status: 200 }) });
+    await expect(malformed.search({ query: 'test', limit: 1 })).rejects.toMatchObject({ code: 'invalid_provider_response' });
+  });
+
+  it('maps request abort to timeout and does not retry the request', async () => {
+    const request = vi.fn<typeof fetch>((_url, init) => new Promise((_, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+    }) as Promise<Response>);
+    const provider = new BraveWebSearchProvider({ apiKey: 'brave-secret', fetch: request as typeof fetch, timeoutMs: 1 });
+    await expect(provider.search({ query: 'test', limit: 1 })).rejects.toMatchObject({ code: 'timeout' });
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it('does not expose an API key when a transport error includes it', async () => {
