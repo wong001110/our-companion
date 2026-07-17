@@ -1426,12 +1426,18 @@ export class AppServices {
   }
 
   private setAutonomyCharacterState(
+    companionId: string,
     coreState: CharacterRuntimeState['coreState'],
     intent: CharacterRuntimeState['intent'],
     animationIntent?: string
   ): CharacterRuntimeState {
-    const characterId = this.db.resolveActiveCompanionId();
-    return this.companionRuntime.advanceWithIntent(characterId, coreState, intent, animationIntent);
+    return this.companionRuntime.advanceWithIntent(companionId, coreState, intent, animationIntent);
+  }
+
+  private requireCompanionName(companionId: string): string {
+    const companion = this.db.getCompanion(companionId);
+    if (!companion) throw new Error(`Companion not found: ${companionId}`);
+    return companion.name;
   }
 
   private recordExplorationEvent(
@@ -1465,12 +1471,12 @@ export class AppServices {
       ...patch,
       state
     });
-    this.recordExplorationEvent(next, state, this.messageForExplorationState(state));
+    this.recordExplorationEvent(next, state, this.messageForExplorationState(state, next.companionId));
     return next;
   }
 
-  private messageForExplorationState(state: ExplorationState): string {
-    const name = this.requireActiveCompanion().name;
+  private messageForExplorationState(state: ExplorationState, companionId: string): string {
+    const name = this.requireCompanionName(companionId);
     const messages: Record<ExplorationState, string> = {
       idle: `${name} is idle.`,
       curious: `${name} became curious.`,
@@ -1632,6 +1638,7 @@ export class AppServices {
     );
 
     const selectedCuriosityTarget = curiosityTargets[0];
+    const companionName = this.requireCompanionName(companionId);
     let cycle = this.db.insertExplorationCycle({
       id: cycleId,
       userId,
@@ -1644,8 +1651,8 @@ export class AppServices {
       insightIds: [],
       startedAt: this.now().toISOString()
     });
-    this.recordExplorationEvent(cycle, 'curious', selectedCuriosityTarget?.reason ?? `${this.requireActiveCompanion().name} became curious.`);
-    this.setAutonomyCharacterState('thinking', 'reviewing_memory');
+    this.recordExplorationEvent(cycle, 'curious', selectedCuriosityTarget?.reason ?? `${companionName} became curious.`);
+    this.setAutonomyCharacterState(companionId, 'thinking', 'reviewing_memory');
 
     if (!selectedCuriosityTarget) {
       for (const [engine, operation] of [
@@ -1672,7 +1679,7 @@ export class AppServices {
       [explorationPlan.id]
     );
     cycle = this.saveCycleState(cycle, 'planning', { explorationPlanId: explorationPlan.id });
-    this.setAutonomyCharacterState('discovering', 'sharing_discovery');
+    this.setAutonomyCharacterState(companionId, 'discovering', 'sharing_discovery');
 
     cycle = this.saveCycleState(cycle, 'exploring');
     const providerOutcomes: DiscoveryProviderOutcome[] = [];
@@ -1775,7 +1782,7 @@ export class AppServices {
       insightIds: insights.map((insight) => insight.id),
       selectedInsightId: selectedInsight?.id
     });
-    this.setAutonomyCharacterState('returning', 'sharing_discovery');
+    this.setAutonomyCharacterState(companionId, 'returning', 'sharing_discovery');
 
     cycle = this.saveCycleState(cycle, 'sharing');
     if (selectedInsight) {
@@ -1802,6 +1809,9 @@ export class AppServices {
       };
       this.db.insertDiscovery(discoveryPayload);
       const decision = this.requestDiscoveryPresentation(discoveryPayload);
+      if (decision.reason === 'discovery_companion_mismatch') {
+        this.companionRuntime.settleDiscoveryPresentation(companionId);
+      }
       trace(
         'decision',
         'evaluate',
@@ -1873,7 +1883,19 @@ export class AppServices {
       causationId = recorded.id;
     };
     const insightId = input.insightId ?? cycle.selectedInsightId;
-    const existingFeedback = this.db.listDiscoveryFeedback(1_000).find((item) =>
+    const persistedInsight = insightId ? this.db.getCompanionInsight(insightId) : undefined;
+    if (
+      insightId &&
+      (
+        !persistedInsight ||
+        persistedInsight.companionId !== cycle.companionId ||
+        !cycle.insightIds.includes(insightId)
+      )
+    ) {
+      throw new Error(`Insight ${insightId} does not belong to exploration cycle ${cycle.id}`);
+    }
+    const companionName = this.requireCompanionName(cycle.companionId);
+    const existingFeedback = this.db.listDiscoveryFeedback(1_000, undefined, cycle.companionId).find((item) =>
       item.cycleId === cycle.id &&
       item.insightId === insightId &&
       item.discoveryCandidateId === input.discoveryCandidateId &&
@@ -1901,7 +1923,7 @@ export class AppServices {
       state: 'reflecting',
       completedAt: nowIso()
     });
-    this.recordExplorationEvent(reflected, 'reflecting', `${this.requireActiveCompanion().name} recorded what happened after sharing the insight.`, {
+    this.recordExplorationEvent(reflected, 'reflecting', `${companionName} recorded what happened after sharing the insight.`, {
       feedback: feedback.value
     });
 
@@ -1934,7 +1956,7 @@ export class AppServices {
       const milestone = this.db.insertMilestone(
         createJourneyMilestone({
           journeyId: activeJourney.id,
-          title: `${this.requireActiveCompanion().name} saved an insight: ${insight.title}`,
+          title: `${companionName} saved an insight: ${insight.title}`,
           summary: insight.summary,
           type: 'discovery_saved'
         })
@@ -1944,7 +1966,7 @@ export class AppServices {
         id: createId('diary'),
         characterId: cycle.companionId,
         type: 'milestone',
-        title: `${this.requireActiveCompanion().name} brought something back`,
+        title: `${companionName} brought something back`,
         content: `I explored ${insight.title} and the user wanted to keep it. I added it to memory ${memory.id} so I can connect it to future curiosity.`,
         relatedJourneyId: activeJourney.id,
         createdAt: nowIso()
@@ -1970,7 +1992,7 @@ export class AppServices {
 
     const relationshipSignal = this.companionRuntime.relationshipSignalForFeedback(input.value);
     if (relationshipSignal) {
-      this.companionRuntime.applyRelationshipSignal(relationshipSignal);
+      this.companionRuntime.applyRelationshipSignal(cycle.companionId, relationshipSignal);
       trace('relationship', 'apply-feedback-signal', 'completed', [feedback.id], [relationshipSignal]);
     } else {
       trace('relationship', 'apply-feedback-signal', 'skipped', [feedback.id], [], 'no_relationship_signal');

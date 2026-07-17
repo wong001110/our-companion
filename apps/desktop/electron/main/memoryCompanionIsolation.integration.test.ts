@@ -35,6 +35,37 @@ function createCompanion(services: AppServices, name: string) {
   });
 }
 
+function autonomyConnector(
+  fetch: DiscoveryConnector['fetch'] = async () => [{}]
+): DiscoveryConnector {
+  return {
+    source: 'github',
+    providerMode: 'fixture',
+    fetch,
+    normalize: (): NormalizedDiscovery => ({
+      source: 'github',
+      title: 'Local-first TypeScript companion architecture',
+      summary: 'A focused implementation reference for local-first Companion state.',
+      url: 'https://example.com/local-first-companion',
+      tags: ['local-first', 'typescript', 'frontend'],
+      raw: {}
+    })
+  };
+}
+
+async function seedAutonomyMemory(
+  services: AppServices,
+  companionId: string
+): Promise<void> {
+  await services.memory.createNode({
+    companionId,
+    type: 'topic',
+    title: 'Local-first TypeScript companion architecture',
+    summary: 'Explore state ownership and deterministic local-first behavior.',
+    content: 'Keep every autonomous artifact owned by the originating Companion.'
+  });
+}
+
 afterEach(() => {
   for (const services of openServices.splice(0)) services.db.close();
 });
@@ -215,5 +246,158 @@ describe('production memory companion isolation', () => {
         companionId: first.id,
         title: 'Refresh owned by the original Companion'
       })]);
+  });
+
+  it('runs explicit non-active Companion autonomy entirely under that owner', async () => {
+    const services = new AppServices(':memory:', undefined, {
+      discoveryConnectors: []
+    });
+    openServices.push(services);
+    const active = createCompanion(services, 'First');
+    const owner = createCompanion(services, 'Second');
+    services.db.setPrimaryCompanion(active.id);
+    services.db.saveCharacterState(services.db.getCharacterState(active.id));
+    services.db.saveCharacterState(services.db.getCharacterState(owner.id));
+    await seedAutonomyMemory(services, owner.id);
+
+    const activeBefore = services.db.getCharacterState(active.id);
+    const saveCharacterState = vi.spyOn(services.db, 'saveCharacterState');
+    const events: Array<{ companionId: string; message?: string }> = [];
+    services.attachAutonomyBroadcasters({
+      explorationEvent: (event) => {
+        events.push({ companionId: event.companionId, message: event.message });
+      }
+    });
+
+    const result = await services.autonomy.startExploration({
+      companionId: owner.id,
+      trigger: 'manual'
+    });
+
+    expect(result.cycle.companionId).toBe(owner.id);
+    const ownerWrites = saveCharacterState.mock.calls.map(([state]) => state.characterId);
+    expect(ownerWrites.length).toBeGreaterThan(0);
+    expect(new Set(ownerWrites)).toEqual(new Set([owner.id]));
+    expect(services.db.getCharacterState(active.id)).toEqual(activeBefore);
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((event) => event.companionId === owner.id)).toBe(true);
+    expect(events.some((event) => event.message?.includes(owner.name))).toBe(true);
+    expect(events.every((event) => !event.message?.includes(active.name))).toBe(true);
+    saveCharacterState.mockRestore();
+  });
+
+  it('keeps an in-flight autonomous cycle on its original owner after a primary switch', async () => {
+    let resolveFetch!: (items: RawDiscoveryItem[]) => void;
+    const services = new AppServices(':memory:', undefined, {
+      discoveryConnectors: [autonomyConnector(() => new Promise<RawDiscoveryItem[]>((resolve) => {
+        resolveFetch = resolve;
+      }))]
+    });
+    openServices.push(services);
+    const owner = createCompanion(services, 'First');
+    const newlyActive = createCompanion(services, 'Second');
+    services.db.setPrimaryCompanion(owner.id);
+    services.db.saveCharacterState(services.db.getCharacterState(owner.id));
+    services.db.saveCharacterState(services.db.getCharacterState(newlyActive.id));
+    await seedAutonomyMemory(services, owner.id);
+
+    const newlyActiveBefore = services.db.getCharacterState(newlyActive.id);
+    const saveCharacterState = vi.spyOn(services.db, 'saveCharacterState');
+    const events: Array<{ companionId: string; message?: string }> = [];
+    services.attachAutonomyBroadcasters({
+      explorationEvent: (event) => {
+        events.push({ companionId: event.companionId, message: event.message });
+      }
+    });
+
+    const pendingCycle = services.autonomy.startExploration({
+      companionId: owner.id,
+      trigger: 'manual'
+    });
+    await vi.waitFor(() => expect(resolveFetch).toBeTypeOf('function'));
+    services.db.setPrimaryCompanion(newlyActive.id);
+    resolveFetch([{}]);
+    const result = await pendingCycle;
+
+    expect(result.cycle.companionId).toBe(owner.id);
+    expect(result.selectedInsight).toBeDefined();
+    const writes = saveCharacterState.mock.calls.map(([state]) => state.characterId);
+    expect(new Set(writes)).toEqual(new Set([owner.id]));
+    expect(services.db.getCharacterState(newlyActive.id)).toEqual(newlyActiveBefore);
+    expect(services.db.getCharacterState(owner.id)).toEqual(expect.objectContaining({
+      coreState: 'idle',
+      intent: 'waiting'
+    }));
+    expect(events.every((event) => event.companionId === owner.id)).toBe(true);
+    expect(events.some((event) => event.message?.includes(owner.name))).toBe(true);
+    expect(events.every((event) => !event.message?.includes(newlyActive.name))).toBe(true);
+    expect(services.db.listDiscoveries({ companionId: newlyActive.id, limit: 100 })).toEqual([]);
+  });
+
+  it('applies feedback for an old cycle only to the cycle owner after switching Companions', async () => {
+    const services = new AppServices(':memory:', undefined, {
+      discoveryConnectors: [autonomyConnector()]
+    });
+    openServices.push(services);
+    const owner = createCompanion(services, 'First');
+    const newlyActive = createCompanion(services, 'Second');
+    services.db.setPrimaryCompanion(owner.id);
+    await seedAutonomyMemory(services, owner.id);
+    const result = await services.autonomy.startExploration({
+      companionId: owner.id,
+      trigger: 'manual'
+    });
+    const insightId = result.cycle.selectedInsightId!;
+    const ownerInsight = services.db.getCompanionInsight(insightId)!;
+    services.db.insertCompanionInsight({
+      ...ownerInsight,
+      id: 'foreign-owner-insight',
+      companionId: newlyActive.id,
+      title: 'Second Companion foreign insight'
+    });
+
+    services.db.setPrimaryCompanion(newlyActive.id);
+    services.db.saveCharacterState(services.db.getCharacterState(newlyActive.id));
+    const newlyActiveStateBefore = services.db.getCharacterState(newlyActive.id);
+    const ownerRelationshipBefore = services.db.getRelationship('local', owner.id);
+    const newlyActiveRelationshipBefore = services.db.getRelationship('local', newlyActive.id);
+    const ownerMemoriesBefore = services.db.listMemoryNodes(owner.id).length;
+
+    await expect(services.autonomy.submitFeedback({
+      cycleId: result.cycle.id,
+      insightId: 'foreign-owner-insight',
+      value: 'saved'
+    })).rejects.toThrow(/insight|cycle|Companion/i);
+
+    const feedback = await services.autonomy.submitFeedback({
+      cycleId: result.cycle.id,
+      insightId,
+      value: 'saved',
+      note: 'owner-only feedback'
+    });
+
+    expect(feedback.companionId).toBe(owner.id);
+    expect(services.db.getRelationship('local', owner.id)).toEqual(expect.objectContaining({
+      companionId: owner.id,
+      recentPositiveInteractions: ownerRelationshipBefore.recentPositiveInteractions + 1
+    }));
+    expect(services.db.getRelationship('local', newlyActive.id)).toEqual(newlyActiveRelationshipBefore);
+    expect(services.db.listMemoryNodes(owner.id)).toHaveLength(ownerMemoriesBefore + 1);
+    expect(services.db.listMemoryNodes(newlyActive.id)).toEqual([]);
+    expect(services.db.getCharacterState(newlyActive.id)).toEqual(newlyActiveStateBefore);
+
+    const ownerDiary = await services.diary.getEntries({ characterId: owner.id });
+    expect(ownerDiary[0]).toEqual(expect.objectContaining({
+      characterId: owner.id,
+      title: expect.stringContaining(owner.name)
+    }));
+    expect(ownerDiary[0]?.title).not.toContain(newlyActive.name);
+    const reflectionEvent = services.db.listExplorationEventsForCycle(result.cycle.id)
+      .find((event) => event.state === 'reflecting');
+    expect(reflectionEvent).toEqual(expect.objectContaining({
+      companionId: owner.id,
+      message: expect.stringContaining(owner.name)
+    }));
+    expect(reflectionEvent?.message).not.toContain(newlyActive.name);
   });
 });

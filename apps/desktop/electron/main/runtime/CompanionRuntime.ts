@@ -367,8 +367,8 @@ export class CompanionRuntime {
     return shouldPresentNow(decision);
   }
 
-  applyRelationshipSignal(signal: RelationshipSignal): void {
-    const companionId = this.resolveCompanionId();
+  applyRelationshipSignal(companionId: string, signal: RelationshipSignal): void {
+    this.db.resolveActiveCompanionId(companionId);
     this.relationship.applySignal(LOCAL_USER_ID, companionId, signal);
   }
 
