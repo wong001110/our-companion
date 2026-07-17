@@ -844,7 +844,7 @@ export interface WebSearchResult {
 
 /**
  * Persisted operational metadata only. Search result payloads (URLs, titles,
- * snippets, ranks, and selected-result IDs) remain transient in the research
+ * snippets, ranks, selected-result IDs, and result domains) remain transient in the research
  * coordinator and are never written to the local database.
  */
 export interface ResearchSearchRecord {
@@ -859,7 +859,6 @@ export interface ResearchSearchRecord {
   mode: 'live' | 'fixture' | 'unavailable';
   status: 'completed' | 'empty' | 'failed' | 'skipped';
   resultCount: number;
-  domains: string[];
   createdAt: string;
   errorCode?: string;
 }
@@ -871,7 +870,6 @@ export interface WebPageEvidence {
   cycleId: string;
   researchIntentId: string;
   researchPlanId: string;
-  searchResultId: string;
   query: string;
   provider: string;
   url: string;

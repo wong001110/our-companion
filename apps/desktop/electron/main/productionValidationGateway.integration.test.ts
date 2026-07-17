@@ -276,6 +276,42 @@ describe('production Validation Kit gateway', () => {
     expect(renderer.commands.length).toBeLessThanOrEqual(1);
   });
 
+  it('collects structured connector candidates without a Brave key or an unavailable-capability stop', async () => {
+    const provider = new FakeDiscoveryProvider([[
+      {
+        id: 'structured-only-item',
+        title: 'Typed local-first state machines',
+        summary: 'A concrete approach to reliable local-first state transitions.',
+        url: 'https://example.com/structured-only-state',
+        tags: ['frontend', 'local-first'],
+        source: 'github'
+      }
+    ]]);
+    const ai = new FakeAiProvider(['I will remember that.', reasonFixture]);
+    const { gateway } = createGateway({ provider, ai });
+    const companionId = gateway.services.db.resolveActiveCompanionId();
+
+    await gateway.execute({
+      category: 'memory',
+      params: {
+        operation: 'conversation-turn',
+        message: 'I prefer local-first TypeScript state machines for desktop products.'
+      }
+    });
+    const result = await gateway.execute({ category: 'discovery', params: { operation: 'autonomous-cycle' } });
+    const traces = gateway.getTraces().filter((trace) => trace.correlationId === result.correlationId);
+
+    expect(result.status).toBe('completed');
+    expect(provider.calls).toHaveLength(1);
+    expect(gateway.services.db.listResearchSearchRecords({ companionId })).toEqual([]);
+    expect(gateway.services.db.listWebPageEvidence({ companionId })).toEqual([]);
+    expect(gateway.services.db.listDiscoveryCandidates('default', 20, companionId)).toHaveLength(1);
+    expect(traces).toEqual(expect.arrayContaining([
+      expect.objectContaining({ operation: 'research-source:route', status: 'completed' }),
+      expect.objectContaining({ operation: 'research-pass:stop', skipReason: 'structured_research_completed' })
+    ]));
+  });
+
   it('defers exactly once in focus mode and emits at most one command after focus ends', async () => {
     const provider = new FakeDiscoveryProvider([[
       {

@@ -230,7 +230,7 @@ CREATE TABLE IF NOT EXISTS research_plans (
 );
 
 -- Search payloads are deliberately transient. This table contains only
--- observability metadata and never stores result URLs, titles, snippets, or ranks.
+-- observability metadata and never stores result URLs, titles, snippets, ranks, or domains.
 CREATE TABLE IF NOT EXISTS research_search_records (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -243,7 +243,6 @@ CREATE TABLE IF NOT EXISTS research_search_records (
   mode TEXT NOT NULL,
   status TEXT NOT NULL,
   result_count INTEGER NOT NULL,
-  domains_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL,
   error_code TEXT
 );
@@ -255,7 +254,6 @@ CREATE TABLE IF NOT EXISTS web_page_evidence (
   cycle_id TEXT NOT NULL,
   research_intent_id TEXT NOT NULL,
   research_plan_id TEXT NOT NULL,
-  search_result_id TEXT NOT NULL,
   query TEXT NOT NULL,
   provider TEXT NOT NULL,
   url TEXT NOT NULL,

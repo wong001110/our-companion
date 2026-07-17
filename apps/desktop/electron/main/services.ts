@@ -1736,7 +1736,6 @@ export class AppServices {
       mode: record.providerMode as 'live' | 'fixture' | 'unavailable',
       status: record.status,
       resultCount: record.resultCount,
-      domains: record.domains,
       errorCode: record.error,
       createdAt: this.now().toISOString()
     });

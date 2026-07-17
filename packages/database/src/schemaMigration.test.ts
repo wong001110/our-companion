@@ -6,6 +6,59 @@ import { describe, expect, it } from 'vitest';
 import { DatabaseService } from './index';
 
 describe('schema compatibility migrations', () => {
+  it('removes legacy persisted search-result IDs while preserving fetched page evidence', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'our-companion-page-evidence-db-'));
+    const dbPath = path.join(directory, 'legacy.sqlite');
+    const legacy = new DatabaseSync(dbPath);
+    legacy.exec(`
+      CREATE TABLE web_page_evidence (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, companion_id TEXT NOT NULL, cycle_id TEXT NOT NULL,
+        research_intent_id TEXT NOT NULL, research_plan_id TEXT NOT NULL, search_result_id TEXT NOT NULL,
+        query TEXT NOT NULL, provider TEXT NOT NULL, url TEXT NOT NULL, canonical_url TEXT NOT NULL,
+        domain TEXT NOT NULL, title TEXT NOT NULL, extracted_text TEXT NOT NULL, excerpt TEXT NOT NULL,
+        content_hash TEXT NOT NULL, content_type TEXT NOT NULL, fetched_at TEXT NOT NULL, published_at TEXT,
+        source_type TEXT NOT NULL
+      );
+      CREATE INDEX idx_web_page_evidence_search_result ON web_page_evidence(search_result_id);
+      CREATE TABLE research_search_records (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, companion_id TEXT NOT NULL, cycle_id TEXT NOT NULL,
+        research_intent_id TEXT NOT NULL, research_plan_id TEXT NOT NULL, query TEXT NOT NULL,
+        provider TEXT NOT NULL, mode TEXT NOT NULL, status TEXT NOT NULL, result_count INTEGER NOT NULL,
+        domains_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, error_code TEXT
+      );
+    `);
+    legacy.prepare(
+      `INSERT INTO web_page_evidence
+       VALUES ('evidence', 'user', 'companion', 'cycle', 'intent', 'plan', 'transient-result-id', 'query',
+        'brave', 'https://example.test/page', 'https://example.test/page', 'example.test', 'Page title',
+        'Fetched public evidence.', 'Excerpt', 'hash', 'text/html', '2026-07-18T00:00:00.000Z', NULL, 'official')`
+    ).run();
+    legacy.prepare(
+      `INSERT INTO research_search_records
+       VALUES ('search', 'user', 'companion', 'cycle', 'intent', 'plan', 'query', 'brave', 'live', 'completed',
+        1, '["example.test"]', '2026-07-18T00:00:00.000Z', NULL)`
+    ).run();
+    legacy.close();
+
+    const db = new DatabaseService({ path: dbPath });
+    const raw = (db as unknown as { db: DatabaseSync }).db;
+    const columns = raw.prepare('PRAGMA table_info(web_page_evidence)').all() as Array<{ name: string }>;
+    expect(columns.some((column) => column.name === 'search_result_id')).toBe(false);
+    expect(raw.prepare('PRAGMA index_list(web_page_evidence)').all()).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'idx_web_page_evidence_search_result' })
+    ]));
+    expect(db.getWebPageEvidence('evidence', 'companion')).toEqual(expect.objectContaining({
+      id: 'evidence', url: 'https://example.test/page', title: 'Page title'
+    }));
+    const searchRecordColumns = raw.prepare('PRAGMA table_info(research_search_records)').all() as Array<{ name: string }>;
+    expect(searchRecordColumns.some((column) => column.name === 'domains_json')).toBe(false);
+    expect(db.getResearchSearchRecord('search', 'companion')).toEqual(expect.objectContaining({
+      id: 'search', provider: 'brave', resultCount: 1
+    }));
+    db.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
   it('adds research provenance columns to existing discovery candidates and exploration cycles', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'our-companion-research-db-'));
     const dbPath = path.join(directory, 'legacy.sqlite');

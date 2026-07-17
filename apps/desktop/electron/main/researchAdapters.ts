@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import net from 'node:net';
+import { Readable } from 'node:stream';
 import { load } from 'cheerio';
 import type { EngineProviderMode, WebPageEvidence, WebSearchResult } from '@our-companion/shared';
 import { createId } from '@our-companion/shared';
@@ -68,6 +71,9 @@ function braveFreshness(days?: number): string | undefined {
   return undefined;
 }
 
+// Pin Brave's dated compatibility contract as well as the `/v1` URL path.
+const BRAVE_API_VERSION = '2023-01-01';
+
 function cleanDomain(domain: string): string | undefined {
   const value = domain.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0] ?? '';
   return /^[a-z0-9.-]+$/i.test(value) ? value : undefined;
@@ -79,11 +85,13 @@ export class BraveWebSearchProvider implements WebSearchProvider {
   readonly mode: ResearchAdapterMode;
   private readonly apiKey?: string;
   private readonly request: typeof fetch;
+  private readonly timeoutMs: number;
 
-  constructor(input: { apiKey?: string; fetch?: typeof fetch } = {}) {
+  constructor(input: { apiKey?: string; fetch?: typeof fetch; timeoutMs?: number } = {}) {
     this.apiKey = input.apiKey?.trim() || process.env.BRAVE_SEARCH_API_KEY?.trim();
     this.mode = this.apiKey ? 'live' : 'unavailable';
     this.request = input.fetch ?? globalThis.fetch;
+    this.timeoutMs = input.timeoutMs ?? 10_000;
   }
 
   async search(input: Parameters<WebSearchProvider['search']>[0]): Promise<WebSearchResult[]> {
@@ -101,17 +109,22 @@ export class BraveWebSearchProvider implements WebSearchProvider {
     endpoint.searchParams.set('safesearch', 'strict');
     const freshness = braveFreshness(input.freshnessDays);
     if (freshness) endpoint.searchParams.set('freshness', freshness);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     let response: Response;
     try {
       response = await this.request(endpoint, {
         method: 'GET',
-        headers: { Accept: 'application/json', 'X-Subscription-Token': this.apiKey },
+        headers: { Accept: 'application/json', 'Api-Version': BRAVE_API_VERSION, 'X-Subscription-Token': this.apiKey },
         redirect: 'error',
-        credentials: 'omit'
+        credentials: 'omit',
+        signal: controller.signal
       });
     } catch (error) {
-      throw new ResearchAdapterError('timeout', error instanceof Error ? error.message : 'Search request failed');
-    }
+      if ((error as { name?: string }).name === 'AbortError') throw new ResearchAdapterError('timeout');
+      // Transport errors are deliberately not exposed: a dependency may include request headers in its message.
+      throw new ResearchAdapterError('provider_request_failed');
+    } finally { clearTimeout(timer); }
     if (response.status === 429) throw new ResearchAdapterError('rate_limited');
     if (response.status === 401 || response.status === 403) throw new ResearchAdapterError('authentication_error');
     if (!response.ok) throw new ResearchAdapterError('provider_error', `Brave Search returned ${response.status}`);
@@ -143,6 +156,8 @@ export class BraveWebSearchProvider implements WebSearchProvider {
 
 export interface SafeWebPageFetcherOptions {
   fetch?: typeof fetch;
+  /** A production transport receives the already validated, DNS-pinned address. */
+  request?: (url: URL, init: RequestInit, address: string) => Promise<Response>;
   lookup?: (hostname: string) => Promise<Array<{ address: string }>>;
   now?: () => Date;
   maxRedirects?: number;
@@ -167,6 +182,46 @@ function ipv4In(address: string, base: string, prefix: number): boolean {
   return (value & mask) === (network & mask);
 }
 
+function ipv6Words(address: string): number[] | undefined {
+  const value = address.toLowerCase().replace(/^\[|\]$/g, '').split('%')[0] ?? '';
+  if (!value.includes(':')) return undefined;
+  const halves = value.split('::');
+  if (halves.length > 2) return undefined;
+  const parseSide = (side: string): number[] | undefined => {
+    if (!side) return [];
+    const parts = side.split(':');
+    const words: number[] = [];
+    for (const part of parts) {
+      if (part.includes('.')) {
+        const ipv4 = ipv4Number(part);
+        if (ipv4 === undefined) return undefined;
+        words.push((ipv4 >>> 16) & 0xffff, ipv4 & 0xffff);
+      } else {
+        if (!/^[0-9a-f]{1,4}$/i.test(part)) return undefined;
+        words.push(Number.parseInt(part, 16));
+      }
+    }
+    return words;
+  };
+  const left = parseSide(halves[0] ?? '');
+  const right = parseSide(halves[1] ?? '');
+  if (!left || !right) return undefined;
+  if (halves.length === 1) return left.length === 8 ? left : undefined;
+  const zeros = 8 - left.length - right.length;
+  return zeros < 1 ? undefined : [...left, ...Array.from({ length: zeros }, () => 0), ...right];
+}
+
+function embeddedIpv4Address(address: string): string | undefined {
+  const words = ipv6Words(address);
+  if (!words) return undefined;
+  const compatible = words.slice(0, 6).every((word) => word === 0);
+  const mapped = words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff;
+  if (!compatible && !mapped) return undefined;
+  const high = words[6] ?? 0;
+  const low = words[7] ?? 0;
+  return `${high >>> 8}.${high & 0xff}.${low >>> 8}.${low & 0xff}`;
+}
+
 export function isBlockedAddress(address: string): boolean {
   const normalized = address.toLowerCase().replace(/^\[|\]$/g, '');
   if (net.isIP(normalized) === 4) {
@@ -176,10 +231,10 @@ export function isBlockedAddress(address: string): boolean {
     ];
     return privateRanges.some(([base, prefix]) => ipv4In(normalized, base, prefix));
   }
-  const ipv4Mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i)?.[1];
-  if (ipv4Mapped) return isBlockedAddress(ipv4Mapped);
+  const embeddedIpv4 = embeddedIpv4Address(normalized);
+  if (embeddedIpv4) return isBlockedAddress(embeddedIpv4);
   if (net.isIP(normalized) === 6) {
-    return normalized === '::1' || normalized.startsWith('fc') || normalized.startsWith('fd') || /^fe[89ab]/.test(normalized);
+    return normalized === '::1' || normalized.startsWith('fc') || normalized.startsWith('fd') || /^fe[89ab]/.test(normalized) || normalized.startsWith('ff');
   }
   return false;
 }
@@ -218,6 +273,22 @@ async function readBoundedBody(response: Response, maximumBytes: number): Promis
   return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
+function abortError(): Error {
+  return Object.assign(new Error('aborted'), { name: 'AbortError' });
+}
+
+async function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw abortError();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    operation.then(
+      (value) => { signal.removeEventListener('abort', onAbort); resolve(value); },
+      (error: unknown) => { signal.removeEventListener('abort', onAbort); reject(error); }
+    );
+  });
+}
+
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
@@ -239,11 +310,40 @@ function extractReadablePage(html: string, fallbackUrl: URL, limit: number): {
   return { title, canonicalUrl, extractedText, excerpt: extractedText.slice(0, 700), publishedAt };
 }
 
+async function fetchWithPinnedAddress(url: URL, init: RequestInit, address: string): Promise<Response> {
+  const request = url.protocol === 'https:' ? httpsRequest : httpRequest;
+  const headers = new Headers(init.headers);
+  // Avoid a compressed body because this small, bounded reader operates on transfer bytes.
+  if (!headers.has('accept-encoding')) headers.set('accept-encoding', 'identity');
+  return new Promise<Response>((resolve, reject) => {
+    const clientRequest = request({
+      protocol: url.protocol,
+      hostname: url.hostname,
+      port: url.port || undefined,
+      path: `${url.pathname}${url.search}`,
+      method: init.method ?? 'GET',
+      headers: Object.fromEntries(headers.entries()),
+      signal: init.signal ?? undefined,
+      // The request keeps the hostname for TLS/SNI but always connects to the address just validated above.
+      lookup: (_hostname, _options, callback) => callback(null, address, net.isIP(address))
+    }, (incoming) => {
+      const responseHeaders = new Headers();
+      for (const [name, value] of Object.entries(incoming.headers)) {
+        if (value !== undefined) responseHeaders.set(name, Array.isArray(value) ? value.join(', ') : value);
+      }
+      const body = Readable.toWeb(incoming) as ReadableStream<Uint8Array>;
+      resolve(new Response(body, { status: incoming.statusCode ?? 502, statusText: incoming.statusMessage, headers: responseHeaders }));
+    });
+    clientRequest.once('error', reject);
+    clientRequest.end();
+  });
+}
+
 /** Read-only, cookie-free, redirect-checked public-page transport. */
 export class SafeWebPageFetcher implements WebPageFetcher {
   readonly id = 'safe-web-page-fetcher';
   readonly mode = 'live' as const;
-  private readonly request: typeof fetch;
+  private readonly request: NonNullable<SafeWebPageFetcherOptions['request']>;
   private readonly resolve: NonNullable<SafeWebPageFetcherOptions['lookup']>;
   private readonly now: () => Date;
   private readonly maxRedirects: number;
@@ -252,7 +352,10 @@ export class SafeWebPageFetcher implements WebPageFetcher {
   private readonly timeoutMs: number;
 
   constructor(options: SafeWebPageFetcherOptions = {}) {
-    this.request = options.fetch ?? globalThis.fetch;
+    // `fetch` is retained only as a deterministic test seam. Production uses the pinned transport.
+    this.request = options.request ?? (options.fetch
+      ? async (url, init) => options.fetch!(url, init)
+      : fetchWithPinnedAddress);
     this.resolve = options.lookup ?? (async (hostname) => (await dnsLookup(hostname, { all: true })).map(({ address }) => ({ address })));
     this.now = options.now ?? (() => new Date());
     this.maxRedirects = options.maxRedirects ?? 3;
@@ -264,50 +367,58 @@ export class SafeWebPageFetcher implements WebPageFetcher {
   async fetchPage(input: Parameters<WebPageFetcher['fetchPage']>[0]): Promise<WebPageEvidence> {
     let target = assertSafeResearchUrl(input.searchResult.url);
     for (let redirects = 0; redirects <= this.maxRedirects; redirects += 1) {
-      const addresses = await this.resolve(target.hostname).catch(() => { throw new ResearchAdapterError('dns_resolution_failed'); });
-      if (addresses.length === 0 || addresses.some(({ address }) => isBlockedAddress(address))) throw new ResearchAdapterError('blocked_private_address');
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-      let response: Response;
       try {
-        response = await this.request(target, {
+        const resolveSafely = async (hostname: string) => {
+          try { return await abortable(this.resolve(hostname), controller.signal); }
+          catch (error) {
+            if (controller.signal.aborted || (error as { name?: string }).name === 'AbortError') throw abortError();
+            throw new ResearchAdapterError('dns_resolution_failed');
+          }
+        };
+        const addresses = await resolveSafely(target.hostname);
+        if (addresses.length === 0 || addresses.some(({ address }) => isBlockedAddress(address))) throw new ResearchAdapterError('blocked_private_address');
+        const response = await abortable(this.request(target, {
           method: 'GET',
           redirect: 'manual',
           credentials: 'omit',
           signal: controller.signal,
           headers: { Accept: 'text/html, application/xhtml+xml, text/plain;q=0.9' }
-        });
+        }, addresses[0]!.address), controller.signal);
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get('location');
+          if (!location) throw new ResearchAdapterError('redirect_missing_location');
+          if (redirects >= this.maxRedirects) throw new ResearchAdapterError('redirect_limit_exceeded');
+          target = assertSafeResearchUrl(new URL(location, target).toString());
+          continue;
+        }
+        if (!response.ok) throw new ResearchAdapterError('http_error', `HTTP ${response.status}`);
+        const contentType = (response.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase();
+        if (!contentType || !SUPPORTED_CONTENT_TYPES.has(contentType)) throw new ResearchAdapterError('unsupported_content_type');
+        const body = await abortable(readBoundedBody(response, this.maxResponseBytes), controller.signal);
+        const extracted = contentType === 'text/plain'
+          ? { title: input.searchResult.title, canonicalUrl: target.toString(), extractedText: normalizeText(body).slice(0, this.maxExtractedCharacters), excerpt: normalizeText(body).slice(0, 700) }
+          : extractReadablePage(body, target, this.maxExtractedCharacters);
+        if (controller.signal.aborted) throw abortError();
+        if (!extracted.extractedText) throw new ResearchAdapterError('empty_page_content');
+        const canonical = assertSafeResearchUrl(extracted.canonicalUrl);
+        const canonicalAddresses = await resolveSafely(canonical.hostname);
+        if (canonicalAddresses.length === 0 || canonicalAddresses.some(({ address }) => isBlockedAddress(address))) throw new ResearchAdapterError('blocked_private_address');
+        return {
+          id: createId('page_evidence'), userId: input.userId, companionId: input.companionId, cycleId: input.cycleId,
+          researchIntentId: input.researchIntentId, researchPlanId: input.researchPlanId,
+          query: input.searchResult.query, provider: input.searchResult.provider,
+          url: target.toString(), canonicalUrl: canonical.toString(), domain: canonical.hostname.toLowerCase(),
+          title: extracted.title, extractedText: extracted.extractedText, excerpt: extracted.excerpt,
+          contentHash: createHash('sha256').update(extracted.extractedText).digest('hex'), contentType,
+          fetchedAt: this.now().toISOString(), publishedAt: extracted.publishedAt, sourceType: input.sourceType
+        };
       } catch (error) {
-        if ((error as { name?: string }).name === 'AbortError') throw new ResearchAdapterError('timeout');
+        if (controller.signal.aborted || (error as { name?: string }).name === 'AbortError') throw new ResearchAdapterError('timeout');
+        if (error instanceof ResearchAdapterError) throw error;
         throw new ResearchAdapterError('fetch_failed', error instanceof Error ? error.message : 'Page fetch failed');
       } finally { clearTimeout(timer); }
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get('location');
-        if (!location) throw new ResearchAdapterError('redirect_missing_location');
-        if (redirects >= this.maxRedirects) throw new ResearchAdapterError('redirect_limit_exceeded');
-        target = assertSafeResearchUrl(new URL(location, target).toString());
-        continue;
-      }
-      if (!response.ok) throw new ResearchAdapterError('http_error', `HTTP ${response.status}`);
-      const contentType = (response.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase();
-      if (!contentType || !SUPPORTED_CONTENT_TYPES.has(contentType)) throw new ResearchAdapterError('unsupported_content_type');
-      const body = await readBoundedBody(response, this.maxResponseBytes);
-      const extracted = contentType === 'text/plain'
-        ? { title: input.searchResult.title, canonicalUrl: target.toString(), extractedText: normalizeText(body).slice(0, this.maxExtractedCharacters), excerpt: normalizeText(body).slice(0, 700) }
-        : extractReadablePage(body, target, this.maxExtractedCharacters);
-      if (!extracted.extractedText) throw new ResearchAdapterError('empty_page_content');
-      const canonical = assertSafeResearchUrl(extracted.canonicalUrl);
-      const canonicalAddresses = await this.resolve(canonical.hostname).catch(() => { throw new ResearchAdapterError('dns_resolution_failed'); });
-      if (canonicalAddresses.length === 0 || canonicalAddresses.some(({ address }) => isBlockedAddress(address))) throw new ResearchAdapterError('blocked_private_address');
-      return {
-        id: createId('page_evidence'), userId: input.userId, companionId: input.companionId, cycleId: input.cycleId,
-        researchIntentId: input.researchIntentId, researchPlanId: input.researchPlanId,
-        searchResultId: input.searchResult.id, query: input.searchResult.query, provider: input.searchResult.provider,
-        url: target.toString(), canonicalUrl: canonical.toString(), domain: canonical.hostname.toLowerCase(),
-        title: extracted.title, extractedText: extracted.extractedText, excerpt: extracted.excerpt,
-        contentHash: createHash('sha256').update(extracted.extractedText).digest('hex'), contentType,
-        fetchedAt: this.now().toISOString(), publishedAt: extracted.publishedAt, sourceType: input.sourceType
-      };
     }
     throw new ResearchAdapterError('redirect_limit_exceeded');
   }

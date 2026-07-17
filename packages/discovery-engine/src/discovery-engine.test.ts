@@ -181,6 +181,26 @@ describe('discovery engine', () => {
     expect(decideResearchContinuation({ intent, coverage, completedAdditionalPasses: 1 })).toEqual(expect.objectContaining({ action: 'stop' }));
   });
 
+  it('does not treat .org domains or an official-looking title as primary-source proof', () => {
+    const target = {
+      id: 'primary-source', userId: 'default', companionId: 'ann', topic: 'Desktop companion', description: 'Find implementation examples.',
+      source: 'memory_trigger' as const, explorationType: 'practical' as const, priority: 0.8, confidence: 0.7,
+      reason: 'memory', expectedValue: 'evidence', createdAt: 'now'
+    };
+    const intent = { ...createResearchIntent({ userId: 'default', companionId: 'ann', cycleId: 'cycle', curiosityTarget: target, now: 'now' }), domainHints: ['electronjs.org'] };
+    const plan = createDeterministicResearchPlan({ intent, capabilities: [], now: 'now' });
+    const selected = selectResearchPages({
+      intent,
+      plan,
+      results: [
+        { id: 'untrusted-org', query: intent.topic, title: 'Official documentation', url: 'https://unrelated.org/docs', domain: 'unrelated.org', rank: 1, provider: 'fixture' },
+        { id: 'trusted-hint', query: intent.topic, title: 'Reference', url: 'https://www.electronjs.org/docs', domain: 'www.electronjs.org', rank: 2, provider: 'fixture' }
+      ]
+    });
+    expect(selected.find((item) => item.searchResultId === 'untrusted-org')?.expectedEvidenceType).toBe('technical_article');
+    expect(selected.find((item) => item.searchResultId === 'trusted-hint')?.expectedEvidenceType).toBe('official');
+  });
+
   it('falls back from invalid AI planning and clamps valid AI limits without accepting URLs', () => {
     const target = {
       id: 'target', userId: 'default', companionId: 'ann', topic: 'Local-first AI', description: 'Practical research.',

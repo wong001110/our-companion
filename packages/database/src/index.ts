@@ -151,9 +151,30 @@ export class DatabaseService {
     }
     this.ensurePendingActionsTable();
     this.ensureTopicPreferencesTable();
+    this.removePersistedSearchResultIds();
+    this.removePersistedSearchDomains();
     this.migratePriorDiscoveryLifecycle();
     this.migratePriorConversationImportance();
     this.migratePriorBuiltinAnn();
+  }
+
+  /**
+   * Search result IDs are coordinator-local handles, not durable provenance.
+   * Page evidence keeps the independently fetched public page and its research
+   * context, while this migration removes the legacy selected-result handle.
+   */
+  private removePersistedSearchResultIds(): void {
+    const columns = this.db.prepare('PRAGMA table_info(web_page_evidence)').all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'search_result_id')) return;
+    this.db.exec('DROP INDEX IF EXISTS idx_web_page_evidence_search_result');
+    this.db.exec('ALTER TABLE web_page_evidence DROP COLUMN search_result_id');
+  }
+
+  /** Result-domain lists are derived from transient provider payloads and are not durable metadata. */
+  private removePersistedSearchDomains(): void {
+    const columns = this.db.prepare('PRAGMA table_info(research_search_records)').all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'domains_json')) return;
+    this.db.exec('ALTER TABLE research_search_records DROP COLUMN domains_json');
   }
 
   private ensureCompatibilityIndexes(): void {
@@ -171,7 +192,6 @@ export class DatabaseService {
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_research_search_records_plan ON research_search_records(research_plan_id, created_at)');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_web_page_evidence_companion_cycle ON web_page_evidence(companion_id, cycle_id, fetched_at)');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_web_page_evidence_plan ON web_page_evidence(research_plan_id, fetched_at)');
-    this.db.exec('CREATE INDEX IF NOT EXISTS idx_web_page_evidence_search_result ON web_page_evidence(search_result_id)');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_discovery_candidates_research_plan ON discovery_candidates(research_plan_id, collected_at)');
   }
 
@@ -1177,8 +1197,8 @@ export class DatabaseService {
       .prepare(
         `INSERT OR REPLACE INTO research_search_records
          (id, user_id, companion_id, cycle_id, research_intent_id, research_plan_id, query, provider, mode, status,
-          result_count, domains_json, created_at, error_code)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          result_count, created_at, error_code)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
@@ -1192,7 +1212,6 @@ export class DatabaseService {
         record.mode,
         record.status,
         record.resultCount,
-        JSON.stringify(record.domains),
         record.createdAt,
         record.errorCode ?? null
       );
@@ -1224,9 +1243,9 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO web_page_evidence
-         (id, user_id, companion_id, cycle_id, research_intent_id, research_plan_id, search_result_id, query, provider,
+         (id, user_id, companion_id, cycle_id, research_intent_id, research_plan_id, query, provider,
           url, canonical_url, domain, title, extracted_text, excerpt, content_hash, content_type, fetched_at, published_at, source_type)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         evidence.id,
@@ -1235,7 +1254,6 @@ export class DatabaseService {
         evidence.cycleId,
         evidence.researchIntentId,
         evidence.researchPlanId,
-        evidence.searchResultId,
         evidence.query,
         evidence.provider,
         evidence.url,
@@ -2219,7 +2237,6 @@ function mapResearchSearchRecord(row: Record<string, unknown>): ResearchSearchRe
     mode: row.mode as ResearchSearchRecord['mode'],
     status: row.status as ResearchSearchRecord['status'],
     resultCount: Number(row.result_count),
-    domains: JSON.parse(String(row.domains_json ?? '[]')),
     createdAt: String(row.created_at),
     errorCode: row.error_code ? String(row.error_code) : undefined
   };
@@ -2233,7 +2250,6 @@ function mapWebPageEvidence(row: Record<string, unknown>): WebPageEvidence {
     cycleId: String(row.cycle_id),
     researchIntentId: String(row.research_intent_id),
     researchPlanId: String(row.research_plan_id),
-    searchResultId: String(row.search_result_id),
     query: String(row.query),
     provider: String(row.provider),
     url: String(row.url),

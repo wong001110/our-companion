@@ -9,6 +9,7 @@ import type {
   WebPageEvidence,
   WebSearchResult
 } from '@our-companion/shared';
+import { createHash } from 'node:crypto';
 import { createId, nowIso, toUnitScore } from '@our-companion/shared';
 import {
   createDeterministicResearchPlan,
@@ -16,6 +17,7 @@ import {
   createResearchIntent,
   decideResearchContinuation,
   evaluateEvidenceCoverage,
+  fingerprintDiscovery,
   normalizeDiscoveryUrl,
   routeResearchSources,
   selectResearchPages,
@@ -24,6 +26,24 @@ import {
   validateAiResearchPlan
 } from '@our-companion/discovery-engine';
 import type { WebPageFetcher, WebSearchProvider } from './researchAdapters';
+
+class ResearchCycleTimeoutError extends Error {
+  constructor() {
+    super('research_cycle_timeout');
+    this.name = 'ResearchCycleTimeoutError';
+  }
+}
+
+function withCycleDeadline<T>(operation: Promise<T>, remainingMs: number): Promise<T> {
+  if (remainingMs <= 0) return Promise.reject(new ResearchCycleTimeoutError());
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new ResearchCycleTimeoutError()), remainingMs);
+    operation.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); }
+    );
+  });
+}
 
 export interface ResearchProviderOutcome {
   id: string;
@@ -50,12 +70,14 @@ export interface ResearchExecution {
   evidence: WebPageEvidence[];
   candidates: DiscoveryCandidate[];
   coverage: ResearchEvidenceCoverage;
+  /** Structured connector output is reported separately from fetched-page evidence coverage. */
+  structuredCandidateCount: number;
   providerOutcomes: ResearchProviderOutcome[];
   stopReason: string;
   additionalPasses: number;
   searchRecords: Array<{
     id: string; query: string; provider: string; providerMode: EngineProviderMode;
-    status: 'completed' | 'empty' | 'failed'; resultCount: number; domains: string[]; error?: string;
+    status: 'completed' | 'empty' | 'failed'; resultCount: number; error?: string;
   }>;
 }
 
@@ -103,19 +125,37 @@ function structuredCandidate(input: {
   try {
     const normalized = input.connector.normalize(input.item);
     const canonicalUrl = normalizeDiscoveryUrl(normalized.url);
+    const sourceType = input.connector.source === 'github' ? 'github' : input.connector.source === 'youtube' ? 'video' : input.connector.source === 'reddit' || input.connector.source === 'hackernews' ? 'community_discussion' : 'article';
     return {
       id: createId('candidate'), userId: input.userId, companionId: input.companionId,
       title: normalized.title, summary: normalized.summary ?? normalized.title,
-      sourceType: input.connector.source === 'github' ? 'github' : input.connector.source === 'youtube' ? 'video' : input.connector.source === 'reddit' || input.connector.source === 'hackernews' ? 'community_discussion' : 'article',
+      sourceType,
       sourceUrl: canonicalUrl ?? normalized.url, sourceName: input.connector.source, agentType: 'research',
       relatedCuriosityTargetId: input.curiosityTarget.id,
       relevanceScore: toUnitScore(0.7), noveltyScore: toUnitScore(0.65),
       evidenceScore: toUnitScore(normalized.summary ? 0.65 : 0.45), usefulnessScore: toUnitScore(0.6),
       researchPlanId: input.researchPlanId,
+      fingerprint: fingerprintDiscovery({ title: normalized.title, canonicalUrl, sourceType }),
       rawEvidence: JSON.stringify({ provider: input.connector.source, externalId: normalized.externalId, canonicalUrl }),
       collectedAt: input.now
     };
   } catch { return undefined; }
+}
+
+/** Prefer fetched-page candidates, which retain directly fetched evidence provenance. */
+function dedupeResearchCandidates(candidates: DiscoveryCandidate[]): DiscoveryCandidate[] {
+  const seenUrls = new Set<string>();
+  const seenFingerprints = new Set<string>();
+  return candidates.flatMap((candidate) => {
+    const canonicalUrl = normalizeDiscoveryUrl(candidate.sourceUrl);
+    // Deliberately omit source type here so the same page from a structured
+    // connector and a fetched web page is one research candidate.
+    const comparisonFingerprint = fingerprintDiscovery({ title: candidate.title, canonicalUrl });
+    if ((canonicalUrl && seenUrls.has(canonicalUrl)) || seenFingerprints.has(comparisonFingerprint)) return [];
+    if (canonicalUrl) seenUrls.add(canonicalUrl);
+    seenFingerprints.add(comparisonFingerprint);
+    return [{ ...candidate, sourceUrl: canonicalUrl ?? candidate.sourceUrl }];
+  });
 }
 
 async function fetchSelectedPages(input: {
@@ -125,6 +165,7 @@ async function fetchSelectedPages(input: {
   owner: Pick<ResearchIntent, 'userId' | 'companionId' | 'cycleId' | 'id'>;
   plan: ResearchPlan;
   onTrace?: (event: ResearchTraceEvent) => void;
+  remainingMs: () => number;
 }): Promise<WebPageEvidence[]> {
   const byId = new Map(input.results.map((result) => [result.id, result]));
   const pending = input.selected.flatMap((selection) => {
@@ -134,6 +175,10 @@ async function fetchSelectedPages(input: {
   const evidence: WebPageEvidence[] = [];
   // Batches are globally bounded to 3 and contain at most one request per domain.
   while (pending.length > 0) {
+    if (input.remainingMs() <= 0) {
+      input.onTrace?.({ operation: 'web-page:fetch', status: 'skipped', providerMode: input.fetcher.mode, inputRefs: [], outputRefs: [], skipReason: 'research_cycle_timeout' });
+      break;
+    }
     const domains = new Set<string>();
     const batch: typeof pending = [];
     for (let index = 0; index < pending.length && batch.length < 3;) {
@@ -145,17 +190,17 @@ async function fetchSelectedPages(input: {
     }
     const fetched = await Promise.all(batch.map(async ({ selection, result }) => {
       try {
-        const page = await input.fetcher.fetchPage({
+        const page = await withCycleDeadline(input.fetcher.fetchPage({
           searchResult: result, userId: input.owner.userId, companionId: input.owner.companionId,
           cycleId: input.owner.cycleId, researchIntentId: input.owner.id, researchPlanId: input.plan.id,
           sourceType: selection.expectedEvidenceType
-        });
-        input.onTrace?.({ operation: 'web-page:fetch', status: 'completed', providerMode: input.fetcher.mode, inputRefs: [result.id], outputRefs: [page.id] });
+        }), input.remainingMs());
+        input.onTrace?.({ operation: 'web-page:fetch', status: 'completed', providerMode: input.fetcher.mode, inputRefs: [input.plan.id], outputRefs: [page.id] });
         input.onTrace?.({ operation: 'web-page:extract', status: 'completed', providerMode: input.fetcher.mode, inputRefs: [page.id], outputRefs: [page.contentHash] });
         return page;
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        input.onTrace?.({ operation: 'web-page:fetch', status: 'skipped', providerMode: input.fetcher.mode, inputRefs: [result.id], skipReason: reason });
+        input.onTrace?.({ operation: 'web-page:fetch', status: 'skipped', providerMode: input.fetcher.mode, inputRefs: [input.plan.id], skipReason: reason });
         return undefined;
       }
     }));
@@ -201,9 +246,19 @@ export class ResearchOrchestrator {
     const selectedCapabilityIds = new Set(plan.selectedCapabilities);
     const selectedConnectors = this.deps.structuredConnectors.filter((connector) => selectedCapabilityIds.has(`structured:${connector.source}`));
     const structuredCandidates: DiscoveryCandidate[] = [];
+    // The cycle deadline covers every external provider, including structured connectors.
+    const deadline = Date.now() + plan.limits.timeoutMs;
+    const remainingMs = () => deadline - Date.now();
+    let searchesStarted = 0;
+    let pageFetchesStarted = 0;
+    let evidenceCharacters = 0;
+    let budgetStopReason: string | undefined;
     for (const connector of selectedConnectors) {
       try {
-        const raw = await connector.fetch({ query: plan.queries[0], limit: plan.limits.maxSearchResultsPerQuery });
+        const raw = await withCycleDeadline(
+          connector.fetch({ query: plan.queries[0], limit: plan.limits.maxSearchResultsPerQuery }),
+          remainingMs()
+        );
         const candidates = raw.flatMap((item) => {
           const candidate = structuredCandidate({ userId: input.userId, companionId: input.companionId, curiosityTarget: input.curiosityTarget, researchPlanId: plan.id, connector, item, now: this.now().toISOString() });
           return candidate ? [candidate] : [];
@@ -211,7 +266,9 @@ export class ResearchOrchestrator {
         structuredCandidates.push(...candidates);
         providerOutcomes.push({ id: connector.source, providerMode: connector.providerMode, status: candidates.length ? 'completed' : 'empty', itemCount: candidates.length });
       } catch (error) {
-        providerOutcomes.push({ id: connector.source, providerMode: connector.providerMode, status: 'failed', itemCount: 0, error: error instanceof Error ? error.message : String(error) });
+        const reason = error instanceof Error ? error.message : String(error);
+        if (error instanceof ResearchCycleTimeoutError) budgetStopReason ??= 'research_cycle_timeout';
+        providerOutcomes.push({ id: connector.source, providerMode: connector.providerMode, status: 'failed', itemCount: 0, error: reason });
       }
     }
 
@@ -221,28 +278,73 @@ export class ResearchOrchestrator {
     const canSearch = selectedCapabilityIds.has(this.deps.searchProvider.id) && selectedCapabilityIds.has(this.deps.pageFetcher.id);
     const search = async (query: string) => {
       if (!canSearch) return;
+      if (searchesStarted >= plan.limits.maxQueries) {
+        budgetStopReason ??= 'query_limit_reached';
+        input.onTrace?.({ operation: `web-search:${this.deps.searchProvider.id}`, status: 'skipped', providerMode: this.deps.searchProvider.mode, inputRefs: [plan.id], outputRefs: [], skipReason: budgetStopReason });
+        return;
+      }
+      if (remainingMs() <= 0) {
+        budgetStopReason ??= 'research_cycle_timeout';
+        input.onTrace?.({ operation: `web-search:${this.deps.searchProvider.id}`, status: 'skipped', providerMode: this.deps.searchProvider.mode, inputRefs: [plan.id], outputRefs: [], skipReason: budgetStopReason });
+        return;
+      }
+      searchesStarted += 1;
       try {
-        const found = await this.deps.searchProvider.search({ query, limit: plan.limits.maxSearchResultsPerQuery, freshnessDays: intent.freshnessDays, domainHints: intent.domainHints, excludedDomains: intent.excludedDomains });
+        const found = await withCycleDeadline(
+          this.deps.searchProvider.search({ query, limit: plan.limits.maxSearchResultsPerQuery, freshnessDays: intent.freshnessDays, domainHints: intent.domainHints, excludedDomains: intent.excludedDomains }),
+          remainingMs()
+        );
         const uniqueResults = found.filter((result) => !results.some((known) => normalizeDiscoveryUrl(known.url) === normalizeDiscoveryUrl(result.url)));
         results.push(...uniqueResults);
         providerOutcomes.push({ id: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: uniqueResults.length ? 'completed' : 'empty', itemCount: uniqueResults.length });
-        searchRecords.push({ id: createId('research_search'), query, provider: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: uniqueResults.length ? 'completed' : 'empty', resultCount: uniqueResults.length, domains: [...new Set(uniqueResults.map((result) => result.domain))] });
-        input.onTrace?.({ operation: `web-search:${this.deps.searchProvider.id}`, status: uniqueResults.length ? 'completed' : 'empty', providerMode: this.deps.searchProvider.mode, inputRefs: [plan.id], outputRefs: uniqueResults.map((result) => result.id), skipReason: uniqueResults.length ? undefined : 'no_search_results' });
+        const searchRecord = { id: createId('research_search'), query, provider: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: uniqueResults.length ? 'completed' as const : 'empty' as const, resultCount: uniqueResults.length };
+        searchRecords.push(searchRecord);
+        // Provider result IDs are transient handles. Engine Trace references only
+        // the persisted operational record, never a provider result or selection.
+        input.onTrace?.({ operation: `web-search:${this.deps.searchProvider.id}`, status: searchRecord.status, providerMode: this.deps.searchProvider.mode, inputRefs: [plan.id], outputRefs: [searchRecord.id], skipReason: uniqueResults.length ? undefined : 'no_search_results' });
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
+        if (error instanceof ResearchCycleTimeoutError) budgetStopReason ??= 'research_cycle_timeout';
         providerOutcomes.push({ id: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: 'failed', itemCount: 0, error: reason });
-        searchRecords.push({ id: createId('research_search'), query, provider: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: 'failed', resultCount: 0, domains: [], error: reason });
+        searchRecords.push({ id: createId('research_search'), query, provider: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: 'failed', resultCount: 0, error: reason });
         input.onTrace?.({ operation: `web-search:${this.deps.searchProvider.id}`, status: 'failed', providerMode: this.deps.searchProvider.mode, inputRefs: [plan.id], outputRefs: [], error: reason });
       }
     };
 
     if (canSearch) await Promise.all(plan.queries.slice(0, plan.limits.maxQueries).map(search));
     const fetchPass = async () => {
-      const selected = selectResearchPages({ intent, plan, results, seenCanonicalUrls: seenUrls });
-      input.onTrace?.({ operation: 'web-search:select-results', status: selected.length ? 'completed' : 'empty', inputRefs: results.map((result) => result.id), outputRefs: selected.map((selection) => selection.searchResultId), skipReason: selected.length ? undefined : 'no_selectable_results' });
-      const pages = await fetchSelectedPages({ selected, results, fetcher: this.deps.pageFetcher, owner: intent, plan, onTrace: input.onTrace });
-      for (const page of pages) seenUrls.add(normalizeDiscoveryUrl(page.canonicalUrl) ?? page.canonicalUrl);
-      evidence.push(...pages);
+      const remainingPages = plan.limits.maxPagesToRead - pageFetchesStarted;
+      const remainingCharacters = plan.limits.maxTotalCharacters - evidenceCharacters;
+      if (remainingPages <= 0 || remainingCharacters <= 0 || remainingMs() <= 0) {
+        budgetStopReason ??= remainingMs() <= 0 ? 'research_cycle_timeout' : remainingPages <= 0 ? 'page_limit_reached' : 'character_limit_reached';
+        input.onTrace?.({ operation: 'web-search:select-results', status: 'skipped', inputRefs: [plan.id], outputRefs: [], skipReason: budgetStopReason });
+        return;
+      }
+      const selected = selectResearchPages({
+        intent,
+        plan: { ...plan, limits: { ...plan.limits, maxPagesToRead: remainingPages } },
+        results,
+        seenCanonicalUrls: seenUrls
+      });
+      input.onTrace?.({ operation: 'web-search:select-results', status: selected.length ? 'completed' : 'empty', inputRefs: [plan.id], outputRefs: [], skipReason: selected.length ? undefined : 'no_selectable_results' });
+      pageFetchesStarted += selected.length;
+      const pages = await fetchSelectedPages({ selected, results, fetcher: this.deps.pageFetcher, owner: intent, plan, onTrace: input.onTrace, remainingMs });
+      for (const page of pages) {
+        const remaining = plan.limits.maxTotalCharacters - evidenceCharacters;
+        if (remaining <= 0) {
+          budgetStopReason ??= 'character_limit_reached';
+          break;
+        }
+        const extractedText = page.extractedText.slice(0, remaining);
+        if (!extractedText) continue;
+        const excerpt = page.excerpt.slice(0, extractedText.length);
+        const boundedPage = extractedText === page.extractedText
+          ? page
+          : { ...page, extractedText, excerpt, contentHash: createHash('sha256').update(extractedText).digest('hex') };
+        seenUrls.add(normalizeDiscoveryUrl(boundedPage.canonicalUrl) ?? boundedPage.canonicalUrl);
+        evidence.push(boundedPage);
+        evidenceCharacters += extractedText.length;
+      }
     };
     if (canSearch) await fetchPass();
     let coverage = evaluateEvidenceCoverage(intent, evidence);
@@ -252,25 +354,36 @@ export class ResearchOrchestrator {
     // A failed provider must not trigger an immediate retry loop. A second pass is
     // allowed only after at least one completed search produced an evaluable result set.
     const hasCompletedSearch = searchRecords.some((record) => record.status === 'completed');
-    if (canSearch && hasCompletedSearch && continuation.action === 'continue' && continuation.query) {
+    if (canSearch && hasCompletedSearch && continuation.action === 'continue' && continuation.query &&
+      searchesStarted < plan.limits.maxQueries && pageFetchesStarted < plan.limits.maxPagesToRead &&
+      evidenceCharacters < plan.limits.maxTotalCharacters && remainingMs() > 0) {
       additionalPasses = 1;
       input.onTrace?.({ operation: 'research-pass:continue', status: 'completed', inputRefs: [plan.id], outputRefs: [], skipReason: continuation.reason });
       await search(continuation.query);
       await fetchPass();
       coverage = evaluateEvidenceCoverage(intent, evidence);
+    } else if (canSearch && hasCompletedSearch && continuation.action === 'continue' && continuation.query) {
+      budgetStopReason ??= remainingMs() <= 0 ? 'research_cycle_timeout'
+        : searchesStarted >= plan.limits.maxQueries ? 'query_limit_reached'
+        : pageFetchesStarted >= plan.limits.maxPagesToRead ? 'page_limit_reached'
+        : 'character_limit_reached';
     }
-    const stop = canSearch
+    const stop = budgetStopReason
+      ? { action: 'stop' as const, reason: budgetStopReason }
+      : canSearch
       ? decideResearchContinuation({ intent, coverage, completedAdditionalPasses: additionalPasses })
+      : structuredCandidates.length > 0
+        ? { action: 'stop' as const, reason: 'structured_research_completed' }
       : { action: 'stop' as const, reason: 'no_compatible_capability' };
     input.onTrace?.({ operation: 'research-pass:stop', status: 'completed', inputRefs: evidence.map((page) => page.id), outputRefs: [], skipReason: stop.reason });
-    const candidates = [
-      ...structuredCandidates,
-      ...createDiscoveryCandidatesFromEvidence({ userId: input.userId, companionId: input.companionId, curiosityTargetId: input.curiosityTarget.id, researchPlanId: plan.id, evidence })
-    ];
+    const candidates = dedupeResearchCandidates([
+      ...createDiscoveryCandidatesFromEvidence({ userId: input.userId, companionId: input.companionId, curiosityTargetId: input.curiosityTarget.id, researchPlanId: plan.id, evidence }),
+      ...structuredCandidates
+    ]);
     const completedPlan: ResearchPlan = {
       ...plan,
       outcome: { stopReason: stop.reason, additionalPasses: additionalPasses as 0 | 1, completedAt: this.now().toISOString() }
     };
-    return { intent, plan: completedPlan, capabilities, evidence, candidates, coverage, providerOutcomes, stopReason: stop.reason, additionalPasses, searchRecords };
+    return { intent, plan: completedPlan, capabilities, evidence, candidates, coverage, structuredCandidateCount: structuredCandidates.length, providerOutcomes, stopReason: stop.reason, additionalPasses, searchRecords };
   }
 }

@@ -179,16 +179,26 @@ export function validateAiResearchPlan(
   };
 }
 
-function isOfficialResult(result: WebSearchResult): boolean {
-  return /(^|\.)(gov|edu|org)$/i.test(result.domain) || /docs|documentation|official/i.test(`${result.title} ${result.url}`);
+/**
+ * A search result cannot prove that a website is an authoritative source.  In
+ * particular, TLDs and words in a title are claims made by the page/search
+ * index, not provenance.  The only open-web primary-source signal we accept is
+ * an explicit domain hint carried by the bounded intent.
+ */
+function isOfficialResult(result: WebSearchResult, domainHints: readonly string[] = []): boolean {
+  const domain = result.domain.toLowerCase();
+  return domainHints.some((hint) => {
+    const normalized = hint.trim().toLowerCase();
+    return normalized.length > 0 && (domain === normalized || domain.endsWith(`.${normalized}`));
+  });
 }
 
 function isContrastingResult(result: WebSearchResult): boolean {
   return /limitation|problem|criticism|risk|drawback|challenge|trade-?off/i.test(`${result.title} ${result.snippet ?? ''}`);
 }
 
-function sourceTypeForResult(result: WebSearchResult): ResearchSourceType {
-  if (isOfficialResult(result)) return 'official';
+function sourceTypeForResult(result: WebSearchResult, domainHints?: readonly string[]): ResearchSourceType {
+  if (isOfficialResult(result, domainHints)) return 'official';
   if (/github\.com$/i.test(result.domain)) return 'code';
   if (/arxiv\.org$|doi\.org$|\.edu$/i.test(result.domain)) return 'research';
   if (/reddit\.com$|news\.ycombinator\.com$/i.test(result.domain)) return 'community';
@@ -209,7 +219,7 @@ export function selectResearchPages(input: {
     .filter((result) => !input.intent.excludedDomains?.some((domain) => result.domain === domain || result.domain.endsWith(`.${domain}`)))
     .sort((left, right) => {
       const priority = (result: WebSearchResult) =>
-        (input.intent.evidenceRequirements.requirePrimarySource && isOfficialResult(result) ? 3 : 0) +
+        (input.intent.evidenceRequirements.requirePrimarySource && isOfficialResult(result, input.intent.domainHints) ? 3 : 0) +
         (input.intent.evidenceRequirements.requireContrastingSource && isContrastingResult(result) ? 2 : 0) - result.rank / 100;
       return priority(right) - priority(left);
     });
@@ -218,8 +228,8 @@ export function selectResearchPages(input: {
     if (usedDomains.has(result.domain) && usedDomains.size >= (input.intent.evidenceRequirements.requireIndependentDomains ?? 1)) continue;
     selected.push({
       searchResultId: result.id,
-      reason: isOfficialResult(result) ? 'primary_source_preferred' : isContrastingResult(result) ? 'contrasting_evidence' : 'relevant_independent_result',
-      expectedEvidenceType: sourceTypeForResult(result)
+      reason: isOfficialResult(result, input.intent.domainHints) ? 'primary_source_preferred' : isContrastingResult(result) ? 'contrasting_evidence' : 'relevant_independent_result',
+      expectedEvidenceType: sourceTypeForResult(result, input.intent.domainHints)
     });
     usedDomains.add(result.domain);
   }
