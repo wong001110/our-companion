@@ -384,8 +384,7 @@ describe('production Validation Kit gateway', () => {
     });
     await gateway.services.character.setPrimary(second.id);
 
-    expect(gateway.services.db.listMemoryNodes(second.id).filter((memory) => memory.companionId))
-      .toEqual([]);
+    expect(gateway.services.db.listMemoryNodes(second.id)).toEqual([]);
     expect(gateway.services.db.listPendingActions(second.id, 'local')).toEqual([]);
     expect(gateway.services.db.getRelationship('local', second.id).trust).toBe(0.1);
     expect(gateway.services.db.getCharacterState(second.id).characterId).toBe(second.id);

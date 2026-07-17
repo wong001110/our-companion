@@ -53,6 +53,7 @@ function createDeps(overrides: Partial<ConstructorParameters<typeof DiscoverySha
       card_body: 'This is worth a look.',
       tags: ['frontend']
     })),
+    settleCommand: vi.fn(() => false),
     markPresenting: vi.fn(),
     markAnnounced: vi.fn(),
     markDeferred: vi.fn(),
@@ -131,6 +132,11 @@ describe('DiscoveryShareOrchestrator renderer acknowledgement lifecycle', () => 
     });
 
     expect(deps.performance.begin).not.toHaveBeenCalled();
+    expect(deps.settleCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ discoveryId: discovery.id }),
+      'cancelled',
+      'interrupted_before_start'
+    );
     expect(deps.markPresenting).not.toHaveBeenCalled();
     expect(deps.markAnnounced).not.toHaveBeenCalled();
     expect(orchestrator.getQueue()).toEqual([]);
@@ -157,6 +163,62 @@ describe('DiscoveryShareOrchestrator renderer acknowledgement lifecycle', () => 
 
     expect(deps.performance.begin).toHaveBeenCalledOnce();
     expect(deps.performance.settle).toHaveBeenCalledOnce();
+    expect(deps.settleCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ discoveryId: discovery.id }),
+      'cancelled',
+      'interrupted_during_preparation'
+    );
+    expect(deps.markAnnounced).not.toHaveBeenCalled();
+    expect(orchestrator.getQueue()).toEqual([]);
+  });
+
+  it('settles a preparation failure through the authoritative command callback', async () => {
+    const deps = createDeps({
+      generateReason: vi.fn(async () => {
+        throw new Error('reason provider failed');
+      })
+    });
+    const orchestrator = new DiscoveryShareOrchestrator(deps);
+    const discovery = sampleDiscovery('reason-failure');
+
+    orchestrator.enqueue(commandFor(discovery), discovery);
+    await vi.waitFor(() => {
+      expect(deps.settleCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ discoveryId: discovery.id }),
+        'failed',
+        'reason provider failed'
+      );
+    });
+
+    expect(deps.performance.begin).toHaveBeenCalledOnce();
+    expect(deps.performance.settle).toHaveBeenCalledOnce();
+    expect(deps.markDeferred).toHaveBeenCalledWith(
+      discovery.id,
+      'reason provider failed'
+    );
+    expect(deps.markAnnounced).not.toHaveBeenCalled();
+    expect(orchestrator.getQueue()).toEqual([]);
+  });
+
+  it('settles a cannot-announce deferral through the authoritative command callback', async () => {
+    const deps = createDeps({ canAnnounce: vi.fn(() => false) });
+    const orchestrator = new DiscoveryShareOrchestrator(deps);
+    const discovery = sampleDiscovery('cannot-announce');
+
+    orchestrator.enqueue(commandFor(discovery), discovery);
+    await vi.waitFor(() => {
+      expect(deps.settleCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ discoveryId: discovery.id }),
+        'cancelled',
+        'cannot_announce'
+      );
+    });
+
+    expect(deps.performance.begin).not.toHaveBeenCalled();
+    expect(deps.markDeferred).toHaveBeenCalledWith(
+      discovery.id,
+      'cannot_announce'
+    );
     expect(deps.markAnnounced).not.toHaveBeenCalled();
     expect(orchestrator.getQueue()).toEqual([]);
   });

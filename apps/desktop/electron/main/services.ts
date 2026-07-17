@@ -120,6 +120,8 @@ import { assertSmokeTestRuntime } from './platform/smokeRuntime';
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
 const PERSONALITY_ANALYSIS_MAX_ENTRIES = 50;
+const DISCOVERY_REEVALUATION_BASE_MS = 2 * 60 * 1000;
+const DISCOVERY_REEVALUATION_MAX_MS = 30 * 60 * 1000;
 export const MAX_COMPANION_ASSET_BYTES = 20 * 1024 * 1024;
 export const MAX_COMPANION_TOTAL_ASSET_BYTES = 200 * 1024 * 1024;
 
@@ -196,6 +198,8 @@ export class AppServices {
   private shareOrchestrator?: DiscoveryShareOrchestrator;
   private readonly presentationDiscoveries = new Map<string, Discovery>();
   private readonly presentationDecisions = new Map<string, CompanionDecision>();
+  private readonly presentationDecisionReevaluationAt = new Map<string, number>();
+  private readonly presentationDecisionAttempts = new Map<string, number>();
   private readonly startedDiscoveryPayloads = new Set<string>();
   private readonly companionRuntime: CompanionRuntime;
   private explorationBroadcaster?: (event: ExplorationLoopEvent) => void;
@@ -651,24 +655,41 @@ export class AppServices {
   };
 
   discovery = {
-    getFeed: async (input: DiscoveryFeedInput = {}) => this.db.listDiscoveries(input),
+    getFeed: async (input: DiscoveryFeedInput = {}) => {
+      const companionId = this.db.resolveActiveCompanionId();
+      return this.db.listDiscoveries({ ...input, companionId });
+    },
     refresh: async (input: { sources?: DiscoverySource[] } = {}) => {
       const result = await this.runDiscoveryRefresh(input.sources);
       return result.discoveries;
     },
     markInterested: async (discoveryId: string) => {
+      const companionId = this.db.resolveActiveCompanionId();
+      const ownedDiscovery = this.db.getDiscovery(discoveryId);
+      if (!ownedDiscovery || ownedDiscovery.companionId !== companionId) {
+        throw new Error('Discovery not found for the active Companion.');
+      }
       const discovery = this.db.transitionDiscoveryStatus(discoveryId, 'saved');
-      this.applyCharacterEmotion(undefined, 'user_accepts_discovery');
+      this.applyCharacterEmotion(companionId, 'user_accepts_discovery');
       return discovery;
     },
     markNotInterested: async (discoveryId: string) => {
+      const companionId = this.db.resolveActiveCompanionId();
+      const ownedDiscovery = this.db.getDiscovery(discoveryId);
+      if (!ownedDiscovery || ownedDiscovery.companionId !== companionId) {
+        throw new Error('Discovery not found for the active Companion.');
+      }
       const discovery = this.db.transitionDiscoveryStatus(discoveryId, 'rejected');
-      this.applyCharacterEmotion(undefined, 'user_rejects_discovery');
+      this.applyCharacterEmotion(companionId, 'user_rejects_discovery');
       return discovery;
     },
     addToJourney: async (input: AddDiscoveryToJourneyInput) => {
       const discovery = this.db.getDiscovery(input.discoveryId);
       if (!discovery) throw new Error(`Discovery not found: ${input.discoveryId}`);
+      const companionId = this.db.resolveActiveCompanionId(input.companionId);
+      if (discovery.companionId && discovery.companionId !== companionId) {
+        throw new Error('Discovery belongs to a different Companion.');
+      }
 
       const journey =
         input.journeyId && this.db.listActiveJourneys().find((item) => item.id === input.journeyId)
@@ -684,7 +705,8 @@ export class AppServices {
           summary: discovery.summary,
           content: discovery.whyThisMatters,
           source: discovery.source,
-          sourceUrl: discovery.url
+          sourceUrl: discovery.url,
+          companionId
         })
       );
       const milestone = this.db.insertMilestone(
@@ -714,7 +736,8 @@ export class AppServices {
       return result.discoveries;
     },
     presentNext: async () => {
-      const oldest = this.db.getOldestQueuedDiscovery();
+      const companionId = this.db.resolveActiveCompanionId();
+      const oldest = this.db.getOldestQueuedDiscovery(companionId);
       if (!oldest) return false;
       this.requestDiscoveryPresentation(oldest);
       return true;
@@ -767,21 +790,48 @@ export class AppServices {
   };
 
   memory = {
-    createNode: async (input: CreateMemoryNodeInput) => this.db.insertMemoryNode(createMemoryNode(input)),
-    getNode: async (id: string) => this.db.getMemoryNode(id),
+    createNode: async (input: CreateMemoryNodeInput) => {
+      const companionId = this.db.resolveActiveCompanionId(input.companionId);
+      return this.db.insertMemoryNode(createMemoryNode({ ...input, companionId }));
+    },
+    getNode: async (id: string) => {
+      const companionId = this.db.resolveActiveCompanionId();
+      return this.db.getMemoryNode(id, companionId);
+    },
     updateNode: async (input: UpdateMemoryNodeInput) => {
-      const existing = this.db.getMemoryNode(input.id);
+      const companionId = this.db.resolveActiveCompanionId(input.companionId);
+      const existing = this.db.getMemoryNode(input.id, companionId);
       if (!existing) throw new Error(`Memory node not found: ${input.id}`);
-      return this.db.updateMemoryNode(updateMemoryNodePure(existing, input));
+      return this.db.updateMemoryNode(updateMemoryNodePure(existing, { ...input, companionId }));
     },
     deleteNode: async (id: string) => {
+      const companionId = this.db.resolveActiveCompanionId();
+      if (!this.db.getMemoryNode(id, companionId)) throw new Error(`Memory node not found: ${id}`);
       this.db.deleteMemoryNode(id);
       return { id, deleted: true as const };
     },
-    createEdge: async (input: CreateMemoryEdgeInput) => this.db.insertMemoryEdge(createMemoryEdge(input)),
-    getGraph: async (input: { query?: string } = {}) =>
-      graphFromMemory(this.db.listMemoryNodes(), this.db.listMemoryEdges(), input.query),
-    search: async (query: string) => searchMemory(this.db.listMemoryNodes(), query)
+    createEdge: async (input: CreateMemoryEdgeInput) => {
+      const companionId = this.db.resolveActiveCompanionId(input.companionId);
+      if (
+        !this.db.getMemoryNode(input.fromNodeId, companionId) ||
+        !this.db.getMemoryNode(input.toNodeId, companionId)
+      ) {
+        throw new Error('Memory edge endpoints must belong to the active Companion.');
+      }
+      return this.db.insertMemoryEdge(createMemoryEdge(input));
+    },
+    getGraph: async (input: { query?: string; companionId?: string } = {}) => {
+      const companionId = this.db.resolveActiveCompanionId(input.companionId);
+      return graphFromMemory(
+        this.db.listMemoryNodes(companionId),
+        this.db.listMemoryEdges(companionId),
+        input.query
+      );
+    },
+    search: async (input: { query: string; companionId?: string }) => {
+      const companionId = this.db.resolveActiveCompanionId(input.companionId);
+      return searchMemory(this.db.listMemoryNodes(companionId), input.query);
+    }
   };
 
   journey = {
@@ -801,7 +851,10 @@ export class AppServices {
   };
 
   diary = {
-    getEntries: async (input: { type?: 'daily' | 'weekly' | 'milestone'; limit?: number } = {}) => this.db.listDiaryEntries(input),
+    getEntries: async (input: { characterId?: string; type?: 'daily' | 'weekly' | 'milestone'; limit?: number } = {}) => {
+      const characterId = this.db.resolveActiveCompanionId(input.characterId);
+      return this.db.listDiaryEntries({ ...input, characterId });
+    },
     generateDaily: async (input: { characterId?: string } = {}) => {
       const correlationId = createId('corr');
       const characterId = this.db.resolveActiveCompanionId(input.characterId);
@@ -811,9 +864,12 @@ export class AppServices {
       const entry = generateDailyDiary({
         characterId,
         milestones: this.db.listMilestones().slice(0, 10),
-        savedDiscoveries: this.db.listDiscoveries({ status: 'saved', limit: 10 }) as Discovery[],
+        savedDiscoveries: this.db
+          .listDiscoveries({ status: 'saved', limit: 100 })
+          .filter((discovery) => discovery.companionId === characterId)
+          .slice(0, 10) as Discovery[],
         completedTasks: [],
-        memoryChanges: this.db.listMemoryNodes().slice(0, 10)
+        memoryChanges: this.db.listMemoryNodes(characterId).slice(0, 10)
       });
       const saved = this.db.insertDiary(entry);
       this.emitFoundationEvent('ReflectionCreated', 'reflection', {
@@ -1184,6 +1240,8 @@ export class AppServices {
       if (record.command.discoveryId) {
         this.startedDiscoveryPayloads.delete(record.command.discoveryId);
         this.presentationDecisions.delete(record.command.discoveryId);
+        this.presentationDecisionReevaluationAt.delete(record.command.discoveryId);
+        this.presentationDecisionAttempts.delete(record.command.discoveryId);
         this.presentationDiscoveries.delete(record.command.discoveryId);
       }
       this.activeCommand = null;
@@ -1247,6 +1305,18 @@ export class AppServices {
     if (this.activeCommand) this.tryStartDiscoveryPayload(this.activeCommand.command);
   }
 
+  settleDiscoveryPresentationCommand(
+    command: CompanionCommand,
+    status: Extract<CommandAckStatus, 'cancelled' | 'failed'>,
+    reason: string
+  ): boolean {
+    return this.transitionActiveCommand(status, {
+      commandId: command.id,
+      companionId: command.companionId,
+      reason
+    });
+  }
+
   attachNetworkStatusBroadcaster(broadcaster: (status: NetworkStatus) => void): void {
     this.networkStatusBroadcaster = broadcaster;
   }
@@ -1256,8 +1326,27 @@ export class AppServices {
   }
 
   requestDiscoveryPresentation(discovery: Discovery): CompanionDecision {
+    const activeCompanionId = this.db.resolveActiveCompanionId();
+    if (discovery.companionId !== activeCompanionId) {
+      return {
+        id: createId('decision'),
+        action: 'stay_silent',
+        priority: 'low',
+        timing: 'later',
+        reason: 'discovery_companion_mismatch',
+        displayHint: 'stay_silent',
+        createdAt: this.now().toISOString()
+      };
+    }
     const existingDecision = this.presentationDecisions.get(discovery.id);
-    if (existingDecision) return existingDecision;
+    const reevaluateAt = this.presentationDecisionReevaluationAt.get(discovery.id);
+    if (existingDecision && (reevaluateAt === undefined || this.now().getTime() < reevaluateAt)) {
+      return existingDecision;
+    }
+    if (existingDecision) {
+      this.presentationDecisions.delete(discovery.id);
+      this.presentationDecisionReevaluationAt.delete(discovery.id);
+    }
     const eligibleDiscovery = discovery.status === 'candidate'
       ? this.db.transitionDiscoveryStatus(discovery.id, 'eligible', {
           companionId: discovery.companionId ?? this.db.resolveActiveCompanionId(),
@@ -1280,8 +1369,20 @@ export class AppServices {
         reason: deferred ? 'decision_deferred_until_idle' : 'decision_approved'
       });
       this.presentationDiscoveries.set(queuedDiscovery.id, queuedDiscovery);
+      this.presentationDecisionReevaluationAt.delete(eligibleDiscovery.id);
+      this.presentationDecisionAttempts.delete(eligibleDiscovery.id);
     } else {
       this.presentationDiscoveries.delete(eligibleDiscovery.id);
+      const attempt = (this.presentationDecisionAttempts.get(eligibleDiscovery.id) ?? 0) + 1;
+      const delayMs = Math.min(
+        DISCOVERY_REEVALUATION_BASE_MS * (2 ** Math.min(attempt - 1, 8)),
+        DISCOVERY_REEVALUATION_MAX_MS
+      );
+      this.presentationDecisionAttempts.set(eligibleDiscovery.id, attempt);
+      this.presentationDecisionReevaluationAt.set(
+        eligibleDiscovery.id,
+        this.now().getTime() + delayMs
+      );
       this.db.transitionDiscoveryStatus(eligibleDiscovery.id, 'eligible', {
         companionId: eligibleDiscovery.companionId,
         cycleId: eligibleDiscovery.cycleId,
@@ -1464,8 +1565,8 @@ export class AppServices {
     const characterProfile = this.db.getActiveCharacters().find((character) => character.id === companionId);
     const memoryNodes = this.db.listMemoryNodes(companionId);
     const journeyMilestones = this.db.listMilestones();
-    const discoveryHistory = this.db.listDiscoveries({ limit: 100 });
-    const feedbackHistory = this.db.listDiscoveryFeedback(100);
+    const discoveryHistory = this.db.listDiscoveries({ limit: 100, companionId });
+    const feedbackHistory = this.db.listDiscoveryFeedback(100, undefined, companionId);
     trace(
       'memory',
       'load-context',
@@ -1912,10 +2013,14 @@ export class AppServices {
     };
     const startedAt = this.now().toISOString();
     trace('scheduled-refresh', 'started', [], [], { startedAt });
+    const companionDiscoveries = this.db
+      .listDiscoveries({ limit: 500 })
+      .filter((item) => item.companionId === companionId);
     const existingKeys = new Set(
-      this.db.listDiscoveries({ limit: 500 }).map((item) => item.url ?? `${item.source}:${item.title}`)
+      companionDiscoveries.map((item) => item.url ?? `${item.source}:${item.title}`)
     );
-    const activeCharacter = this.db.getActiveCharacters()[0];
+    const activeCharacter = this.db.getActiveCharacters().find((character) => character.id === companionId);
+    if (!activeCharacter) throw new Error(`Active Companion not found: ${companionId}`);
     const requestedSources = sources ? new Set(sources) : undefined;
     const connectors = requestedSources
       ? this.discoveryConnectors.filter((connector) => requestedSources.has(connector.source))
@@ -1928,9 +2033,9 @@ export class AppServices {
           ...this.db.listTopicPreferences('local').filter((preference) => preference.interestScore > 0).map((preference) => preference.topicKey),
           'frontend', 'ux', 'pixijs', 'local-first'
         ],
-        recentMemoryTags: this.db.listMemoryNodes().flatMap((node) => [node.type, node.title.toLowerCase()]),
+        recentMemoryTags: this.db.listMemoryNodes(companionId).flatMap((node) => [node.type, node.title.toLowerCase()]),
         activeCharacter,
-        seenUrls: new Set(this.db.listDiscoveries({ limit: 200 }).map((item) => item.url).filter(Boolean) as string[])
+        seenUrls: new Set(companionDiscoveries.map((item) => item.url).filter(Boolean) as string[])
       },
       this.db.countAnnouncedToday(companionId),
       (outcome) => providerOutcomes.push(outcome)
@@ -1957,8 +2062,9 @@ export class AppServices {
       }
     }
 
+    const ownedDiscoveries = discoveries.map((discovery) => ({ ...discovery, companionId }));
     const newlyInserted: Discovery[] = [];
-    for (const discovery of discoveries) {
+    for (const discovery of ownedDiscoveries) {
       const key = discovery.url ?? `${discovery.source}:${discovery.title}`;
       const isNew = !existingKeys.has(key);
       this.db.insertDiscovery(discovery);
@@ -1983,7 +2089,7 @@ export class AppServices {
     trace(
       'persist-candidates',
       newlyInserted.length === 0 ? 'empty' : 'completed',
-      discoveries.map((discovery) => discovery.id),
+      ownedDiscoveries.map((discovery) => discovery.id),
       newlyInserted.map((discovery) => discovery.id),
       {
         providerMode: providerOutcomes.some((outcome) => outcome.providerMode === 'live')
@@ -1993,7 +2099,10 @@ export class AppServices {
       }
     );
 
-    return { discoveries, newlyInserted };
+    if (this.db.resolveActiveCompanionId() !== companionId) {
+      return { discoveries: [], newlyInserted: [] };
+    }
+    return { discoveries: ownedDiscoveries, newlyInserted };
   }
 
   getEffectiveDiscoveryScore(): number {

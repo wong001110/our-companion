@@ -81,6 +81,8 @@ export class ProductionValidationGateway implements ProductionRuntimeGateway {
         }
       },
       generateReason: (discovery) => this.services.ai.generateDiscoveryReason({ discovery }),
+      settleCommand: (command, status, reason) =>
+        this.services.settleDiscoveryPresentationCommand(command, status, reason),
       markPresenting: (id, commandId) => {
         this.services.db.transitionDiscoveryStatus(id, 'presenting', { commandId });
       },
@@ -192,8 +194,14 @@ export class ProductionValidationGateway implements ProductionRuntimeGateway {
       const scheduler = new DiscoveryScheduler({
         refresh: () => this.services.runDiscoveryRefresh(),
         getDiscoveryScore: () => this.services.getEffectiveDiscoveryScore(),
-        countAnnouncedToday: () => this.services.db.countAnnouncedToday(),
-        getOldestQueuedDiscovery: () => Promise.resolve(this.services.db.getOldestQueuedDiscovery()),
+        countAnnouncedToday: () => {
+          const companionId = this.services.db.resolveActiveCompanionId();
+          return this.services.db.countAnnouncedToday(companionId);
+        },
+        getOldestQueuedDiscovery: () => {
+          const companionId = this.services.db.resolveActiveCompanionId();
+          return Promise.resolve(this.services.db.getOldestQueuedDiscovery(companionId));
+        },
         presentationGateway: {
           isBusy: () => this.services.isDiscoveryPresentationBusy(),
           hasPending: () => this.services.hasPendingDiscoveryPresentation(),

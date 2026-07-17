@@ -1045,11 +1045,13 @@ export interface DiscoveryFeedInput {
 
 export interface AddDiscoveryToJourneyInput {
   discoveryId: string;
+  companionId?: string;
   journeyId?: string;
   createJourneyTitle?: string;
 }
 
 export interface CreateMemoryNodeInput {
+  companionId?: string;
   type: MemoryNodeType;
   title: string;
   summary?: string;
@@ -1065,6 +1067,7 @@ export interface UpdateMemoryNodeInput extends Partial<CreateMemoryNodeInput> {
 }
 
 export interface CreateMemoryEdgeInput {
+  companionId?: string;
   fromNodeId: string;
   toNodeId: string;
   relationType: MemoryRelation;
@@ -1609,8 +1612,8 @@ export interface OurCompanionApi {
     getNode(id: string): Promise<MemoryNode | undefined>;
     deleteNode(id: string): Promise<{ id: string; deleted: true }>;
     createEdge(input: CreateMemoryEdgeInput): Promise<MemoryEdge>;
-    getGraph(input?: { query?: string }): Promise<KnowledgeGraph>;
-    search(query: string): Promise<MemoryRecord[]>;
+    getGraph(input?: { query?: string; companionId?: string }): Promise<KnowledgeGraph>;
+    search(input: { query: string; companionId?: string }): Promise<MemoryRecord[]>;
   };
   journey: {
     create(input: CreateJourneyInput): Promise<CompanionJourney>;
@@ -1619,7 +1622,7 @@ export interface OurCompanionApi {
     addMilestone(input: AddJourneyMilestoneInput): Promise<JourneyTimelineEntry>;
   };
   diary: {
-    getEntries(input?: { type?: DiaryEntry['type']; limit?: number }): Promise<DiaryEntry[]>;
+    getEntries(input?: { characterId?: string; type?: DiaryEntry['type']; limit?: number }): Promise<DiaryEntry[]>;
     generateDaily(input?: { characterId?: string }): Promise<DiaryEntry>;
   };
   tool: {

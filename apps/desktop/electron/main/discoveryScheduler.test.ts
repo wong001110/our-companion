@@ -126,7 +126,7 @@ describe('DiscoveryScheduler', () => {
     expect(gateway.requestPresentation).not.toHaveBeenCalled();
   });
 
-  it('presents the oldest queued discovery after the daily announcement cap', async () => {
+  it('stops before refresh and queued backlog presentation at the daily announcement cap', async () => {
     const oldest = sampleDiscovery('oldest-queued', 'queued');
     const refresh = vi.fn(async () => ({ discoveries: [], newlyInserted: [] }));
     const getOldestQueuedDiscovery = vi.fn(async () => oldest);
@@ -141,9 +141,34 @@ describe('DiscoveryScheduler', () => {
     const result = await scheduler.runOnce();
 
     expect(refresh).not.toHaveBeenCalled();
+    expect(getOldestQueuedDiscovery).not.toHaveBeenCalled();
+    expect(gateway.requestPresentation).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      status: 'skipped',
+      reason: 'daily_announcement_cap'
+    });
+  });
+
+  it('selects an older queued or due eligible discovery after an empty refresh', async () => {
+    const dueEligible = sampleDiscovery('due-eligible', 'eligible');
+    const refresh = vi.fn(async () => ({ discoveries: [], newlyInserted: [] }));
+    const getOldestQueuedDiscovery = vi.fn(async () => dueEligible);
+    const gateway = presentationGateway();
+    const scheduler = new DiscoveryScheduler(deps({
+      refresh,
+      getOldestQueuedDiscovery,
+      presentationGateway: gateway
+    }));
+
+    const result = await scheduler.runOnce();
+
+    expect(refresh).toHaveBeenCalledOnce();
     expect(getOldestQueuedDiscovery).toHaveBeenCalledOnce();
-    expect(gateway.requestPresentation).toHaveBeenCalledWith(oldest);
-    expect(result.presentedDiscoveryId).toBe(oldest.id);
+    expect(gateway.requestPresentation).toHaveBeenCalledWith(dueEligible);
+    expect(result).toEqual({
+      status: 'completed',
+      presentedDiscoveryId: dueEligible.id
+    });
   });
 
   it.each([

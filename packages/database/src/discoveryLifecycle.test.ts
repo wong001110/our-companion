@@ -81,6 +81,29 @@ describe('canonical Discovery lifecycle persistence', () => {
     expect(db.getOldestQueuedDiscovery()?.id).toBe('queued-new');
     db.close();
   });
+
+  it('does not expose unowned or foreign queued discoveries to a Companion-scoped lookup', () => {
+    const db = new DatabaseService({ path: ':memory:' });
+    db.insertDiscovery({
+      ...sampleDiscovery('unowned', '2026-07-17T01:00:00.000Z'),
+      status: 'eligible'
+    });
+    db.insertDiscovery({
+      ...sampleDiscovery('foreign', '2026-07-17T02:00:00.000Z'),
+      companionId: 'companion-b',
+      status: 'eligible'
+    });
+    db.insertDiscovery({
+      ...sampleDiscovery('owned', '2026-07-17T03:00:00.000Z'),
+      companionId: 'companion-a',
+      status: 'eligible'
+    });
+
+    expect(db.listQueuedOrEligible(20, 'companion-a').map((item) => item.id))
+      .toEqual(['owned']);
+    expect(db.getOldestQueuedDiscovery('companion-b')?.id).toBe('foreign');
+    db.close();
+  });
 });
 
 function sampleDiscovery(id: string, createdAt: string): Discovery {

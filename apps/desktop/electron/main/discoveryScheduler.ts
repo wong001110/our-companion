@@ -84,16 +84,15 @@ export class DiscoveryScheduler {
     }
 
     try {
-      if (this.deps.countAnnouncedToday() < DAILY_SHARE_CAP) {
-        const result = await this.deps.refresh();
-        const newestEligible = result.newlyInserted.find((discovery) => discovery.status === 'eligible');
-        if (newestEligible) {
-          this.deps.presentationGateway.requestPresentation(newestEligible);
-          return { status: 'completed', presentedDiscoveryId: newestEligible.id };
-        }
-        if (result.newlyInserted.length === 0) {
-          return { status: 'empty', reason: 'no_valid_discoveries' };
-        }
+      if (this.deps.countAnnouncedToday() >= DAILY_SHARE_CAP) {
+        return { status: 'skipped', reason: 'daily_announcement_cap' };
+      }
+
+      const result = await this.deps.refresh();
+      const newestEligible = result.newlyInserted.find((discovery) => discovery.status === 'eligible');
+      if (newestEligible) {
+        this.deps.presentationGateway.requestPresentation(newestEligible);
+        return { status: 'completed', presentedDiscoveryId: newestEligible.id };
       }
 
       const oldest = await this.deps.getOldestQueuedDiscovery();
@@ -101,7 +100,9 @@ export class DiscoveryScheduler {
         this.deps.presentationGateway.requestPresentation(oldest);
         return { status: 'completed', presentedDiscoveryId: oldest.id };
       }
-      return { status: 'empty', reason: 'no_queued_discoveries' };
+      return result.newlyInserted.length === 0
+        ? { status: 'empty', reason: 'no_valid_discoveries' }
+        : { status: 'empty', reason: 'no_queued_discoveries' };
     } catch (error) {
       return {
         status: 'failed',

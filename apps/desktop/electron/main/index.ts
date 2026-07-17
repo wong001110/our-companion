@@ -881,6 +881,8 @@ function startDiscoveryAutomation(): void {
       }
     },
     generateReason: (discovery) => services.ai.generateDiscoveryReason({ discovery }),
+    settleCommand: (command, status, reason) =>
+      services.settleDiscoveryPresentationCommand(command, status, reason),
     markPresenting: (id, commandId) => {
       services.db.transitionDiscoveryStatus(id, 'presenting', { commandId });
     },
@@ -899,8 +901,14 @@ function startDiscoveryAutomation(): void {
   discoveryScheduler = new DiscoveryScheduler({
     refresh: () => services.runDiscoveryRefresh(),
     getDiscoveryScore: () => services.getEffectiveDiscoveryScore(),
-    countAnnouncedToday: () => services.db.countAnnouncedToday(),
-    getOldestQueuedDiscovery: () => Promise.resolve(services.db.getOldestQueuedDiscovery()),
+    countAnnouncedToday: () => {
+      const companionId = services.db.resolveActiveCompanionId();
+      return services.db.countAnnouncedToday(companionId);
+    },
+    getOldestQueuedDiscovery: () => {
+      const companionId = services.db.resolveActiveCompanionId();
+      return Promise.resolve(services.db.getOldestQueuedDiscovery(companionId));
+    },
     presentationGateway: {
       isBusy: () => services.isDiscoveryPresentationBusy(),
       hasPending: () => services.hasPendingDiscoveryPresentation(),

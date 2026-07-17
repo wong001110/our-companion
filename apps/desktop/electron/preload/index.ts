@@ -102,8 +102,8 @@ const api: OurCompanionApi = {
     updateNode: (input: UpdateMemoryNodeInput) => invoke('memory:updateNode', input),
     deleteNode: (id: string) => invoke('memory:deleteNode', id),
     createEdge: (input: CreateMemoryEdgeInput) => invoke('memory:createEdge', input),
-    getGraph: (input?: { query?: string }) => invoke('memory:getGraph', input),
-    search: (query: string) => invoke('memory:search', query)
+    getGraph: (input?: { query?: string; companionId?: string }) => invoke('memory:getGraph', input),
+    search: (input: { query: string; companionId?: string }) => invoke('memory:search', input)
   },
   journey: {
     create: (input: CreateJourneyInput) => invoke('journey:create', input),
@@ -112,7 +112,7 @@ const api: OurCompanionApi = {
     addMilestone: (input: AddJourneyMilestoneInput) => invoke('journey:addMilestone', input)
   },
   diary: {
-    getEntries: (input?: { type?: 'daily' | 'weekly' | 'milestone'; limit?: number }) => invoke('diary:getEntries', input),
+    getEntries: (input?: { characterId?: string; type?: 'daily' | 'weekly' | 'milestone'; limit?: number }) => invoke('diary:getEntries', input),
     generateDaily: (input?: { characterId?: string }) => invoke('diary:generateDaily', input)
   },
   tool: {

@@ -564,6 +564,9 @@ export class DatabaseService {
   }
 
   insertMemoryNode(node: MemoryNode): MemoryNode {
+    if (!node.companionId) {
+      throw new Error('Memory companion ownership is required.');
+    }
     this.db
       .prepare(
         `INSERT INTO memory_nodes
@@ -594,6 +597,9 @@ export class DatabaseService {
   }
 
   updateMemoryNode(node: MemoryNode): MemoryNode {
+    if (!node.companionId) {
+      throw new Error('Memory companion ownership is required.');
+    }
     this.db
       .prepare(
         `UPDATE memory_nodes SET
@@ -628,14 +634,16 @@ export class DatabaseService {
     this.db.prepare('DELETE FROM memory_nodes WHERE id = ?').run(id);
   }
 
-  getMemoryNode(id: string): MemoryNode | undefined {
-    const row = this.db.prepare('SELECT * FROM memory_nodes WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  getMemoryNode(id: string, companionId?: string): MemoryNode | undefined {
+    const row = companionId
+      ? this.db.prepare('SELECT * FROM memory_nodes WHERE id = ? AND companion_id = ?').get(id, companionId)
+      : this.db.prepare('SELECT * FROM memory_nodes WHERE id = ?').get(id);
     return row ? mapMemoryNode(row) : undefined;
   }
 
   listMemoryNodes(companionId?: string): MemoryNode[] {
     if (companionId) {
-      return (this.db.prepare('SELECT * FROM memory_nodes WHERE companion_id = ? OR companion_id IS NULL ORDER BY updated_at DESC').all(companionId) as Array<Record<string, unknown>>).map(mapMemoryNode);
+      return (this.db.prepare('SELECT * FROM memory_nodes WHERE companion_id = ? ORDER BY updated_at DESC').all(companionId) as Array<Record<string, unknown>>).map(mapMemoryNode);
     }
     return (this.db.prepare('SELECT * FROM memory_nodes ORDER BY updated_at DESC').all() as Array<Record<string, unknown>>).map(
       mapMemoryNode
@@ -652,8 +660,17 @@ export class DatabaseService {
     return edge;
   }
 
-  listMemoryEdges(): MemoryEdge[] {
-    return (this.db.prepare('SELECT * FROM memory_edges ORDER BY created_at DESC').all() as Array<Record<string, unknown>>).map(
+  listMemoryEdges(companionId?: string): MemoryEdge[] {
+    const rows = companionId
+      ? this.db.prepare(
+          `SELECT edges.* FROM memory_edges edges
+           INNER JOIN memory_nodes source ON source.id = edges.from_node_id
+           INNER JOIN memory_nodes target ON target.id = edges.to_node_id
+           WHERE source.companion_id = ? AND target.companion_id = ?
+           ORDER BY edges.created_at DESC`
+        ).all(companionId, companionId)
+      : this.db.prepare('SELECT * FROM memory_edges ORDER BY created_at DESC').all();
+    return (rows as Array<Record<string, unknown>>).map(
       (row) => ({
         id: String(row.id),
         fromNodeId: String(row.from_node_id),
@@ -785,13 +802,21 @@ export class DatabaseService {
     return row ? mapDiscovery(row) : undefined;
   }
 
-  listDiscoveries(input: { status?: DiscoveryStatus; limit?: number } = {}): Discovery[] {
+  listDiscoveries(input: { companionId?: string; status?: DiscoveryStatus; limit?: number } = {}): Discovery[] {
     const limit = input.limit ?? 20;
-    const rows = input.status
+    const rows = input.companionId && input.status
       ? this.db
-          .prepare('SELECT * FROM discoveries WHERE status = ? ORDER BY final_score DESC LIMIT ?')
-          .all(input.status, limit)
-      : this.db.prepare('SELECT * FROM discoveries ORDER BY final_score DESC LIMIT ?').all(limit);
+          .prepare('SELECT * FROM discoveries WHERE companion_id = ? AND status = ? ORDER BY final_score DESC LIMIT ?')
+          .all(input.companionId, input.status, limit)
+      : input.companionId
+        ? this.db
+            .prepare('SELECT * FROM discoveries WHERE companion_id = ? ORDER BY final_score DESC LIMIT ?')
+            .all(input.companionId, limit)
+        : input.status
+          ? this.db
+              .prepare('SELECT * FROM discoveries WHERE status = ? ORDER BY final_score DESC LIMIT ?')
+              .all(input.status, limit)
+          : this.db.prepare('SELECT * FROM discoveries ORDER BY final_score DESC LIMIT ?').all(limit);
     return (rows as Array<Record<string, unknown>>).map(mapDiscovery);
   }
 
@@ -838,7 +863,7 @@ export class DatabaseService {
     const rows = companionId
       ? this.db.prepare(
           `SELECT * FROM discoveries
-           WHERE status IN ('queued', 'eligible') AND (companion_id = ? OR companion_id IS NULL)
+           WHERE status IN ('queued', 'eligible') AND companion_id = ?
            ORDER BY CASE status WHEN 'queued' THEN 0 ELSE 1 END,
                     COALESCE(queued_at, eligible_at, created_at) ASC
            LIMIT ?`
@@ -1252,15 +1277,27 @@ export class DatabaseService {
     return feedback;
   }
 
-  listDiscoveryFeedback(limit = 100, domain?: DiscoveryFeedback['feedbackDomain']): DiscoveryFeedback[] {
-    if (domain) {
-      return (this.db.prepare(
-        'SELECT * FROM discovery_feedback WHERE feedback_domain = ? ORDER BY created_at DESC LIMIT ?'
-      ).all(domain, limit) as Array<Record<string, unknown>>).map(mapDiscoveryFeedback);
-    }
-    return (this.db.prepare('SELECT * FROM discovery_feedback ORDER BY created_at DESC LIMIT ?').all(limit) as Array<
-      Record<string, unknown>
-    >).map(mapDiscoveryFeedback);
+  listDiscoveryFeedback(
+    limit = 100,
+    domain?: DiscoveryFeedback['feedbackDomain'],
+    companionId?: string
+  ): DiscoveryFeedback[] {
+    const rows = companionId && domain
+      ? this.db.prepare(
+          `SELECT * FROM discovery_feedback
+           WHERE companion_id = ? AND feedback_domain = ?
+           ORDER BY created_at DESC LIMIT ?`
+        ).all(companionId, domain, limit)
+      : companionId
+        ? this.db.prepare(
+            'SELECT * FROM discovery_feedback WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?'
+          ).all(companionId, limit)
+        : domain
+          ? this.db.prepare(
+              'SELECT * FROM discovery_feedback WHERE feedback_domain = ? ORDER BY created_at DESC LIMIT ?'
+            ).all(domain, limit)
+          : this.db.prepare('SELECT * FROM discovery_feedback ORDER BY created_at DESC LIMIT ?').all(limit);
+    return (rows as Array<Record<string, unknown>>).map(mapDiscoveryFeedback);
   }
 
   listInteractionFeedbackActions(limit = 20): string[] {
@@ -1337,11 +1374,15 @@ export class DatabaseService {
     return entry;
   }
 
-  listDiaryEntries(input: { type?: DiaryEntry['type']; limit?: number } = {}): DiaryEntry[] {
+  listDiaryEntries(input: { characterId?: string; type?: DiaryEntry['type']; limit?: number } = {}): DiaryEntry[] {
     const limit = input.limit ?? 20;
-    const rows = input.type
-      ? this.db.prepare('SELECT * FROM diary_entries WHERE type = ? ORDER BY created_at DESC LIMIT ?').all(input.type, limit)
-      : this.db.prepare('SELECT * FROM diary_entries ORDER BY created_at DESC LIMIT ?').all(limit);
+    const rows = input.characterId && input.type
+      ? this.db.prepare('SELECT * FROM diary_entries WHERE character_id = ? AND type = ? ORDER BY created_at DESC LIMIT ?').all(input.characterId, input.type, limit)
+      : input.characterId
+        ? this.db.prepare('SELECT * FROM diary_entries WHERE character_id = ? ORDER BY created_at DESC LIMIT ?').all(input.characterId, limit)
+        : input.type
+          ? this.db.prepare('SELECT * FROM diary_entries WHERE type = ? ORDER BY created_at DESC LIMIT ?').all(input.type, limit)
+          : this.db.prepare('SELECT * FROM diary_entries ORDER BY created_at DESC LIMIT ?').all(limit);
     return (rows as Array<Record<string, unknown>>).map(mapDiary);
   }
 

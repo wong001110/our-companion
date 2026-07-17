@@ -35,6 +35,11 @@ export interface DiscoveryPerformanceGateway {
 export interface DiscoveryShareOrchestratorDeps {
   performance: DiscoveryPerformanceGateway;
   generateReason: (discovery: NormalizedDiscovery) => Promise<DiscoveryReason>;
+  settleCommand: (
+    command: CompanionCommand,
+    status: Extract<CommandAckStatus, 'cancelled' | 'failed'>,
+    reason: string
+  ) => boolean;
   markPresenting: (discoveryId: string, commandId: string) => void;
   markAnnounced: (discoveryId: string, commandId: string) => void;
   markDeferred: (discoveryId: string, reason: string) => void;
@@ -220,10 +225,15 @@ export class DiscoveryShareOrchestrator {
       return true;
     }
     if (status === 'received') return true;
-    if (entry.status !== 'presenting') return false;
+    if (
+      entry.status !== 'presenting' &&
+      !(entry.status === 'queued' && (status === 'cancelled' || status === 'failed'))
+    ) return false;
 
-    this.deps.performance.settle(entry.command.companionId);
-    this.busy = false;
+    if (entry.status === 'presenting') {
+      this.deps.performance.settle(entry.command.companionId);
+      this.busy = false;
+    }
 
     if (status === 'completed') {
       entry.status = 'announced';
@@ -245,9 +255,12 @@ export class DiscoveryShareOrchestrator {
   }
 
   stop(): void {
-    const presenting = this.queue.find((entry) => entry.status === 'presenting');
-    if (presenting) this.deps.performance.settle(presenting.command.companionId);
     this.stopped = true;
+    for (const entry of [...this.queue]) {
+      if (entry.status === 'queued' || entry.status === 'presenting') {
+        this.requestCommandSettlement(entry, 'cancelled', 'orchestrator_stopped');
+      }
+    }
     this.queue = [];
     this.busy = false;
     this.processing = false;
@@ -255,8 +268,11 @@ export class DiscoveryShareOrchestrator {
   }
 
   clearQueue(): void {
-    const presenting = this.queue.find((entry) => entry.status === 'presenting');
-    if (presenting) this.deps.performance.settle(presenting.command.companionId);
+    for (const entry of [...this.queue]) {
+      if (entry.status === 'queued' || entry.status === 'presenting') {
+        this.requestCommandSettlement(entry, 'cancelled', 'queue_cleared');
+      }
+    }
     this.queue = [];
     this.busy = false;
   }
@@ -267,6 +283,27 @@ export class DiscoveryShareOrchestrator {
     );
   }
 
+  /**
+   * Internal presentation failures request an AppServices command transition.
+   * AppServices then calls acknowledge(), so the authoritative command becomes
+   * terminal before this local queue entry is settled.
+   */
+  private requestCommandSettlement(
+    entry: QueuedDiscovery,
+    status: Extract<CommandAckStatus, 'cancelled' | 'failed'>,
+    reason: string
+  ): void {
+    const transitioned = this.deps.settleCommand(entry.command, status, reason);
+    if (
+      !transitioned &&
+      this.queue.some((candidate) => candidate.command.id === entry.command.id)
+    ) {
+      // The authoritative command may already have been settled by another
+      // source. In that case only stale local cleanup remains.
+      this.acknowledge(entry.command.id, status, reason);
+    }
+  }
+
   private async processQueue(): Promise<void> {
     if (this.processing || this.stopped || this.busy) return;
     const entry = this.queue.find((candidate) => candidate.status === 'queued');
@@ -275,20 +312,13 @@ export class DiscoveryShareOrchestrator {
 
     try {
       if (!this.canAnnounceNow()) {
-        entry.status = 'deferred';
-        entry.retryCount += 1;
         this.lastSkipReason = 'cannot_announce';
-        this.deps.markDeferred(entry.discovery.id, 'cannot_announce');
-        this.queue = this.queue.filter((candidate) => candidate.command.id !== entry.command.id);
+        this.requestCommandSettlement(entry, 'cancelled', 'cannot_announce');
         return;
       }
       if (this.shouldInterruptNow()) {
-        entry.status = 'deferred';
-        entry.interruptCount += 1;
-        entry.retryCount += 1;
         this.lastSkipReason = 'interrupted_before_start';
-        this.deps.markDeferred(entry.discovery.id, 'interrupted_before_start');
-        this.queue = this.queue.filter((candidate) => candidate.command.id !== entry.command.id);
+        this.requestCommandSettlement(entry, 'cancelled', 'interrupted_before_start');
         return;
       }
 
@@ -304,8 +334,17 @@ export class DiscoveryShareOrchestrator {
       });
 
       const reason = await this.deps.generateReason(entry.discovery);
+      const presentationStillActive = this.queue.some((candidate) =>
+        candidate.command.id === entry.command.id &&
+        candidate.status === 'presenting'
+      );
+      if (this.stopped || !presentationStillActive) return;
       if (this.shouldInterruptNow()) {
-        this.acknowledge(entry.command.id, 'cancelled', 'interrupted_during_preparation');
+        this.requestCommandSettlement(
+          entry,
+          'cancelled',
+          'interrupted_during_preparation'
+        );
         return;
       }
       this.emitEvent(DOMAIN_EVENT_TYPES.CompanionMessageQueued, {
@@ -321,13 +360,14 @@ export class DiscoveryShareOrchestrator {
         sourceUrl: entry.discovery.url
       });
     } catch (error) {
-      this.acknowledge(
-        entry.command.id,
+      this.requestCommandSettlement(
+        entry,
         'failed',
         error instanceof Error ? error.message : String(error)
       );
     } finally {
       this.processing = false;
+      void this.processQueue();
     }
   }
 }

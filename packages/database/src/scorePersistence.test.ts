@@ -15,6 +15,7 @@ describe('normalized score persistence boundaries', () => {
       type: 'topic',
       title: 'Boundary memory',
       importance,
+      companionId: 'ann',
       source: 'test',
       createdAt: '2026-07-17T01:00:00.000Z',
       updatedAt: '2026-07-17T01:00:00.000Z'

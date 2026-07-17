@@ -159,6 +159,32 @@ describe('direction correction — companion registry', () => {
     db.close();
   });
 
+  it('excludes legacy NULL memory from every companion-scoped read', () => {
+    const db = new DatabaseService({ path: ':memory:' });
+    const raw = (db as unknown as { db: DatabaseSync }).db;
+    const now = new Date().toISOString();
+    raw.prepare(
+      `INSERT INTO memory_nodes
+       (id, type, title, importance_score, companion_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, NULL, ?, ?)`
+    ).run('legacy-unowned', 'topic', 'Unowned legacy memory', 50, now, now);
+
+    expect(db.listMemoryNodes('ann')).toEqual([]);
+    expect(db.getMemoryNode('legacy-unowned', 'ann')).toBeUndefined();
+    expect(db.listMemoryNodes()).toEqual([
+      expect.objectContaining({ id: 'legacy-unowned', companionId: undefined })
+    ]);
+    expect(() => db.insertMemoryNode({
+      id: 'new-unowned',
+      type: 'topic',
+      title: 'New unowned memory',
+      importance: 0.5,
+      createdAt: now,
+      updatedAt: now
+    })).toThrow('Memory companion ownership is required');
+    db.close();
+  });
+
   it('aggregates topic feedback separately from relationship state', () => {
     const db = new DatabaseService({ path: ':memory:' });
     db.recordTopicPreference('local', 'pixijs', false);

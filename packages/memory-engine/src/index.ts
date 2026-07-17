@@ -19,6 +19,7 @@ export function createMemoryNode(input: CreateMemoryNodeInput): MemoryNode {
   const timestamp = nowIso();
   return {
     id: createId('mem'),
+    companionId: input.companionId,
     type: input.type,
     title: input.title,
     summary: input.summary,
