@@ -16,4 +16,10 @@ export type {
   RendererCommand,
   RendererGateway,
   ToolAdapters,
+  WebPageFetcher,
+  WebPageFetcherInput,
+  WebPageFetcherResult,
+  WebSearchProvider,
+  WebSearchProviderInput,
+  WebSearchProviderItem,
 } from './types';

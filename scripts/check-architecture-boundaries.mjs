@@ -181,6 +181,7 @@ export function checkArchitectureBoundaries(root = DEFAULT_ROOT) {
     );
     const isOrchestrator = rel === ORCHESTRATOR;
     const isEnginePackage = /^packages\/[^/]+-engine\//.test(rel);
+    const isDiscoveryEngine = /^packages\/discovery-engine\//.test(rel);
     const isDatabase = rel.startsWith('packages/database/');
     const isShared = rel.startsWith('packages/shared/');
     const isRenderer = rel.startsWith('apps/desktop/renderer/');
@@ -213,6 +214,20 @@ export function checkArchitectureBoundaries(root = DEFAULT_ROOT) {
           rel,
           node,
           'engine packages must not import Electron',
+        );
+      }
+
+      if (
+        isDiscoveryEngine &&
+        moduleName &&
+        (/^node:/.test(moduleName) || /^electron(?:\/|$)/.test(moduleName))
+      ) {
+        addViolation(
+          violations,
+          sourceFile,
+          rel,
+          node,
+          'discovery-engine research domain must not import runtime or transport modules',
         );
       }
 

@@ -7,6 +7,8 @@ import type {
   ProductionRuntimeGateway,
   RandomSource,
   RendererGateway,
+  WebPageFetcher as ValidationWebPageFetcher,
+  WebSearchProvider as ValidationWebSearchProvider,
   ToolAdapters as ValidationToolAdapters
 } from '@our-companion/validation-kit';
 import type {
@@ -16,12 +18,13 @@ import type {
   DiscoverySource,
   EngineTrace
 } from '@our-companion/shared';
-import { DOMAIN_EVENT_TYPES } from '@our-companion/shared';
+import { createId, DOMAIN_EVENT_TYPES } from '@our-companion/shared';
 import type { DiscoveryConnector } from '@our-companion/discovery-engine';
 import { InProcessEventBus } from '@our-companion/event-bus';
 import { DiscoveryScheduler } from './discoveryScheduler';
 import { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 import { AppServices } from './services';
+import type { WebPageFetcher, WebSearchProvider } from './researchAdapters';
 
 const DISCOVERY_SOURCES = new Set<DiscoverySource>([
   'internet',
@@ -42,6 +45,8 @@ export interface ProductionValidationDependencies {
   clock: Clock;
   random: RandomSource;
   discoveryProvider: DiscoveryProvider;
+  webSearchProvider?: ValidationWebSearchProvider;
+  webPageFetcher?: ValidationWebPageFetcher;
   aiProvider: AiProvider;
   toolAdapters: ValidationToolAdapters;
   renderer: RendererGateway;
@@ -66,6 +71,8 @@ export class ProductionValidationGateway implements ProductionRuntimeGateway {
       setTimer: (callback, delayMs) => dependencies.clock.setTimeout(callback, delayMs),
       clearTimer: (handle) => dependencies.clock.clearTimeout(handle),
       discoveryConnectors: [toDiscoveryConnector(dependencies.discoveryProvider)],
+      webSearchProvider: toWebSearchProvider(dependencies.webSearchProvider),
+      webPageFetcher: toWebPageFetcher(dependencies.webPageFetcher, () => dependencies.clock.nowIso()),
       aiProvider: dependencies.aiProvider,
       toolAdapters: dependencies.toolAdapters
     });
@@ -307,6 +314,54 @@ export class ProductionValidationGateway implements ProductionRuntimeGateway {
       await Promise.all([...this.rendererTasks]);
     }
   }
+}
+
+function toWebSearchProvider(provider?: ValidationWebSearchProvider): WebSearchProvider {
+  if (!provider) {
+    return { id: 'validation-web-search', mode: 'unavailable', search: async () => [] };
+  }
+  return {
+    id: 'validation-web-search',
+    mode: provider.mode,
+    search: async (input) => (await provider.search(input)).map((item, index) => ({
+      id: item.id,
+      query: input.query,
+      title: item.title,
+      url: item.url,
+      domain: item.domain,
+      snippet: item.snippet,
+      publishedAt: item.publishedAt,
+      rank: item.rank ?? index + 1,
+      provider: 'validation-web-search'
+    }))
+  };
+}
+
+function toWebPageFetcher(provider: ValidationWebPageFetcher | undefined, nowIso: () => string): WebPageFetcher {
+  if (!provider) {
+    return {
+      id: 'validation-web-page-fetcher', mode: 'unavailable',
+      fetchPage: async () => { throw new Error('unavailable'); }
+    };
+  }
+  return {
+    id: 'validation-web-page-fetcher',
+    mode: provider.mode,
+    fetchPage: async (input) => {
+      const result = await provider.fetchPage({
+        searchResultId: input.searchResult.id, query: input.searchResult.query, provider: input.searchResult.provider,
+        url: input.searchResult.url, domain: input.searchResult.domain, title: input.searchResult.title
+      });
+      return {
+        id: createId('page_evidence'), userId: input.userId, companionId: input.companionId, cycleId: input.cycleId,
+        researchIntentId: input.researchIntentId, researchPlanId: input.researchPlanId, searchResultId: input.searchResult.id,
+        query: input.searchResult.query, provider: input.searchResult.provider, url: input.searchResult.url,
+        canonicalUrl: result.canonicalUrl, domain: input.searchResult.domain, title: result.title,
+        extractedText: result.extractedText, excerpt: result.excerpt, contentHash: result.contentHash,
+        contentType: result.contentType, fetchedAt: nowIso(), publishedAt: result.publishedAt, sourceType: input.sourceType
+      };
+    }
+  };
 }
 
 function toDiscoveryConnector(provider: DiscoveryProvider): DiscoveryConnector {

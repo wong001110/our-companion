@@ -1,6 +1,8 @@
 import type { DatabaseService } from '@our-companion/database';
 import type { CompanionInsight, DiscoverySchedulingDebug, EngineSnapshot, EngineSnapshotInput, GeneratedInsight } from '@our-companion/shared';
 import { nowIso } from '@our-companion/shared';
+import { evaluateEvidenceCoverage } from '@our-companion/discovery-engine';
+import type { ResearchCapabilityStatus } from '@our-companion/shared';
 import type { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 
 function mapGeneratedInsight(i: CompanionInsight): GeneratedInsight {
@@ -27,13 +29,23 @@ export function buildEngineSnapshot(
   db: DatabaseService,
   input: EngineSnapshotInput = {},
   characterId = db.resolveActiveCompanionId(),
-  orchestrator?: DiscoveryShareOrchestrator
+  orchestrator?: DiscoveryShareOrchestrator,
+  researchCapabilities: ResearchCapabilityStatus[] = []
 ): EngineSnapshot {
   const userId = input.userId ?? 'default';
+  const companionCycles = db.listExplorationCycles(100).filter((cycle) => cycle.companionId === characterId);
+  const requestedCycle = input.cycleId ? db.getExplorationCycle(input.cycleId) : undefined;
   const focusCycle =
-    (input.cycleId ? db.getExplorationCycle(input.cycleId) : undefined) ??
-    db.getCurrentExplorationCycle() ??
-    db.listExplorationCycles(1)[0];
+    (requestedCycle?.companionId === characterId ? requestedCycle : undefined) ??
+    companionCycles.find((cycle) => !cycle.completedAt) ??
+    companionCycles[0];
+  const researchIntent = focusCycle?.researchIntentId
+    ? db.getResearchIntent(focusCycle.researchIntentId, characterId)
+    : undefined;
+  const researchPlan = focusCycle?.researchPlanId
+    ? db.getResearchPlan(focusCycle.researchPlanId, characterId)
+    : undefined;
+  const researchEvidence = db.listWebPageEvidence({ companionId: characterId, cycleId: focusCycle?.id, limit: 50 });
 
   const announcedIds = new Set(db.getAnnouncedDiscoveryIds());
   const recoverableDiscoveries = db.listQueuedOrEligible(200, characterId);
@@ -63,15 +75,18 @@ export function buildEngineSnapshot(
     capturedAt: nowIso(),
     characterState: db.getCharacterState(characterId),
     currentCycle: focusCycle,
-    recentCycles: db.listExplorationCycles(10),
+    recentCycles: companionCycles.slice(0, 10),
     patterns: db.listPatterns(userId, 20),
     interestGraph: db.getInterestGraph(userId),
     curiosityTargets: db.listCuriosityTargets(userId, 20),
-    explorationPlan: focusCycle?.explorationPlanId
-      ? db.getExplorationPlan(focusCycle.explorationPlanId)
-      : undefined,
-    discoveryCandidates: db.listDiscoveryCandidates(userId, 20),
-    insights: db.listCompanionInsights(userId, 20).map(mapGeneratedInsight),
+    researchIntent,
+    researchPlan,
+    researchEvidence,
+    researchCapabilities,
+    researchCoverage: researchIntent ? evaluateEvidenceCoverage(researchIntent, researchEvidence) : undefined,
+    researchStopReason: researchPlan?.outcome?.stopReason ?? (researchEvidence.length ? 'evidence_collected' : 'no_valid_external_evidence'),
+    discoveryCandidates: db.listDiscoveryCandidates(userId, 20, characterId),
+    insights: db.listCompanionInsights(userId, 20, characterId).map(mapGeneratedInsight),
     explorationEvents: focusCycle ? db.listExplorationEventsForCycle(focusCycle.id) : [],
     recentDiscoveries: db.listDiscoveries({ limit: 10 }),
     actionPermissions: db.getActionPermissions(),

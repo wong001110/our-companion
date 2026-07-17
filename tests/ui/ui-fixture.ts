@@ -43,8 +43,15 @@ export class UiElectronFixture {
 
   async creationWindow(): Promise<Page> {
     const main = await this.mainWindow();
-    await main.evaluate(async () => window.ourCompanion.window.openPanelForSwitch());
-    return this.waitForWindow('mode=creation');
+    // Electron can briefly expose the outgoing creation page while a previous
+    // window-close callback is settling. Only return a stable page to callers.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await main.evaluate(async () => window.ourCompanion.window.openPanelForSwitch());
+      const creation = await this.waitForWindow('mode=creation');
+      await creation.waitForTimeout(100);
+      if (!creation.isClosed()) return creation;
+    }
+    throw new Error('UI_CREATION_WINDOW_CLOSED_DURING_OPEN');
   }
 
   async screenshot(page: Page, name: string, artifactDir = this.artifactDir): Promise<string> {

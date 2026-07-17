@@ -200,15 +200,75 @@ CREATE TABLE IF NOT EXISTS curiosity_targets (
   created_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS exploration_plans (
+CREATE TABLE IF NOT EXISTS research_intents (
   id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  companion_id TEXT NOT NULL,
+  cycle_id TEXT NOT NULL,
   curiosity_target_id TEXT NOT NULL,
+  topic TEXT NOT NULL,
   objective TEXT NOT NULL,
-  agents_json TEXT NOT NULL DEFAULT '[]',
-  search_queries_json TEXT NOT NULL DEFAULT '[]',
-  constraints_json TEXT NOT NULL DEFAULT '[]',
-  max_candidates_per_agent INTEGER NOT NULL,
+  preferred_source_types_json TEXT NOT NULL DEFAULT '[]',
+  domain_hints_json TEXT NOT NULL DEFAULT '[]',
+  excluded_domains_json TEXT NOT NULL DEFAULT '[]',
+  freshness_days INTEGER,
+  evidence_requirements_json TEXT NOT NULL,
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS research_plans (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  companion_id TEXT NOT NULL,
+  cycle_id TEXT NOT NULL,
+  research_intent_id TEXT NOT NULL,
+  queries_json TEXT NOT NULL DEFAULT '[]',
+  selected_capabilities_json TEXT NOT NULL DEFAULT '[]',
+  limits_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+  ,outcome_json TEXT NOT NULL DEFAULT '{}'
+);
+
+-- Search payloads are deliberately transient. This table contains only
+-- observability metadata and never stores result URLs, titles, snippets, or ranks.
+CREATE TABLE IF NOT EXISTS research_search_records (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  companion_id TEXT NOT NULL,
+  cycle_id TEXT NOT NULL,
+  research_intent_id TEXT NOT NULL,
+  research_plan_id TEXT NOT NULL,
+  query TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  status TEXT NOT NULL,
+  result_count INTEGER NOT NULL,
+  domains_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  error_code TEXT
+);
+
+CREATE TABLE IF NOT EXISTS web_page_evidence (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  companion_id TEXT NOT NULL,
+  cycle_id TEXT NOT NULL,
+  research_intent_id TEXT NOT NULL,
+  research_plan_id TEXT NOT NULL,
+  search_result_id TEXT NOT NULL,
+  query TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  url TEXT NOT NULL,
+  canonical_url TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  title TEXT NOT NULL,
+  extracted_text TEXT NOT NULL,
+  excerpt TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  fetched_at TEXT NOT NULL,
+  published_at TEXT,
+  source_type TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS discovery_candidates (
@@ -226,6 +286,8 @@ CREATE TABLE IF NOT EXISTS discovery_candidates (
   novelty_score REAL NOT NULL,
   evidence_score REAL NOT NULL,
   usefulness_score REAL NOT NULL,
+  research_plan_id TEXT,
+  evidence_ids_json TEXT NOT NULL DEFAULT '[]',
   raw_evidence TEXT,
   collected_at TEXT NOT NULL
 );
@@ -261,7 +323,8 @@ CREATE TABLE IF NOT EXISTS exploration_cycles (
   state TEXT NOT NULL,
   curiosity_target_ids_json TEXT NOT NULL DEFAULT '[]',
   selected_curiosity_target_id TEXT,
-  exploration_plan_id TEXT,
+  research_intent_id TEXT,
+  research_plan_id TEXT,
   discovery_candidate_ids_json TEXT NOT NULL DEFAULT '[]',
   insight_ids_json TEXT NOT NULL DEFAULT '[]',
   selected_insight_id TEXT,

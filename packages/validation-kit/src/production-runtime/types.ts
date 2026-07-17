@@ -67,6 +67,53 @@ export interface DiscoveryProvider {
   search(input: DiscoveryProviderInput): Promise<DiscoveryProviderItem[]>;
 }
 
+export interface WebSearchProviderInput {
+  query: string;
+  limit: number;
+  freshnessDays?: number;
+  domainHints?: string[];
+  excludedDomains?: string[];
+}
+
+export interface WebSearchProviderItem {
+  id: string;
+  title: string;
+  url: string;
+  domain: string;
+  snippet?: string;
+  publishedAt?: string;
+  rank?: number;
+}
+
+export interface WebSearchProvider {
+  readonly mode: Extract<ProviderMode, 'live' | 'fixture' | 'unavailable'>;
+  search(input: WebSearchProviderInput): Promise<WebSearchProviderItem[]>;
+}
+
+export interface WebPageFetcherInput {
+  searchResultId: string;
+  query: string;
+  provider: string;
+  url: string;
+  domain: string;
+  title: string;
+}
+
+export interface WebPageFetcherResult {
+  canonicalUrl: string;
+  title: string;
+  extractedText: string;
+  excerpt: string;
+  contentHash: string;
+  contentType: string;
+  publishedAt?: string;
+}
+
+export interface WebPageFetcher {
+  readonly mode: Extract<ProviderMode, 'live' | 'fixture' | 'unavailable'>;
+  fetchPage(input: WebPageFetcherInput): Promise<WebPageFetcherResult>;
+}
+
 export interface AiProviderRequest {
   operation: string;
   messages?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;

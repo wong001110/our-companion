@@ -5,6 +5,7 @@ import type {
   NormalizedDiscovery
 } from '@our-companion/shared';
 import type { DiscoveryConnector, RawDiscoveryItem } from '@our-companion/discovery-engine';
+import type { WebPageFetcher, WebSearchProvider } from './researchAdapters';
 import { AppServices } from './services';
 
 vi.mock('electron', () => ({
@@ -236,16 +237,11 @@ describe('production memory companion isolation', () => {
     const pendingRefresh = services.runDiscoveryRefresh();
     const second = createCompanion(services, 'Second');
     services.db.setPrimaryCompanion(second.id);
-    resolveFetch([{}]);
     const result = await pendingRefresh;
 
     expect(result).toEqual({ discoveries: [], newlyInserted: [] });
     expect(services.db.listDiscoveries({ companionId: second.id, limit: 100 })).toEqual([]);
-    expect(services.db.listDiscoveries({ companionId: first.id, limit: 100 }))
-      .toEqual([expect.objectContaining({
-        companionId: first.id,
-        title: 'Refresh owned by the original Companion'
-      })]);
+    expect(services.db.listDiscoveries({ companionId: first.id, limit: 100 })).toEqual([]);
   });
 
   it('runs explicit non-active Companion autonomy entirely under that owner', async () => {
@@ -332,6 +328,77 @@ describe('production memory companion isolation', () => {
     expect(events.some((event) => event.message?.includes(owner.name))).toBe(true);
     expect(events.every((event) => !event.message?.includes(newlyActive.name))).toBe(true);
     expect(services.db.listDiscoveries({ companionId: newlyActive.id, limit: 100 })).toEqual([]);
+  });
+
+  it('keeps search evidence on the captured owner when the active Companion changes during an open-web search', async () => {
+    const resolveSearches: Array<(items: Array<{ id: string; query: string; title: string; url: string; domain: string; rank: number; provider: string }>) => void> = [];
+    const search: WebSearchProvider = {
+      id: 'switch-search', mode: 'fixture',
+      search: () => new Promise((resolve) => { resolveSearches.push(resolve); })
+    };
+    const pageFetcher: WebPageFetcher = {
+      id: 'switch-fetcher', mode: 'fixture',
+      async fetchPage(input) {
+        return {
+          id: 'owner-evidence', userId: input.userId, companionId: input.companionId, cycleId: input.cycleId,
+          researchIntentId: input.researchIntentId, researchPlanId: input.researchPlanId, searchResultId: input.searchResult.id,
+          query: input.searchResult.query, provider: 'switch-search', url: input.searchResult.url, canonicalUrl: input.searchResult.url,
+          domain: input.searchResult.domain, title: input.searchResult.title, extractedText: 'Fetched public evidence owned by the original Companion.',
+          excerpt: 'Fetched public evidence owned by the original Companion.', contentHash: 'owner-hash', contentType: 'text/html',
+          fetchedAt: '2026-07-18T00:00:00.000Z', sourceType: input.sourceType
+        };
+      }
+    };
+    const services = new AppServices(':memory:', undefined, { webSearchProvider: search, webPageFetcher: pageFetcher, discoveryConnectors: [] });
+    openServices.push(services);
+    const owner = createCompanion(services, 'First');
+    const newlyActive = createCompanion(services, 'Second');
+    services.db.setPrimaryCompanion(owner.id);
+    await seedAutonomyMemory(services, owner.id);
+
+    const pending = services.autonomy.startExploration({ companionId: owner.id, trigger: 'manual' });
+    await vi.waitFor(() => expect(resolveSearches.length).toBeGreaterThan(0));
+    services.db.setPrimaryCompanion(newlyActive.id);
+    for (const resolveSearch of resolveSearches) resolveSearch([{ id: 'actual-result', query: 'Local-first TypeScript companion architecture', title: 'Official implementation evidence', url: 'https://docs.example.test/owner', domain: 'docs.example.test', rank: 1, provider: 'switch-search' }]);
+    const result = await pending;
+
+    expect(result.cycle.companionId).toBe(owner.id);
+    expect(services.db.listResearchIntents({ companionId: owner.id })).toHaveLength(1);
+    expect(services.db.listWebPageEvidence({ companionId: owner.id })).toEqual([expect.objectContaining({ companionId: owner.id, id: 'owner-evidence' })]);
+    expect(services.db.listResearchIntents({ companionId: newlyActive.id })).toEqual([]);
+    expect(services.db.listWebPageEvidence({ companionId: newlyActive.id })).toEqual([]);
+  });
+
+  it('keeps page-fetch evidence on the captured owner when the active Companion changes during extraction', async () => {
+    let resolvePage!: (page: import('@our-companion/shared').WebPageEvidence) => void;
+    let pendingPageInput!: Parameters<WebPageFetcher['fetchPage']>[0];
+    const search: WebSearchProvider = {
+      id: 'page-switch-search', mode: 'fixture',
+      async search(input) { return [{ id: 'actual-result', query: input.query, title: 'Official implementation evidence', url: 'https://docs.example.test/page-owner', domain: 'docs.example.test', rank: 1, provider: 'page-switch-search' }]; }
+    };
+    const pageFetcher: WebPageFetcher = {
+      id: 'page-switch-fetcher', mode: 'fixture',
+      fetchPage: (input) => new Promise((resolve) => {
+        pendingPageInput = input;
+        resolvePage = (page) => resolve(page);
+      })
+    };
+    const services = new AppServices(':memory:', undefined, { webSearchProvider: search, webPageFetcher: pageFetcher, discoveryConnectors: [] });
+    openServices.push(services);
+    const owner = createCompanion(services, 'First');
+    const newlyActive = createCompanion(services, 'Second');
+    services.db.setPrimaryCompanion(owner.id);
+    await seedAutonomyMemory(services, owner.id);
+
+    const pending = services.autonomy.startExploration({ companionId: owner.id, trigger: 'manual' });
+    await vi.waitFor(() => expect(resolvePage).toBeTypeOf('function'));
+    services.db.setPrimaryCompanion(newlyActive.id);
+    resolvePage({ id: 'page-owner-evidence', userId: pendingPageInput.userId, companionId: pendingPageInput.companionId, cycleId: pendingPageInput.cycleId, researchIntentId: pendingPageInput.researchIntentId, researchPlanId: pendingPageInput.researchPlanId, searchResultId: pendingPageInput.searchResult.id, query: pendingPageInput.searchResult.query, provider: 'page-switch-search', url: pendingPageInput.searchResult.url, canonicalUrl: pendingPageInput.searchResult.url, domain: pendingPageInput.searchResult.domain, title: pendingPageInput.searchResult.title, extractedText: 'Fetched evidence remains private to its original owner.', excerpt: 'Fetched evidence remains private to its original owner.', contentHash: 'page-owner-hash', contentType: 'text/html', fetchedAt: '2026-07-18T00:00:00.000Z', sourceType: pendingPageInput.sourceType });
+    const result = await pending;
+
+    expect(result.cycle.companionId).toBe(owner.id);
+    expect(services.db.listWebPageEvidence({ companionId: owner.id })).toEqual([expect.objectContaining({ companionId: owner.id, id: 'page-owner-evidence' })]);
+    expect(services.db.listWebPageEvidence({ companionId: newlyActive.id })).toEqual([]);
   });
 
   it('applies feedback for an old cycle only to the cycle owner after switching Companions', async () => {

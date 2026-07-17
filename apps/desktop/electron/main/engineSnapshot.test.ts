@@ -17,7 +17,7 @@ describe('buildEngineSnapshot', () => {
     db.insertExplorationCycle({
       id: cycleId,
       userId: 'default',
-      companionId: 'ann',
+      companionId: companion.id,
       trigger: 'manual',
       state: 'sharing',
       curiosityTargetIds: [],
@@ -29,7 +29,7 @@ describe('buildEngineSnapshot', () => {
     db.insertExplorationEvent({
       id: createId('explore_evt'),
       userId: 'default',
-      companionId: 'ann',
+      companionId: companion.id,
       cycleId,
       state: 'curious',
       message: 'Ann became curious.',
@@ -39,7 +39,7 @@ describe('buildEngineSnapshot', () => {
     db.insertCuriosityTarget({
       id: createId('curiosity'),
       userId: 'default',
-      companionId: 'ann',
+      companionId: companion.id,
       topic: 'Desktop companions',
       description: 'Explore adjacent ideas.',
       source: 'memory_trigger',

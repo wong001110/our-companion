@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   selectEligibleDiscoveries,
   checkDuplicateDiscovery,
@@ -8,13 +8,17 @@ import {
   normalizeDiscoveryUrl,
   normalizeSignal,
   passesDiscoveryQuality,
-  planExploration,
-  runDiscoveryAgents,
-  runDiscoveryPipeline,
+  createDeterministicResearchPlan,
+  createResearchIntent,
+  decideResearchContinuation,
+  evaluateEvidenceCoverage,
+  routeResearchSources,
+  selectResearchPages,
+  validateAiResearchPlan,
   scoreDiscovery,
   captureSignal,
 } from './index';
-import type { DiscoveryConnector } from './index';
+import type { ResearchCapability } from './index';
 
 describe('discovery engine', () => {
   it('scores with user interest, history, character expertise, novelty, and usefulness', () => {
@@ -119,7 +123,7 @@ describe('discovery engine', () => {
     expect(capped.every((item) => item.status === 'eligible')).toBe(true);
   });
 
-  it('plans and runs discovery agents for a curiosity target', async () => {
+  it('creates a practical research intent and routes only available capabilities', () => {
     const target = {
       id: 'curiosity_test',
       userId: 'default',
@@ -134,80 +138,66 @@ describe('discovery engine', () => {
       expectedValue: 'Find implementation references.',
       createdAt: 'now'
     };
-    const plan = planExploration(target);
-    const connector: DiscoveryConnector = {
-      source: 'github',
-      providerMode: 'fixture',
-      async fetch() {
-        return [{ id: 'desktop-companion', title: 'Desktop companion implementation', summary: 'A concrete implementation reference.', tags: ['desktop', 'companion'] }];
-      },
-      normalize(item) {
-        return {
-          source: 'github',
-          externalId: String(item.id),
-          title: String(item.title),
-          summary: String(item.summary),
-          tags: (item.tags as string[]) ?? [],
-          raw: item
-        };
-      }
+    const intent = createResearchIntent({ userId: 'default', companionId: 'ann', cycleId: 'cycle', curiosityTarget: target, now: 'now' });
+    const capabilities: ResearchCapability[] = [
+      { id: 'github', kind: 'structured_connector' as const, sourceTypes: ['code'], mode: 'fixture' as const, available: true },
+      { id: 'brave-search', kind: 'open_web_search' as const, sourceTypes: ['official', 'code', 'technical_article'], mode: 'fixture' as const, available: true },
+      { id: 'page-fetcher', kind: 'web_page_fetcher' as const, sourceTypes: ['official', 'code', 'technical_article'], mode: 'fixture' as const, available: true },
+      { id: 'reddit', kind: 'structured_connector' as const, sourceTypes: ['community'], mode: 'unavailable' as const, available: false }
+    ];
+    const plan = createDeterministicResearchPlan({ intent, capabilities, now: 'now' });
+    const routed = routeResearchSources(intent, capabilities);
+
+    expect(intent.preferredSourceTypes).toEqual(expect.arrayContaining(['official', 'code', 'technical_article']));
+    expect(plan.queries).toHaveLength(2);
+    expect(routed.map((capability) => capability.id)).toEqual(expect.arrayContaining(['github', 'brave-search', 'page-fetcher']));
+    expect(routed.map((capability) => capability.id)).not.toContain('reddit');
+  });
+
+  it('selects only current search-result IDs with domain diversity and bounded continuation', () => {
+    const target = {
+      id: 'curiosity_test', userId: 'default', companionId: 'ann', topic: 'Local-first AI companion', description: 'Challenge the architecture.',
+      source: 'memory_trigger' as const, explorationType: 'challenge' as const, priority: 0.8, confidence: 0.7,
+      reason: 'Current project memory.', expectedValue: 'Find limits.', createdAt: 'now'
     };
-    const candidates = await runDiscoveryAgents({
-      userId: 'default',
-      companionId: 'ann',
-      curiosityTarget: target,
-      explorationPlan: plan,
-      connectors: [connector]
+    const intent = createResearchIntent({ userId: 'default', companionId: 'ann', cycleId: 'cycle', curiosityTarget: target, now: 'now' });
+    const capabilities: ResearchCapability[] = [
+      { id: 'search', kind: 'open_web_search' as const, sourceTypes: ['research', 'community', 'technical_article'], mode: 'fixture' as const, available: true },
+      { id: 'fetch', kind: 'web_page_fetcher' as const, sourceTypes: ['research', 'community', 'technical_article'], mode: 'fixture' as const, available: true }
+    ];
+    const plan = createDeterministicResearchPlan({ intent, capabilities, now: 'now' });
+    const selected = selectResearchPages({
+      intent, plan,
+      results: [
+        { id: 'official', query: intent.topic, title: 'Official docs', url: 'https://docs.example.test/a', domain: 'docs.example.test', rank: 1, provider: 'fixture' },
+        { id: 'critical', query: intent.topic, title: 'Limitations and risks', url: 'https://critique.example.test/b', domain: 'critique.example.test', rank: 2, provider: 'fixture' },
+        { id: 'same-domain', query: intent.topic, title: 'Another page', url: 'https://docs.example.test/c', domain: 'docs.example.test', rank: 3, provider: 'fixture' }
+      ]
     });
-
-    expect(plan.agents).toContain('builder');
-    expect(candidates.length).toBeGreaterThan(0);
-    expect(candidates[0]?.relatedCuriosityTargetId).toBe(target.id);
+    expect(selected.map((item) => item.searchResultId)).toEqual(expect.arrayContaining(['official', 'critical']));
+    expect(selected.map((item) => item.searchResultId)).not.toContain('invented-url');
+    const coverage = evaluateEvidenceCoverage(intent, []);
+    expect(decideResearchContinuation({ intent, coverage, completedAdditionalPasses: 0 })).toEqual(expect.objectContaining({ action: 'continue' }));
+    expect(decideResearchContinuation({ intent, coverage, completedAdditionalPasses: 1 })).toEqual(expect.objectContaining({ action: 'stop' }));
   });
 
-  it('treats an empty provider result as a normal empty outcome', async () => {
-    const onOutcome = vi.fn();
-    const connector: DiscoveryConnector = {
-      source: 'github',
-      providerMode: 'fixture',
-      fetch: async () => [],
-      normalize: () => {
-        throw new Error('normalize should not run');
-      }
+  it('falls back from invalid AI planning and clamps valid AI limits without accepting URLs', () => {
+    const target = {
+      id: 'target', userId: 'default', companionId: 'ann', topic: 'Local-first AI', description: 'Practical research.',
+      source: 'memory_trigger' as const, explorationType: 'practical' as const, priority: 0.8, confidence: 0.8,
+      reason: 'memory', expectedValue: 'evidence', createdAt: 'now'
     };
-
-    await expect(runDiscoveryPipeline(
-      [connector],
-      { userInterests: [], recentMemoryTags: [], activeCharacter: { expertise: [] } },
-      0,
-      onOutcome
-    )).resolves.toEqual([]);
-    expect(onOutcome).toHaveBeenCalledWith(expect.objectContaining({ status: 'empty', itemCount: 0 }));
-  });
-
-  it('captures provider failures and safely returns no discoveries', async () => {
-    const onOutcome = vi.fn();
-    const connector: DiscoveryConnector = {
-      source: 'github',
-      providerMode: 'live',
-      fetch: async () => {
-        throw new Error('rate limited');
-      },
-      normalize: () => {
-        throw new Error('normalize should not run');
-      }
-    };
-
-    await expect(runDiscoveryPipeline(
-      [connector],
-      { userInterests: [], recentMemoryTags: [], activeCharacter: { expertise: [] } },
-      0,
-      onOutcome
-    )).resolves.toEqual([]);
-    expect(onOutcome).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'failed',
-      error: 'rate limited',
-      itemCount: 0
-    }));
+    const intent = createResearchIntent({ userId: 'default', companionId: 'ann', cycleId: 'cycle', curiosityTarget: target, now: 'now' });
+    const capabilities: ResearchCapability[] = [
+      { id: 'search', kind: 'open_web_search', sourceTypes: ['official', 'code', 'technical_article'], mode: 'fixture', available: true },
+      { id: 'fetch', kind: 'web_page_fetcher', sourceTypes: ['official', 'code', 'technical_article'], mode: 'fixture', available: true }
+    ];
+    const deterministic = createDeterministicResearchPlan({ intent, capabilities, now: 'now' });
+    expect(validateAiResearchPlan({ urls: ['https://invented.example'], queries: [], selectedCapabilities: ['search'] }, deterministic, capabilities)).toEqual(deterministic);
+    const refined = validateAiResearchPlan({ urls: ['https://invented.example'], queries: ['  local-first safety  '], selectedCapabilities: ['search', 'fetch'], limits: { maxQueries: 999, maxPagesToRead: 999 } }, deterministic, capabilities);
+    expect(refined.queries).toEqual(['local-first safety']);
+    expect(refined.limits.maxQueries).toBe(3);
+    expect(refined.limits.maxPagesToRead).toBe(5);
+    expect(refined).not.toHaveProperty('urls');
   });
 });

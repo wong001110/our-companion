@@ -66,6 +66,41 @@ function topEmotions(emotion?: EmotionState): string {
     .join(', ');
 }
 
+export function ResearchObservatory({ snapshot }: { snapshot?: EngineSnapshot }) {
+  const intent = snapshot?.researchIntent;
+  const plan = snapshot?.researchPlan;
+  const evidence = snapshot?.researchEvidence ?? [];
+  const coverage = snapshot?.researchCoverage;
+  if (!intent || !plan) {
+    return (
+      <section className="engine-research-observatory" aria-label="Research observatory">
+        <h3>Constrained research</h3>
+        <p className="engine-empty">No valid external evidence found.</p>
+      </section>
+    );
+  }
+  return (
+    <section className="engine-research-observatory" aria-label="Research observatory">
+      <h3>Constrained research</h3>
+      <dl className="engine-research-grid">
+        <div><dt>Objective</dt><dd>{intent.objective}</dd></div>
+        <div><dt>Cycle</dt><dd>{intent.cycleId}</dd></div>
+        <div><dt>Source types</dt><dd>{intent.preferredSourceTypes.join(', ')}</dd></div>
+        <div><dt>Capabilities</dt><dd>{snapshot?.researchCapabilities.map((capability) => `${capability.id}: ${capability.available ? capability.mode : 'unavailable'}`).join(', ') || 'none'}</dd></div>
+        <div><dt>Queries</dt><dd>{plan.queries.join(' · ')}</dd></div>
+        <div><dt>Coverage</dt><dd>{coverage ? `${coverage.sourceCount} pages / ${coverage.independentDomainCount} domains` : 'not evaluated'}</dd></div>
+        <div><dt>Stop reason</dt><dd>{snapshot?.researchStopReason ?? 'pending'}</dd></div>
+        <div><dt>Correlation</dt><dd>{snapshot?.engineTraces[0]?.correlationId ?? '—'}</dd></div>
+      </dl>
+      {evidence.length ? (
+        <ul className="engine-research-pages">
+          {evidence.slice(0, 8).map((page) => <li key={page.id}><strong>{page.domain}</strong> <span>{page.title}</span></li>)}
+        </ul>
+      ) : <p className="engine-empty">No valid external evidence found.</p>}
+    </section>
+  );
+}
+
 export function EngineObservatory() {
   const [events, setEvents] = useState<BaseEvent[]>([]);
   const [snapshot, setSnapshot] = useState<EngineSnapshot>();
@@ -239,6 +274,8 @@ export function EngineObservatory() {
       </section>
 
       <EngineTraceTimeline traces={snapshot?.engineTraces ?? []} />
+
+      <ResearchObservatory snapshot={snapshot} />
 
       <section className="debug-ai-log engine-event-timeline">
         <div className="debug-ai-log-header">

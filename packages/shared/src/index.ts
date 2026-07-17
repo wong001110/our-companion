@@ -755,21 +755,159 @@ export interface CuriosityQueueQuery {
 
 export type DiscoveryAgentType = 'scout' | 'research' | 'builder' | 'trend' | 'contrarian' | 'memory_scout';
 
-export interface ExplorationPlan {
+// ============================================================================
+// CONSTRAINED RESEARCH — canonical domain contracts
+// ============================================================================
+
+/** Source categories are capabilities, never a hard-coded list of websites. */
+export type ResearchSourceType =
+  | 'official'
+  | 'code'
+  | 'research'
+  | 'technical_article'
+  | 'news'
+  | 'community'
+  | 'video'
+  | 'rss'
+  | 'network_public'
+  | 'open_web';
+
+export type ResearchObjective =
+  | 'find_official_information'
+  | 'find_implementation_examples'
+  | 'find_recent_developments'
+  | 'find_research_evidence'
+  | 'find_community_opinions'
+  | 'find_contrarian_evidence'
+  | 'compare_approaches';
+
+export interface ResearchIntent {
   id: string;
+  userId: string;
+  companionId: string;
+  cycleId: string;
   curiosityTargetId: string;
-  objective:
-    | 'find_new_examples'
-    | 'find_practical_references'
-    | 'find_related_research'
-    | 'find_trends'
-    | 'challenge_assumption'
-    | 'connect_to_memory';
-  agents: DiscoveryAgentType[];
-  searchQueries: string[];
-  constraints?: string[];
-  maxCandidatesPerAgent: number;
+  topic: string;
+  objective: ResearchObjective;
+  preferredSourceTypes: ResearchSourceType[];
+  domainHints?: string[];
+  excludedDomains?: string[];
+  freshnessDays?: number;
+  evidenceRequirements: {
+    minimumSources: number;
+    requirePrimarySource?: boolean;
+    requireIndependentDomains?: number;
+    requireContrastingSource?: boolean;
+  };
   createdAt: string;
+}
+
+export interface ResearchLimits {
+  maxQueries: number;
+  maxSearchResultsPerQuery: number;
+  maxPagesToRead: number;
+  maxLinkDepth: number;
+  maxTotalCharacters: number;
+  timeoutMs: number;
+}
+
+/** The only public plan representation for constrained external research. */
+export interface ResearchPlan {
+  id: string;
+  userId: string;
+  companionId: string;
+  cycleId: string;
+  researchIntentId: string;
+  queries: string[];
+  selectedCapabilities: string[];
+  limits: ResearchLimits;
+  createdAt: string;
+  /** Recorded once the bounded research run finishes; never contains provider payloads. */
+  outcome?: {
+    stopReason: string;
+    additionalPasses: 0 | 1;
+    completedAt: string;
+  };
+}
+
+export interface WebSearchResult {
+  id: string;
+  query: string;
+  title: string;
+  url: string;
+  snippet?: string;
+  domain: string;
+  publishedAt?: string;
+  rank: number;
+  provider: string;
+}
+
+/**
+ * Persisted operational metadata only. Search result payloads (URLs, titles,
+ * snippets, ranks, and selected-result IDs) remain transient in the research
+ * coordinator and are never written to the local database.
+ */
+export interface ResearchSearchRecord {
+  id: string;
+  userId: string;
+  companionId: string;
+  cycleId: string;
+  researchIntentId: string;
+  researchPlanId: string;
+  query: string;
+  provider: string;
+  mode: 'live' | 'fixture' | 'unavailable';
+  status: 'completed' | 'empty' | 'failed' | 'skipped';
+  resultCount: number;
+  domains: string[];
+  createdAt: string;
+  errorCode?: string;
+}
+
+export interface WebPageEvidence {
+  id: string;
+  userId: string;
+  companionId: string;
+  cycleId: string;
+  researchIntentId: string;
+  researchPlanId: string;
+  searchResultId: string;
+  query: string;
+  provider: string;
+  url: string;
+  canonicalUrl: string;
+  domain: string;
+  title: string;
+  extractedText: string;
+  excerpt: string;
+  contentHash: string;
+  contentType: string;
+  fetchedAt: string;
+  publishedAt?: string;
+  sourceType: ResearchSourceType;
+}
+
+/** A selection can only name an ID produced by the current search pass. */
+export interface SelectedResearchPage {
+  searchResultId: string;
+  reason: string;
+  expectedEvidenceType: ResearchSourceType;
+}
+
+export interface ResearchEvidenceCoverage {
+  sourceCount: number;
+  independentDomainCount: number;
+  hasPrimarySource: boolean;
+  hasContrastingSource: boolean;
+  requirementsSatisfied: boolean;
+  missing: string[];
+}
+
+export interface ResearchCapabilityStatus {
+  id: string;
+  sourceTypes: ResearchSourceType[];
+  mode: EngineProviderMode;
+  available: boolean;
 }
 
 export interface DiscoveryCandidate {
@@ -798,6 +936,8 @@ export interface DiscoveryCandidate {
   evidenceScore: UnitScore;
   usefulnessScore: UnitScore;
   fingerprint?: string;
+  researchPlanId?: string;
+  evidenceIds?: string[];
   rawEvidence?: string;
   collectedAt: string;
 }
@@ -918,7 +1058,8 @@ export interface ExplorationCycle {
   state: ExplorationState;
   curiosityTargetIds: string[];
   selectedCuriosityTargetId?: string;
-  explorationPlanId?: string;
+  researchIntentId?: string;
+  researchPlanId?: string;
   discoveryCandidateIds: string[];
   insightIds: string[];
   selectedInsightId?: string;
@@ -970,7 +1111,9 @@ export interface ExplorationCycleResult {
   cycle: ExplorationCycle;
   curiosityTargets: CuriosityTarget[];
   selectedCuriosityTarget?: CuriosityTarget;
-  explorationPlan?: ExplorationPlan;
+  researchIntent?: ResearchIntent;
+  researchPlan?: ResearchPlan;
+  webPageEvidence?: WebPageEvidence[];
   discoveryCandidates: DiscoveryCandidate[];
   insights: GeneratedInsight[];
   selectedInsight?: GeneratedInsight;
@@ -1320,7 +1463,12 @@ export interface EngineSnapshot {
   patterns: Pattern[];
   interestGraph: InterestGraph;
   curiosityTargets: CuriosityTarget[];
-  explorationPlan?: ExplorationPlan;
+  researchIntent?: ResearchIntent;
+  researchPlan?: ResearchPlan;
+  researchEvidence: WebPageEvidence[];
+  researchCapabilities: ResearchCapabilityStatus[];
+  researchCoverage?: ResearchEvidenceCoverage;
+  researchStopReason?: string;
   discoveryCandidates: DiscoveryCandidate[];
   insights: GeneratedInsight[];
   explorationEvents: ExplorationLoopEvent[];

@@ -24,7 +24,6 @@ import type {
   EngineTrace,
   ExplorationCycle,
   ExplorationLoopEvent,
-  ExplorationPlan,
   InterestEdge,
   InterestGraph,
   InterestNode,
@@ -37,7 +36,11 @@ import type {
   PendingCompanionAction,
   SessionCloseReason,
   CompanionDecision
-  ,UserTopicPreference, NetworkCompanionLink, CachedAssetPack
+  ,UserTopicPreference, NetworkCompanionLink, CachedAssetPack,
+  ResearchIntent,
+  ResearchPlan,
+  ResearchSearchRecord,
+  WebPageEvidence
 } from '@our-companion/shared';
 import type { ActionPermissionState } from '@our-companion/shared';
 import {
@@ -76,6 +79,13 @@ export interface EngineTraceQuery {
   correlationId?: string;
   cycleId?: string;
   companionId?: string;
+  limit?: number;
+}
+
+/** Research artifacts are always read through the captured cycle owner. */
+export interface ResearchArtifactQuery {
+  companionId: string;
+  cycleId?: string;
   limit?: number;
 }
 
@@ -120,7 +130,12 @@ export class DatabaseService {
       { column: 'presenting_at', sql: 'ALTER TABLE discoveries ADD COLUMN presenting_at TEXT' },
       { column: 'announced_at', sql: 'ALTER TABLE discoveries ADD COLUMN announced_at TEXT' },
       { column: 'updated_at', sql: 'ALTER TABLE discoveries ADD COLUMN updated_at TEXT' },
-      { column: 'status_reason', sql: 'ALTER TABLE discoveries ADD COLUMN status_reason TEXT' }
+      { column: 'status_reason', sql: 'ALTER TABLE discoveries ADD COLUMN status_reason TEXT' },
+      { column: 'research_plan_id', sql: 'ALTER TABLE discovery_candidates ADD COLUMN research_plan_id TEXT' },
+      { column: 'evidence_ids_json', sql: "ALTER TABLE discovery_candidates ADD COLUMN evidence_ids_json TEXT NOT NULL DEFAULT '[]'" },
+      { column: 'research_intent_id', sql: 'ALTER TABLE exploration_cycles ADD COLUMN research_intent_id TEXT' },
+      { column: 'research_plan_id', sql: 'ALTER TABLE exploration_cycles ADD COLUMN research_plan_id TEXT' }
+      ,{ column: 'outcome_json', sql: "ALTER TABLE research_plans ADD COLUMN outcome_json TEXT NOT NULL DEFAULT '{}'" }
     ];
     for (const migration of migrations) {
       try {
@@ -149,6 +164,15 @@ export class DatabaseService {
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_engine_traces_correlation ON engine_traces(correlation_id, started_at)');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_engine_traces_cycle ON engine_traces(cycle_id, started_at)');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_engine_traces_companion ON engine_traces(companion_id, started_at)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_research_intents_companion_cycle ON research_intents(companion_id, cycle_id, created_at)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_research_plans_companion_cycle ON research_plans(companion_id, cycle_id, created_at)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_research_plans_intent ON research_plans(research_intent_id, created_at)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_research_search_records_companion_cycle ON research_search_records(companion_id, cycle_id, created_at)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_research_search_records_plan ON research_search_records(research_plan_id, created_at)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_web_page_evidence_companion_cycle ON web_page_evidence(companion_id, cycle_id, fetched_at)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_web_page_evidence_plan ON web_page_evidence(research_plan_id, fetched_at)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_web_page_evidence_search_result ON web_page_evidence(search_result_id)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_discovery_candidates_research_plan ON discovery_candidates(research_plan_id, collected_at)');
   }
 
   private migratePriorDiscoveryLifecycle(): void {
@@ -1058,29 +1082,196 @@ export class DatabaseService {
     return row ? mapCuriosityTarget(row) : undefined;
   }
 
-  insertExplorationPlan(plan: ExplorationPlan): ExplorationPlan {
+  insertResearchIntent(intent: ResearchIntent): ResearchIntent {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO exploration_plans
-         (id, curiosity_target_id, objective, agents_json, search_queries_json, constraints_json, max_candidates_per_agent, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT OR REPLACE INTO research_intents
+         (id, user_id, companion_id, cycle_id, curiosity_target_id, topic, objective, preferred_source_types_json,
+          domain_hints_json, excluded_domains_json, freshness_days, evidence_requirements_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        intent.id,
+        intent.userId,
+        intent.companionId,
+        intent.cycleId,
+        intent.curiosityTargetId,
+        intent.topic,
+        intent.objective,
+        JSON.stringify(intent.preferredSourceTypes),
+        JSON.stringify(intent.domainHints ?? []),
+        JSON.stringify(intent.excludedDomains ?? []),
+        intent.freshnessDays ?? null,
+        JSON.stringify(intent.evidenceRequirements),
+        intent.createdAt
+      );
+    return intent;
+  }
+
+  getResearchIntent(id: string, companionId: string): ResearchIntent | undefined {
+    const row = this.db.prepare(
+      'SELECT * FROM research_intents WHERE id = ? AND companion_id = ?'
+    ).get(id, companionId) as Record<string, unknown> | undefined;
+    return row ? mapResearchIntent(row) : undefined;
+  }
+
+  listResearchIntents(input: ResearchArtifactQuery): ResearchIntent[] {
+    const conditions = ['companion_id = ?'];
+    const params: Array<string | number> = [input.companionId];
+    if (input.cycleId) {
+      conditions.push('cycle_id = ?');
+      params.push(input.cycleId);
+    }
+    params.push(input.limit ?? 20);
+    const rows = this.db.prepare(
+      `SELECT * FROM research_intents WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`
+    ).all(...params) as Array<Record<string, unknown>>;
+    return rows.map(mapResearchIntent);
+  }
+
+  insertResearchPlan(plan: ResearchPlan): ResearchPlan {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO research_plans
+         (id, user_id, companion_id, cycle_id, research_intent_id, queries_json, selected_capabilities_json, limits_json, created_at, outcome_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         plan.id,
-        plan.curiosityTargetId,
-        plan.objective,
-        JSON.stringify(plan.agents),
-        JSON.stringify(plan.searchQueries),
-        JSON.stringify(plan.constraints ?? []),
-        plan.maxCandidatesPerAgent,
-        plan.createdAt
+        plan.userId,
+        plan.companionId,
+        plan.cycleId,
+        plan.researchIntentId,
+        JSON.stringify(plan.queries),
+        JSON.stringify(plan.selectedCapabilities),
+        JSON.stringify(plan.limits),
+        plan.createdAt,
+        JSON.stringify(plan.outcome ?? {})
       );
     return plan;
   }
 
-  getExplorationPlan(id: string): ExplorationPlan | undefined {
-    const row = this.db.prepare('SELECT * FROM exploration_plans WHERE id = ?').get(id) as Record<string, unknown> | undefined;
-    return row ? mapExplorationPlan(row) : undefined;
+  getResearchPlan(id: string, companionId: string): ResearchPlan | undefined {
+    const row = this.db.prepare(
+      'SELECT * FROM research_plans WHERE id = ? AND companion_id = ?'
+    ).get(id, companionId) as Record<string, unknown> | undefined;
+    return row ? mapResearchPlan(row) : undefined;
+  }
+
+  listResearchPlans(input: ResearchArtifactQuery): ResearchPlan[] {
+    const conditions = ['companion_id = ?'];
+    const params: Array<string | number> = [input.companionId];
+    if (input.cycleId) {
+      conditions.push('cycle_id = ?');
+      params.push(input.cycleId);
+    }
+    params.push(input.limit ?? 20);
+    const rows = this.db.prepare(
+      `SELECT * FROM research_plans WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`
+    ).all(...params) as Array<Record<string, unknown>>;
+    return rows.map(mapResearchPlan);
+  }
+
+  insertResearchSearchRecord(record: ResearchSearchRecord): ResearchSearchRecord {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO research_search_records
+         (id, user_id, companion_id, cycle_id, research_intent_id, research_plan_id, query, provider, mode, status,
+          result_count, domains_json, created_at, error_code)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        record.id,
+        record.userId,
+        record.companionId,
+        record.cycleId,
+        record.researchIntentId,
+        record.researchPlanId,
+        record.query,
+        record.provider,
+        record.mode,
+        record.status,
+        record.resultCount,
+        JSON.stringify(record.domains),
+        record.createdAt,
+        record.errorCode ?? null
+      );
+    return record;
+  }
+
+  getResearchSearchRecord(id: string, companionId: string): ResearchSearchRecord | undefined {
+    const row = this.db.prepare(
+      'SELECT * FROM research_search_records WHERE id = ? AND companion_id = ?'
+    ).get(id, companionId) as Record<string, unknown> | undefined;
+    return row ? mapResearchSearchRecord(row) : undefined;
+  }
+
+  listResearchSearchRecords(input: ResearchArtifactQuery): ResearchSearchRecord[] {
+    const conditions = ['companion_id = ?'];
+    const params: Array<string | number> = [input.companionId];
+    if (input.cycleId) {
+      conditions.push('cycle_id = ?');
+      params.push(input.cycleId);
+    }
+    params.push(input.limit ?? 50);
+    const rows = this.db.prepare(
+      `SELECT * FROM research_search_records WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`
+    ).all(...params) as Array<Record<string, unknown>>;
+    return rows.map(mapResearchSearchRecord);
+  }
+
+  insertWebPageEvidence(evidence: WebPageEvidence): WebPageEvidence {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO web_page_evidence
+         (id, user_id, companion_id, cycle_id, research_intent_id, research_plan_id, search_result_id, query, provider,
+          url, canonical_url, domain, title, extracted_text, excerpt, content_hash, content_type, fetched_at, published_at, source_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        evidence.id,
+        evidence.userId,
+        evidence.companionId,
+        evidence.cycleId,
+        evidence.researchIntentId,
+        evidence.researchPlanId,
+        evidence.searchResultId,
+        evidence.query,
+        evidence.provider,
+        evidence.url,
+        evidence.canonicalUrl,
+        evidence.domain,
+        evidence.title,
+        evidence.extractedText,
+        evidence.excerpt,
+        evidence.contentHash,
+        evidence.contentType,
+        evidence.fetchedAt,
+        evidence.publishedAt ?? null,
+        evidence.sourceType
+      );
+    return evidence;
+  }
+
+  getWebPageEvidence(id: string, companionId: string): WebPageEvidence | undefined {
+    const row = this.db.prepare(
+      'SELECT * FROM web_page_evidence WHERE id = ? AND companion_id = ?'
+    ).get(id, companionId) as Record<string, unknown> | undefined;
+    return row ? mapWebPageEvidence(row) : undefined;
+  }
+
+  listWebPageEvidence(input: ResearchArtifactQuery): WebPageEvidence[] {
+    const conditions = ['companion_id = ?'];
+    const params: Array<string | number> = [input.companionId];
+    if (input.cycleId) {
+      conditions.push('cycle_id = ?');
+      params.push(input.cycleId);
+    }
+    params.push(input.limit ?? 50);
+    const rows = this.db.prepare(
+      `SELECT * FROM web_page_evidence WHERE ${conditions.join(' AND ')} ORDER BY fetched_at DESC LIMIT ?`
+    ).all(...params) as Array<Record<string, unknown>>;
+    return rows.map(mapWebPageEvidence);
   }
 
   insertDiscoveryCandidate(candidate: DiscoveryCandidate): DiscoveryCandidate {
@@ -1088,8 +1279,8 @@ export class DatabaseService {
       .prepare(
         `INSERT OR REPLACE INTO discovery_candidates
          (id, user_id, companion_id, title, summary, source_type, source_url, source_name, agent_type, related_curiosity_target_id,
-          relevance_score, novelty_score, evidence_score, usefulness_score, raw_evidence, collected_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          relevance_score, novelty_score, evidence_score, usefulness_score, research_plan_id, evidence_ids_json, raw_evidence, collected_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         candidate.id,
@@ -1106,6 +1297,8 @@ export class DatabaseService {
         candidate.noveltyScore,
         candidate.evidenceScore,
         candidate.usefulnessScore,
+        candidate.researchPlanId ?? null,
+        JSON.stringify(candidate.evidenceIds ?? []),
         candidate.rawEvidence ?? null,
         candidate.collectedAt
       );
@@ -1160,9 +1353,9 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO exploration_cycles
-         (id, user_id, companion_id, trigger, state, curiosity_target_ids_json, selected_curiosity_target_id, exploration_plan_id,
+         (id, user_id, companion_id, trigger, state, curiosity_target_ids_json, selected_curiosity_target_id, research_intent_id, research_plan_id,
           discovery_candidate_ids_json, insight_ids_json, selected_insight_id, started_at, completed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         cycle.id,
@@ -1172,7 +1365,8 @@ export class DatabaseService {
         cycle.state,
         JSON.stringify(cycle.curiosityTargetIds),
         cycle.selectedCuriosityTargetId ?? null,
-        cycle.explorationPlanId ?? null,
+        cycle.researchIntentId ?? null,
+        cycle.researchPlanId ?? null,
         JSON.stringify(cycle.discoveryCandidateIds),
         JSON.stringify(cycle.insightIds),
         cycle.selectedInsightId ?? null,
@@ -1226,16 +1420,18 @@ export class DatabaseService {
       .all(userId, limit) as Array<Record<string, unknown>>).map(mapCuriosityTarget);
   }
 
-  listDiscoveryCandidates(userId = 'default', limit = 20): DiscoveryCandidate[] {
-    return (this.db
-      .prepare('SELECT * FROM discovery_candidates WHERE user_id = ? ORDER BY collected_at DESC LIMIT ?')
-      .all(userId, limit) as Array<Record<string, unknown>>).map(mapDiscoveryCandidate);
+  listDiscoveryCandidates(userId = 'default', limit = 20, companionId?: string): DiscoveryCandidate[] {
+    const rows = companionId
+      ? this.db.prepare('SELECT * FROM discovery_candidates WHERE user_id = ? AND companion_id = ? ORDER BY collected_at DESC LIMIT ?').all(userId, companionId, limit)
+      : this.db.prepare('SELECT * FROM discovery_candidates WHERE user_id = ? ORDER BY collected_at DESC LIMIT ?').all(userId, limit);
+    return (rows as Array<Record<string, unknown>>).map(mapDiscoveryCandidate);
   }
 
-  listCompanionInsights(userId = 'default', limit = 20): CompanionInsight[] {
-    return (this.db
-      .prepare('SELECT * FROM companion_insights WHERE user_id = ? ORDER BY created_at DESC LIMIT ?')
-      .all(userId, limit) as Array<Record<string, unknown>>).map(mapCompanionInsight);
+  listCompanionInsights(userId = 'default', limit = 20, companionId?: string): CompanionInsight[] {
+    const rows = companionId
+      ? this.db.prepare('SELECT * FROM companion_insights WHERE user_id = ? AND companion_id = ? ORDER BY created_at DESC LIMIT ?').all(userId, companionId, limit)
+      : this.db.prepare('SELECT * FROM companion_insights WHERE user_id = ? ORDER BY created_at DESC LIMIT ?').all(userId, limit);
+    return (rows as Array<Record<string, unknown>>).map(mapCompanionInsight);
   }
 
   listExplorationEvents(cycleId?: string, limit = 50): ExplorationLoopEvent[] {
@@ -1589,7 +1785,10 @@ export class DatabaseService {
         clearTable('exploration_cycles');
         clearTable('companion_insights');
         clearTable('discovery_candidates');
-        clearTable('exploration_plans');
+        clearTable('web_page_evidence');
+        clearTable('research_search_records');
+        clearTable('research_plans');
+        clearTable('research_intents');
         clearTable('curiosity_targets');
         clearTable('patterns');
         clearTable('interest_edges');
@@ -1973,16 +2172,81 @@ function mapCuriosityTarget(row: Record<string, unknown>): CuriosityTarget {
   };
 }
 
-function mapExplorationPlan(row: Record<string, unknown>): ExplorationPlan {
+function mapResearchIntent(row: Record<string, unknown>): ResearchIntent {
   return {
     id: String(row.id),
+    userId: String(row.user_id),
+    companionId: String(row.companion_id),
+    cycleId: String(row.cycle_id),
     curiosityTargetId: String(row.curiosity_target_id),
-    objective: row.objective as ExplorationPlan['objective'],
-    agents: JSON.parse(String(row.agents_json ?? '[]')),
-    searchQueries: JSON.parse(String(row.search_queries_json ?? '[]')),
-    constraints: JSON.parse(String(row.constraints_json ?? '[]')),
-    maxCandidatesPerAgent: Number(row.max_candidates_per_agent),
+    topic: String(row.topic),
+    objective: row.objective as ResearchIntent['objective'],
+    preferredSourceTypes: JSON.parse(String(row.preferred_source_types_json ?? '[]')),
+    domainHints: JSON.parse(String(row.domain_hints_json ?? '[]')),
+    excludedDomains: JSON.parse(String(row.excluded_domains_json ?? '[]')),
+    freshnessDays: row.freshness_days === null || row.freshness_days === undefined ? undefined : Number(row.freshness_days),
+    evidenceRequirements: JSON.parse(String(row.evidence_requirements_json)),
     createdAt: String(row.created_at)
+  };
+}
+
+function mapResearchPlan(row: Record<string, unknown>): ResearchPlan {
+  const outcome = JSON.parse(String(row.outcome_json ?? '{}')) as ResearchPlan['outcome'];
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    companionId: String(row.companion_id),
+    cycleId: String(row.cycle_id),
+    researchIntentId: String(row.research_intent_id),
+    queries: JSON.parse(String(row.queries_json ?? '[]')),
+    selectedCapabilities: JSON.parse(String(row.selected_capabilities_json ?? '[]')),
+    limits: JSON.parse(String(row.limits_json)),
+    createdAt: String(row.created_at),
+    ...(outcome && typeof outcome.stopReason === 'string' ? { outcome } : {})
+  };
+}
+
+function mapResearchSearchRecord(row: Record<string, unknown>): ResearchSearchRecord {
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    companionId: String(row.companion_id),
+    cycleId: String(row.cycle_id),
+    researchIntentId: String(row.research_intent_id),
+    researchPlanId: String(row.research_plan_id),
+    query: String(row.query),
+    provider: String(row.provider),
+    mode: row.mode as ResearchSearchRecord['mode'],
+    status: row.status as ResearchSearchRecord['status'],
+    resultCount: Number(row.result_count),
+    domains: JSON.parse(String(row.domains_json ?? '[]')),
+    createdAt: String(row.created_at),
+    errorCode: row.error_code ? String(row.error_code) : undefined
+  };
+}
+
+function mapWebPageEvidence(row: Record<string, unknown>): WebPageEvidence {
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    companionId: String(row.companion_id),
+    cycleId: String(row.cycle_id),
+    researchIntentId: String(row.research_intent_id),
+    researchPlanId: String(row.research_plan_id),
+    searchResultId: String(row.search_result_id),
+    query: String(row.query),
+    provider: String(row.provider),
+    url: String(row.url),
+    canonicalUrl: String(row.canonical_url),
+    domain: String(row.domain),
+    title: String(row.title),
+    extractedText: String(row.extracted_text),
+    excerpt: String(row.excerpt),
+    contentHash: String(row.content_hash),
+    contentType: String(row.content_type),
+    fetchedAt: String(row.fetched_at),
+    publishedAt: row.published_at ? String(row.published_at) : undefined,
+    sourceType: row.source_type as WebPageEvidence['sourceType']
   };
 }
 
@@ -2002,6 +2266,8 @@ function mapDiscoveryCandidate(row: Record<string, unknown>): DiscoveryCandidate
     noveltyScore: Number(row.novelty_score),
     evidenceScore: Number(row.evidence_score),
     usefulnessScore: Number(row.usefulness_score),
+    researchPlanId: row.research_plan_id ? String(row.research_plan_id) : undefined,
+    evidenceIds: JSON.parse(String(row.evidence_ids_json ?? '[]')),
     rawEvidence: row.raw_evidence ? String(row.raw_evidence) : undefined,
     collectedAt: String(row.collected_at)
   };
@@ -2041,7 +2307,8 @@ function mapExplorationCycle(row: Record<string, unknown>): ExplorationCycle {
     state: row.state as ExplorationCycle['state'],
     curiosityTargetIds: JSON.parse(String(row.curiosity_target_ids_json ?? '[]')),
     selectedCuriosityTargetId: row.selected_curiosity_target_id ? String(row.selected_curiosity_target_id) : undefined,
-    explorationPlanId: row.exploration_plan_id ? String(row.exploration_plan_id) : undefined,
+    researchIntentId: row.research_intent_id ? String(row.research_intent_id) : undefined,
+    researchPlanId: row.research_plan_id ? String(row.research_plan_id) : undefined,
     discoveryCandidateIds: JSON.parse(String(row.discovery_candidate_ids_json ?? '[]')),
     insightIds: JSON.parse(String(row.insight_ids_json ?? '[]')),
     selectedInsightId: row.selected_insight_id ? String(row.selected_insight_id) : undefined,

@@ -101,6 +101,7 @@ test('Panel navigation remains usable from the keyboard', async () => {
     const settings = panel.getByRole('button', { name: 'Settings' });
     await settings.focus();
     await panel.keyboard.press('Space');
+    await expect(panel.getByTestId('panel-page-settings')).toHaveAttribute('data-motion-state', 'entered');
     await expect(panel.getByRole('tablist')).toBeVisible();
 
     const voice = panel.getByRole('tab', { name: 'Voice' });

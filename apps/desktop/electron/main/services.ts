@@ -20,11 +20,7 @@ import type { CommandAckStatus, CompanionDecision, CompanionCommand, CompanionCo
 import { generateDailyDiary } from '@our-companion/diary-engine';
 import {
   createUnavailableConnector,
-  planExploration,
-  runDiscoveryAgents,
-  runDiscoveryPipeline,
-  type DiscoveryConnector,
-  type DiscoveryProviderOutcome
+  type DiscoveryConnector
 } from '@our-companion/discovery-engine';
 import { generateInsights, selectPrimaryInsight } from '@our-companion/insight-engine';
 import { createJourney, createJourneyMilestone } from '@our-companion/journey-engine';
@@ -116,6 +112,13 @@ import { VisitService } from './network/visitService';
 import { VisualVisitService } from './network/visualVisitService';
 import { createSmokeFixturePng } from './platform/smokeFixture';
 import { assertSmokeTestRuntime } from './platform/smokeRuntime';
+import {
+  BraveWebSearchProvider,
+  SafeWebPageFetcher,
+  type WebPageFetcher,
+  type WebSearchProvider
+} from './researchAdapters';
+import { ResearchOrchestrator } from './researchOrchestrator';
 
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
@@ -131,6 +134,8 @@ export interface AppRuntimeDependencies {
   setTimer?: (callback: () => void, delayMs: number) => unknown;
   clearTimer?: (handle: unknown) => void;
   discoveryConnectors?: DiscoveryConnector[];
+  webSearchProvider?: WebSearchProvider;
+  webPageFetcher?: WebPageFetcher;
   aiProvider?: {
     complete<T = unknown>(request: {
       operation: string;
@@ -219,6 +224,7 @@ export class AppServices {
   private localCompanionAway = false;
   private readonly now: () => Date;
   private readonly discoveryConnectors: DiscoveryConnector[];
+  private readonly researchOrchestrator: ResearchOrchestrator;
   private readonly aiProvider: AppRuntimeDependencies['aiProvider'];
   private readonly speechProvider: NonNullable<AppRuntimeDependencies['speechProvider']>;
   private readonly toolAdapters: ToolAdapters;
@@ -241,6 +247,30 @@ export class AppServices {
     this.toolAdapters = runtimeDependencies.toolAdapters ?? createElectronToolAdapters();
     this.discoveryConnectors = runtimeDependencies.discoveryConnectors ??
       (['github', 'hackernews', 'reddit', 'youtube'] as DiscoverySource[]).map(createUnavailableConnector);
+    this.researchOrchestrator = new ResearchOrchestrator({
+      searchProvider: runtimeDependencies.webSearchProvider ?? new BraveWebSearchProvider(),
+      pageFetcher: runtimeDependencies.webPageFetcher ?? new SafeWebPageFetcher({ now: this.now }),
+      structuredConnectors: this.discoveryConnectors,
+      now: this.now,
+      refinePlan: this.aiProvider
+        ? async ({ intent, deterministicPlan }) => this.aiProvider!.complete({
+          operation: 'research-plan:refine',
+          input: {
+            intent: {
+              topic: intent.topic,
+              objective: intent.objective,
+              preferredSourceTypes: intent.preferredSourceTypes,
+              evidenceRequirements: intent.evidenceRequirements
+            },
+            deterministicPlan: {
+              queries: deterministicPlan.queries,
+              selectedCapabilities: deterministicPlan.selectedCapabilities,
+              limits: deterministicPlan.limits
+            }
+          }
+        })
+        : undefined
+    });
     const userDataDir = app.getPath('userData');
     if (userDataDir !== ':memory:') {
       fs.mkdirSync(userDataDir, { recursive: true });
@@ -1263,7 +1293,7 @@ export class AppServices {
   debug = {
     resetData: async (input: DebugDataResetInput) => this.db.resetDebugData(input),
     getFoundationLog: async (input: FoundationEventLogInput = {}) => this.getFoundationLog(input),
-    getEngineSnapshot: async (input: EngineSnapshotInput = {}) => buildEngineSnapshot(this.db, input, undefined, this.shareOrchestrator)
+    getEngineSnapshot: async (input: EngineSnapshotInput = {}) => buildEngineSnapshot(this.db, input, undefined, this.shareOrchestrator, this.researchOrchestrator.getCapabilities())
   };
 
   workspace = {
@@ -1669,60 +1699,53 @@ export class AppServices {
       return { cycle, curiosityTargets, discoveryCandidates: [], insights: [] };
     }
 
-    const explorationPlan = planExploration(selectedCuriosityTarget);
-    this.db.insertExplorationPlan(explorationPlan);
-    trace(
-      'discovery',
-      'plan',
-      'completed',
-      [selectedCuriosityTarget.id],
-      [explorationPlan.id]
-    );
-    cycle = this.saveCycleState(cycle, 'planning', { explorationPlanId: explorationPlan.id });
+    cycle = this.saveCycleState(cycle, 'planning');
     this.setAutonomyCharacterState(companionId, 'discovering', 'sharing_discovery');
 
     cycle = this.saveCycleState(cycle, 'exploring');
-    const providerOutcomes: DiscoveryProviderOutcome[] = [];
-    const providerStartedAt = this.now().toISOString();
-    const discoveryCandidates = await runDiscoveryAgents({
+    const research = await this.researchOrchestrator.run({
       userId,
       companionId,
+      cycleId,
       curiosityTarget: selectedCuriosityTarget,
-      explorationPlan,
-      connectors: this.discoveryConnectors,
-      onProviderOutcome: (outcome) => providerOutcomes.push(outcome),
-      memoryCandidates: memoryNodes.map((memory) => ({
-        title: memory.title,
-        summary: memory.summary ?? memory.content,
-        url: memory.sourceUrl,
-        tags: [memory.type]
-      }))
+      seenCanonicalUrls: new Set(discoveryHistory.map((discovery) => discovery.canonicalUrl ?? discovery.url).filter(Boolean) as string[]),
+      onTrace: (event) => trace(
+        'research',
+        event.operation,
+        event.status,
+        event.inputRefs ?? [],
+        event.outputRefs ?? [],
+        {
+          providerMode: event.providerMode,
+          skipReason: event.skipReason,
+          error: event.error
+        }
+      )
     });
-    if (providerOutcomes.length === 0) {
-      trace(
-        'discovery',
-        'provider-search',
-        'empty',
-        [explorationPlan.id],
-        [],
-        { providerMode: 'unavailable', startedAt: providerStartedAt }
-      );
-    } else {
-      for (const outcome of providerOutcomes) {
-        trace(
-          'discovery',
-          `provider-search:${outcome.source}`,
-          outcome.status,
-          [explorationPlan.id],
-          [],
-          {
-            providerMode: outcome.providerMode,
-            startedAt: providerStartedAt,
-            error: outcome.error
-          }
-        );
-      }
-    }
+    this.db.insertResearchIntent(research.intent);
+    this.db.insertResearchPlan(research.plan);
+    for (const record of research.searchRecords) this.db.insertResearchSearchRecord({
+      id: record.id,
+      userId,
+      companionId,
+      cycleId,
+      researchIntentId: research.intent.id,
+      researchPlanId: research.plan.id,
+      query: record.query,
+      provider: record.provider,
+      mode: record.providerMode as 'live' | 'fixture' | 'unavailable',
+      status: record.status,
+      resultCount: record.resultCount,
+      domains: record.domains,
+      errorCode: record.error,
+      createdAt: this.now().toISOString()
+    });
+    for (const evidence of research.evidence) this.db.insertWebPageEvidence(evidence);
+    cycle = this.saveCycleState(cycle, 'planning', {
+      researchIntentId: research.intent.id,
+      researchPlanId: research.plan.id
+    });
+    const discoveryCandidates = research.candidates;
     for (const candidate of discoveryCandidates) {
       this.db.insertDiscoveryCandidate(candidate);
     }
@@ -1730,7 +1753,7 @@ export class AppServices {
       'discovery',
       'collect-candidates',
       discoveryCandidates.length === 0 ? 'empty' : 'completed',
-      [explorationPlan.id],
+      [research.plan.id],
       discoveryCandidates.map((candidate) => candidate.id)
     );
 
@@ -1748,7 +1771,9 @@ export class AppServices {
         cycle,
         curiosityTargets,
         selectedCuriosityTarget,
-        explorationPlan,
+        researchIntent: research.intent,
+        researchPlan: research.plan,
+        webPageEvidence: research.evidence,
         discoveryCandidates,
         insights: []
       };
@@ -1847,7 +1872,9 @@ export class AppServices {
       cycle,
       curiosityTargets,
       selectedCuriosityTarget,
-      explorationPlan,
+      researchIntent: research.intent,
+      researchPlan: research.plan,
+      webPageEvidence: research.evidence,
       discoveryCandidates,
       insights,
       selectedInsight
@@ -2008,123 +2035,19 @@ export class AppServices {
     return feedback;
   }
 
-  async runDiscoveryRefresh(sources?: DiscoverySource[]): Promise<DiscoveryRefreshResult> {
+  async runDiscoveryRefresh(_sources?: DiscoverySource[]): Promise<DiscoveryRefreshResult> {
+    // Scheduled refresh uses the same owner-captured ResearchOrchestrator path as
+    // manual autonomy. Source selection is determined by ResearchIntent and the
+    // Source Router, never by executing every fixed connector.
     const companionId = this.db.resolveActiveCompanionId();
-    const correlationId = createId('corr');
-    let causationId: string | undefined;
-    const trace = (
-      operation: string,
-      status: EngineTraceStatus,
-      inputRefs: string[],
-      outputRefs: string[],
-      extra: Partial<Pick<EngineTrace, 'providerMode' | 'skipReason' | 'error' | 'startedAt'>> = {}
-    ) => {
-      const recorded = this.recordEngineTrace({
-        correlationId,
-        causationId,
-        companionId,
-        engine: 'discovery',
-        operation,
-        status,
-        inputRefs,
-        outputRefs,
-        ...extra
-      });
-      causationId = recorded.id;
-      return recorded;
+    const before = new Set(this.db.listDiscoveries({ companionId, limit: 500 }).map((discovery) => discovery.id));
+    await this.runAutonomousExploration({ companionId, trigger: 'scheduled' });
+    if (this.db.resolveActiveCompanionId() !== companionId) return { discoveries: [], newlyInserted: [] };
+    const discoveries = this.db.listDiscoveries({ companionId, limit: 500 });
+    return {
+      discoveries,
+      newlyInserted: discoveries.filter((discovery) => !before.has(discovery.id))
     };
-    const startedAt = this.now().toISOString();
-    trace('scheduled-refresh', 'started', [], [], { startedAt });
-    const companionDiscoveries = this.db
-      .listDiscoveries({ limit: 500 })
-      .filter((item) => item.companionId === companionId);
-    const existingKeys = new Set(
-      companionDiscoveries.map((item) => item.url ?? `${item.source}:${item.title}`)
-    );
-    const activeCharacter = this.db.getActiveCharacters().find((character) => character.id === companionId);
-    if (!activeCharacter) throw new Error(`Active Companion not found: ${companionId}`);
-    const requestedSources = sources ? new Set(sources) : undefined;
-    const connectors = requestedSources
-      ? this.discoveryConnectors.filter((connector) => requestedSources.has(connector.source))
-      : this.discoveryConnectors;
-    const providerOutcomes: DiscoveryProviderOutcome[] = [];
-    const discoveries = await runDiscoveryPipeline(
-      connectors,
-      {
-        userInterests: [
-          ...this.db.listTopicPreferences('local').filter((preference) => preference.interestScore > 0).map((preference) => preference.topicKey),
-          'frontend', 'ux', 'pixijs', 'local-first'
-        ],
-        recentMemoryTags: this.db.listMemoryNodes(companionId).flatMap((node) => [node.type, node.title.toLowerCase()]),
-        activeCharacter,
-        seenUrls: new Set(companionDiscoveries.map((item) => item.url).filter(Boolean) as string[])
-      },
-      this.db.countAnnouncedToday(companionId),
-      (outcome) => providerOutcomes.push(outcome)
-    );
-    if (providerOutcomes.length === 0) {
-      trace('provider-search', 'empty', [], [], {
-        providerMode: 'unavailable',
-        startedAt,
-        skipReason: 'no_configured_providers'
-      });
-    } else {
-      for (const outcome of providerOutcomes) {
-        trace(
-          `provider-search:${outcome.source}`,
-          outcome.status,
-          [],
-          [],
-          {
-            providerMode: outcome.providerMode,
-            startedAt,
-            error: outcome.error
-          }
-        );
-      }
-    }
-
-    const ownedDiscoveries = discoveries.map((discovery) => ({ ...discovery, companionId }));
-    const newlyInserted: Discovery[] = [];
-    for (const discovery of ownedDiscoveries) {
-      const key = discovery.url ?? `${discovery.source}:${discovery.title}`;
-      const isNew = !existingKeys.has(key);
-      this.db.insertDiscovery(discovery);
-      if (isNew) {
-        newlyInserted.push(discovery);
-        existingKeys.add(key);
-        const correlationId = createId('corr');
-        this.emitFoundationEvent('SignalCaptured', 'discovery', {
-          sourceType: discovery.source,
-          title: discovery.title,
-          summary: discovery.summary,
-          url: discovery.url
-        }, correlationId);
-        this.emitFoundationEvent('DiscoveryCreated', 'discovery', {
-          discoveryId: discovery.id,
-          title: discovery.title,
-          status: discovery.status,
-          url: discovery.url
-        }, correlationId);
-      }
-    }
-    trace(
-      'persist-candidates',
-      newlyInserted.length === 0 ? 'empty' : 'completed',
-      ownedDiscoveries.map((discovery) => discovery.id),
-      newlyInserted.map((discovery) => discovery.id),
-      {
-        providerMode: providerOutcomes.some((outcome) => outcome.providerMode === 'live')
-          ? 'live'
-          : providerOutcomes[0]?.providerMode ?? 'unavailable',
-        startedAt
-      }
-    );
-
-    if (this.db.resolveActiveCompanionId() !== companionId) {
-      return { discoveries: [], newlyInserted: [] };
-    }
-    return { discoveries: ownedDiscoveries, newlyInserted };
   }
 
   getEffectiveDiscoveryScore(): number {

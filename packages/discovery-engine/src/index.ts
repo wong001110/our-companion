@@ -10,13 +10,14 @@ import type {
   DiscoverySource,
   EngineProviderMode,
   DuplicateResult,
-  ExplorationPlan,
   NormalizedSignal,
   NormalizedDiscovery,
   Signal,
   SignalEngine
 } from '@our-companion/shared';
 import { createId, nowIso, toUnitScore } from '@our-companion/shared';
+
+export * from './research';
 
 export interface DiscoveryFetchInput {
   query?: string;
@@ -44,29 +45,11 @@ export interface DiscoveryConnector {
   normalize(item: RawDiscoveryItem): NormalizedDiscovery;
 }
 
-export interface DiscoveryProviderOutcome {
-  source: DiscoverySource;
-  providerMode: EngineProviderMode;
-  status: 'completed' | 'empty' | 'failed';
-  itemCount: number;
-  error?: string;
-}
-
 export interface RankingContext {
   userInterests: string[];
   recentMemoryTags: string[];
   activeCharacter: Pick<CharacterProfile, 'expertise'>;
   seenUrls?: Set<string>;
-}
-
-export interface RunDiscoveryAgentsInput {
-  userId: string;
-  companionId: string;
-  curiosityTarget: CuriosityTarget;
-  explorationPlan: ExplorationPlan;
-  connectors?: DiscoveryConnector[];
-  memoryCandidates?: Array<{ title: string; summary?: string; url?: string; tags?: string[] }>;
-  onProviderOutcome?: (outcome: DiscoveryProviderOutcome) => void;
 }
 
 function matchScore(tags: string[], values: string[], fallback: number): number {
@@ -380,109 +363,6 @@ export function createUnavailableConnector(source: DiscoverySource): DiscoveryCo
   };
 }
 
-export async function runDiscoveryPipeline(
-  connectors: DiscoveryConnector[],
-  context: RankingContext,
-  alreadyAnnouncedToday: number,
-  onProviderOutcome?: (outcome: DiscoveryProviderOutcome) => void
-): Promise<Discovery[]> {
-  const normalizedByConnector = await Promise.all(
-    connectors.map(async (connector) => {
-      try {
-        const raw = await connector.fetch({ limit: 10 });
-        const normalized = raw.flatMap((item) => {
-          try {
-            return [connector.normalize(item)];
-          } catch {
-            return [];
-          }
-        });
-        onProviderOutcome?.({
-          source: connector.source,
-          providerMode: connector.providerMode,
-          status: normalized.length === 0 ? 'empty' : 'completed',
-          itemCount: normalized.length
-        });
-        return normalized;
-      } catch (error) {
-        onProviderOutcome?.({
-          source: connector.source,
-          providerMode: connector.providerMode,
-          status: 'failed',
-          itemCount: 0,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        return [];
-      }
-    })
-  );
-
-  const normalized = deduplicateDiscoveries(normalizedByConnector.flat());
-  const ranked = normalized.map((item) => toDiscovery(item, scoreDiscovery(item, context)));
-  return selectEligibleDiscoveries(ranked, alreadyAnnouncedToday);
-}
-
-function sourceTypeFor(source: DiscoverySource): DiscoveryCandidate['sourceType'] {
-  const map: Record<DiscoverySource, DiscoveryCandidate['sourceType']> = {
-    internet: 'article',
-    rss: 'article',
-    user: 'generated_idea',
-    local_file: 'article',
-    calendar: 'article',
-    companion: 'generated_idea',
-    community: 'community_discussion',
-    system: 'generated_idea',
-    github: 'github',
-    hackernews: 'community_discussion',
-    reddit: 'community_discussion',
-    youtube: 'video'
-  };
-  return map[source];
-}
-
-function agentForSource(source: DiscoverySource, preferred: DiscoveryAgentType[]): DiscoveryAgentType {
-  if (source === 'github') return preferred.includes('builder') ? 'builder' : preferred[0] ?? 'scout';
-  if (source === 'hackernews') return preferred.includes('trend') ? 'trend' : preferred[0] ?? 'scout';
-  if (source === 'reddit') return preferred.includes('contrarian') ? 'contrarian' : preferred[0] ?? 'scout';
-  if (source === 'youtube') return preferred.includes('research') ? 'research' : preferred[0] ?? 'scout';
-  return preferred[0] ?? 'scout';
-}
-
-export function planExploration(curiosityTarget: CuriosityTarget): ExplorationPlan {
-  const objectiveByType: Record<CuriosityTarget['explorationType'], ExplorationPlan['objective']> = {
-    similar: 'find_new_examples',
-    adjacent: 'find_new_examples',
-    opposite: 'challenge_assumption',
-    deepening: 'find_related_research',
-    challenge: 'challenge_assumption',
-    practical: 'find_practical_references'
-  };
-  const agentsByType: Record<CuriosityTarget['explorationType'], DiscoveryAgentType[]> = {
-    similar: ['scout', 'memory_scout'],
-    adjacent: ['scout', 'trend', 'memory_scout'],
-    opposite: ['contrarian', 'research'],
-    deepening: ['research', 'memory_scout'],
-    challenge: ['contrarian', 'research'],
-    practical: ['builder', 'scout']
-  };
-  const queryTopic = curiosityTarget.topic.trim();
-
-  return {
-    id: createId('plan'),
-    curiosityTargetId: curiosityTarget.id,
-    objective: objectiveByType[curiosityTarget.explorationType],
-    agents: agentsByType[curiosityTarget.explorationType],
-    searchQueries: [
-      queryTopic,
-      `${queryTopic} examples`,
-      `${queryTopic} ${curiosityTarget.explorationType === 'practical' ? 'implementation' : 'patterns'}`
-    ],
-    constraints: ['Prefer specific evidence over generic summaries.', 'Do not produce user-facing narration.'],
-    maxCandidatesPerAgent: 3,
-    createdAt: nowIso()
-  };
-}
-
 export function scoreCandidate(candidate: Pick<DiscoveryCandidate, 'relevanceScore' | 'noveltyScore' | 'evidenceScore' | 'usefulnessScore'>): number {
   return (
     candidate.relevanceScore * 0.35 +
@@ -501,104 +381,6 @@ export function deduplicateCandidates(candidates: DiscoveryCandidate[]): Discove
     seen.add(key);
     return true;
   });
-}
-
-export async function runDiscoveryAgents(input: RunDiscoveryAgentsInput): Promise<DiscoveryCandidate[]> {
-  const connectors = input.connectors ?? [];
-  const preferredAgents = input.explorationPlan.agents;
-  const searchQuery = input.explorationPlan.searchQueries[0];
-
-  const external = await Promise.all(
-    connectors.map(async (connector) => {
-      try {
-        const raw = await connector.fetch({ query: searchQuery, limit: input.explorationPlan.maxCandidatesPerAgent });
-        const candidates = raw.slice(0, input.explorationPlan.maxCandidatesPerAgent).flatMap((item) => {
-          let normalized: NormalizedDiscovery;
-          try {
-            normalized = connector.normalize(item);
-          } catch {
-            return [];
-          }
-          const agentType = agentForSource(connector.source, preferredAgents);
-        const tags = normalized.tags.map((tag) => tag.toLowerCase());
-        const topicWords = input.curiosityTarget.topic.toLowerCase().split(/\s+/);
-        const relevanceScore = topicWords.some((word) => tags.includes(word)) ? 0.82 : 0.62;
-          return [{
-          id: createId('candidate'),
-          userId: input.userId,
-          companionId: input.companionId,
-          title: normalized.title,
-          summary: normalized.summary ?? `A ${connector.source} signal related to ${input.curiosityTarget.topic}.`,
-          sourceType: sourceTypeFor(connector.source),
-          sourceUrl: normalized.url,
-          sourceName: connector.source,
-          agentType,
-          relatedCuriosityTargetId: input.curiosityTarget.id,
-          relevanceScore,
-          noveltyScore: normalized.url ? 0.72 : 0.48,
-          evidenceScore: normalized.summary || normalized.url ? 0.68 : 0.42,
-          usefulnessScore: normalized.tags.length > 0 ? 0.66 : 0.45,
-          fingerprint: fingerprintDiscovery({
-            title: normalized.title,
-            canonicalUrl: normalizeDiscoveryUrl(normalized.url),
-            topics: normalized.tags,
-            sourceType: normalized.source
-          }),
-          rawEvidence: JSON.stringify(normalized.raw),
-          collectedAt: nowIso()
-          } satisfies DiscoveryCandidate];
-        });
-        input.onProviderOutcome?.({
-          source: connector.source,
-          providerMode: connector.providerMode,
-          status: candidates.length === 0 ? 'empty' : 'completed',
-          itemCount: candidates.length
-        });
-        return candidates;
-      } catch (error) {
-        input.onProviderOutcome?.({
-          source: connector.source,
-          providerMode: connector.providerMode,
-          status: 'failed',
-          itemCount: 0,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        return [];
-      }
-    })
-  );
-
-  const memoryCandidates =
-    preferredAgents.includes('memory_scout')
-      ? (input.memoryCandidates ?? []).slice(0, input.explorationPlan.maxCandidatesPerAgent).map((item) => ({
-          id: createId('candidate'),
-          userId: input.userId,
-          companionId: input.companionId,
-          title: item.title,
-          summary: item.summary ?? `Companion found this in memory while exploring ${input.curiosityTarget.topic}.`,
-          sourceType: 'internal_memory' as const,
-          sourceUrl: item.url,
-          sourceName: 'memory',
-          agentType: 'memory_scout' as const,
-          relatedCuriosityTargetId: input.curiosityTarget.id,
-          relevanceScore: 0.78,
-          noveltyScore: 0.45,
-          evidenceScore: 0.7,
-          usefulnessScore: 0.72,
-          fingerprint: fingerprintDiscovery({
-            title: item.title,
-            canonicalUrl: normalizeDiscoveryUrl(item.url),
-            topics: item.tags,
-            sourceType: 'internal_memory'
-          }),
-          rawEvidence: JSON.stringify(item),
-          collectedAt: nowIso()
-        }))
-      : [];
-
-  return deduplicateCandidates([...external.flat(), ...memoryCandidates]).sort(
-    (left, right) => scoreCandidate(right) - scoreCandidate(left)
-  );
 }
 
 export { DISCOVERY_STARTUP_DELAY_MS, getDiscoveryFetchDelay, getDiscoveryFetchDelayRange } from './timing';

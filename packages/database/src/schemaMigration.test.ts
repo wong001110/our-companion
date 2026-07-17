@@ -6,6 +6,42 @@ import { describe, expect, it } from 'vitest';
 import { DatabaseService } from './index';
 
 describe('schema compatibility migrations', () => {
+  it('adds research provenance columns to existing discovery candidates and exploration cycles', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'our-companion-research-db-'));
+    const dbPath = path.join(directory, 'legacy.sqlite');
+    const legacy = new DatabaseSync(dbPath);
+    legacy.exec(`
+      CREATE TABLE discovery_candidates (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, companion_id TEXT NOT NULL, title TEXT NOT NULL, summary TEXT NOT NULL,
+        source_type TEXT NOT NULL, source_url TEXT, source_name TEXT, agent_type TEXT NOT NULL,
+        related_curiosity_target_id TEXT NOT NULL, relevance_score REAL NOT NULL, novelty_score REAL NOT NULL,
+        evidence_score REAL NOT NULL, usefulness_score REAL NOT NULL, raw_evidence TEXT, collected_at TEXT NOT NULL
+      );
+      CREATE TABLE exploration_cycles (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, companion_id TEXT NOT NULL, trigger TEXT NOT NULL, state TEXT NOT NULL,
+        curiosity_target_ids_json TEXT NOT NULL DEFAULT '[]', selected_curiosity_target_id TEXT, exploration_plan_id TEXT,
+        discovery_candidate_ids_json TEXT NOT NULL DEFAULT '[]', insight_ids_json TEXT NOT NULL DEFAULT '[]', selected_insight_id TEXT,
+        started_at TEXT NOT NULL, completed_at TEXT
+      );
+    `);
+    legacy.close();
+
+    const db = new DatabaseService({ path: dbPath });
+    const raw = (db as unknown as { db: DatabaseSync }).db;
+    const candidateColumns = raw.prepare('PRAGMA table_info(discovery_candidates)').all() as Array<{ name: string }>;
+    const cycleColumns = raw.prepare('PRAGMA table_info(exploration_cycles)').all() as Array<{ name: string }>;
+    expect(candidateColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      'research_plan_id',
+      'evidence_ids_json'
+    ]));
+    expect(cycleColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      'research_intent_id',
+      'research_plan_id'
+    ]));
+    db.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
   it('adds session_id before creating its index for an existing companion_messages table', () => {
     const dbPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'our-companion-db-')), 'legacy.sqlite');
     const legacy = new DatabaseSync(dbPath);
