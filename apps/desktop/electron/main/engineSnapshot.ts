@@ -1,27 +1,9 @@
 import type { DatabaseService } from '@our-companion/database';
-import type { CompanionInsight, DiscoverySchedulingDebug, EngineSnapshot, EngineSnapshotInput, InsightV2, Pattern, PatternV2 } from '@our-companion/shared';
+import type { CompanionInsight, DiscoverySchedulingDebug, EngineSnapshot, EngineSnapshotInput, GeneratedInsight } from '@our-companion/shared';
 import { nowIso } from '@our-companion/shared';
 import type { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 
-function mapPatternToV2(p: Pattern): PatternV2 {
-  return {
-    id: p.id,
-    userId: p.userId,
-    category: 'interest',
-    type: p.type,
-    title: p.title,
-    summary: p.summary,
-    confidence: p.confidence,
-    strength: p.strength,
-    supportingMemoryIds: p.relatedConceptIds ?? [],
-    firstDetectedAt: p.detectedAt ?? p.createdAt,
-    lastUpdatedAt: p.updatedAt,
-    reinforcementCount: 1,
-    evidence: p.evidence
-  };
-}
-
-function mapInsightToV2(i: CompanionInsight): InsightV2 {
+function mapGeneratedInsight(i: CompanionInsight): GeneratedInsight {
   return {
     id: i.id,
     userId: i.userId,
@@ -54,8 +36,7 @@ export function buildEngineSnapshot(
     db.listExplorationCycles(1)[0];
 
   const announcedIds = new Set(db.getAnnouncedDiscoveryIds());
-  const allShared = db.listDiscoveries({ status: 'shared', limit: 200 });
-  const unannouncedCount = allShared.filter((d) => !announcedIds.has(d.id)).length;
+  const recoverableDiscoveries = db.listQueuedOrEligible(200, characterId);
 
   const schedulingDebug: DiscoverySchedulingDebug = {
     isBusy: orchestrator?.isBusy() ?? false,
@@ -67,15 +48,14 @@ export function buildEngineSnapshot(
     lastAnnouncedId: orchestrator?.getLastAnnouncedId(),
     isProcessing: orchestrator?.isProcessing() ?? false,
     nextRetryAt: orchestrator?.getNextRetryAt(),
-    unannouncedCount,
+    unannouncedCount: recoverableDiscoveries.length,
     announcedCount: announcedIds.size,
     queue: orchestrator?.getQueue().map((q) => ({
       id: q.discovery.id,
       title: q.discovery.title,
       status: q.status,
       retryCount: q.retryCount,
-      interruptCount: q.interruptCount,
-      retryAfterAt: q.retryAfterAt
+      interruptCount: q.interruptCount
     }))
   };
 
@@ -84,17 +64,23 @@ export function buildEngineSnapshot(
     characterState: db.getCharacterState(characterId),
     currentCycle: focusCycle,
     recentCycles: db.listExplorationCycles(10),
-    patterns: db.listPatterns(userId, 20).map(mapPatternToV2),
+    patterns: db.listPatterns(userId, 20),
     interestGraph: db.getInterestGraph(userId),
     curiosityTargets: db.listCuriosityTargets(userId, 20),
     explorationPlan: focusCycle?.explorationPlanId
       ? db.getExplorationPlan(focusCycle.explorationPlanId)
       : undefined,
     discoveryCandidates: db.listDiscoveryCandidates(userId, 20),
-    insights: db.listCompanionInsights(userId, 20).map(mapInsightToV2),
+    insights: db.listCompanionInsights(userId, 20).map(mapGeneratedInsight),
     explorationEvents: focusCycle ? db.listExplorationEventsForCycle(focusCycle.id) : [],
     recentDiscoveries: db.listDiscoveries({ limit: 10 }),
     actionPermissions: db.getActionPermissions(),
-    discoveryScheduling: schedulingDebug
+    discoveryScheduling: schedulingDebug,
+    engineTraces: db.listEngineTraces({
+      cycleId: input.cycleId ?? focusCycle?.id,
+      correlationId: input.correlationId,
+      companionId: characterId,
+      limit: input.traceLimit ?? 100
+    })
   };
 }

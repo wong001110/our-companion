@@ -200,7 +200,7 @@ export function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): 
     const topic = normalizedTitle(memory.title || memory.summary || 'current project');
     if (!topic || dismissed.has(topic.toLowerCase())) continue;
     const score = scoreCuriosity({
-      memoryRelevance: clamp01(memory.importanceScore / 100),
+      memoryRelevance: memory.importance,
       patternStrength: strongPatterns[0]?.strength ?? 0.45,
       novelty: 0.55,
       relationshipFit: 0.72,
@@ -300,23 +300,3 @@ export function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): 
     .sort((left, right) => right.priority - left.priority)
     .slice(0, 7);
 }
-
-// ============================================================================
-// Curiosity Engine V2 â€” Enhanced curiosity management
-// ============================================================================
-
-export { CuriosityEngine } from './curiosity-engine';
-export { scoreCandidatePriority, rankCandidates } from './curiosity-scoring';
-export { generateFromMemories, generateFromPatterns, generateFromInsights, generateDefaultCandidate } from './candidate-generator';
-export {
-  addToQueue,
-  removeFromQueue,
-  getTopCandidates,
-  deduplicateQueue,
-  expireStaleCandidates,
-} from './queue-manager';
-export {
-  MIN_CANDIDATE_PRIORITY,
-  MAX_CANDIDATES_IN_QUEUE,
-  CANDIDATE_EXPIRY_DAYS,
-} from './types';

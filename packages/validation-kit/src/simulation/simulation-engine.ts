@@ -1,169 +1,64 @@
-import { nowIso } from '@our-companion/shared';
 import type {
-  SimulationCategory,
   SimulationConfig,
   SimulationResult,
-  TimeAdvance,
-  RelationshipOverride,
-  ContextOverride,
-  RuntimeOverride,
+  SimulationStateChange,
+  SimulationStateDelta,
 } from './types';
-import { advanceTime, getSimulatedTime, resetTime } from './time-simulator';
+import type {
+  Clock,
+  ProductionRuntimeExecution,
+  ProductionRuntimeGateway,
+} from '../production-runtime';
 
 export interface SimulationEngineDeps {
+  gateway: ProductionRuntimeGateway;
   emitEvent(type: string, payload?: Record<string, unknown>): void;
-  updateRelationship?(override: RelationshipOverride): void;
-  updateContext?(override: ContextOverride): void;
-  updateRuntime?(override: RuntimeOverride): void;
+  clock?: Pick<Clock, 'nowIso'>;
 }
 
 export class SimulationEngine {
   private readonly deps: SimulationEngineDeps;
   private history: SimulationResult[] = [];
-  private contextOverride: ContextOverride | null = null;
-  private runtimeOverride: RuntimeOverride | null = null;
 
   constructor(deps: SimulationEngineDeps) {
     this.deps = deps;
   }
 
   getHistory(): SimulationResult[] {
-    return [...this.history];
+    return this.history.map(clone);
   }
 
-  getContextOverride(): ContextOverride | null {
-    return this.contextOverride ? { ...this.contextOverride } : null;
-  }
-
-  getRuntimeOverride(): RuntimeOverride | null {
-    return this.runtimeOverride ? { ...this.runtimeOverride } : null;
-  }
-
-  execute(config: SimulationConfig): SimulationResult {
-    const result = this.processConfig(config);
+  async execute(config: SimulationConfig): Promise<SimulationResult> {
+    const before = clone(await this.deps.gateway.getState());
+    let execution: ProductionRuntimeExecution;
+    try {
+      execution = await this.deps.gateway.execute({
+        category: config.category,
+        params: clone(config.params),
+      });
+    } catch (error) {
+      execution = {
+        operation: config.category,
+        status: 'failed',
+        description: `${config.category} production flow failed`,
+        traceIds: [],
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+    const after = execution.state
+      ? clone(execution.state)
+      : clone(await this.deps.gateway.getState());
+    const result = toSimulationResult(config, execution, before, after, this.timestamp());
     this.history.push(result);
     this.deps.emitEvent('SimulationExecuted', {
       category: config.category,
+      operation: result.operation,
+      status: result.status,
       success: result.success,
-      description: result.description,
+      correlationId: result.correlationId,
+      traceIds: result.traceIds,
     });
-    return result;
-  }
-
-  private processConfig(config: SimulationConfig): SimulationResult {
-    const timestamp = nowIso();
-    switch (config.category) {
-      case 'time':
-        return this.simulateTime(config.params as unknown as TimeAdvance, timestamp);
-      case 'relationship':
-        return this.simulateRelationship(config.params as unknown as RelationshipOverride, timestamp);
-      case 'context':
-        return this.simulateContext(config.params as unknown as ContextOverride, timestamp);
-      case 'runtime':
-        return this.simulateRuntime(config.params as unknown as RuntimeOverride, timestamp);
-      case 'journey':
-        return this.simulateJourney(config.params, timestamp);
-      case 'discovery':
-        return this.simulateDiscovery(config.params, timestamp);
-      case 'memory':
-        return this.simulateMemory(config.params, timestamp);
-      case 'notebook':
-        return this.simulateNotebook(config.params, timestamp);
-      default:
-        return { success: false, category: config.category, description: 'Unknown category', affectedSystems: [], timestamp };
-    }
-  }
-
-  private simulateTime(advance: TimeAdvance, timestamp: string): SimulationResult {
-    const before = getSimulatedTime();
-    advanceTime(advance);
-    const after = getSimulatedTime();
-    return {
-      success: true,
-      category: 'time',
-      description: `Time advanced from ${before} to ${after}`,
-      affectedSystems: ['journey', 'reflection', 'discovery', 'relationship', 'notebook', 'notifications'],
-      timestamp,
-    };
-  }
-
-  private simulateRelationship(override: RelationshipOverride, timestamp: string): SimulationResult {
-    this.deps.updateRelationship?.(override);
-    return {
-      success: true,
-      category: 'relationship',
-      description: `Relationship updated: trust=${override.trustScore ?? 'unchanged'}, stage=${override.stage ?? 'unchanged'}`,
-      affectedSystems: ['behavior', 'initiative', 'conversation', 'notebook'],
-      timestamp,
-    };
-  }
-
-  private simulateContext(override: ContextOverride, timestamp: string): SimulationResult {
-    this.contextOverride = override;
-    this.deps.updateContext?.(override);
-    return {
-      success: true,
-      category: 'context',
-      description: `Context overridden to ${override.category} (confidence: ${override.confidence ?? 0.9})`,
-      affectedSystems: ['behavior', 'attention', 'initiative', 'notification'],
-      timestamp,
-    };
-  }
-
-  private simulateRuntime(override: RuntimeOverride, timestamp: string): SimulationResult {
-    this.runtimeOverride = override;
-    this.deps.updateRuntime?.(override);
-    return {
-      success: true,
-      category: 'runtime',
-      description: `Runtime state forced to ${override.state}`,
-      affectedSystems: ['presence', 'animation', 'behavior'],
-      timestamp,
-    };
-  }
-
-  private simulateJourney(params: Record<string, unknown>, timestamp: string): SimulationResult {
-    const action = (params.action as string) ?? 'create';
-    return {
-      success: true,
-      category: 'journey',
-      description: `Journey action: ${action}`,
-      affectedSystems: ['journey', 'notebook', 'reflection', 'cards'],
-      timestamp,
-    };
-  }
-
-  private simulateDiscovery(params: Record<string, unknown>, timestamp: string): SimulationResult {
-    const action = (params.action as string) ?? 'complete';
-    return {
-      success: true,
-      category: 'discovery',
-      description: `Discovery action: ${action}`,
-      affectedSystems: ['discovery', 'cards', 'notification', 'notebook'],
-      timestamp,
-    };
-  }
-
-  private simulateMemory(params: Record<string, unknown>, timestamp: string): SimulationResult {
-    const action = (params.action as string) ?? 'add';
-    return {
-      success: true,
-      category: 'memory',
-      description: `Memory action: ${action}`,
-      affectedSystems: ['memory', 'pattern', 'insight', 'notebook'],
-      timestamp,
-    };
-  }
-
-  private simulateNotebook(params: Record<string, unknown>, timestamp: string): SimulationResult {
-    const action = (params.action as string) ?? 'generate_daily';
-    return {
-      success: true,
-      category: 'notebook',
-      description: `Notebook action: ${action}`,
-      affectedSystems: ['notebook', 'cards', 'reflection'],
-      timestamp,
-    };
+    return clone(result);
   }
 
   clearHistory(): void {
@@ -171,9 +66,60 @@ export class SimulationEngine {
   }
 
   resetAll(): void {
-    resetTime();
-    this.contextOverride = null;
-    this.runtimeOverride = null;
     this.history = [];
   }
+
+  private timestamp(): string {
+    return this.deps.clock?.nowIso() ?? new Date().toISOString();
+  }
+}
+
+function toSimulationResult(
+  config: SimulationConfig,
+  execution: ProductionRuntimeExecution,
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  fallbackTimestamp: string,
+): SimulationResult {
+  return {
+    success: execution.status !== 'failed',
+    category: config.category,
+    operation: execution.operation,
+    status: execution.status,
+    description: execution.description ?? `${execution.operation} ${execution.status}`,
+    correlationId: execution.correlationId,
+    traceIds: [...execution.traceIds],
+    inputRefs: [...(execution.inputRefs ?? [])],
+    outputRefs: [...(execution.outputRefs ?? [])],
+    stateDelta: createStateDelta(before, after),
+    error: execution.error,
+    timestamp: execution.completedAt ?? fallbackTimestamp,
+  };
+}
+
+export function createStateDelta(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): SimulationStateDelta {
+  const changes: Record<string, SimulationStateChange> = {};
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const key of keys) {
+    if (!isEquivalent(before[key], after[key])) {
+      changes[key] = {
+        before: clone(before[key]),
+        after: clone(after[key]),
+      };
+    }
+  }
+  return { before: clone(before), after: clone(after), changes };
+}
+
+function isEquivalent(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function clone<T>(value: T): T {
+  if (value === undefined) return value;
+  return structuredClone(value);
 }

@@ -5,13 +5,14 @@ import type {
   CuriosityTarget,
   DiscoveryCandidate,
   InterestGraph,
-  Insight,
-  InsightV2,
   InsightCategory,
+  ExplorationCycleResult,
   MemoryNode,
   Pattern
 } from '@our-companion/shared';
 import { clamp01, createId, nowIso } from '@our-companion/shared';
+
+type GeneratedInsight = ExplorationCycleResult['insights'][number];
 
 export interface GenerateInsightsInput {
   userId: string;
@@ -32,12 +33,6 @@ export interface InsightSelectionScore {
   practicalRelevance: number;
   relationshipFit: number;
   finalScore: number;
-}
-
-export interface GenerateCognitiveInsightInput {
-  concepts: Array<{ id: string; name: string; summary: string }>;
-  patterns: Pattern[];
-  discoveryCandidates: DiscoveryCandidate[];
 }
 
 export function scoreInsight(input: Omit<InsightSelectionScore, 'finalScore'>): InsightSelectionScore {
@@ -66,7 +61,7 @@ function average(values: number[], fallback: number): number {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-export function generateInsights(input: GenerateInsightsInput): InsightV2[] {
+export function generateInsights(input: GenerateInsightsInput): GeneratedInsight[] {
   const candidates = input.discoveryCandidates;
   const primaryCandidate = [...candidates].sort(
     (left, right) =>
@@ -84,7 +79,7 @@ export function generateInsights(input: GenerateInsightsInput): InsightV2[] {
 
   const category: InsightCategory = input.curiosityTarget.explorationType === 'practical' ? 'project' : 'discovery';
 
-  const insight: InsightV2 = {
+  const insight: GeneratedInsight = {
     id: createId('insight'),
     userId: input.userId,
     category,
@@ -107,7 +102,7 @@ export function generateInsights(input: GenerateInsightsInput): InsightV2[] {
   return [insight];
 }
 
-export function selectPrimaryInsight(insights: InsightV2[]): InsightV2 | undefined {
+export function selectPrimaryInsight(insights: GeneratedInsight[]): GeneratedInsight | undefined {
   return [...insights].sort((left, right) => {
     const leftScore = scoreInsight({
       confidence: left.confidence,
@@ -126,57 +121,3 @@ export function selectPrimaryInsight(insights: InsightV2[]): InsightV2 | undefin
     return rightScore - leftScore;
   })[0];
 }
-
-export function generateCognitiveInsight(input: GenerateCognitiveInsightInput): Insight | undefined {
-  const pattern = [...input.patterns].sort((left, right) => right.strength - left.strength)[0];
-  const concept = input.concepts[0];
-  const candidate = [...input.discoveryCandidates].sort(
-    (left, right) => right.relevanceScore + right.usefulnessScore - (left.relevanceScore + left.usefulnessScore)
-  )[0];
-
-  if (!pattern && !concept && !candidate) return undefined;
-
-  const title = pattern?.title ?? concept?.name ?? candidate?.title ?? 'New cognitive insight';
-  const explanation =
-    pattern?.description ??
-    pattern?.summary ??
-    concept?.summary ??
-    candidate?.summary ??
-    'Companion found a meaningful relationship worth considering later.';
-  const confidence = Math.min(1, Math.max(pattern?.confidence ?? 0, candidate?.evidenceScore ?? 0.55));
-  const growthValue = Math.round(
-    Math.min(100, ((pattern?.strength ?? 0.55) * 45 + (candidate?.usefulnessScore ?? 0.55) * 35 + confidence * 20))
-  );
-
-  return {
-    id: createId('insight'),
-    title,
-    explanation,
-    relatedConceptIds: [...new Set([...(pattern?.relatedConceptIds ?? []), ...(concept ? [concept.id] : [])])],
-    relatedPatternIds: pattern ? [pattern.id] : [],
-    confidence,
-    growthValue,
-    createdAt: nowIso(),
-    status: 'candidate'
-  };
-}
-
-// ============================================================================
-// Insight Engine V2 Ã¢â‚¬â€ Enhanced insight generation
-// ============================================================================
-
-export { InsightEngine } from './insight-engine';
-export { calculateInsightConfidence, calculateInsightImportance, calculateInsightNovelty } from './scoring';
-export { generateInterestInsights } from './generators/interest-insight';
-export { generateLearningInsights } from './generators/learning-insight';
-export { generateProductivityInsights } from './generators/productivity-insight';
-export { generateProjectInsights } from './generators/project-insight';
-export { generateBehaviourInsights } from './generators/behaviour-insight';
-export { generateRelationshipInsights } from './generators/relationship-insight';
-export { generateDiscoveryInsights } from './generators/discovery-insight';
-export { generateRiskInsights } from './generators/risk-insight';
-export {
-  MIN_PATTERNS_FOR_INSIGHT,
-  MAX_INSIGHTS_PER_GENERATION,
-  CONFIDENCE_WEIGHTS,
-} from './types';

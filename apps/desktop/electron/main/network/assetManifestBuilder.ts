@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { COMPANION_ANIMATION_MANIFEST, type BuiltAssetPack, type CompanionAssetManifestV1 } from '@our-companion/shared';
+import { COMPANION_ANIMATION_MANIFEST, type BuiltAssetPack, type CompanionAssetManifest } from '@our-companion/shared';
 import { resolveCompanionAssetPath, getCompanionAssetMimeType, type ResolveCompanionAssetPathOptions } from '../platform/companionAssetPaths';
 
 const ALLOWED = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.json', '.mp3', '.wav', '.ogg']);
@@ -16,7 +16,7 @@ export function buildAssetManifest(input: { companionId: string; includeVoices?:
   collectFiles(root.target, root.target, files);
   if (!files.size || files.size > limits.maxFiles) throw new Error('ASSET_PACK_LIMIT_EXCEEDED');
   const lower = new Set<string>();
-  const entries: CompanionAssetManifestV1['files'] = [];
+  const entries: CompanionAssetManifest['files'] = [];
   let totalBytes = 0;
   for (const [relativePath, filePath] of [...files.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     const normalized = `assets/${relativePath}`;
@@ -51,7 +51,7 @@ export function buildAssetManifest(input: { companionId: string; includeVoices?:
   for (const required of ['Idle_Neutral', 'Enter', 'Leave'] as const) if (!animationNames.has(required)) throw new Error('ASSET_PACK_MANIFEST_INVALID');
   const portraitPath = entries.find(entry => entry.category === 'portrait')?.relativePath;
   const iconPath = entries.find(entry => entry.category === 'icon')?.relativePath;
-  const manifest: CompanionAssetManifestV1 = {
+  const manifest: CompanionAssetManifest = {
     format: 'our-companion-asset-pack', schemaVersion: 1,
     runtime: { defaultAnimation: 'Idle_Neutral', ...(portraitPath ? { portraitPath } : {}), ...(iconPath ? { iconPath } : {}), animations: animations.sort((a, b) => a.name.localeCompare(b.name)) },
     files: entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath)),
@@ -77,7 +77,7 @@ function collectFiles(root: string, directory: string, files: Map<string, string
     else throw new Error('ASSET_PACK_FILE_INVALID');
   }
 }
-function categoryFor(relativePath: string): CompanionAssetManifestV1['files'][number]['category'] { if (relativePath.startsWith('assets/animations/')) return 'animation'; if (relativePath.startsWith('assets/portraits/')) return 'portrait'; if (relativePath.startsWith('assets/icons/')) return 'icon'; if (relativePath.startsWith('assets/voices/')) return 'voice'; return 'metadata'; }
+function categoryFor(relativePath: string): CompanionAssetManifest['files'][number]['category'] { if (relativePath.startsWith('assets/animations/')) return 'animation'; if (relativePath.startsWith('assets/portraits/')) return 'portrait'; if (relativePath.startsWith('assets/icons/')) return 'icon'; if (relativePath.startsWith('assets/voices/')) return 'voice'; return 'metadata'; }
 function hashFile(filePath: string): string { return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex'); }
 function readPngSpriteMetadata(filePath: string) {
   const bytes = fs.readFileSync(filePath);

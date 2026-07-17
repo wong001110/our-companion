@@ -565,7 +565,7 @@
 .soft-filter-row button,
 .prompt-chip-row button {
   border-radius: 999px;
-  color: #62477d;
+  color: #4b2e64;
   background: #ddc4ec;
 }
 
@@ -635,6 +635,10 @@
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 18px;
+}
+
+.notebook-toolbar > button {
+  background: #604478;
 }
 
 .soft-filter-row,
@@ -852,6 +856,7 @@
 .chat-filter-chips .chip.active,
 .chat-filter-chips .chip:hover {
   background: #ddc4ec;
+  color: #57386b;
 }
 
 .chat-search {

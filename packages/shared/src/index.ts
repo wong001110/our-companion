@@ -1,9 +1,19 @@
 export * from './models';
 export * from './interfaces';
 export * from './domain-events';
-export { clamp01, clampScore, clamp } from './utils';
+export {
+  clamp01,
+  clampScore,
+  clamp,
+  toUnitScore,
+  toScore100,
+  unitToScore100,
+  score100ToUnit
+} from './utils';
+export type { UnitScore, Score100 } from './utils';
 
-import type { ActionPermissionState, ActionPlan, ActionRunResult, ActionStep, BaseEvent, KnowledgeGraph, PerformanceScript, SignalSourceType } from './models';
+import type { ActionPermissionState, ActionStep, BaseEvent, KnowledgeGraph, SignalSourceType } from './models';
+import type { UnitScore } from './utils';
 
 export type DiscoverySource = SignalSourceType;
 
@@ -107,7 +117,7 @@ export interface MemoryCandidate {
   proposedType: TypedMemoryType;
   sourceText?: string;
   summary: string;
-  confidence: number;
+  confidence: UnitScore;
   sensitivity: 'normal' | 'personal' | 'sensitive';
   retention: MemoryRetention;
   reason: string;
@@ -287,9 +297,9 @@ export interface MemoryMetadata {
 export interface UserCompanionRelationship {
   userId: string;
   companionId: string;
-  familiarity: number;
-  trust: number;
-  comfort: number;
+  familiarity: UnitScore;
+  trust: UnitScore;
+  comfort: UnitScore;
   preferredInteractionFrequency: 'low' | 'normal' | 'high';
   preferredInteractionStyle: 'quiet' | 'balanced' | 'expressive';
   recentPositiveInteractions: number;
@@ -360,7 +370,8 @@ export interface MemoryNode {
   title: string;
   summary?: string;
   content?: string;
-  importanceScore: number;
+  /** Normalized domain importance in the inclusive 0–1 range. */
+  importance: UnitScore;
   source?: string;
   sourceUrl?: string;
   isPinned?: boolean;
@@ -389,7 +400,7 @@ export interface MemoryGraph {
 }
 
 // ============================================================================
-// MEMORY V2 — New memory architecture types
+// MEMORY — Canonical memory architecture types
 // ============================================================================
 
 export type MemoryTier = 'short_term' | 'long_term' | 'episodic' | 'semantic';
@@ -477,15 +488,14 @@ export interface MemoryEvent {
 }
 
 export type DiscoveryStatus =
-  | 'new'
   | 'candidate'
+  | 'eligible'
   | 'queued'
-  | 'shared'
-  | 'viewed'
+  | 'presenting'
+  | 'announced'
   | 'saved'
   | 'rejected'
-  | 'ignored'
-  | 'journey'
+  | 'dismissed'
   | 'archived';
 
 export interface NormalizedDiscovery {
@@ -500,12 +510,12 @@ export interface NormalizedDiscovery {
 }
 
 export interface DiscoveryScores {
-  userInterestScore: number;
-  userHistoryScore: number;
-  characterExpertiseScore: number;
-  noveltyScore: number;
-  usefulnessScore: number;
-  finalScore: number;
+  userInterestScore: UnitScore;
+  userHistoryScore: UnitScore;
+  characterExpertiseScore: UnitScore;
+  noveltyScore: UnitScore;
+  usefulnessScore: UnitScore;
+  finalScore: UnitScore;
 }
 
 export interface Discovery extends NormalizedDiscovery, DiscoveryScores {
@@ -515,18 +525,26 @@ export interface Discovery extends NormalizedDiscovery, DiscoveryScores {
   status: DiscoveryStatus;
   canonicalUrl?: string;
   fingerprint?: string;
-  growthValue?: number;
-  confidenceScore?: number;
+  growthValue?: UnitScore;
+  confidenceScore?: UnitScore;
   whyThisMatters?: string;
   recommendedAction?: 'view' | 'save' | 'ignore' | 'add_to_journey';
   shortMessage?: string;
-  sharedAt?: string;
+  companionId?: string;
+  cycleId?: string;
+  presentationCommandId?: string;
+  eligibleAt?: string;
+  queuedAt?: string;
+  presentingAt?: string;
+  announcedAt?: string;
+  updatedAt?: string;
+  statusReason?: string;
   createdAt: string;
   lastSeenAt?: string;
 }
 
 // ============================================================================
-// DISCOVERY V2 — Enhanced discovery types
+// DISCOVERY — Canonical discovery types
 // ============================================================================
 
 export type DiscoveryJobStatus = 'pending' | 'planning' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
@@ -579,14 +597,6 @@ export interface DiscoveryQueueQuery {
   limit?: number;
 }
 
-export interface ExplorationPlanV2 {
-  objective: string;
-  searchTargets: string[];
-  stoppingConditions: string[];
-  maxCost: number;
-  expectedOutputs: string[];
-}
-
 export type PatternType =
   | 'repeated_topic'
   | 'cross_source_trend'
@@ -608,7 +618,7 @@ export interface PatternEvidence {
   sourceType: 'memory' | 'journey_event' | 'conversation' | 'discovery_feedback' | 'saved_discovery' | 'dismissed_discovery';
   sourceId?: string;
   summary: string;
-  weight: number;
+  weight: UnitScore;
 }
 
 export interface Pattern {
@@ -620,65 +630,13 @@ export interface Pattern {
   description?: string;
   relatedConceptIds?: string[];
   relatedDiscoveryIds?: string[];
-  confidence: number;
-  strength: number;
-  freshness: number;
+  confidence: UnitScore;
+  strength: UnitScore;
+  freshness: UnitScore;
   evidence: PatternEvidence[];
   detectedAt?: string;
   createdAt: string;
   updatedAt: string;
-}
-
-// ============================================================================
-// PATTERN V2 — Enhanced pattern types
-// ============================================================================
-
-export type PatternCategory =
-  | 'interest'
-  | 'behaviour'
-  | 'conversation'
-  | 'project'
-  | 'learning'
-  | 'temporal'
-  | 'relationship';
-
-export interface PatternV2 {
-  id: string;
-  userId: string;
-  category: PatternCategory;
-  type: PatternType;
-  title: string;
-  summary: string;
-  confidence: number;
-  strength: number;
-  supportingMemoryIds: string[];
-  firstDetectedAt: string;
-  lastUpdatedAt: string;
-  reinforcementCount: number;
-  evidence: PatternEvidence[];
-}
-
-export interface PatternQuery {
-  categories?: PatternCategory[];
-  types?: PatternType[];
-  minConfidence?: number;
-  limit?: number;
-}
-
-export interface PatternDetectionInput {
-  userId: string;
-  memories: MemoryRecord[];
-  discoveries?: Discovery[];
-  feedback?: DiscoveryFeedback[];
-}
-
-export interface PatternDetectionResult {
-  patterns: PatternV2[];
-  metadata: {
-    memoriesAnalyzed: number;
-    patternsDetected: number;
-    avgConfidence: number;
-  };
 }
 
 export type InterestNodeType =
@@ -698,9 +656,9 @@ export interface InterestNode {
   label: string;
   description?: string;
   type: InterestNodeType;
-  weight: number;
-  confidence: number;
-  freshness: number;
+  weight: UnitScore;
+  confidence: UnitScore;
+  freshness: UnitScore;
   source: 'memory' | 'conversation' | 'journey' | 'discovery' | 'manual' | 'pattern' | 'diary';
   createdAt: string;
   updatedAt: string;
@@ -721,8 +679,8 @@ export interface InterestEdge {
     | 'used_for'
     | 'evolved_into'
     | 'frequently_appears_with';
-  weight: number;
-  confidence: number;
+  weight: UnitScore;
+  confidence: UnitScore;
   createdAt: string;
 }
 
@@ -753,8 +711,8 @@ export interface CuriosityTarget {
   description: string;
   source: CuriositySource;
   explorationType: ExplorationType;
-  priority: number;
-  confidence: number;
+  priority: UnitScore;
+  confidence: UnitScore;
   reason: string;
   expectedValue: string;
   relatedMemoryIds?: string[];
@@ -764,7 +722,7 @@ export interface CuriosityTarget {
 }
 
 // ============================================================================
-// CURIOSITY V2 — Enhanced curiosity types
+// CURIOSITY — Canonical curiosity types
 // ============================================================================
 
 export type CuriosityCandidateStatus = 'pending' | 'queued' | 'exploring' | 'completed' | 'dismissed' | 'expired';
@@ -778,11 +736,11 @@ export interface CuriosityCandidate {
   category: string;
   relatedMemoryIds: string[];
   relatedInsightIds: string[];
-  novelty: number;
-  relevance: number;
-  confidence: number;
-  priority: number;
-  freshness: number;
+  novelty: UnitScore;
+  relevance: UnitScore;
+  confidence: UnitScore;
+  priority: UnitScore;
+  freshness: UnitScore;
   status: CuriosityCandidateStatus;
   createdAt: string;
   updatedAt: string;
@@ -835,10 +793,10 @@ export interface DiscoveryCandidate {
   sourceName?: string;
   agentType: DiscoveryAgentType;
   relatedCuriosityTargetId: string;
-  relevanceScore: number;
-  noveltyScore: number;
-  evidenceScore: number;
-  usefulnessScore: number;
+  relevanceScore: UnitScore;
+  noveltyScore: UnitScore;
+  evidenceScore: UnitScore;
+  usefulnessScore: UnitScore;
   fingerprint?: string;
   rawEvidence?: string;
   collectedAt: string;
@@ -864,10 +822,10 @@ export interface CompanionInsight {
   insight: string;
   whyItMatters: string;
   whyCompanionFoundIt: string;
-  confidence: number;
-  novelty: number;
-  emotionalRelevance: number;
-  practicalRelevance: number;
+  confidence: UnitScore;
+  novelty: UnitScore;
+  emotionalRelevance: UnitScore;
+  practicalRelevance: UnitScore;
   supportingCandidateIds: string[];
   relatedMemoryIds?: string[];
   relatedPatternIds?: string[];
@@ -878,7 +836,7 @@ export interface CompanionInsight {
 }
 
 // ============================================================================
-// INSIGHT V2 — Enhanced insight types
+// GENERATED INSIGHT — Insight presentation and generation types
 // ============================================================================
 
 export type InsightCategory =
@@ -891,7 +849,7 @@ export type InsightCategory =
   | 'discovery'
   | 'risk';
 
-export interface InsightV2 {
+export interface GeneratedInsight {
   id: string;
   userId: string;
   category: InsightCategory;
@@ -900,9 +858,9 @@ export interface InsightV2 {
   explanation: string;
   supportingPatternIds: string[];
   supportingMemoryIds: string[];
-  confidence: number;
-  importance: number;
-  novelty: number;
+  confidence: UnitScore;
+  importance: UnitScore;
+  novelty: UnitScore;
   evidenceCount: number;
   status: 'active' | 'archived';
   createdAt: string;
@@ -919,12 +877,12 @@ export interface InsightQuery {
 
 export interface InsightGenerationInput {
   userId: string;
-  patterns: PatternV2[];
+  patterns: Pattern[];
   memories: MemoryRecord[];
 }
 
 export interface InsightGenerationResult {
-  insights: InsightV2[];
+  insights: GeneratedInsight[];
   metadata: {
     patternsAnalyzed: number;
     insightsGenerated: number;
@@ -1014,8 +972,8 @@ export interface ExplorationCycleResult {
   selectedCuriosityTarget?: CuriosityTarget;
   explorationPlan?: ExplorationPlan;
   discoveryCandidates: DiscoveryCandidate[];
-  insights: InsightV2[];
-  selectedInsight?: InsightV2;
+  insights: GeneratedInsight[];
+  selectedInsight?: GeneratedInsight;
   diaryEntryId?: string;
 }
 
@@ -1290,6 +1248,43 @@ export interface FoundationEventLogInput {
 export interface EngineSnapshotInput {
   userId?: string;
   cycleId?: string;
+  correlationId?: string;
+  traceLimit?: number;
+}
+
+export type EngineProviderMode =
+  | 'live'
+  | 'mock'
+  | 'fixture'
+  | 'deterministic'
+  | 'unavailable';
+
+export type EngineTraceStatus =
+  | 'started'
+  | 'completed'
+  | 'failed'
+  | 'skipped'
+  | 'empty';
+
+export interface EngineTrace {
+  id: string;
+  correlationId: string;
+  causationId?: string;
+  cycleId?: string;
+  companionId: string;
+  engine: string;
+  operation: string;
+  providerMode: EngineProviderMode;
+  inputRefs: string[];
+  outputRefs: string[];
+  stateBeforeHash?: string;
+  stateAfterHash?: string;
+  startedAt: string;
+  completedAt?: string;
+  durationMs?: number;
+  status: EngineTraceStatus;
+  skipReason?: string;
+  error?: string;
 }
 
 export interface DiscoverySchedulingDebug {
@@ -1319,16 +1314,17 @@ export interface EngineSnapshot {
   characterState?: CharacterRuntimeState;
   currentCycle?: ExplorationCycle;
   recentCycles: ExplorationCycle[];
-  patterns: PatternV2[];
+  patterns: Pattern[];
   interestGraph: InterestGraph;
   curiosityTargets: CuriosityTarget[];
   explorationPlan?: ExplorationPlan;
   discoveryCandidates: DiscoveryCandidate[];
-  insights: InsightV2[];
+  insights: GeneratedInsight[];
   explorationEvents: ExplorationLoopEvent[];
   recentDiscoveries: Discovery[];
   actionPermissions: ActionPermissionState;
   discoveryScheduling: DiscoverySchedulingDebug;
+  engineTraces: EngineTrace[];
 }
 
 export interface DiscoveryReason {
@@ -1448,13 +1444,13 @@ export interface PublicCompanionProfile {
   updatedAt: string;
   publishedAt?: string;
 }
-export interface CompanionAssetManifestV1 {
+export interface CompanionAssetManifest {
   format: 'our-companion-asset-pack';
   schemaVersion: 1;
   runtime: { defaultAnimation: 'Idle_Neutral'; portraitPath?: string; iconPath?: string; animations: Array<{ name: string; format: 'sprite_sheet' | 'frame_sequence' | 'gif' | 'static'; files: string[]; frameWidth?: number; frameHeight?: number; frameCount?: number; frameDurationMs?: number; loop: boolean }> };
   files: Array<{ relativePath: string; category: 'animation' | 'portrait' | 'icon' | 'voice' | 'metadata'; mimeType: string; sizeBytes: number; sha256: string }>;
 }
-export interface BuiltAssetPack { manifest: CompanionAssetManifestV1; manifestHash: string; totalFiles: number; totalBytes: number; requiredAnimations: Record<'Idle_Neutral' | 'Enter' | 'Leave', boolean>; }
+export interface BuiltAssetPack { manifest: CompanionAssetManifest; manifestHash: string; totalFiles: number; totalBytes: number; requiredAnimations: Record<'Idle_Neutral' | 'Enter' | 'Leave', boolean>; }
 export interface NetworkAssetPack { id: string; companionId: string; manifestHash: string; schemaVersion: number; status: 'draft' | 'uploading' | 'verifying' | 'active' | 'superseded' | 'deleting' | 'failed' | 'abandoning' | 'abandoned'; totalFiles: number; totalBytes: number; failureCode?: string; createdAt: string; updatedAt: string; completedAt?: string; activatedAt?: string; supersededAt?: string; }
 export interface CompleteAssetPackResult { assetPack: NetworkAssetPack; companion: PublicCompanionProfile; }
 export interface NetworkCompanionLink { serverOrigin: string; networkAccountId: string; localCompanionId: string; networkCompanionId: string; activeAssetPackId?: string; lastPublishedManifestHash?: string; lastPublishedAt?: string; publishStatus?: string; }
@@ -1587,13 +1583,13 @@ export interface OurCompanionApi {
     refresh(input?: { sources?: DiscoverySource[] }): Promise<Discovery[]>;
     markInterested(discoveryId: string): Promise<Discovery>;
     markNotInterested(discoveryId: string): Promise<Discovery>;
-    addToJourney(input: AddDiscoveryToJourneyInput): Promise<{ journey: CompanionJourney; milestone: JourneyMilestoneV2; memory: MemoryRecord }>;
+    addToJourney(input: AddDiscoveryToJourneyInput): Promise<{ journey: CompanionJourney; milestone: JourneyTimelineEntry; memory: MemoryRecord }>;
     onAnnounce(listener: (payload: DiscoveryAnnouncePayload) => void): () => void;
     generateNow(): Promise<Discovery[]>;
-    shareNext(): Promise<boolean>;
-    resetStatuses(): Promise<{ reset: boolean }>;
-    countUnannounced(): Promise<{ count: number }>;
-    markSharedAsUnannounced(): Promise<{ count: number }>;
+    presentNext(): Promise<boolean>;
+    resetLifecycle(): Promise<{ reset: boolean }>;
+    countPendingAnnouncements(): Promise<{ count: number }>;
+    resetAnnouncementHistory(): Promise<{ count: number }>;
     clearPool(): Promise<{ cleared: boolean }>;
     simulateCanAnnounceDisabled(disabled: boolean): Promise<{ disabled: boolean }>;
     simulateInterruptEnabled(enabled: boolean): Promise<{ enabled: boolean }>;
@@ -1619,8 +1615,8 @@ export interface OurCompanionApi {
   journey: {
     create(input: CreateJourneyInput): Promise<CompanionJourney>;
     getActive(): Promise<CompanionJourney[]>;
-    getTimeline(input?: { journeyId?: string }): Promise<JourneyMilestoneV2[]>;
-    addMilestone(input: AddJourneyMilestoneInput): Promise<JourneyMilestoneV2>;
+    getTimeline(input?: { journeyId?: string }): Promise<JourneyTimelineEntry[]>;
+    addMilestone(input: AddJourneyMilestoneInput): Promise<JourneyTimelineEntry>;
   };
   diary: {
     getEntries(input?: { type?: DiaryEntry['type']; limit?: number }): Promise<DiaryEntry[]>;
@@ -1631,11 +1627,11 @@ export interface OurCompanionApi {
     execute(input: ToolExecuteInput): Promise<ToolExecutionResult>;
   };
   action: {
-    plan(text: string): Promise<ActionPlanV2 | undefined>;
-    executePlan(plan: ActionPlanV2): Promise<ActionResult>;
+    plan(text: string): Promise<ActionPlan | undefined>;
+    executePlan(plan: ActionPlan): Promise<ActionResult>;
     getPermissions(): Promise<ActionPermissionState>;
     updatePermissions(state: ActionPermissionState): Promise<ActionPermissionState>;
-    onPerformance(listener: (script: PerformanceScriptV2) => void): () => void;
+    onPerformance(listener: (script: PerformanceScript) => void): () => void;
   };
   ai: {
     getSettings(): Promise<AiSettings>;
@@ -1818,14 +1814,14 @@ export function createId(prefix: string): string {
 // VOLUME 3 — Character Runtime & Presence
 // ============================================================================
 
-export type CharacterRuntimeStateV2 =
+export type PersistedCharacterRuntimeState =
   | 'booting' | 'idle' | 'observing' | 'thinking' | 'listening'
   | 'speaking' | 'exploring' | 'sharing' | 'performing'
   | 'waiting' | 'sleeping' | 'error';
 
 export interface CharacterRuntimeContext {
   characterId: string;
-  state: CharacterRuntimeStateV2;
+  state: PersistedCharacterRuntimeState;
   currentBehaviour?: BehaviourExecution;
   queuedBehaviours: BehaviourRequest[];
   currentEmotion?: EmotionState;
@@ -1897,7 +1893,7 @@ export interface AttentionState {
   lastUserInputAt?: string;
 }
 
-export interface PerformanceScriptV2 {
+export interface PerformanceScript {
   id: string;
   name: string;
   behaviourType: string;
@@ -1941,7 +1937,7 @@ export interface InitializeRuntimeInput {
 }
 
 // ============================================================================
-// VOLUME 3 — Action Engine V2
+// VOLUME 3 — Action Engine
 // ============================================================================
 
 export interface ActionIntent {
@@ -1955,7 +1951,7 @@ export interface ActionIntent {
   createdAt: string;
 }
 
-export interface ActionPlanV2 {
+export interface ActionPlan {
   id: string;
   intentId: string;
   steps: ActionStep[];
@@ -1979,7 +1975,7 @@ export interface ActionResult {
 }
 
 // ============================================================================
-// VOLUME 3 — Speech Engine V2
+// VOLUME 3 — Speech Engine
 // ============================================================================
 
 export interface SpeechInput {
@@ -2013,7 +2009,7 @@ export interface SpeechSession {
 }
 
 // ============================================================================
-// VOLUME 3 — Journey Engine V2
+// VOLUME 3 — Journey Engine
 // ============================================================================
 
 export interface CompanionJourney {
@@ -2022,14 +2018,14 @@ export interface CompanionJourney {
   description?: string;
   status: 'active' | 'paused' | 'completed' | 'abandoned';
   origin: 'user' | 'discovery' | 'brain' | 'system';
-  milestones: JourneyMilestoneV2[];
+  milestones: JourneyTimelineEntry[];
   relatedMemories: string[];
   relatedInsights: string[];
   createdAt: string;
   updatedAt: string;
 }
 
-export interface JourneyMilestoneV2 {
+export interface JourneyTimelineEntry {
   id: string;
   title: string;
   description?: string;

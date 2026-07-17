@@ -91,6 +91,7 @@ test('Reduced Motion feedback surfaces use opacity-only transitions', async () =
     const toast = panel.locator('.toast');
     await expect(toast).toBeVisible();
     expect(await toast.evaluate((element) => getComputedStyle(element).transform)).toBe('none');
+    await device.screenshot(panel, 'reduced-motion/feedback.png');
   } finally { await device.close(); }
 });
 

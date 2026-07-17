@@ -12,7 +12,6 @@ import {
   validateDiscoveryReason
 } from '@our-companion/ai-engine';
 import { directPerformance, planAction, runActionPlan, type ActionOrchestratorDeps } from '@our-companion/action-engine';
-import { advanceCharacter, applyEmotionEvent } from '@our-companion/character-engine';
 import { collectWorkspaceStatus, type WorkspaceStatusSnapshot } from './workspaceStatus';
 import { generateCuriosityTargets } from '@our-companion/curiosity-engine';
 import { assessCuriosity } from '@our-companion/curiosity-engine';
@@ -20,13 +19,15 @@ import { DatabaseService } from '@our-companion/database';
 import type { CommandAckStatus, CompanionDecision, CompanionCommand, CompanionCommandAck, VisualVisitRendererState } from '@our-companion/shared';
 import { generateDailyDiary } from '@our-companion/diary-engine';
 import {
-  createFallbackConnector,
+  createUnavailableConnector,
   planExploration,
   runDiscoveryAgents,
-  runDiscoveryPipeline
+  runDiscoveryPipeline,
+  type DiscoveryConnector,
+  type DiscoveryProviderOutcome
 } from '@our-companion/discovery-engine';
 import { generateInsights, selectPrimaryInsight } from '@our-companion/insight-engine';
-import { createCompanionJourney, createJourney, createJourneyMilestone, createJourneyMilestoneV2 } from '@our-companion/journey-engine';
+import { createJourney, createJourneyMilestone } from '@our-companion/journey-engine';
 import {
   buildInterestGraph,
   createMemoryEdge,
@@ -37,7 +38,7 @@ import {
 } from '@our-companion/memory-engine';
 import type {
   ActionPermissionState,
-  ActionPlanV2,
+  ActionPlan,
   ActionResult,
   AddDiscoveryToJourneyInput,
   AddJourneyMilestoneInput,
@@ -47,7 +48,7 @@ import type {
   CharacterRuntimeState,
   ChatInput,
   CompanionInsight,
-  InsightV2,
+  GeneratedInsight,
   CompanionAppendMessageInput,
   CompanionHistoryInput,
   CompanionMessage,
@@ -67,6 +68,9 @@ import type {
   DiscoveryFeedInput,
   DiscoveryFeedback,
   DiscoverySource,
+  EngineProviderMode,
+  EngineTrace,
+  EngineTraceStatus,
   EngineSnapshotInput,
   ExplorationCycle,
   ExplorationCycleResult,
@@ -74,7 +78,7 @@ import type {
   ExplorationState,
   FoundationEventLogInput,
   NormalizedDiscovery,
-  PerformanceScriptV2,
+  PerformanceScript,
   SpeechSettings,
   StartExplorationInput,
   SubmitDiscoveryFeedbackInput,
@@ -90,10 +94,10 @@ import type {
 import type { UserProfile, OnlineMode, RegisterUserInput, LoginUserInput } from '@our-companion/shared';
 import { COMPANION_ANIMATION_MANIFEST, COMPANION_CHAT_CONTEXT_LIMIT, createId, nowIso, clampScore, type BaseEvent, type CompanionAnimationManifestEntry } from '@our-companion/shared';
 import { detectPatterns } from '@our-companion/pattern-engine';
-import { executeActionStep, executeTool, previewTool } from '@our-companion/tool-engine';
+import { executeActionStep, executeTool, previewTool, type ToolAdapters } from '@our-companion/tool-engine';
 import { createElectronToolAdapters } from './platform/electronCommandAdapter';
 import { getWhisperStatus, transcribeRecording } from '@our-companion/speech-engine';
-import { createEvent, globalEventBus, type EventBus } from '@our-companion/event-bus';
+import { createEvent, InProcessEventBus, type EventBus } from '@our-companion/event-bus';
 import type { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 import type { DiscoveryRefreshResult } from './discoveryScheduler';
 import { buildEngineSnapshot } from './engineSnapshot';
@@ -119,8 +123,35 @@ const PERSONALITY_ANALYSIS_MAX_ENTRIES = 50;
 export const MAX_COMPANION_ASSET_BYTES = 20 * 1024 * 1024;
 export const MAX_COMPANION_TOTAL_ASSET_BYTES = 200 * 1024 * 1024;
 
+export interface AppRuntimeDependencies {
+  now?: () => Date;
+  random?: () => number;
+  setTimer?: (callback: () => void, delayMs: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+  discoveryConnectors?: DiscoveryConnector[];
+  aiProvider?: {
+    complete<T = unknown>(request: {
+      operation: string;
+      messages?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+      input?: Record<string, unknown>;
+      correlationId?: string;
+    }): Promise<T>;
+  };
+  speechProvider?: {
+    getStatus(userDataRoot: string): Promise<{ ready: boolean; model?: string; error?: string }>;
+    transcribe(input: {
+      audio: ArrayBuffer;
+      mimeType?: string;
+      userDataRoot: string;
+      language?: string;
+      useGpu: boolean;
+    }): Promise<{ text: string; language?: string }>;
+  };
+  toolAdapters?: ToolAdapters;
+}
+
 export function toPersistedCompanionInsight(
-  insight: InsightV2,
+  insight: GeneratedInsight,
   companionId: string,
   whyCompanionFoundIt: string,
   supportingCandidateIds: string[]
@@ -182,11 +213,30 @@ export class AppServices {
   private networkStatusBroadcaster?: (status: NetworkStatus) => void;
   private visualVisitBroadcaster?: (state: VisualVisitRendererState) => void;
   private localCompanionAway = false;
+  private readonly now: () => Date;
+  private readonly discoveryConnectors: DiscoveryConnector[];
+  private readonly aiProvider: AppRuntimeDependencies['aiProvider'];
+  private readonly speechProvider: NonNullable<AppRuntimeDependencies['speechProvider']>;
+  private readonly toolAdapters: ToolAdapters;
+
+  get runtime(): CompanionRuntime {
+    return this.companionRuntime;
+  }
 
   constructor(
     dbPath = path.join(app.getPath('userData'), 'our-companion.db'),
-    readonly eventBus: EventBus = globalEventBus
+    readonly eventBus: EventBus = new InProcessEventBus(),
+    runtimeDependencies: AppRuntimeDependencies = {}
   ) {
+    this.now = runtimeDependencies.now ?? (() => new Date());
+    this.aiProvider = runtimeDependencies.aiProvider;
+    this.speechProvider = runtimeDependencies.speechProvider ?? {
+      getStatus: getWhisperStatus,
+      transcribe: transcribeRecording
+    };
+    this.toolAdapters = runtimeDependencies.toolAdapters ?? createElectronToolAdapters();
+    this.discoveryConnectors = runtimeDependencies.discoveryConnectors ??
+      (['github', 'hackernews', 'reddit', 'youtube'] as DiscoverySource[]).map(createUnavailableConnector);
     const userDataDir = app.getPath('userData');
     if (userDataDir !== ':memory:') {
       fs.mkdirSync(userDataDir, { recursive: true });
@@ -195,7 +245,7 @@ export class AppServices {
     try {
       this.db = new DatabaseService({
         path: dbPath,
-        legacyAnnHasCustomAssets: () => {
+        priorAnnHasCustomAssets: () => {
           const directory = path.join(userDataDir, 'companions', 'ann');
           return fs.existsSync(directory) && fs.readdirSync(directory, { recursive: true }).length > 0;
         },
@@ -210,6 +260,28 @@ export class AppServices {
       );
       this.db = new DatabaseService({ path: ':memory:' });
       this.databaseMode = 'memory';
+    }
+
+    if (this.eventBus instanceof InProcessEventBus) {
+      this.eventBus.setErrorReporter((error, event) => {
+        const completedAt = this.now().toISOString();
+        this.db.insertEngineTrace({
+          id: createId('trace'),
+          correlationId: event.correlationId ?? createId('corr'),
+          causationId: event.id,
+          companionId: this.db.tryResolveActiveCompanionId() ?? 'unassigned',
+          engine: 'event-bus',
+          operation: `handle:${event.type}`,
+          providerMode: 'deterministic',
+          inputRefs: [event.id],
+          outputRefs: [],
+          startedAt: event.timestamp,
+          completedAt,
+          durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(event.timestamp)),
+          status: 'failed',
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
     }
 
     this.companionRuntime = new CompanionRuntime(
@@ -238,6 +310,12 @@ export class AppServices {
         this.commandBroadcaster?.(command);
         this.tryStartDiscoveryPayload(command);
         return true;
+      },
+      {
+        now: () => this.now().getTime(),
+        random: runtimeDependencies.random,
+        setTimer: runtimeDependencies.setTimer,
+        clearTimer: runtimeDependencies.clearTimer
       }
     );
     let visits: VisitService | undefined;
@@ -304,7 +382,7 @@ export class AppServices {
   }
 
   private prunePersonalityAnalyses(): void {
-    const now = Date.now();
+    const now = this.now().getTime();
     for (const [id, analysis] of this.personalityAnalyses) {
       if (analysis.used || analysis.expiresAt <= now) {
         this.personalityAnalyses.delete(id);
@@ -341,32 +419,10 @@ export class AppServices {
     updateBehaviorSettings: async (input: UpdateCharacterBehaviorSettingsInput) => this.updateCharacterBehaviorSettings(input),
     setPrimary: async (characterId: string) => this.db.setPrimaryCharacter(characterId),
     updatePosition: async (input: { characterId?: string; x: number; y: number }) => {
-      const state = this.db.getCharacterState(input.characterId);
-      const next = this.db.saveCharacterState({ ...state, position: { x: input.x, y: input.y } });
-      this.emitFoundationEvent('CharacterStateChanged', 'character', {
-        characterId: next.characterId,
-        coreState: next.coreState,
-        intent: next.intent,
-        position: next.position
-      });
-      return next;
+      return this.companionRuntime.updatePosition(input.characterId, { x: input.x, y: input.y });
     },
     triggerBehavior: async (input: { characterId?: string; event: string }) => {
-      const state = this.db.getCharacterState(input.characterId);
-      const next = advanceCharacter(state, {
-        userCommand: input.event === 'user_command' ? input.event : undefined,
-        availableDiscoveries: input.event === 'discovery' ? [{} as NormalizedDiscovery] : undefined,
-        recentMemoryActivity: input.event === 'memory',
-        reflectionDue: input.event === 'reflection',
-        userActive: true
-      });
-      const saved = this.db.saveCharacterState(next);
-      this.emitFoundationEvent('CharacterStateChanged', 'character', {
-        characterId: saved.characterId,
-        coreState: saved.coreState,
-        intent: saved.intent
-      });
-      return saved;
+      return this.companionRuntime.triggerBehavior(input.characterId, input.event);
     }
   };
 
@@ -380,7 +436,7 @@ export class AppServices {
         throw new Error('AI personality analysis is required before creating a Companion.');
       }
       const analysis = this.personalityAnalyses.get(input.personalityAnalysisId);
-      if (!analysis || analysis.used || analysis.expiresAt <= Date.now() || analysis.description !== description) {
+      if (!analysis || analysis.used || analysis.expiresAt <= this.now().getTime() || analysis.description !== description) {
         throw new Error('AI personality analysis is invalid, expired, or already used. Analyze the description again.');
       }
       const assets = input.assets ?? [];
@@ -461,7 +517,7 @@ export class AppServices {
       let consumedAnalysisId: string | undefined;
       if (personalityChanged) {
         const analysis = rest.personalityAnalysisId ? this.personalityAnalyses.get(rest.personalityAnalysisId) : undefined;
-        if (!analysis || analysis.used || analysis.expiresAt <= Date.now() || analysis.description !== description) {
+        if (!analysis || analysis.used || analysis.expiresAt <= this.now().getTime() || analysis.description !== description) {
           throw new Error('A current AI personality analysis is required to update personality.');
         }
         analysis.used = true;
@@ -601,12 +657,12 @@ export class AppServices {
       return result.discoveries;
     },
     markInterested: async (discoveryId: string) => {
-      const discovery = this.db.updateDiscoveryStatus(discoveryId, 'saved');
+      const discovery = this.db.transitionDiscoveryStatus(discoveryId, 'saved');
       this.applyCharacterEmotion(undefined, 'user_accepts_discovery');
       return discovery;
     },
     markNotInterested: async (discoveryId: string) => {
-      const discovery = this.db.updateDiscoveryStatus(discoveryId, 'rejected');
+      const discovery = this.db.transitionDiscoveryStatus(discoveryId, 'rejected');
       this.applyCharacterEmotion(undefined, 'user_rejects_discovery');
       return discovery;
     },
@@ -639,7 +695,7 @@ export class AppServices {
           type: 'discovery_saved'
         })
       );
-      this.db.updateDiscoveryStatus(discovery.id, 'saved');
+      this.db.transitionDiscoveryStatus(discovery.id, 'saved');
       const correlationId = createId('corr');
       this.emitFoundationEvent('KnowledgeCreated', 'knowledge', {
         memoryId: memory.id,
@@ -657,31 +713,30 @@ export class AppServices {
       const result = await this.runDiscoveryRefresh();
       return result.discoveries;
     },
-    shareNext: async () => {
-      const oldest = this.db.getOldestUnannouncedShared();
+    presentNext: async () => {
+      const oldest = this.db.getOldestQueuedDiscovery();
       if (!oldest) return false;
       this.requestDiscoveryPresentation(oldest);
       return true;
     },
-    resetStatuses: async () => {
+    resetLifecycle: async () => {
+      this.db.clearAnnouncedDiscoveryIds();
       const discoveries = this.db.listDiscoveries({ limit: 200 });
       for (const d of discoveries) {
-        if (d.status === 'shared' || d.status === 'queued') {
-          this.db.updateDiscoveryStatus(d.id, 'new');
+        if (d.status === 'queued' || d.status === 'presenting') {
+          this.db.transitionDiscoveryStatus(d.id, 'eligible', {
+            reason: 'developer_lifecycle_reset'
+          });
         }
       }
       return { reset: true };
     },
-    countUnannounced: async () => {
-      const announced = this.db.getAnnouncedDiscoveryIds();
-      const shared = this.db.listDiscoveries({ status: 'shared', limit: 200 });
-      const unannounced = shared.filter((d) => !announced.includes(d.id));
-      return { count: unannounced.length };
+    countPendingAnnouncements: async () => {
+      return { count: this.db.listQueuedOrEligible(200).length };
     },
-    markSharedAsUnannounced: async () => {
+    resetAnnouncementHistory: async () => {
       this.db.clearAnnouncedDiscoveryIds();
-      const shared = this.db.listDiscoveries({ status: 'shared', limit: 200 });
-      return { count: shared.length };
+      return { count: this.db.listQueuedOrEligible(200).length };
     },
     clearPool: async () => {
       this.db.resetDebugData({ targets: ['discoveries'] });
@@ -770,7 +825,7 @@ export class AppServices {
     }
   };
 
-  onPerformanceListeners: Array<(script: PerformanceScriptV2) => void> = [];
+  onPerformanceListeners: Array<(script: PerformanceScript) => void> = [];
 
   tool = {
     preview: async (input: ToolExecuteInput) => previewTool(input),
@@ -780,8 +835,7 @@ export class AppServices {
         toolName: input.toolName,
         args: input.args
       }, correlationId);
-      const adapters = createElectronToolAdapters();
-      const result = await executeTool(input, adapters);
+      const result = await executeTool(input, this.toolAdapters);
       this.emitFoundationEvent(result.status === 'executed' ? 'CommandExecuted' : 'ActionFailed', 'tool', {
         toolName: input.toolName,
         status: result.status,
@@ -795,13 +849,20 @@ export class AppServices {
   action = {
     plan: async (text: string) => {
       const aiSettings = this.getAiSettings();
-      const hasAi = aiSettings.apiKeyConfigured;
+      const hasAi = aiSettings.apiKeyConfigured || Boolean(this.aiProvider);
       let llmDeps = undefined;
       if (hasAi) {
-        const client = this.createDeepSeekClient();
         llmDeps = {
           completeJson: async <T>(messages: Array<{ role: 'system' | 'user'; content: string }>) => {
-            const result = await client.chat(messages.map((m) => ({ ...m, role: m.role as 'system' | 'user' | 'assistant' })));
+            if (this.aiProvider) {
+              return this.aiProvider.complete<T>({
+                operation: 'action_plan',
+                messages
+              });
+            }
+            const result = await this.createDeepSeekClient().chat(
+              messages.map((m) => ({ ...m, role: m.role as 'system' | 'user' | 'assistant' }))
+            );
             return result as T;
           },
           validateActionPlan: (raw: string) => validateActionPlan(raw),
@@ -809,16 +870,16 @@ export class AppServices {
       }
       return planAction(text, llmDeps);
     },
-    executePlan: async (plan: ActionPlanV2) => {
+    executePlan: async (plan: ActionPlan) => {
       const correlationId = createId('corr');
       this.emitFoundationEvent('ActionRequested', 'action', { planId: plan.id, intentId: plan.intentId }, correlationId);
-      const adapters = createElectronToolAdapters();
       const orchDeps: ActionOrchestratorDeps = {
-        executeStep: (toolName: string, args: Record<string, unknown>) => executeActionStep(toolName, args, adapters),
+        executeStep: (toolName: string, args: Record<string, unknown>) =>
+          executeActionStep(toolName, args, this.toolAdapters),
         emitEvent: (type: string, payload?: Record<string, unknown>, cid?: string) => this.emitFoundationEvent(type, 'action', payload, cid ?? correlationId),
         getPermissions: () => this.db.getActionPermissions(),
         directPerformance: (actionId: string, outcome: 'success' | 'failure') => directPerformance(actionId, outcome),
-        broadcastPerformance: (script: PerformanceScriptV2) => {
+        broadcastPerformance: (script: PerformanceScript) => {
           for (const listener of this.onPerformanceListeners) listener(script);
         },
       };
@@ -952,7 +1013,7 @@ export class AppServices {
 
   speech = {
     getStatus: async () => {
-      const status = await getWhisperStatus(app.getPath('userData'));
+      const status = await this.speechProvider.getStatus(app.getPath('userData'));
       return {
         ready: status.ready,
         model: status.model,
@@ -965,7 +1026,7 @@ export class AppServices {
       try {
         const language = input.language ?? whisperLanguageForReplyLanguage(this.getAiSettings().replyLanguage);
         const speechSettings = this.getSpeechSettings();
-        const result = await transcribeRecording({
+        const result = await this.speechProvider.transcribe({
           audio: input.audio,
           mimeType: input.mimeType,
           userDataRoot: app.getPath('userData'),
@@ -1034,8 +1095,12 @@ export class AppServices {
     getAttentionMode: async (): Promise<'available' | 'focused' | 'do_not_disturb'> =>
       this.db.getAppSetting<'available' | 'focused' | 'do_not_disturb'>('attention_mode') ?? 'available',
     setAttentionMode: async (mode: 'available' | 'focused' | 'do_not_disturb'): Promise<void> => {
+      const previousMode = this.db.getAppSetting<'available' | 'focused' | 'do_not_disturb'>('attention_mode') ?? 'available';
       this.db.setAppSetting('attention_mode', mode);
       this.companionRuntime.setExplicitMode(mode);
+      if (previousMode !== 'available' && mode === 'available') {
+        this.companionRuntime.reevaluatePendingActions();
+      }
     },
     listPendingActions: async () => {
       const companionId = this.db.resolveActiveCompanionId();
@@ -1056,7 +1121,7 @@ export class AppServices {
         });
         return null;
       }
-      if (record.command.expiresAt && Date.parse(record.command.expiresAt) <= Date.now()) {
+      if (record.command.expiresAt && Date.parse(record.command.expiresAt) <= this.now().getTime()) {
         this.transitionActiveCommand('cancelled', {
           commandId: record.command.id,
           companionId: record.command.companionId,
@@ -1083,7 +1148,7 @@ export class AppServices {
       });
       return false;
     }
-    this.activeCommand = { command, latestStatus: 'issued', updatedAt: new Date().toISOString(), terminal: false };
+    this.activeCommand = { command, latestStatus: 'issued', updatedAt: this.now().toISOString(), terminal: false };
     return true;
   }
 
@@ -1105,6 +1170,9 @@ export class AppServices {
     record.latestStatus = nextStatus;
     record.updatedAt = input.reportedAt ?? nowIso();
     record.terminal = ['completed', 'cancelled', 'failed'].includes(nextStatus);
+    if (record.command.discoveryId) {
+      this.shareOrchestrator?.acknowledge(record.command.id, nextStatus, input.reason);
+    }
     this.emitFoundationEvent('CompanionCommandAck', 'companion', {
       commandId: record.command.id,
       companionId: record.command.companionId,
@@ -1113,6 +1181,11 @@ export class AppServices {
       failedStep: input.failedStep,
     });
     if (record.terminal) {
+      if (record.command.discoveryId) {
+        this.startedDiscoveryPayloads.delete(record.command.discoveryId);
+        this.presentationDecisions.delete(record.command.discoveryId);
+        this.presentationDiscoveries.delete(record.command.discoveryId);
+      }
       this.activeCommand = null;
       this.companionRuntime.schedulePendingReevaluation();
     }
@@ -1185,18 +1258,35 @@ export class AppServices {
   requestDiscoveryPresentation(discovery: Discovery): CompanionDecision {
     const existingDecision = this.presentationDecisions.get(discovery.id);
     if (existingDecision) return existingDecision;
-    this.presentationDiscoveries.set(discovery.id, discovery);
+    const eligibleDiscovery = discovery.status === 'candidate'
+      ? this.db.transitionDiscoveryStatus(discovery.id, 'eligible', {
+          companionId: discovery.companionId ?? this.db.resolveActiveCompanionId(),
+          cycleId: discovery.cycleId,
+          reason: 'candidate_selected_for_decision'
+        })
+      : discovery;
+    this.presentationDiscoveries.set(eligibleDiscovery.id, eligibleDiscovery);
     const decision = this.companionRuntime.decideForDiscovery(
-      discovery,
+      eligibleDiscovery,
       this.companionSessionPhase !== 'inactive' && this.companionSessionPhase !== 'idle',
       this.companionDragging
     );
-    this.presentationDecisions.set(discovery.id, decision);
+    this.presentationDecisions.set(eligibleDiscovery.id, decision);
     const deferred = decision.timing === 'next_idle';
-    if (!this.companionRuntime.shouldPresentNow(decision) && !deferred) {
-      this.presentationDiscoveries.delete(discovery.id);
-      const persisted = this.db.getDiscovery(discovery.id);
-      if (persisted?.status === 'shared') this.db.updateDiscoveryStatus(discovery.id, 'candidate');
+    if (this.companionRuntime.shouldPresentNow(decision) || deferred) {
+      const queuedDiscovery = this.db.transitionDiscoveryStatus(eligibleDiscovery.id, 'queued', {
+        companionId: eligibleDiscovery.companionId ?? this.db.resolveActiveCompanionId(),
+        cycleId: eligibleDiscovery.cycleId,
+        reason: deferred ? 'decision_deferred_until_idle' : 'decision_approved'
+      });
+      this.presentationDiscoveries.set(queuedDiscovery.id, queuedDiscovery);
+    } else {
+      this.presentationDiscoveries.delete(eligibleDiscovery.id);
+      this.db.transitionDiscoveryStatus(eligibleDiscovery.id, 'eligible', {
+        companionId: eligibleDiscovery.companionId,
+        cycleId: eligibleDiscovery.cycleId,
+        reason: decision.reason
+      });
     }
     return decision;
   }
@@ -1218,7 +1308,7 @@ export class AppServices {
     ) return;
     const discovery = this.presentationDiscoveries.get(command.discoveryId) ?? this.db.getDiscovery(command.discoveryId);
     if (!discovery) return;
-    if (this.shareOrchestrator.enqueue(discovery)) {
+    if (this.shareOrchestrator.enqueue(command, discovery)) {
       this.startedDiscoveryPayloads.add(discovery.id);
       this.presentationDiscoveries.delete(discovery.id);
     }
@@ -1294,16 +1384,95 @@ export class AppServices {
     return messages[state];
   }
 
+  private recordEngineTrace(input: {
+    correlationId: string;
+    causationId?: string;
+    cycleId?: string;
+    companionId: string;
+    engine: string;
+    operation: string;
+    providerMode?: EngineProviderMode;
+    inputRefs?: string[];
+    outputRefs?: string[];
+    status: EngineTraceStatus;
+    startedAt?: string;
+    skipReason?: string;
+    error?: string;
+  }): EngineTrace {
+    const completedAt = this.now().toISOString();
+    const startedAt = input.startedAt ?? completedAt;
+    const trace = this.db.insertEngineTrace({
+      id: createId('trace'),
+      correlationId: input.correlationId,
+      causationId: input.causationId,
+      cycleId: input.cycleId,
+      companionId: input.companionId,
+      engine: input.engine,
+      operation: input.operation,
+      providerMode: input.providerMode ?? 'deterministic',
+      inputRefs: input.inputRefs ?? [],
+      outputRefs: input.outputRefs ?? [],
+      startedAt,
+      completedAt,
+      durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(startedAt)),
+      status: input.status,
+      skipReason: input.skipReason,
+      error: input.error
+    });
+    this.emitFoundationEvent('EngineTraceRecorded', 'trace', {
+      traceId: trace.id,
+      correlationId: trace.correlationId,
+      cycleId: trace.cycleId,
+      engine: trace.engine,
+      operation: trace.operation,
+      status: trace.status
+    }, trace.correlationId);
+    return trace;
+  }
+
   private async runAutonomousExploration(input: StartExplorationInput = {}): Promise<ExplorationCycleResult> {
     const userId = input.userId ?? 'default';
     const companionId = this.db.resolveActiveCompanionId(input.companionId);
     const trigger = input.trigger ?? 'manual';
+    const cycleId = createId('cycle');
+    const correlationId = createId('corr');
+    let causationId: string | undefined;
+    const trace = (
+      engine: string,
+      operation: string,
+      status: EngineTraceStatus,
+      inputRefs: string[],
+      outputRefs: string[],
+      extra: Partial<Pick<EngineTrace, 'providerMode' | 'skipReason' | 'error' | 'startedAt'>> = {}
+    ) => {
+      const recorded = this.recordEngineTrace({
+        correlationId,
+        causationId,
+        cycleId,
+        companionId,
+        engine,
+        operation,
+        status,
+        inputRefs,
+        outputRefs,
+        ...extra
+      });
+      causationId = recorded.id;
+      return recorded;
+    };
     const characterState = this.db.getCharacterState(companionId);
     const characterProfile = this.db.getActiveCharacters().find((character) => character.id === companionId);
-    const memoryNodes = this.db.listMemoryNodes();
+    const memoryNodes = this.db.listMemoryNodes(companionId);
     const journeyMilestones = this.db.listMilestones();
     const discoveryHistory = this.db.listDiscoveries({ limit: 100 });
     const feedbackHistory = this.db.listDiscoveryFeedback(100);
+    trace(
+      'memory',
+      'load-context',
+      memoryNodes.length === 0 ? 'empty' : 'completed',
+      [companionId, userId],
+      memoryNodes.map((memory) => memory.id)
+    );
 
     const detectedPatterns = detectPatterns({
       userId,
@@ -1315,6 +1484,13 @@ export class AppServices {
     for (const pattern of detectedPatterns) {
       this.db.insertPattern(pattern);
     }
+    trace(
+      'pattern',
+      'detect',
+      detectedPatterns.length === 0 ? 'empty' : 'completed',
+      memoryNodes.map((memory) => memory.id),
+      detectedPatterns.map((pattern) => pattern.id)
+    );
 
     const interestGraph = buildInterestGraph({
       userId,
@@ -1324,6 +1500,13 @@ export class AppServices {
       feedback: feedbackHistory
     });
     this.db.upsertInterestGraph(interestGraph);
+    trace(
+      'memory',
+      'build-interest-graph',
+      interestGraph.nodes.length === 0 ? 'empty' : 'completed',
+      [...memoryNodes.map((memory) => memory.id), ...detectedPatterns.map((pattern) => pattern.id)],
+      [...interestGraph.nodes.map((node) => node.id), ...interestGraph.edges.map((edge) => edge.id)]
+    );
 
     const curiosityTargets = generateCuriosityTargets({
       userId,
@@ -1339,10 +1522,17 @@ export class AppServices {
     for (const target of curiosityTargets) {
       this.db.insertCuriosityTarget(target);
     }
+    trace(
+      'curiosity',
+      'generate-targets',
+      curiosityTargets.length === 0 ? 'empty' : 'completed',
+      [...memoryNodes.map((memory) => memory.id), ...detectedPatterns.map((pattern) => pattern.id)],
+      curiosityTargets.map((target) => target.id)
+    );
 
     const selectedCuriosityTarget = curiosityTargets[0];
     let cycle = this.db.insertExplorationCycle({
-      id: createId('cycle'),
+      id: cycleId,
       userId,
       companionId,
       trigger,
@@ -1351,27 +1541,48 @@ export class AppServices {
       selectedCuriosityTargetId: selectedCuriosityTarget?.id,
       discoveryCandidateIds: [],
       insightIds: [],
-      startedAt: nowIso()
+      startedAt: this.now().toISOString()
     });
     this.recordExplorationEvent(cycle, 'curious', selectedCuriosityTarget?.reason ?? `${this.requireActiveCompanion().name} became curious.`);
     this.setAutonomyCharacterState('thinking', 'reviewing_memory');
 
     if (!selectedCuriosityTarget) {
-      cycle = this.saveCycleState(cycle, 'reflecting', { completedAt: nowIso() });
+      for (const [engine, operation] of [
+        ['discovery', 'plan'],
+        ['discovery', 'provider-search'],
+        ['insight', 'generate'],
+        ['decision', 'evaluate'],
+        ['presentation', 'enqueue']
+      ] as const) {
+        trace(engine, operation, 'skipped', [], [], { skipReason: 'no_curiosity_target' });
+      }
+      cycle = this.saveCycleState(cycle, 'reflecting', { completedAt: this.now().toISOString() });
+      this.companionRuntime.settleDiscoveryPresentation(companionId);
       return { cycle, curiosityTargets, discoveryCandidates: [], insights: [] };
     }
 
     const explorationPlan = planExploration(selectedCuriosityTarget);
     this.db.insertExplorationPlan(explorationPlan);
+    trace(
+      'discovery',
+      'plan',
+      'completed',
+      [selectedCuriosityTarget.id],
+      [explorationPlan.id]
+    );
     cycle = this.saveCycleState(cycle, 'planning', { explorationPlanId: explorationPlan.id });
     this.setAutonomyCharacterState('discovering', 'sharing_discovery');
 
     cycle = this.saveCycleState(cycle, 'exploring');
+    const providerOutcomes: DiscoveryProviderOutcome[] = [];
+    const providerStartedAt = this.now().toISOString();
     const discoveryCandidates = await runDiscoveryAgents({
       userId,
       companionId,
       curiosityTarget: selectedCuriosityTarget,
       explorationPlan,
+      connectors: this.discoveryConnectors,
+      onProviderOutcome: (outcome) => providerOutcomes.push(outcome),
       memoryCandidates: memoryNodes.map((memory) => ({
         title: memory.title,
         summary: memory.summary ?? memory.content,
@@ -1379,13 +1590,62 @@ export class AppServices {
         tags: [memory.type]
       }))
     });
+    if (providerOutcomes.length === 0) {
+      trace(
+        'discovery',
+        'provider-search',
+        'empty',
+        [explorationPlan.id],
+        [],
+        { providerMode: 'unavailable', startedAt: providerStartedAt }
+      );
+    } else {
+      for (const outcome of providerOutcomes) {
+        trace(
+          'discovery',
+          `provider-search:${outcome.source}`,
+          outcome.status,
+          [explorationPlan.id],
+          [],
+          {
+            providerMode: outcome.providerMode,
+            startedAt: providerStartedAt,
+            error: outcome.error
+          }
+        );
+      }
+    }
     for (const candidate of discoveryCandidates) {
       this.db.insertDiscoveryCandidate(candidate);
     }
+    trace(
+      'discovery',
+      'collect-candidates',
+      discoveryCandidates.length === 0 ? 'empty' : 'completed',
+      [explorationPlan.id],
+      discoveryCandidates.map((candidate) => candidate.id)
+    );
 
     cycle = this.saveCycleState(cycle, 'collecting', {
       discoveryCandidateIds: discoveryCandidates.map((candidate) => candidate.id)
     });
+
+    if (discoveryCandidates.length === 0) {
+      trace('insight', 'generate', 'skipped', [], [], { skipReason: 'no_valid_discoveries' });
+      trace('decision', 'evaluate', 'skipped', [], [], { skipReason: 'no_insight' });
+      trace('presentation', 'enqueue', 'skipped', [], [], { skipReason: 'no_decision' });
+      cycle = this.saveCycleState(cycle, 'reflecting', { completedAt: this.now().toISOString() });
+      this.companionRuntime.settleDiscoveryPresentation(companionId);
+      return {
+        cycle,
+        curiosityTargets,
+        selectedCuriosityTarget,
+        explorationPlan,
+        discoveryCandidates,
+        insights: []
+      };
+    }
+
     cycle = this.saveCycleState(cycle, 'synthesizing');
 
     const insights = generateInsights({
@@ -1402,6 +1662,13 @@ export class AppServices {
     for (const insight of insights) {
       this.db.insertCompanionInsight(toPersistedCompanionInsight(insight, companionId, selectedCuriosityTarget.reason, discoveryCandidates.map((candidate) => candidate.id)));
     }
+    trace(
+      'insight',
+      'generate',
+      insights.length === 0 ? 'empty' : 'completed',
+      discoveryCandidates.map((candidate) => candidate.id),
+      insights.map((insight) => insight.id)
+    );
     const selectedInsight = selectPrimaryInsight(insights);
     cycle = this.saveCycleState(cycle, 'returning', {
       insightIds: insights.map((insight) => insight.id),
@@ -1410,8 +1677,8 @@ export class AppServices {
     this.setAutonomyCharacterState('returning', 'sharing_discovery');
 
     cycle = this.saveCycleState(cycle, 'sharing');
-    this.setAutonomyCharacterState('talking', 'sharing_discovery', 'Expedition_Present');
     if (selectedInsight) {
+      const createdAt = this.now().toISOString();
       const discoveryPayload: Discovery = {
         id: selectedInsight.id,
         source: 'companion',
@@ -1419,22 +1686,50 @@ export class AppServices {
         summary: selectedInsight.summary,
         tags: [],
         raw: {},
-        userInterestScore: 50,
-        userHistoryScore: 50,
-        characterExpertiseScore: 50,
-        noveltyScore: selectedInsight.novelty * 100,
-        usefulnessScore: selectedInsight.importance * 100,
-        finalScore: selectedInsight.confidence * 100,
-        status: 'shared',
-        createdAt: nowIso(),
+        userInterestScore: 0.5,
+        userHistoryScore: 0.5,
+        characterExpertiseScore: 0.5,
+        noveltyScore: selectedInsight.novelty,
+        usefulnessScore: selectedInsight.importance,
+        finalScore: selectedInsight.confidence,
+        companionId,
+        cycleId: cycle.id,
+        status: 'eligible',
+        eligibleAt: createdAt,
+        createdAt,
+        updatedAt: createdAt
       };
       this.db.insertDiscovery(discoveryPayload);
       const decision = this.requestDiscoveryPresentation(discoveryPayload);
+      trace(
+        'decision',
+        'evaluate',
+        'completed',
+        [selectedInsight.id],
+        [decision.id]
+      );
+      trace(
+        'presentation',
+        'enqueue',
+        this.companionRuntime.shouldPresentNow(decision) || decision.timing === 'next_idle'
+          ? 'completed'
+          : 'skipped',
+        [decision.id],
+        this.companionRuntime.shouldPresentNow(decision) || decision.timing === 'next_idle'
+          ? [discoveryPayload.id]
+          : [],
+        this.companionRuntime.shouldPresentNow(decision) || decision.timing === 'next_idle'
+          ? {}
+          : { skipReason: decision.reason }
+      );
       this.emitFoundationEvent('DiscoveryPresentationEvaluated', 'decision', {
         discoveryId: selectedInsight.id,
         cycleId: cycle.id,
         gated: !this.companionRuntime.shouldPresentNow(decision),
       });
+    } else {
+      trace('decision', 'evaluate', 'skipped', [], [], { skipReason: 'no_selected_insight' });
+      trace('presentation', 'enqueue', 'skipped', [], [], { skipReason: 'no_decision' });
     }
 
     return {
@@ -1451,21 +1746,55 @@ export class AppServices {
   private async submitDiscoveryFeedback(input: SubmitDiscoveryFeedbackInput): Promise<DiscoveryFeedback> {
     const cycle = this.db.getExplorationCycle(input.cycleId);
     if (!cycle) throw new Error(`Exploration cycle not found: ${input.cycleId}`);
+    const cycleTraces = this.db.listEngineTraces({ cycleId: cycle.id, limit: 1_000 });
+    const correlationId = cycleTraces[0]?.correlationId ?? createId('corr');
+    let causationId = cycleTraces.at(-1)?.id;
+    const trace = (
+      engine: string,
+      operation: string,
+      status: EngineTraceStatus,
+      inputRefs: string[],
+      outputRefs: string[],
+      skipReason?: string
+    ) => {
+      const recorded = this.recordEngineTrace({
+        correlationId,
+        causationId,
+        cycleId: cycle.id,
+        companionId: cycle.companionId,
+        engine,
+        operation,
+        status,
+        inputRefs,
+        outputRefs,
+        skipReason
+      });
+      causationId = recorded.id;
+    };
+    const insightId = input.insightId ?? cycle.selectedInsightId;
+    const existingFeedback = this.db.listDiscoveryFeedback(1_000).find((item) =>
+      item.cycleId === cycle.id &&
+      item.insightId === insightId &&
+      item.discoveryCandidateId === input.discoveryCandidateId &&
+      item.value === input.value
+    );
+    if (existingFeedback) return existingFeedback;
 
     const feedback: DiscoveryFeedback = this.db.insertDiscoveryFeedback({
       id: createId('feedback'),
       userId: cycle.userId,
       companionId: cycle.companionId,
       cycleId: cycle.id,
-      insightId: input.insightId ?? cycle.selectedInsightId,
+      insightId,
       discoveryCandidateId: input.discoveryCandidateId,
       value: input.value,
       note: input.note,
       feedbackDomain: this.companionRuntime.feedbackDomainForValue(input.value),
       createdAt: nowIso()
     });
+    trace('feedback', 'record', 'completed', [cycle.id, ...(insightId ? [insightId] : [])], [feedback.id]);
 
-    const insight = feedback.insightId ? (this.db.getCompanionInsight(feedback.insightId) as unknown as InsightV2 | undefined) : undefined;
+    const insight = feedback.insightId ? (this.db.getCompanionInsight(feedback.insightId) as unknown as GeneratedInsight | undefined) : undefined;
     const reflected = this.db.insertExplorationCycle({
       ...cycle,
       state: 'reflecting',
@@ -1476,19 +1805,32 @@ export class AppServices {
     });
 
     if (input.value === 'saved' && insight) {
-      const memory = this.db.insertMemoryNode(
-        createMemoryNode({
+      const memory = this.db.insertMemoryNode({
+        ...createMemoryNode({
           type: 'discovery',
           title: insight.title,
           summary: insight.summary,
           content: insight.explanation,
           source: 'autonomous_exploration'
-        })
-      );
+        }),
+        companionId: cycle.companionId,
+        userId: cycle.userId,
+        memoryType: 'conversation_episode',
+        metadata: {
+          ownerCompanionId: cycle.companionId,
+          ownerUserId: cycle.userId,
+          sourceType: 'discovery',
+          confidence: insight.confidence,
+          sensitivity: 'normal',
+          scope: 'companion',
+          createdAt: nowIso()
+        }
+      });
+      trace('memory', 'save-feedback-memory', 'completed', [feedback.id, insight.id], [memory.id]);
       const activeJourney = this.db.listActiveJourneys()[0] ?? this.db.insertJourney(
         createJourney({ title: `Explore ${insight.title}`, description: insight.summary })
       );
-      this.db.insertMilestone(
+      const milestone = this.db.insertMilestone(
         createJourneyMilestone({
           journeyId: activeJourney.id,
           title: `${this.requireActiveCompanion().name} saved an insight: ${insight.title}`,
@@ -1496,7 +1838,8 @@ export class AppServices {
           type: 'discovery_saved'
         })
       );
-      this.db.insertDiary({
+      trace('journey', 'save-feedback-milestone', 'completed', [feedback.id, memory.id], [activeJourney.id, milestone.id]);
+      const diary = this.db.insertDiary({
         id: createId('diary'),
         characterId: cycle.companionId,
         type: 'milestone',
@@ -1505,6 +1848,7 @@ export class AppServices {
         relatedJourneyId: activeJourney.id,
         createdAt: nowIso()
       });
+      trace('diary', 'record-feedback-reflection', 'completed', [feedback.id, milestone.id], [diary.id]);
       this.applyCharacterEmotion(cycle.companionId, 'user_accepts_discovery');
     } else if (input.value === 'talk_about_this' && insight) {
       this.db.insertCompanionMessage({
@@ -1514,11 +1858,21 @@ export class AppServices {
         source: 'companion_text',
         metadata: { cycleId: cycle.id, insightId: insight.id }
       });
+      trace('memory', 'save-feedback-memory', 'skipped', [feedback.id], [], 'feedback_did_not_request_save');
+      trace('journey', 'save-feedback-milestone', 'skipped', [feedback.id], [], 'feedback_did_not_request_save');
+      trace('diary', 'record-feedback-reflection', 'skipped', [feedback.id], [], 'feedback_did_not_request_save');
+    } else {
+      trace('memory', 'save-feedback-memory', 'skipped', [feedback.id], [], 'feedback_did_not_request_save');
+      trace('journey', 'save-feedback-milestone', 'skipped', [feedback.id], [], 'feedback_did_not_request_save');
+      trace('diary', 'record-feedback-reflection', 'skipped', [feedback.id], [], 'feedback_did_not_request_save');
     }
 
     const relationshipSignal = this.companionRuntime.relationshipSignalForFeedback(input.value);
     if (relationshipSignal) {
       this.companionRuntime.applyRelationshipSignal(relationshipSignal);
+      trace('relationship', 'apply-feedback-signal', 'completed', [feedback.id], [relationshipSignal]);
+    } else {
+      trace('relationship', 'apply-feedback-signal', 'skipped', [feedback.id], [], 'no_relationship_signal');
     }
     if (input.value === 'not_interested') {
       this.db.recordTopicPreference('local', (input.note ?? insight?.title ?? 'general').toLowerCase(), false);
@@ -1532,11 +1886,41 @@ export class AppServices {
   }
 
   async runDiscoveryRefresh(sources?: DiscoverySource[]): Promise<DiscoveryRefreshResult> {
+    const companionId = this.db.resolveActiveCompanionId();
+    const correlationId = createId('corr');
+    let causationId: string | undefined;
+    const trace = (
+      operation: string,
+      status: EngineTraceStatus,
+      inputRefs: string[],
+      outputRefs: string[],
+      extra: Partial<Pick<EngineTrace, 'providerMode' | 'skipReason' | 'error' | 'startedAt'>> = {}
+    ) => {
+      const recorded = this.recordEngineTrace({
+        correlationId,
+        causationId,
+        companionId,
+        engine: 'discovery',
+        operation,
+        status,
+        inputRefs,
+        outputRefs,
+        ...extra
+      });
+      causationId = recorded.id;
+      return recorded;
+    };
+    const startedAt = this.now().toISOString();
+    trace('scheduled-refresh', 'started', [], [], { startedAt });
     const existingKeys = new Set(
       this.db.listDiscoveries({ limit: 500 }).map((item) => item.url ?? `${item.source}:${item.title}`)
     );
     const activeCharacter = this.db.getActiveCharacters()[0];
-    const connectors = (sources ?? ['github', 'hackernews', 'reddit', 'youtube']).map(createFallbackConnector);
+    const requestedSources = sources ? new Set(sources) : undefined;
+    const connectors = requestedSources
+      ? this.discoveryConnectors.filter((connector) => requestedSources.has(connector.source))
+      : this.discoveryConnectors;
+    const providerOutcomes: DiscoveryProviderOutcome[] = [];
     const discoveries = await runDiscoveryPipeline(
       connectors,
       {
@@ -1548,8 +1932,30 @@ export class AppServices {
         activeCharacter,
         seenUrls: new Set(this.db.listDiscoveries({ limit: 200 }).map((item) => item.url).filter(Boolean) as string[])
       },
-      this.db.countSharedToday()
+      this.db.countAnnouncedToday(companionId),
+      (outcome) => providerOutcomes.push(outcome)
     );
+    if (providerOutcomes.length === 0) {
+      trace('provider-search', 'empty', [], [], {
+        providerMode: 'unavailable',
+        startedAt,
+        skipReason: 'no_configured_providers'
+      });
+    } else {
+      for (const outcome of providerOutcomes) {
+        trace(
+          `provider-search:${outcome.source}`,
+          outcome.status,
+          [],
+          [],
+          {
+            providerMode: outcome.providerMode,
+            startedAt,
+            error: outcome.error
+          }
+        );
+      }
+    }
 
     const newlyInserted: Discovery[] = [];
     for (const discovery of discoveries) {
@@ -1574,6 +1980,18 @@ export class AppServices {
         }, correlationId);
       }
     }
+    trace(
+      'persist-candidates',
+      newlyInserted.length === 0 ? 'empty' : 'completed',
+      discoveries.map((discovery) => discovery.id),
+      newlyInserted.map((discovery) => discovery.id),
+      {
+        providerMode: providerOutcomes.some((outcome) => outcome.providerMode === 'live')
+          ? 'live'
+          : providerOutcomes[0]?.providerMode ?? 'unavailable',
+        startedAt
+      }
+    );
 
     return { discoveries, newlyInserted };
   }
@@ -1606,7 +2024,7 @@ export class AppServices {
   }
 
   countAutonomousCyclesToday(): number {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = this.now().toISOString().slice(0, 10);
     return this.db
       .listExplorationCycles(100)
       .filter((cycle) => cycle.trigger !== 'manual' && cycle.startedAt.startsWith(today)).length;
@@ -1684,7 +2102,7 @@ export class AppServices {
       personality[key] = value;
     }
     const analysisId = createId('personality_analysis');
-    const expiresAt = Date.now() + 10 * 60 * 1000;
+    const expiresAt = this.now().getTime() + 10 * 60 * 1000;
     this.personalityAnalyses.set(analysisId, { personality, description: trimmed, expiresAt, used: false });
     this.prunePersonalityAnalyses();
     return { analysisId, personality, description: trimmed, expiresAt: new Date(expiresAt).toISOString() };
@@ -1736,7 +2154,9 @@ export class AppServices {
     source: string;
   }): Promise<{ content: string; raw: unknown; requestBody: unknown }> {
     try {
-      const result = await this.createDeepSeekClient().chatDebug(input.messages);
+      const result = this.aiProvider
+        ? await this.completeWithInjectedAi(input)
+        : await this.createDeepSeekClient().chatDebug(input.messages);
       this.pushDebugEntry({
         channel: input.channel,
         source: input.source,
@@ -1763,13 +2183,30 @@ export class AppServices {
     }
   }
 
-  private applyCharacterEmotion(characterId: string | undefined, eventType: Parameters<typeof applyEmotionEvent>[1]): void {
-    const id = this.db.resolveActiveCompanionId(characterId);
-    const state = this.db.getCharacterState(id);
-    const nextState = this.db.saveCharacterState({
-      ...state,
-      emotion: applyEmotionEvent(state.emotion, eventType)
-    });
+  private async completeWithInjectedAi(input: {
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+    channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis';
+    source: string;
+  }): Promise<{ content: string; raw: unknown; requestBody: unknown }> {
+    const requestBody = {
+      operation: input.channel,
+      messages: input.messages,
+      input: { source: input.source }
+    };
+    const raw = await this.aiProvider!.complete<unknown>(requestBody);
+    const content = typeof raw === 'string'
+      ? raw
+      : typeof raw === 'object' && raw !== null && 'content' in raw
+        ? String((raw as { content: unknown }).content)
+        : JSON.stringify(raw);
+    return { content, raw, requestBody };
+  }
+
+  private applyCharacterEmotion(
+    characterId: string | undefined,
+    eventType: Parameters<CompanionRuntime['applyEmotion']>[1]
+  ): void {
+    const nextState = this.companionRuntime.applyEmotion(characterId, eventType);
     this.emitFoundationEvent('EmotionChanged', 'character', {
       characterId: nextState.characterId,
       reason: eventType

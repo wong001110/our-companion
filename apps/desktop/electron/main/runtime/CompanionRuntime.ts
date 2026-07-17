@@ -1,4 +1,9 @@
-import { dominantEmotion } from '@our-companion/character-engine';
+import {
+  advanceCharacter,
+  applyEmotionEvent,
+  dominantEmotion,
+  type EmotionEvent
+} from '@our-companion/character-engine';
 import { decideUnifiedCompanionAction, computeInitiativeBudget } from '@our-companion/decision-engine';
 import type { DatabaseService } from '@our-companion/database';
 import type {
@@ -8,9 +13,10 @@ import type {
   CompanionLifeActivity,
   CompanionSessionPhase,
   Discovery,
+  NormalizedDiscovery,
   RelationshipSignal,
 } from '@our-companion/shared';
-import { createId, nowIso } from '@our-companion/shared';
+import { createId } from '@our-companion/shared';
 import {
   animationIntentForLifeActivity,
   animationIntentForSessionPhase,
@@ -24,19 +30,24 @@ import {
   shouldPresentNow,
   type ReevaluateContext
 } from './DecisionCoordinator';
-import { LifeCoordinator } from './LifeCoordinator';
+import { LifeCoordinator, type LifeCoordinatorDeps } from './LifeCoordinator';
 import { MemoryPolicy } from './MemoryPolicy';
 import { RelationshipPolicy } from './RelationshipPolicy';
 
 const LOCAL_USER_ID = 'local';
 const LIFE_TICK_BASE_MS = 90_000;
 
+export interface CompanionRuntimeDependencies extends LifeCoordinatorDeps {
+  setTimer?: (callback: () => void, delayMs: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+}
+
 export function shouldEmitCompanionCommand(decision: CompanionDecision): boolean {
   return decision.action === 'share_discovery' && decision.timing === 'now';
 }
 
 export class CompanionRuntime {
-  private lifeTimer: ReturnType<typeof setTimeout> | undefined;
+  private lifeTimer: unknown;
   private lastDecision: CompanionDecision | null = null;
   private companionDragging = false;
   private explicitMode?: 'available' | 'focused' | 'do_not_disturb';
@@ -49,19 +60,26 @@ export class CompanionRuntime {
   private readonly memory: MemoryPolicy;
   private readonly relationship: RelationshipPolicy;
   private readonly life: LifeCoordinator;
+  private readonly now: () => number;
+  private readonly setTimer: (callback: () => void, delayMs: number) => unknown;
+  private readonly clearTimer: (handle: unknown) => void;
 
   constructor(
     private readonly db: DatabaseService,
     private readonly emitState: (state: CharacterRuntimeState) => void,
     private readonly emitDecision: (decision: CompanionDecision) => void,
     private readonly emitCommand?: (command: CompanionCommand) => boolean | void,
-    lifeDeps?: ConstructorParameters<typeof LifeCoordinator>[0]
+    dependencies: CompanionRuntimeDependencies = {}
   ) {
+    this.now = dependencies.now ?? (() => Date.now());
+    this.setTimer = dependencies.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
+    this.clearTimer = dependencies.clearTimer ?? ((handle) =>
+      clearTimeout(handle as ReturnType<typeof setTimeout>));
     this.conversation = new ConversationCoordinator(db);
-    this.decisions = new DecisionCoordinator(db);
-    this.memory = new MemoryPolicy(db);
-    this.relationship = new RelationshipPolicy(db);
-    this.life = new LifeCoordinator(lifeDeps);
+    this.decisions = new DecisionCoordinator(db, { now: this.now });
+    this.memory = new MemoryPolicy(db, { now: this.now });
+    this.relationship = new RelationshipPolicy(db, { now: this.now });
+    this.life = new LifeCoordinator(dependencies);
   }
 
   resolveCompanionId(characterId?: string): string {
@@ -86,7 +104,7 @@ export class CompanionRuntime {
 
   stopLifeScheduler(): void {
     if (this.lifeTimer !== undefined) {
-      clearTimeout(this.lifeTimer);
+      this.clearTimer(this.lifeTimer);
       this.lifeTimer = undefined;
     }
   }
@@ -103,8 +121,8 @@ export class CompanionRuntime {
   }
 
   private scheduleLifeTick(delayMs: number): void {
-    if (this.lifeTimer !== undefined) clearTimeout(this.lifeTimer);
-    this.lifeTimer = setTimeout(() => {
+    if (this.lifeTimer !== undefined) this.clearTimer(this.lifeTimer);
+    this.lifeTimer = this.setTimer(() => {
       this.lifeTimer = undefined;
       this.tickLife();
       this.scheduleLifeTick(LIFE_TICK_BASE_MS);
@@ -121,7 +139,7 @@ export class CompanionRuntime {
     const sessionActive = this.conversation.isConversationActive(companionId, LOCAL_USER_ID);
     if (sessionActive || this.companionDragging) return;
 
-    const hour = new Date().getHours();
+    const hour = new Date(this.now()).getHours();
     const hasPending = this.decisions.listReadyForPresentation(companionId, LOCAL_USER_ID).length > 0;
     const next = this.life.selectNextActivity(companionId, {
       conversationActive: sessionActive,
@@ -142,11 +160,59 @@ export class CompanionRuntime {
       ...state,
       lifeActivity: activity,
       animationIntent,
-      updatedAt: nowIso()
+      updatedAt: this.timestamp()
     };
     this.db.saveCharacterState(next);
     this.emitState(next);
     return next;
+  }
+
+  updatePosition(companionId: string | undefined, position: { x: number; y: number }): CharacterRuntimeState {
+    const current = this.db.getCharacterState(companionId);
+    const next = this.db.saveCharacterState({
+      ...current,
+      position,
+      updatedAt: this.timestamp()
+    });
+    this.emitState(next);
+    return next;
+  }
+
+  triggerBehavior(companionId: string | undefined, event: string): CharacterRuntimeState {
+    const current = this.db.getCharacterState(companionId);
+    const next = advanceCharacter(current, {
+      userCommand: event === 'user_command' ? event : undefined,
+      availableDiscoveries: event === 'discovery' ? ([{}] as NormalizedDiscovery[]) : undefined,
+      recentMemoryActivity: event === 'memory',
+      reflectionDue: event === 'reflection',
+      userActive: true
+    });
+    const saved = this.db.saveCharacterState({
+      ...next,
+      updatedAt: this.timestamp()
+    });
+    this.emitState(saved);
+    return saved;
+  }
+
+  applyEmotion(companionId: string | undefined, event: EmotionEvent): CharacterRuntimeState {
+    const current = this.db.getCharacterState(companionId);
+    const next = this.db.saveCharacterState({
+      ...current,
+      emotion: applyEmotionEvent(current.emotion, event),
+      updatedAt: this.timestamp()
+    });
+    this.emitState(next);
+    return next;
+  }
+
+  beginDiscoveryPresentation(companionId: string): CharacterRuntimeState {
+    this.applyEmotion(companionId, 'new_high_score_discovery');
+    return this.advanceWithIntent(companionId, 'talking', 'sharing_discovery', 'Expedition_Present');
+  }
+
+  settleDiscoveryPresentation(companionId: string): CharacterRuntimeState {
+    return this.advanceWithIntent(companionId, 'idle', 'waiting', 'Idle_Neutral');
   }
 
   setSessionPhase(phase: CompanionSessionPhase): void {
@@ -191,7 +257,7 @@ export class CompanionRuntime {
       ...sessionState,
       animationIntent,
       lifeActivity: restoredLifeActivity ?? (phase === 'idle' || phase === 'inactive' || phase === 'closing' ? 'idle' : 'interacting'),
-      updatedAt: nowIso()
+      updatedAt: this.timestamp()
     });
     this.emitState(next);
   }
@@ -234,7 +300,7 @@ export class CompanionRuntime {
       coreState,
       intent,
       animationIntent: resolvedAnimation,
-      updatedAt: nowIso()
+      updatedAt: this.timestamp()
     };
     this.db.saveCharacterState(next);
     this.emitState(next);
@@ -248,19 +314,20 @@ export class CompanionRuntime {
   ): CompanionDecision {
     const companionId = this.resolveCompanionId();
     const relationship = this.db.getRelationship(LOCAL_USER_ID, companionId);
-    const sharedToday = this.db.countSharedToday();
+    const announcedToday = this.db.countAnnouncedToday(companionId);
     const recentActions = this.buildRecentActions();
 
     const attention = buildUserAttentionContext({
       conversationActive: sessionActive,
       companionDragging,
-      explicitMode: this.explicitMode
+      explicitMode: this.explicitMode,
+      localTime: this.timestamp()
     });
-    const userContext = attentionToUserContext(attention, recentActions);
+    const userContext = attentionToUserContext(attention, recentActions, this.timestamp());
 
     const initiativeBudget = computeInitiativeBudget(
       relationship,
-      sharedToday,
+      announcedToday,
       userContext.mode === 'focused'
     );
 
@@ -270,9 +337,9 @@ export class CompanionRuntime {
         insightContext: {
           recentInsights: [discovery.id],
           insightCount: 1,
-          topInsightImportance: discovery.finalScore / 100
+          topInsightImportance: discovery.finalScore
         },
-        timestamp: nowIso()
+        timestamp: this.timestamp()
       },
       userContext,
       relationship,
@@ -300,22 +367,9 @@ export class CompanionRuntime {
     return shouldPresentNow(decision);
   }
 
-  /** @deprecated Use shouldPresentNow — next_idle is deferred, not immediately presentable */
   applyRelationshipSignal(signal: RelationshipSignal): void {
     const companionId = this.resolveCompanionId();
     this.relationship.applySignal(LOCAL_USER_ID, companionId, signal);
-  }
-
-  /** @deprecated Use applyRelationshipSignal */
-  recordInteraction(signal: 'positive' | 'ignored' | 'correction' | 'not_now' | 'not_interested'): void {
-    const map: Record<string, RelationshipSignal> = {
-      positive: 'positive_feedback',
-      ignored: 'ignored',
-      correction: 'user_correction',
-      not_now: 'not_now',
-      not_interested: 'not_interested'
-    };
-    this.applyRelationshipSignal(map[signal] ?? 'not_now');
   }
 
   processMemoryFromTurn(companionId: string, userMessage: string, assistantReply: string, sessionId?: string): void {
@@ -326,11 +380,6 @@ export class CompanionRuntime {
       assistantReply,
       sessionId
     });
-  }
-
-  /** @deprecated Use processMemoryFromTurn */
-  extractMemoryFromTurn(companionId: string, userMessage: string, assistantReply: string, sessionId?: string): void {
-    this.processMemoryFromTurn(companionId, userMessage, assistantReply, sessionId);
   }
 
   getActiveSessionId(companionId?: string): string | null {
@@ -349,7 +398,7 @@ export class CompanionRuntime {
       sessionActive: this.conversation.isConversationActive(id, LOCAL_USER_ID),
       companionDragging: this.companionDragging,
       relationship: this.db.getRelationship(LOCAL_USER_ID, id),
-      sharedToday: this.db.countSharedToday(),
+      announcedToday: this.db.countAnnouncedToday(id),
       recentActions: this.buildRecentActions(),
       explicitMode: this.explicitMode
     };
@@ -403,8 +452,12 @@ export class CompanionRuntime {
       companionId,
       discoveryId,
       decision,
-      issuedAt: nowIso()
+      issuedAt: this.timestamp()
     };
     return this.emitCommand(command) !== false;
+  }
+
+  private timestamp(): string {
+    return new Date(this.now()).toISOString();
   }
 }

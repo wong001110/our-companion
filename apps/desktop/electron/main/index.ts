@@ -146,6 +146,7 @@ function createPanelWindow(): BrowserWindow {
   });
 
   window.on('close', (event) => {
+    if (isQuitting) return;
     event.preventDefault();
     window.hide();
   });
@@ -323,10 +324,10 @@ function registerIpc(): void {
     'discovery:markNotInterested': services.discovery.markNotInterested,
     'discovery:addToJourney': services.discovery.addToJourney,
     'discovery:generateNow': services.discovery.generateNow,
-    'discovery:shareNext': services.discovery.shareNext,
-    'discovery:resetStatuses': services.discovery.resetStatuses,
-    'discovery:countUnannounced': services.discovery.countUnannounced,
-    'discovery:markSharedAsUnannounced': services.discovery.markSharedAsUnannounced,
+    'discovery:presentNext': services.discovery.presentNext,
+    'discovery:resetLifecycle': services.discovery.resetLifecycle,
+    'discovery:countPendingAnnouncements': services.discovery.countPendingAnnouncements,
+    'discovery:resetAnnouncementHistory': services.discovery.resetAnnouncementHistory,
     'discovery:clearPool': services.discovery.clearPool,
     'discovery:simulateCanAnnounceDisabled': services.discovery.simulateCanAnnounceDisabled,
     'discovery:simulateInterruptEnabled': services.discovery.simulateInterruptEnabled,
@@ -871,10 +872,24 @@ function startDiscoveryAutomation(): void {
   });
 
   discoveryShareOrchestrator = new DiscoveryShareOrchestrator({
-    getState: () => services.db.getCharacterState(),
-    saveState: (state) => services.db.saveCharacterState(state),
+    performance: {
+      begin: (companionId) => {
+        services.runtime.beginDiscoveryPresentation(companionId);
+      },
+      settle: (companionId) => {
+        services.runtime.settleDiscoveryPresentation(companionId);
+      }
+    },
     generateReason: (discovery) => services.ai.generateDiscoveryReason({ discovery }),
-    markAnnounced: (id) => services.db.markDiscoveryAnnounced(id),
+    markPresenting: (id, commandId) => {
+      services.db.transitionDiscoveryStatus(id, 'presenting', { commandId });
+    },
+    markAnnounced: (id, commandId) => {
+      services.db.transitionDiscoveryStatus(id, 'announced', { commandId });
+    },
+    markDeferred: (id, reason) => {
+      services.db.transitionDiscoveryStatus(id, 'eligible', { reason });
+    },
     canAnnounce: () => services.canAnnounceDiscovery(),
     shouldInterruptShare: () => services.shouldInterruptShare(),
     eventBus: services.eventBus
@@ -884,16 +899,13 @@ function startDiscoveryAutomation(): void {
   discoveryScheduler = new DiscoveryScheduler({
     refresh: () => services.runDiscoveryRefresh(),
     getDiscoveryScore: () => services.getEffectiveDiscoveryScore(),
-    countSharedToday: () => services.db.countSharedToday(),
-    getOldestUnannouncedShared: () => Promise.resolve(services.db.getOldestUnannouncedShared()),
+    countAnnouncedToday: () => services.db.countAnnouncedToday(),
+    getOldestQueuedDiscovery: () => Promise.resolve(services.db.getOldestQueuedDiscovery()),
     presentationGateway: {
       isBusy: () => services.isDiscoveryPresentationBusy(),
       hasPending: () => services.hasPendingDiscoveryPresentation(),
       requestPresentation: (discovery) => { services.requestDiscoveryPresentation(discovery); },
-    },
-    runAutonomousCycle: () => services.autonomy.startExploration({ trigger: 'scheduled' }).then(() => undefined),
-    countAutonomousCyclesToday: () => services.countAutonomousCyclesToday(),
-    canRunAutonomousCycle: () => services.canAnnounceDiscovery()
+    }
   });
   discoveryScheduler.start();
 
@@ -1011,9 +1023,11 @@ function escapeHtml(value: string): string {
 }
 
 let isQuitting = false;
+let didCleanup = false;
 
 function forceCleanup(): void {
-  if (isQuitting) return;
+  if (didCleanup) return;
+  didCleanup = true;
   isQuitting = true;
   unregisterCompanionHotkey();
   stopDiscoveryAutomation();
@@ -1025,6 +1039,10 @@ function forceCleanup(): void {
   try { services?.db.close(); } catch { /* ignore */ }
   try { services?.network.dispose(); } catch { /* ignore */ }
 }
+
+app.on('before-quit', () => {
+  isQuitting = true;
+});
 
 app.on('window-all-closed', () => {
   forceCleanup();

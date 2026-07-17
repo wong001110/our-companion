@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type {
-  ActionPlanV2,
+  ActionPlan,
   CompanionDecision,
   CompanionInsight,
   CuriosityAssessment,
@@ -8,7 +8,7 @@ import type {
   DiscoveryReason,
   DiscoveryUnderstanding,
   Insight,
-  InsightV2,
+  GeneratedInsight,
   MemorySummary,
   ToolIntent
 } from '@our-companion/shared';
@@ -82,7 +82,7 @@ export const actionPlanSchema = z.object({
 
 export type ActionPlanLlmResult = z.infer<typeof actionPlanSchema>;
 
-export function validateActionPlan(raw: string): ActionPlanV2 | undefined {
+export function validateActionPlan(raw: string): ActionPlan | undefined {
   try {
     const parsed: unknown = JSON.parse(raw);
     const result = actionPlanSchema.safeParse(parsed);
@@ -154,7 +154,7 @@ export const cognitiveInsightSchema = z.object({
   supportingPatternIds: z.array(z.string()).optional(),
   supportingMemoryIds: z.array(z.string()).optional(),
   confidence: z.number().min(0).max(1),
-  importance: z.number().min(0).max(100),
+  importance: z.number().min(0).max(1),
   novelty: z.number().min(0).max(1),
   evidenceCount: z.number().min(0).optional()
 });
@@ -175,7 +175,18 @@ export const curiosityAssessmentSchema = z.object({
 });
 
 export const decisionSchema = z.object({
-  action: z.enum(['speak', 'queue_for_later', 'remember_only', 'ignore', 'perform_action', 'stay_silent']),
+  action: z.enum([
+    'stay_silent',
+    'idle_activity',
+    'respond',
+    'approach',
+    'share_discovery',
+    'start_exploration',
+    'continue_conversation',
+    'end_conversation',
+    'suggest_action',
+    'execute_approved_action'
+  ]),
   timing: z.enum(['now', 'next_idle', 'later']),
   priority: z.enum(['low', 'normal', 'high']),
   reason: z.string()
@@ -245,12 +256,12 @@ export function validateDiscoveryUnderstanding(text: string): DiscoveryUnderstan
   return discoveryUnderstandingSchema.parse(parseJsonObject(text));
 }
 
-export function validateCognitiveInsight(text: string): Pick<InsightV2, 'title' | 'explanation' | 'confidence' | 'importance' | 'novelty' | 'category' | 'summary'> & { supportingPatternIds: string[]; supportingMemoryIds: string[] } {
+export function validateCognitiveInsight(text: string): Pick<GeneratedInsight, 'title' | 'explanation' | 'confidence' | 'importance' | 'novelty' | 'category' | 'summary'> & { supportingPatternIds: string[]; supportingMemoryIds: string[] } {
   const parsed = cognitiveInsightSchema.parse(parseJsonObject(text));
   return {
     id: parsed.id ?? '',
     userId: parsed.userId ?? '',
-    category: parsed.category as InsightV2['category'],
+    category: parsed.category as GeneratedInsight['category'],
     title: parsed.title,
     summary: parsed.summary,
     explanation: parsed.explanation,
@@ -260,7 +271,7 @@ export function validateCognitiveInsight(text: string): Pick<InsightV2, 'title' 
     importance: parsed.importance,
     novelty: parsed.novelty,
     evidenceCount: parsed.evidenceCount ?? 0
-  } as Pick<InsightV2, 'title' | 'explanation' | 'confidence' | 'importance' | 'novelty' | 'category' | 'summary'> & { supportingPatternIds: string[]; supportingMemoryIds: string[] };
+  } as Pick<GeneratedInsight, 'title' | 'explanation' | 'confidence' | 'importance' | 'novelty' | 'category' | 'summary'> & { supportingPatternIds: string[]; supportingMemoryIds: string[] };
 }
 
 export function validateCuriosityAssessment(text: string): Pick<CuriosityAssessment, 'targetId' | 'targetType' | 'growthValue' | 'budgetCost' | 'reason'> & { gapMatch?: CuriosityAssessment['gapMatch'] } {

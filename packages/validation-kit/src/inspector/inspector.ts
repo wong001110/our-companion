@@ -59,7 +59,7 @@ export class Inspector {
   getViewData(): Record<string, unknown> {
     if (this.frozen && this.frozenData) return this.frozenData;
     switch (this.currentView) {
-      case 'overview': return this.deps.getOverview();
+      case 'overview': return { ...this.deps.getOverview() };
       case 'context': return this.deps.getContextData();
       case 'behavior': return this.deps.getBehaviorData();
       case 'thought': return this.deps.getThoughtData();

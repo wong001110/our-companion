@@ -61,7 +61,7 @@ describe('ai engine', () => {
     expect(parsed.tool_name).toBe('search_web');
   });
 
-  it('validates Volume 02 cognitive JSON contracts', () => {
+  it('validates cognitive JSON contracts', () => {
     expect(
       validateDiscoveryUnderstanding(
         '{"summary":"Useful","concepts":["memory"],"entities":["SQLite"],"tags":["local-first"],"growth_value":82,"confidence":0.8,"reason":"Relevant"}'
@@ -69,7 +69,7 @@ describe('ai engine', () => {
     ).toBe(82);
     expect(
       validateCognitiveInsight(
-        '{"category":"learning","title":"Memory direction","summary":"A summary","explanation":"It matters","supportingPatternIds":["p1"],"confidence":0.82,"importance":88,"novelty":0.7}'
+        '{"category":"learning","title":"Memory direction","summary":"A summary","explanation":"It matters","supportingPatternIds":["p1"],"confidence":0.82,"importance":0.88,"novelty":0.7}'
       ).supportingPatternIds
     ).toContain('p1');
     expect(
@@ -77,8 +77,8 @@ describe('ai engine', () => {
         '{"target_id":"disc_1","target_type":"discovery","growth_value":77,"budget_cost":7,"reason":"Good fit"}'
       ).targetId
     ).toBe('disc_1');
-    expect(validateDecision('{"action":"queue_for_later","timing":"next_idle","priority":"normal","reason":"Focused"}').action).toBe(
-      'queue_for_later'
+    expect(validateDecision('{"action":"stay_silent","timing":"next_idle","priority":"normal","reason":"Focused"}').action).toBe(
+      'stay_silent'
     );
   });
 });

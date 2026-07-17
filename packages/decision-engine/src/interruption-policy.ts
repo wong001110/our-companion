@@ -17,7 +17,7 @@ export function shouldInterrupt(
     }
   }
 
-  if (context.user.fatigueScore !== undefined && context.user.fatigueScore > 80) {
+  if (context.user.fatigueScore !== undefined && context.user.fatigueScore > 0.8) {
     if (candidate.interruptionCost > 0.2) {
       return false;
     }

@@ -108,8 +108,39 @@ CREATE TABLE IF NOT EXISTS discoveries (
   why_this_matters TEXT,
   recommended_action TEXT,
   short_message TEXT,
+  companion_id TEXT,
+  cycle_id TEXT,
+  presentation_command_id TEXT,
+  eligible_at TEXT,
+  queued_at TEXT,
+  presenting_at TEXT,
+  announced_at TEXT,
+  updated_at TEXT,
+  status_reason TEXT,
+  -- Retained only so existing databases can be migrated to announced_at.
   shared_at TEXT,
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS engine_traces (
+  id TEXT PRIMARY KEY,
+  correlation_id TEXT NOT NULL,
+  causation_id TEXT,
+  cycle_id TEXT,
+  companion_id TEXT NOT NULL,
+  engine TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  provider_mode TEXT NOT NULL,
+  input_refs_json TEXT NOT NULL DEFAULT '[]',
+  output_refs_json TEXT NOT NULL DEFAULT '[]',
+  state_before_hash TEXT,
+  state_after_hash TEXT,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  duration_ms REAL,
+  status TEXT NOT NULL,
+  skip_reason TEXT,
+  error TEXT
 );
 
 CREATE TABLE IF NOT EXISTS patterns (
@@ -349,6 +380,9 @@ CREATE INDEX IF NOT EXISTS idx_memory_edges_from ON memory_edges(from_node_id);
 CREATE INDEX IF NOT EXISTS idx_memory_edges_to ON memory_edges(to_node_id);
 CREATE INDEX IF NOT EXISTS idx_discoveries_score ON discoveries(final_score);
 CREATE INDEX IF NOT EXISTS idx_discoveries_status ON discoveries(status);
+CREATE INDEX IF NOT EXISTS idx_engine_traces_correlation ON engine_traces(correlation_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_engine_traces_cycle ON engine_traces(cycle_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_engine_traces_companion ON engine_traces(companion_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_patterns_user ON patterns(user_id);
 CREATE INDEX IF NOT EXISTS idx_interest_nodes_user ON interest_nodes(user_id);
 CREATE INDEX IF NOT EXISTS idx_curiosity_targets_user ON curiosity_targets(user_id);

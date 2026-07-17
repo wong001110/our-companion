@@ -30,7 +30,7 @@ export function formatDuration(durationMs?: number): string {
 }
 
 export function formatDiscoveryTime(discovery: Discovery, lang: Lang = 'en'): string {
-  return formatRelativeDate(discovery.publishedAt ?? discovery.sharedAt ?? discovery.createdAt, lang);
+  return formatRelativeDate(discovery.publishedAt ?? discovery.announcedAt ?? discovery.createdAt, lang);
 }
 
 export function formatRelativeDate(value?: string, lang: Lang = 'en'): string {

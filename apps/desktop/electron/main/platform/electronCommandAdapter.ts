@@ -20,7 +20,7 @@ export function openKnownApp(appName: string): Promise<{ appName: string; starte
     vscode: 'code'
   };
   const executable = allowedApps[appName.toLowerCase()];
-  if (!executable) throw new Error(`App is not in the v1 allowlist: ${appName}`);
+  if (!executable) throw new Error(`App is not in the approved application allowlist: ${appName}`);
 
   const child = spawn(executable, [], {
     detached: true,

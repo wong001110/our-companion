@@ -49,7 +49,7 @@ describe('curiosity engine', () => {
           type: 'topic',
           title: 'Desktop companion architecture',
           summary: 'Ann should explore around desktop companion systems.',
-          importanceScore: 80,
+          importance: 0.8,
           createdAt: 'now',
           updatedAt: 'now'
         }

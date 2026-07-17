@@ -74,7 +74,7 @@ describe('speech-engine userDataPath', () => {
 describe('speech-engine expression formatting', () => {
   it('changes bubble text with mood', () => {
     const payload = formatSpeechPayload({
-      decision: { action: 'speak', reason: 'High growth discovery.' },
+      decision: { action: 'share_discovery', reason: 'High growth discovery.' },
       characterState: { mood: 'curious' },
       discovery: {
         title: 'Local-first memory',
@@ -94,7 +94,7 @@ describe('speech-engine expression formatting', () => {
       source: 'github'
     });
     const notification = createNotificationPayload({
-      decision: { action: 'speak', reason: 'High growth.' },
+      decision: { action: 'share_discovery', reason: 'High growth.' },
       title: card.title,
       body: card.summary,
       focusMode: true

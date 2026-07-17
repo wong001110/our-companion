@@ -1,4 +1,4 @@
-import type { Concept, Discovery, DiscoveryFeedback, JourneyMilestone, MemoryNode, Pattern, PatternEvidence, PatternType } from '@our-companion/shared';
+import type { Discovery, DiscoveryFeedback, JourneyMilestone, MemoryNode, Pattern, PatternEvidence, PatternType } from '@our-companion/shared';
 import { clamp01, createId, nowIso } from '@our-companion/shared';
 
 export interface DetectPatternsInput {
@@ -16,12 +16,6 @@ export interface PatternScore {
   emotionalWeight: number;
   feedbackWeight: number;
   finalScore: number;
-}
-
-export interface DetectCognitivePatternsInput {
-  userId: string;
-  concepts: Concept[];
-  discoveries: Discovery[];
 }
 
 export function scorePattern(input: Omit<PatternScore, 'finalScore'>): PatternScore {
@@ -70,7 +64,7 @@ export function detectPatterns(input: DetectPatternsInput): Pattern[] {
       sourceType: 'memory' as const,
       sourceId: node.id,
       text: `${node.title} ${node.summary ?? ''} ${node.content ?? ''}`,
-      weight: node.importanceScore / 100
+      weight: node.importance
     })),
     ...input.journeyMilestones.map((milestone) => ({
       sourceType: 'journey_event' as const,
@@ -173,89 +167,3 @@ export function detectPatterns(input: DetectPatternsInput): Pattern[] {
 
   return patterns.sort((left, right) => right.strength - left.strength).slice(0, 8);
 }
-
-export function detectCognitivePatterns(input: DetectCognitivePatternsInput): Pattern[] {
-  const timestamp = nowIso();
-  const patterns: Pattern[] = [];
-  const activeConcepts = input.concepts.filter((concept) => concept.status === 'active');
-  const sourceCounts = new Map<string, Set<string>>();
-
-  for (const discovery of input.discoveries) {
-    for (const tag of discovery.tags) {
-      const sources = sourceCounts.get(tag) ?? new Set<string>();
-      sources.add(discovery.source);
-      sourceCounts.set(tag, sources);
-    }
-  }
-
-  for (const concept of activeConcepts.filter((item) => item.relatedDiscoveryIds.length >= 2).slice(0, 4)) {
-    patterns.push({
-      id: createId('pattern'),
-      userId: input.userId,
-      type: 'repeated_topic',
-      title: `${concept.name} keeps resurfacing`,
-      summary: concept.summary,
-      description: `The concept has ${concept.relatedDiscoveryIds.length} related discoveries.`,
-      relatedConceptIds: [concept.id],
-      relatedDiscoveryIds: concept.relatedDiscoveryIds,
-      confidence: Math.min(1, concept.strength / 5),
-      strength: Math.min(1, concept.strength / 5),
-      freshness: 0.85,
-      evidence: concept.relatedDiscoveryIds.map((id) => ({
-        sourceType: 'discovery_feedback',
-        sourceId: id,
-        summary: concept.name,
-        weight: 0.7
-      })),
-      detectedAt: timestamp,
-      createdAt: timestamp,
-      updatedAt: timestamp
-    });
-  }
-
-  for (const [tag, sources] of [...sourceCounts.entries()].filter(([, sourcesForTag]) => sourcesForTag.size >= 2).slice(0, 3)) {
-    const related = input.discoveries.filter((discovery) => discovery.tags.includes(tag));
-    patterns.push({
-      id: createId('pattern'),
-      userId: input.userId,
-      type: 'cross_source_trend',
-      title: `${tag} appears across sources`,
-      summary: `${tag} appeared in ${sources.size} source types.`,
-      description: 'Multiple sources are pointing at the same topic.',
-      relatedDiscoveryIds: related.map((discovery) => discovery.id),
-      confidence: Math.min(1, sources.size / 4),
-      strength: Math.min(1, related.length / 4),
-      freshness: 0.8,
-      evidence: related.map((discovery) => ({
-        sourceType: discovery.status === 'saved' ? 'saved_discovery' : 'discovery_feedback',
-        sourceId: discovery.id,
-        summary: discovery.title,
-        weight: 0.65
-      })),
-      detectedAt: timestamp,
-      createdAt: timestamp,
-      updatedAt: timestamp
-    });
-  }
-
-  return patterns.sort((left, right) => right.strength - left.strength);
-}
-
-// ============================================================================
-// Pattern Engine V2 â€” Enhanced pattern detection
-// ============================================================================
-
-export { PatternEngine } from './pattern-engine';
-export { calculatePatternConfidence } from './confidence';
-export { detectInterestPatterns } from './detectors/interest-detector';
-export { detectBehaviourPatterns } from './detectors/behaviour-detector';
-export { detectConversationPatterns } from './detectors/conversation-detector';
-export { detectProjectPatterns } from './detectors/project-detector';
-export { detectLearningPatterns } from './detectors/learning-detector';
-export { detectTemporalPatterns } from './detectors/temporal-detector';
-export { detectRelationshipPatterns } from './detectors/relationship-detector';
-export {
-  MIN_SUPPORTING_MEMORIES,
-  MAX_PATTERNS_PER_DETECTION,
-  CONFIDENCE_WEIGHTS,
-} from './types';

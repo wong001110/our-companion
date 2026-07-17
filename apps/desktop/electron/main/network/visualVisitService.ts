@@ -1,4 +1,4 @@
-import type { CompanionAssetManifestV1, VisualVisitRenderModel, VisualVisitRendererState, VisitSessionSummary } from '@our-companion/shared';
+import type { CompanionAssetManifest, VisualVisitRenderModel, VisualVisitRendererState, VisitSessionSummary } from '@our-companion/shared';
 import type { NetworkConnectionService } from '../networkConnection';
 import type { PublicCompanionService } from './publicCompanionService';
 import type { VisitService } from './visitService';
@@ -117,12 +117,12 @@ export class VisualVisitService {
   }
 }
 
-function supportsVisualManifest(manifest: CompanionAssetManifestV1): boolean {
+function supportsVisualManifest(manifest: CompanionAssetManifest): boolean {
   const names = new Set(manifest.runtime.animations.map((animation) => animation.name));
   return REQUIRED_ANIMATIONS.every((name) => names.has(name));
 }
 
-function createRenderModel(session: VisitSessionSummary, name: string, manifest: CompanionAssetManifestV1): VisualVisitRenderModel {
+function createRenderModel(session: VisitSessionSummary, name: string, manifest: CompanionAssetManifest): VisualVisitRenderModel {
   const animations = new Map(manifest.runtime.animations.map((animation) => [animation.name, animation]));
   const assetUrls: Record<string, string> = {};
   const frameTiming: VisualVisitRenderModel['frameTiming'] = {};

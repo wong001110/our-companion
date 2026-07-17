@@ -5,7 +5,7 @@ import type {
   PendingCompanionAction,
   UserCompanionRelationship
 } from '@our-companion/shared';
-import { createId, nowIso } from '@our-companion/shared';
+import { createId } from '@our-companion/shared';
 import { decideUnifiedCompanionAction, computeInitiativeBudget, type UnifiedDecisionInput } from '@our-companion/decision-engine';
 import { attentionToUserContext, buildUserAttentionContext } from './attentionContext';
 
@@ -26,7 +26,7 @@ export interface ReevaluateContext {
   sessionActive: boolean;
   companionDragging: boolean;
   relationship: UserCompanionRelationship;
-  sharedToday: number;
+  announcedToday: number;
   recentActions: string[];
   explicitMode?: 'available' | 'focused' | 'do_not_disturb';
 }
@@ -37,7 +37,11 @@ export interface ReevaluateResult {
 }
 
 export class DecisionCoordinator {
-  constructor(private readonly db: DatabaseService) {}
+  private readonly now: () => number;
+
+  constructor(private readonly db: DatabaseService, deps: { now?: () => number } = {}) {
+    this.now = deps.now ?? (() => Date.now());
+  }
 
   enqueueDeferred(decision: CompanionDecision, companionId: string, discoveryId?: string, userId = 'local'): PendingCompanionAction {
     const action: PendingCompanionAction = {
@@ -45,8 +49,8 @@ export class DecisionCoordinator {
       companionId,
       decision,
       discoveryId,
-      createdAt: nowIso(),
-      expiresAt: new Date(Date.now() + PENDING_TTL_MS).toISOString(),
+      createdAt: new Date(this.now()).toISOString(),
+      expiresAt: new Date(this.now() + PENDING_TTL_MS).toISOString(),
       status: 'pending',
       deferReason: decision.reason
     };
@@ -69,7 +73,7 @@ export class DecisionCoordinator {
   }
 
   expireStale(companionId: string, userId = 'local'): void {
-    const now = Date.now();
+    const now = this.now();
     for (const action of this.db.listPendingActions(companionId, userId)) {
       if (new Date(action.expiresAt).getTime() <= now) {
         this.db.updatePendingActionStatus(action.id, 'expired');
@@ -94,13 +98,15 @@ export class DecisionCoordinator {
     const attention = buildUserAttentionContext({
       conversationActive: ctx.sessionActive,
       companionDragging: ctx.companionDragging,
-      explicitMode: ctx.explicitMode
+      explicitMode: ctx.explicitMode,
+      localTime: new Date(this.now()).toISOString()
     });
-    const userContext = attentionToUserContext(attention, ctx.recentActions);
+    const timestamp = new Date(this.now()).toISOString();
+    const userContext = attentionToUserContext(attention, ctx.recentActions, timestamp);
 
     const initiativeBudget = computeInitiativeBudget(
       ctx.relationship,
-      ctx.sharedToday,
+      ctx.announcedToday,
       userContext.mode === 'focused'
     );
 
@@ -108,9 +114,9 @@ export class DecisionCoordinator {
       brainInput: {
         userContext,
         insightContext: ctx.discovery
-          ? { recentInsights: [ctx.discovery.id], insightCount: 1, topInsightImportance: ctx.discovery.finalScore / 100 }
+          ? { recentInsights: [ctx.discovery.id], insightCount: 1, topInsightImportance: ctx.discovery.finalScore }
           : { recentInsights: [], insightCount: 0, topInsightImportance: 0 },
-        timestamp: nowIso()
+        timestamp
       },
       userContext,
       relationship: ctx.relationship,

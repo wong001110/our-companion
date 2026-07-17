@@ -4,10 +4,12 @@ import type {
   RelationshipSignal,
   UserCompanionRelationship
 } from '@our-companion/shared';
-import { nowIso } from '@our-companion/shared';
-
 export class RelationshipPolicy {
-  constructor(private readonly db: DatabaseService) {}
+  private readonly now: () => number;
+
+  constructor(private readonly db: DatabaseService, deps: { now?: () => number } = {}) {
+    this.now = deps.now ?? (() => Date.now());
+  }
 
   applySignal(
     userId: string,
@@ -15,16 +17,16 @@ export class RelationshipPolicy {
     signal: RelationshipSignal
   ): UserCompanionRelationship {
     const rel = this.db.getRelationship(userId, companionId);
-    const now = nowIso();
+    const now = new Date(this.now()).toISOString();
 
     switch (signal) {
       case 'conversation_completed':
-        rel.familiarity = Math.min(100, rel.familiarity + 0.5);
+        rel.familiarity = Math.min(1, rel.familiarity + 0.005);
         break;
       case 'positive_feedback':
         rel.recentPositiveInteractions += 1;
-        rel.comfort = Math.min(100, rel.comfort + 0.5);
-        rel.trust = Math.min(100, rel.trust + 0.25);
+        rel.comfort = Math.min(1, rel.comfort + 0.005);
+        rel.trust = Math.min(1, rel.trust + 0.0025);
         break;
       case 'user_correction':
         rel.recentCorrections += 1;
@@ -36,7 +38,7 @@ export class RelationshipPolicy {
         rel.recentIgnoredInteractions += 1;
         break;
       case 'user_reengaged':
-        rel.familiarity = Math.min(100, rel.familiarity + 0.25);
+        rel.familiarity = Math.min(1, rel.familiarity + 0.0025);
         break;
       case 'not_now':
       case 'not_interested':

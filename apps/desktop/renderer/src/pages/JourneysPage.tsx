@@ -1,10 +1,10 @@
-import type { CompanionJourney, JourneyMilestoneV2 } from '@our-companion/shared';
+import type { CompanionJourney, JourneyTimelineEntry } from '@our-companion/shared';
 import { t } from '../i18n';
 import { InlineNotice } from '../components/feedback/InlineNotice';
 import { useJourneysViewModel } from '../features/journeys/useJourneysViewModel';
 import { NotebookPage, PaperCard, StickyNote, useLang } from '../ui/NotebookPrimitives';
 
-export function JourneysPage({ journeys, timeline, onRefresh }: { journeys: CompanionJourney[]; timeline: JourneyMilestoneV2[]; onRefresh: () => Promise<void> }) {
+export function JourneysPage({ journeys, timeline, onRefresh }: { journeys: CompanionJourney[]; timeline: JourneyTimelineEntry[]; onRefresh: () => Promise<void> }) {
   const lang = useLang();
   const { busy, createNewJourney, error } = useJourneysViewModel({ lang, onRefresh });
   return (

@@ -14,12 +14,12 @@ export function scoreCandidate(
     score -= candidate.interruptionCost * 0.5;
   }
 
-  if (context.user.fatigueScore !== undefined && context.user.fatigueScore > 70) {
+  if (context.user.fatigueScore !== undefined && context.user.fatigueScore > 0.7) {
     score -= 0.15;
   }
 
   const hoursSinceInteraction = context.user.lastInteractionAt
-    ? (Date.now() - new Date(context.user.lastInteractionAt).getTime()) / (1000 * 60 * 60)
+    ? (new Date(context.timestamp).getTime() - new Date(context.user.lastInteractionAt).getTime()) / (1000 * 60 * 60)
     : 24;
 
   if (hoursSinceInteraction > 4) {

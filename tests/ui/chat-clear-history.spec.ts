@@ -112,12 +112,14 @@ test('Simplified Chinese clear-history dialog fits at 760 by 720 without overflo
   const device = new UiElectronFixture();
   try {
     await device.launch();
-    const main = await device.mainWindow();
-    await main.evaluate(async () => { await window.ourCompanion.ai.updateSettings({ uiLang: 'zh-CN' }); });
     await seedHistory(device);
     const panel = await device.panelWindow();
     await panel.bringToFront();
     await panel.evaluate(() => window.focus());
+    await panel.getByRole('button', { name: 'Settings' }).click();
+    await panel.getByRole('tab', { name: 'AI' }).click();
+    await panel.locator('.settings-panel select').nth(1).selectOption('zh-CN');
+    await panel.getByRole('button', { name: 'Save' }).click();
     await panel.setViewportSize({ width: 760, height: 720 });
     await panel.getByRole('button', { name: '对话' }).click();
     await expect(panel.getByTestId('panel-page-chat')).toHaveAttribute('data-motion-state', 'entered');

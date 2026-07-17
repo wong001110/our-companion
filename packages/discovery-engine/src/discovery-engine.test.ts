@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
-  applyDailyCap,
+  selectEligibleDiscoveries,
   checkDuplicateDiscovery,
   deduplicateDiscoveries,
   discoveryFromSignal,
@@ -10,17 +10,11 @@ import {
   passesDiscoveryQuality,
   planExploration,
   runDiscoveryAgents,
+  runDiscoveryPipeline,
   scoreDiscovery,
   captureSignal,
-  createPoolItem,
-  addToPool,
-  getShareCandidates,
-  evaluateShareCandidate,
-  determineInterruptionLevel,
-  shouldShareNow,
-  DiscoveryEngine,
 } from './index';
-import type { DiscoveryResult, AttentionState } from '@our-companion/shared';
+import type { DiscoveryConnector } from './index';
 
 describe('discovery engine', () => {
   it('scores with user interest, history, character expertise, novelty, and usefulness', () => {
@@ -41,7 +35,7 @@ describe('discovery engine', () => {
       }
     );
 
-    expect(score.finalScore).toBeGreaterThan(50);
+    expect(score.finalScore).toBeGreaterThan(0.5);
   });
 
   it('deduplicates by URL', () => {
@@ -88,12 +82,12 @@ describe('discovery engine', () => {
       })
     );
     const discovery = discoveryFromSignal(useful, {
-      userInterestScore: 80,
-      userHistoryScore: 70,
-      characterExpertiseScore: 60,
-      noveltyScore: 75,
-      usefulnessScore: 85,
-      finalScore: 76
+      userInterestScore: 0.8,
+      userHistoryScore: 0.7,
+      characterExpertiseScore: 0.6,
+      noveltyScore: 0.75,
+      usefulnessScore: 0.85,
+      finalScore: 0.76
     });
 
     expect(passesDiscoveryQuality(lowQuality)).toBe(false);
@@ -102,7 +96,7 @@ describe('discovery engine', () => {
   });
 
   it('applies the global daily cap', () => {
-    const capped = applyDailyCap(
+    const capped = selectEligibleDiscoveries(
       Array.from({ length: 12 }, (_, index) => ({
         id: `d${index}`,
         source: 'github' as const,
@@ -114,7 +108,7 @@ describe('discovery engine', () => {
         characterExpertiseScore: 0,
         noveltyScore: 0,
         usefulnessScore: 0,
-        finalScore: index,
+        finalScore: index / 12,
         status: 'candidate' as const,
         createdAt: 'now'
       })),
@@ -122,7 +116,7 @@ describe('discovery engine', () => {
     );
 
     expect(capped).toHaveLength(8);
-    expect(capped.every((item) => item.status === 'shared')).toBe(true);
+    expect(capped.every((item) => item.status === 'eligible')).toBe(true);
   });
 
   it('plans and runs discovery agents for a curiosity target', async () => {
@@ -141,167 +135,79 @@ describe('discovery engine', () => {
       createdAt: 'now'
     };
     const plan = planExploration(target);
+    const connector: DiscoveryConnector = {
+      source: 'github',
+      providerMode: 'fixture',
+      async fetch() {
+        return [{ id: 'desktop-companion', title: 'Desktop companion implementation', summary: 'A concrete implementation reference.', tags: ['desktop', 'companion'] }];
+      },
+      normalize(item) {
+        return {
+          source: 'github',
+          externalId: String(item.id),
+          title: String(item.title),
+          summary: String(item.summary),
+          tags: (item.tags as string[]) ?? [],
+          raw: item
+        };
+      }
+    };
     const candidates = await runDiscoveryAgents({
       userId: 'default',
       companionId: 'ann',
       curiosityTarget: target,
-      explorationPlan: plan
+      explorationPlan: plan,
+      connectors: [connector]
     });
 
     expect(plan.agents).toContain('builder');
     expect(candidates.length).toBeGreaterThan(0);
     expect(candidates[0]?.relatedCuriosityTargetId).toBe(target.id);
   });
-});
 
-describe('discovery pool', () => {
-  const mockResult: DiscoveryResult = {
-    id: 'result_1',
-    jobId: 'job_1',
-    summary: 'Found PixiJS tutorials',
-    detailedFindings: 'Multiple tutorials found',
-    evidence: [],
-    confidence: 0.8,
-    novelty: 0.7,
-    suggestedMemoryUpdates: ['mem_1'],
-    suggestedInsights: ['insight_1'],
-    suggestedFollowUps: [],
-    createdAt: new Date().toISOString(),
-  };
-
-  it('creates pool item from result', () => {
-    const item = createPoolItem(mockResult);
-    expect(item.sourceDiscoveryId).toBe('job_1');
-    expect(item.status).toBe('pooled');
-    expect(item.noveltyScore).toBe(0.7);
-  });
-
-  it('adds item to pool', () => {
-    const item = createPoolItem(mockResult);
-    const pool = addToPool([], item);
-    expect(pool).toHaveLength(1);
-  });
-
-  it('prevents duplicate pool items', () => {
-    const item = createPoolItem(mockResult);
-    let pool = addToPool([], item);
-    pool = addToPool(pool, item);
-    expect(pool).toHaveLength(1);
-  });
-
-  it('gets share candidates', () => {
-    const item = createPoolItem(mockResult);
-    const pool = addToPool([], item);
-    const candidates = getShareCandidates(pool);
-    expect(candidates).toHaveLength(1);
-  });
-});
-
-describe('share timing', () => {
-  const mockAttention: AttentionState = {
-    userActive: true,
-    appFocused: true,
-    recentInteraction: true,
-    doNotDisturb: false,
-    estimatedInterruptCost: 0.2,
-  };
-
-  it('evaluates share candidate', () => {
-    const item = {
-      id: 'item_1',
-      sourceDiscoveryId: 'disc_1',
-      title: 'PixiJS Tutorial',
-      summary: 'Found PixiJS tutorial',
-      evidence: [],
-      tags: [],
-      relatedTopics: [],
-      relatedMemories: [],
-      relatedInsights: [],
-      noveltyScore: 0.8,
-      relevanceScore: 0.7,
-      confidenceScore: 0.75,
-      sharePriority: 0.7,
-      status: 'pooled' as const,
-      createdAt: new Date().toISOString(),
-      returnedAt: new Date().toISOString(),
-      lastUpdatedAt: new Date().toISOString(),
+  it('treats an empty provider result as a normal empty outcome', async () => {
+    const onOutcome = vi.fn();
+    const connector: DiscoveryConnector = {
+      source: 'github',
+      providerMode: 'fixture',
+      fetch: async () => [],
+      normalize: () => {
+        throw new Error('normalize should not run');
+      }
     };
 
-    const candidate = evaluateShareCandidate(item, mockAttention, 0);
-    expect(candidate.poolItemId).toBe('item_1');
-    expect(candidate.suggestedTone).toBe('excited');
+    await expect(runDiscoveryPipeline(
+      [connector],
+      { userInterests: [], recentMemoryTags: [], activeCharacter: { expertise: [] } },
+      0,
+      onOutcome
+    )).resolves.toEqual([]);
+    expect(onOutcome).toHaveBeenCalledWith(expect.objectContaining({ status: 'empty', itemCount: 0 }));
   });
 
-  it('determines interruption level', () => {
-    const candidate = {
-      id: 'candidate_1',
-      poolItemId: 'item_1',
-      reason: 'High novelty',
-      priority: 0.8,
-      urgency: 0.7,
-      expectedUserValue: 0.8,
-      interruptionCost: 0.3,
-      confidence: 0.75,
-      suggestedTone: 'excited' as const,
-      suggestedTiming: 'now' as const,
+  it('captures provider failures and safely returns no discoveries', async () => {
+    const onOutcome = vi.fn();
+    const connector: DiscoveryConnector = {
+      source: 'github',
+      providerMode: 'live',
+      fetch: async () => {
+        throw new Error('rate limited');
+      },
+      normalize: () => {
+        throw new Error('normalize should not run');
+      }
     };
 
-    const level = determineInterruptionLevel(candidate, mockAttention);
-    expect(level).toBe('soft_prompt');
-  });
-
-  it('blocks share when do not disturb', () => {
-    const dndAttention: AttentionState = {
-      ...mockAttention,
-      doNotDisturb: true,
-    };
-
-    const candidate = {
-      id: 'candidate_1',
-      poolItemId: 'item_1',
-      reason: 'High novelty',
-      priority: 0.8,
-      urgency: 0.7,
-      expectedUserValue: 0.8,
-      interruptionCost: 0.3,
-      confidence: 0.75,
-      suggestedTone: 'excited' as const,
-      suggestedTiming: 'now' as const,
-    };
-
-    expect(shouldShareNow(candidate, dndAttention)).toBe(false);
-  });
-});
-
-describe('discovery engine v2', () => {
-  it('creates and completes discovery job', () => {
-    const engine = new DiscoveryEngine();
-    const job = engine.createDiscoveryJob('curiosity_1', 0.8, ['PixiJS']);
-
-    expect(job.status).toBe('pending');
-    expect(job.sourceCuriosityId).toBe('curiosity_1');
-
-    const completed = engine.completeDiscovery(job.id);
-    expect(completed).toBeTruthy();
-    expect(completed?.summary).toBeTruthy();
-  });
-
-  it('cancels discovery job', () => {
-    const engine = new DiscoveryEngine();
-    const job = engine.createDiscoveryJob('curiosity_1', 0.8);
-
-    engine.cancelDiscovery(job.id);
-    const queue = engine.getDiscoveryQueue();
-    expect(queue.find((j) => j.id === job.id)?.status).toBe('cancelled');
-  });
-
-  it('retries failed job', () => {
-    const engine = new DiscoveryEngine();
-    const job = engine.createDiscoveryJob('curiosity_1', 0.8);
-
-    engine.cancelDiscovery(job.id);
-    const retried = engine.retryDiscovery(job.id);
-    expect(retried?.status).toBe('pending');
-    expect(retried?.retryCount).toBe(1);
+    await expect(runDiscoveryPipeline(
+      [connector],
+      { userInterests: [], recentMemoryTags: [], activeCharacter: { expertise: [] } },
+      0,
+      onOutcome
+    )).resolves.toEqual([]);
+    expect(onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'failed',
+      error: 'rate limited',
+      itemCount: 0
+    }));
   });
 });

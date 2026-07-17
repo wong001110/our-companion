@@ -1,33 +1,28 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Discovery } from '@our-companion/shared';
 import { DISCOVERY_STARTUP_DELAY_MS } from '@our-companion/discovery-engine';
 import { DiscoveryScheduler } from './discoveryScheduler';
 
-vi.mock('@our-companion/discovery-engine', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@our-companion/discovery-engine')>();
-  return { ...actual, getDiscoveryFetchDelay: () => 100 };
-});
-
-function sampleDiscovery(id: string): Discovery {
+function sampleDiscovery(id: string, status: Discovery['status'] = 'eligible'): Discovery {
   return {
     id,
+    companionId: 'test-companion',
     source: 'github',
     title: `Discovery ${id}`,
     tags: ['frontend'],
     raw: {},
-    userInterestScore: 80,
-    userHistoryScore: 70,
-    characterExpertiseScore: 75,
-    noveltyScore: 70,
-    usefulnessScore: 65,
-    finalScore: 75,
-    status: 'shared',
-    createdAt: new Date().toISOString(),
-    sharedAt: new Date().toISOString()
+    userInterestScore: 0.8,
+    userHistoryScore: 0.7,
+    characterExpertiseScore: 0.75,
+    noveltyScore: 0.7,
+    usefulnessScore: 0.65,
+    finalScore: 0.75,
+    status,
+    createdAt: '2026-01-01T00:00:00.000Z'
   };
 }
 
-function createPresentationGateway() {
+function presentationGateway() {
   return {
     isBusy: vi.fn(() => false),
     hasPending: vi.fn(() => false),
@@ -35,171 +30,140 @@ function createPresentationGateway() {
   };
 }
 
+function deps(overrides: Partial<ConstructorParameters<typeof DiscoveryScheduler>[0]> = {}) {
+  return {
+    refresh: vi.fn(async () => ({ discoveries: [], newlyInserted: [] })),
+    getDiscoveryScore: vi.fn(() => 0.5),
+    countAnnouncedToday: vi.fn(() => 0),
+    getOldestQueuedDiscovery: vi.fn(async () => null),
+    presentationGateway: presentationGateway(),
+    ...overrides
+  };
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe('DiscoveryScheduler', () => {
-  it('queues exactly one when 10 discoveries are generated', async () => {
-    vi.useFakeTimers();
-    const ten = Array.from({ length: 10 }, (_, i) => sampleDiscovery(`gen_${i}`));
-    const refresh = vi.fn(async () => ({ discoveries: ten, newlyInserted: ten }));
-    const presentationGateway = createPresentationGateway();
-    const getOldestUnannouncedShared = vi.fn(async () => null);
-
-    const scheduler = new DiscoveryScheduler({
-      refresh,
-      getDiscoveryScore: () => 35,
-      countSharedToday: () => 0,
-      getOldestUnannouncedShared,
-      presentationGateway
-    });
-
-    scheduler.start();
-    await vi.advanceTimersByTimeAsync(DISCOVERY_STARTUP_DELAY_MS);
-    scheduler.stop();
-
-    expect(presentationGateway.requestPresentation).toHaveBeenCalledTimes(1);
-    const requested = (presentationGateway.requestPresentation.mock.calls as unknown[][])[0]![0] as Discovery;
-    expect(requested.id).toBe('gen_0');
-
-    vi.useRealTimers();
-  });
-
-  it('queues exactly one when 20 backlog discoveries exist', async () => {
+  it('waits the full injected 90-second startup boundary: 89 seconds is zero ticks, then 1 second is one', async () => {
     vi.useFakeTimers();
     const refresh = vi.fn(async () => ({ discoveries: [], newlyInserted: [] }));
-    const oldest = sampleDiscovery('oldest_backlog');
-    const getOldestUnannouncedShared = vi.fn(async () => oldest);
-    const presentationGateway = createPresentationGateway();
-
-    const scheduler = new DiscoveryScheduler({
-      refresh,
-      getDiscoveryScore: () => 35,
-      countSharedToday: () => 0,
-      getOldestUnannouncedShared,
-      presentationGateway
-    });
+    const setTimer = vi.fn((callback: (...args: unknown[]) => void, delay?: number) =>
+      setTimeout(callback, delay)
+    ) as unknown as typeof setTimeout;
+    const clearTimer = vi.fn((timer: ReturnType<typeof setTimeout>) =>
+      clearTimeout(timer)
+    ) as unknown as typeof clearTimeout;
+    const scheduler = new DiscoveryScheduler(deps({ refresh, setTimer, clearTimer }));
 
     scheduler.start();
-    await vi.advanceTimersByTimeAsync(DISCOVERY_STARTUP_DELAY_MS);
+    expect(DISCOVERY_STARTUP_DELAY_MS).toBe(90_000);
+    expect(setTimer).toHaveBeenCalledWith(expect.any(Function), 90_000);
+
+    await vi.advanceTimersByTimeAsync(89_000);
+    expect(refresh).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(refresh).toHaveBeenCalledOnce();
+
     scheduler.stop();
-
-    expect(getOldestUnannouncedShared).toHaveBeenCalledTimes(1);
-    expect(presentationGateway.requestPresentation).toHaveBeenCalledTimes(1);
-    const requested = (presentationGateway.requestPresentation.mock.calls as unknown[][])[0]![0] as Discovery;
-    expect(requested.id).toBe('oldest_backlog');
-
-    vi.useRealTimers();
+    expect(clearTimer).toHaveBeenCalledOnce();
   });
 
-  it('queues zero when Ann is busy', async () => {
-    vi.useFakeTimers();
-    const fresh = [sampleDiscovery('fresh1')];
-    const refresh = vi.fn(async () => ({ discoveries: fresh, newlyInserted: fresh }));
-    const presentationGateway = createPresentationGateway();
-    presentationGateway.isBusy.mockReturnValue(true);
-    const getOldestUnannouncedShared = vi.fn(async () => null);
-
-    const scheduler = new DiscoveryScheduler({
+  it('presents exactly one eligible discovery from a healthy provider refresh', async () => {
+    const first = sampleDiscovery('eligible-first');
+    const second = sampleDiscovery('eligible-second');
+    const refresh = vi.fn(async () => ({
+      discoveries: [first, second],
+      newlyInserted: [first, second]
+    }));
+    const gateway = presentationGateway();
+    const scheduler = new DiscoveryScheduler(deps({
       refresh,
-      getDiscoveryScore: () => 35,
-      countSharedToday: () => 0,
-      getOldestUnannouncedShared,
-      presentationGateway
+      presentationGateway: gateway
+    }));
+
+    const result = await scheduler.runOnce();
+
+    expect(result).toEqual({
+      status: 'completed',
+      presentedDiscoveryId: first.id
     });
-
-    scheduler.start();
-    await vi.advanceTimersByTimeAsync(DISCOVERY_STARTUP_DELAY_MS);
-    scheduler.stop();
-
-    expect(presentationGateway.requestPresentation).not.toHaveBeenCalled();
-
-    vi.useRealTimers();
+    expect(gateway.requestPresentation).toHaveBeenCalledOnce();
+    expect(gateway.requestPresentation).toHaveBeenCalledWith(first);
   });
 
-  it('queues zero when a discovery is already pending', async () => {
-    vi.useFakeTimers();
-    const fresh = [sampleDiscovery('fresh1')];
-    const refresh = vi.fn(async () => ({ discoveries: fresh, newlyInserted: fresh }));
-    const presentationGateway = createPresentationGateway();
-    presentationGateway.hasPending.mockReturnValue(true);
-    const getOldestUnannouncedShared = vi.fn(async () => null);
-
-    const scheduler = new DiscoveryScheduler({
+  it('completes empty safely when a healthy provider returns no valid discoveries', async () => {
+    const refresh = vi.fn(async () => ({ discoveries: [], newlyInserted: [] }));
+    const gateway = presentationGateway();
+    const scheduler = new DiscoveryScheduler(deps({
       refresh,
-      getDiscoveryScore: () => 35,
-      countSharedToday: () => 0,
-      getOldestUnannouncedShared,
-      presentationGateway
+      presentationGateway: gateway
+    }));
+
+    await expect(scheduler.runOnce()).resolves.toEqual({
+      status: 'empty',
+      reason: 'no_valid_discoveries'
     });
-
-    scheduler.start();
-    await vi.advanceTimersByTimeAsync(DISCOVERY_STARTUP_DELAY_MS);
-    scheduler.stop();
-
-    expect(presentationGateway.requestPresentation).not.toHaveBeenCalled();
-
-    vi.useRealTimers();
+    expect(gateway.requestPresentation).not.toHaveBeenCalled();
   });
 
-  it('queues one after speech finishes and next tick runs', async () => {
-    vi.useFakeTimers();
-    const fresh = [sampleDiscovery('fresh1')];
-    const refresh = vi.fn(async () => ({ discoveries: fresh, newlyInserted: fresh }));
-    const presentationGateway = createPresentationGateway();
-
-    let busy = true;
-    presentationGateway.isBusy.mockImplementation(() => busy);
-
-    const scheduler = new DiscoveryScheduler({
-      refresh,
-      getDiscoveryScore: () => 35,
-      countSharedToday: () => 0,
-      getOldestUnannouncedShared: async () => null,
-      presentationGateway
+  it('reports provider failure safely without scheduling a presentation', async () => {
+    const refresh = vi.fn(async () => {
+      throw new Error('provider unavailable');
     });
+    const gateway = presentationGateway();
+    const scheduler = new DiscoveryScheduler(deps({
+      refresh,
+      presentationGateway: gateway
+    }));
 
-    scheduler.start();
-
-    // First tick — Ann is busy, nothing queued
-    await vi.advanceTimersByTimeAsync(DISCOVERY_STARTUP_DELAY_MS);
-    expect(presentationGateway.requestPresentation).not.toHaveBeenCalled();
-
-    // Ann finishes speaking
-    busy = false;
-
-    // Next tick fires after mocked 100ms delay
-    await vi.advanceTimersByTimeAsync(100);
-    scheduler.stop();
-
-    expect(presentationGateway.requestPresentation).toHaveBeenCalledTimes(1);
-
-    vi.useRealTimers();
+    await expect(scheduler.runOnce()).resolves.toEqual({
+      status: 'failed',
+      error: 'provider unavailable'
+    });
+    expect(gateway.requestPresentation).not.toHaveBeenCalled();
   });
 
-  it('does not request another discovery while the gateway has a pending presentation', async () => {
-    vi.useFakeTimers();
-    const presentationGateway = createPresentationGateway();
-
-    const fresh = [sampleDiscovery('dup1')];
-    const refresh = vi.fn(async () => ({ discoveries: fresh, newlyInserted: fresh }));
-
-    const scheduler = new DiscoveryScheduler({
+  it('presents the oldest queued discovery after the daily announcement cap', async () => {
+    const oldest = sampleDiscovery('oldest-queued', 'queued');
+    const refresh = vi.fn(async () => ({ discoveries: [], newlyInserted: [] }));
+    const getOldestQueuedDiscovery = vi.fn(async () => oldest);
+    const gateway = presentationGateway();
+    const scheduler = new DiscoveryScheduler(deps({
       refresh,
-      getDiscoveryScore: () => 35,
-      countSharedToday: () => 0,
-      getOldestUnannouncedShared: async () => null,
-      presentationGateway
+      countAnnouncedToday: () => 10,
+      getOldestQueuedDiscovery,
+      presentationGateway: gateway
+    }));
+
+    const result = await scheduler.runOnce();
+
+    expect(refresh).not.toHaveBeenCalled();
+    expect(getOldestQueuedDiscovery).toHaveBeenCalledOnce();
+    expect(gateway.requestPresentation).toHaveBeenCalledWith(oldest);
+    expect(result.presentedDiscoveryId).toBe(oldest.id);
+  });
+
+  it.each([
+    ['busy', { busy: true, pending: false }],
+    ['pending', { busy: false, pending: true }]
+  ])('skips refresh while the presentation gateway is %s', async (_label, state) => {
+    const refresh = vi.fn(async () => ({ discoveries: [], newlyInserted: [] }));
+    const gateway = presentationGateway();
+    gateway.isBusy.mockReturnValue(state.busy);
+    gateway.hasPending.mockReturnValue(state.pending);
+    const scheduler = new DiscoveryScheduler(deps({
+      refresh,
+      presentationGateway: gateway
+    }));
+
+    await expect(scheduler.runOnce()).resolves.toEqual({
+      status: 'skipped',
+      reason: 'presentation_busy'
     });
-
-    scheduler.start();
-    await vi.advanceTimersByTimeAsync(DISCOVERY_STARTUP_DELAY_MS);
-
-    expect(presentationGateway.requestPresentation).toHaveBeenCalledTimes(1);
-
-    presentationGateway.hasPending.mockReturnValue(true);
-    await vi.advanceTimersByTimeAsync(100);
-    scheduler.stop();
-
-    expect(presentationGateway.requestPresentation).toHaveBeenCalledTimes(1);
-
-    vi.useRealTimers();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(gateway.requestPresentation).not.toHaveBeenCalled();
   });
 });

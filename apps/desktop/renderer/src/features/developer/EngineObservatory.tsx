@@ -3,6 +3,7 @@ import type {
   BaseEvent,
   EmotionState,
   EngineSnapshot,
+  EngineTrace,
   ExplorationLoopEvent,
   ExplorationState,
   SpeechStatus
@@ -237,6 +238,8 @@ export function EngineObservatory() {
         )}
       </section>
 
+      <EngineTraceTimeline traces={snapshot?.engineTraces ?? []} />
+
       <section className="debug-ai-log engine-event-timeline">
         <div className="debug-ai-log-header">
           <span className="debug-ai-log-title">Foundation event timeline</span>
@@ -402,7 +405,7 @@ export function EngineObservatory() {
                       <li key={discovery.id}>
                         <strong>{discovery.title}</strong>
                         <span>
-                          {discovery.source} · score {discovery.finalScore}
+                          {discovery.source} · score {Math.round(discovery.finalScore * 100)}
                         </span>
                       </li>
                     ))}
@@ -465,12 +468,12 @@ export function EngineObservatory() {
               )}
               <div className="engine-meta" style={{ marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 <button onClick={() => void window.ourCompanion.discovery.generateNow().then(() => void refreshAll())}>Generate now</button>
-                <button onClick={() => void window.ourCompanion.discovery.shareNext().then(() => void refreshAll())}>Share next</button>
+                <button onClick={() => void window.ourCompanion.discovery.presentNext().then(() => void refreshAll())}>Present next</button>
                 <button onClick={() => { window.__discoveryQueue?.dismissCurrent(); refreshQueueStats(); void refreshAll(); }}>Dismiss current</button>
                 <button onClick={() => { window.__discoveryQueue?.reset(); refreshQueueStats(); void refreshAll(); }}>Reset queue</button>
-                <button onClick={() => void window.ourCompanion.discovery.resetStatuses().then(() => void refreshAll())}>Reset statuses</button>
-                <button onClick={() => void window.ourCompanion.discovery.countUnannounced().then((r) => { alert(`${r.count} unannounced`); void refreshAll(); })}>Count unannounced</button>
-                <button onClick={() => void window.ourCompanion.discovery.markSharedAsUnannounced().then((r) => { alert(`Cleared history; ${r.count} shared discoveries can now be re-announced`); void refreshAll(); })}>Reset announcement history</button>
+                <button onClick={() => void window.ourCompanion.discovery.resetLifecycle().then(() => void refreshAll())}>Reset lifecycle</button>
+                <button onClick={() => void window.ourCompanion.discovery.countPendingAnnouncements().then((r) => { alert(`${r.count} pending announcements`); void refreshAll(); })}>Count pending</button>
+                <button onClick={() => void window.ourCompanion.discovery.resetAnnouncementHistory().then((r) => { alert(`Cleared history; ${r.count} discoveries are eligible to be announced`); void refreshAll(); })}>Reset announcement history</button>
                 <button onClick={() => void window.ourCompanion.discovery.clearPool().then(() => void refreshAll())}>Clear pool</button>
               </div>
               <div style={{ marginTop: '8px' }}>
@@ -564,7 +567,7 @@ export function EngineObservatory() {
         </SnapshotPanel>
 
         <SnapshotPanel title="Society" open={expandedPanels.society} onToggle={() => togglePanel('society')}>
-          <p className="engine-empty">Society engine is not wired into the desktop app in v1.</p>
+          <p className="engine-empty">Society engine is not wired into the desktop runtime.</p>
         </SnapshotPanel>
       </div>
 
@@ -590,6 +593,71 @@ export function EngineObservatory() {
         <p className="engine-meta">Snapshot captured at {new Date(snapshot.capturedAt).toLocaleString()}</p>
       )}
     </div>
+  );
+}
+
+export function EngineTraceTimeline({ traces }: { traces: EngineTrace[] }) {
+  return (
+    <section className="engine-trace-timeline" aria-labelledby="engine-trace-timeline-title">
+      <div className="engine-trace-timeline-header">
+        <div>
+          <h3 id="engine-trace-timeline-title">Engine timeline</h3>
+          <p>Production operations and their causal references.</p>
+        </div>
+        <span className="debug-ai-log-count">{traces.length} traces</span>
+      </div>
+      {traces.length === 0 ? (
+        <p className="engine-empty">No engine traces recorded yet.</p>
+      ) : (
+        <div className="engine-trace-table-scroll">
+          <table className="engine-trace-table">
+            <thead>
+              <tr>
+                <th scope="col">Engine</th>
+                <th scope="col">Operation</th>
+                <th scope="col">Status</th>
+                <th scope="col">Provider mode</th>
+                <th scope="col">Input refs</th>
+                <th scope="col">Output refs</th>
+                <th scope="col">Duration</th>
+                <th scope="col">Skip reason</th>
+                <th scope="col">Error</th>
+                <th scope="col">Correlation ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {traces.map((trace) => (
+                <tr key={trace.id} className={`engine-trace-row engine-trace-row-${trace.status}`}>
+                  <td><strong>{trace.engine}</strong></td>
+                  <td>{trace.operation}</td>
+                  <td>
+                    <span className={`engine-trace-status engine-trace-status-${trace.status}`}>
+                      {trace.status === 'empty' ? 'No valid discoveries found' : trace.status}
+                    </span>
+                  </td>
+                  <td>{trace.providerMode}</td>
+                  <td>{renderTraceRefs(trace.inputRefs)}</td>
+                  <td>{renderTraceRefs(trace.outputRefs)}</td>
+                  <td>{trace.durationMs === undefined ? '—' : `${trace.durationMs} ms`}</td>
+                  <td>{trace.skipReason ?? '—'}</td>
+                  <td className="engine-trace-error">{trace.error ?? '—'}</td>
+                  <td><code>{trace.correlationId}</code></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function renderTraceRefs(refs: string[]): ReactNode {
+  if (refs.length === 0) return '—';
+  return (
+    <span className="engine-trace-refs">
+      {refs.map((ref) => <code key={ref}>{ref}</code>)}
+    </span>
   );
 }
 

@@ -1,13 +1,14 @@
 import type {
   CompanionDecision,
   CompanionDecisionInput,
+  AttentionAssessment,
+  CompanionContext,
   Discovery,
   UserCompanionRelationship,
   UserContext,
 } from '@our-companion/shared';
-import { createId, nowIso } from '@our-companion/shared';
+import { createId, nowIso, toUnitScore } from '@our-companion/shared';
 import { CompanionBrain } from './companion-brain';
-import { assessAttention } from './index';
 
 export interface InitiativeBudgetState {
   remaining: number;
@@ -26,6 +27,47 @@ export interface UnifiedDecisionInput {
 }
 
 const HARD_SHARE_MAX = 8;
+
+interface AssessAttentionInput {
+  targetId: string;
+  targetType: string;
+  noveltyScore?: number;
+  growthValue?: number;
+  urgency?: number;
+  sourceQuality?: number;
+  userContext: UserContext;
+  companionContext: CompanionContext;
+}
+
+function assessAttention(input: AssessAttentionInput): AttentionAssessment {
+  const fatiguePenalty = (input.userContext.fatigueScore ?? 0) * 0.25;
+  const timingPenalty = input.userContext.mode === 'focused' || input.userContext.mode === 'working' ? 0.2 : 0;
+  const latePenalty = isLateNight(input.userContext.localTime) ? 0.15 : 0;
+  const attentionValue = toUnitScore(
+    (input.noveltyScore ?? 0.5) * 0.25 +
+      (input.growthValue ?? 0.5) * 0.35 +
+      (input.urgency ?? 0.3) * 0.15 +
+      (input.sourceQuality ?? 0.7) * 0.15 +
+      input.companionContext.trustScore * 0.1
+  );
+  const attentionCost = toUnitScore(0.2 + fatiguePenalty + timingPenalty + latePenalty);
+  const deservesAttention =
+    attentionValue >= attentionCost + 0.2 &&
+    input.companionContext.attentionBudgetRemaining >= attentionCost &&
+    (input.sourceQuality ?? 0.7) >= 0.35;
+
+  return {
+    id: createId('attention'),
+    targetId: input.targetId,
+    targetType: input.targetType,
+    deservesAttention,
+    attentionCost,
+    attentionValue,
+    reason: deservesAttention
+      ? 'Attention value clears timing, fatigue, quality, and budget gates.'
+      : 'Attention is protected by timing, fatigue, quality, or budget gates.'
+  };
+}
 
 function isLateNight(localTime: string): boolean {
   const hour = Number(localTime.slice(11, 13) || localTime.slice(0, 2));
@@ -74,17 +116,17 @@ function animationIntentFor(action: CompanionDecision['action']): string | undef
 
 export function computeInitiativeBudget(
   relationship: UserCompanionRelationship,
-  sharedToday: number,
+  announcedToday: number,
   focusedMode: boolean
 ): InitiativeBudgetState {
   let base = 3;
   if (relationship.preferredInteractionFrequency === 'high') base += 2;
   if (relationship.preferredInteractionFrequency === 'low') base -= 1;
-  base += Math.min(2, Math.floor(relationship.trust / 30));
+  base += Math.min(2, Math.floor(relationship.trust / 0.3));
   base -= Math.min(3, relationship.recentIgnoredInteractions);
   if (focusedMode) base -= 2;
   const max = HARD_SHARE_MAX;
-  const remaining = Math.max(0, Math.min(max, base - sharedToday));
+  const remaining = Math.max(0, Math.min(max, base - announcedToday));
   return { remaining, max, recoveryRate: 1 };
 }
 
@@ -139,9 +181,9 @@ export function decideUnifiedCompanionAction(input: UnifiedDecisionInput): Compa
       userContext: input.userContext,
       companionContext: {
         dailySharedCount: input.initiativeBudget.max - input.initiativeBudget.remaining,
-        attentionBudgetRemaining: input.initiativeBudget.remaining * 20,
-        curiosityBudgetRemaining: 100,
-        trustScore: input.relationship.trust / 100,
+        attentionBudgetRemaining: toUnitScore(input.initiativeBudget.remaining / input.initiativeBudget.max),
+        curiosityBudgetRemaining: 1,
+        trustScore: input.relationship.trust,
       },
     });
     if (action === 'share_discovery' && !attention.deservesAttention) {

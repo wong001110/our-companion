@@ -44,7 +44,7 @@ describe('CompanionRuntime session animation state', () => {
       saveCharacterState: vi.fn((next) => { current = next; return next; }),
       listPendingActions: () => [],
       getRelationship: () => ({}),
-      countSharedToday: () => 0,
+      countAnnouncedToday: () => 0,
       listInteractionFeedbackActions: () => [],
     } as any;
     const emitState = vi.fn();

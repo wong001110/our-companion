@@ -17,7 +17,7 @@
     "typecheck": "tsc -b --force",
     "test": "vitest run",
     "lint": "tsc -b --pretty false",
-    "arch:check": "node scripts/check-architecture-boundaries.mjs",
+    "arch:check": "node --test scripts/check-architecture-boundaries.test.mjs && node scripts/check-architecture-boundaries.mjs",
     "test:ui": "npm run build && playwright test tests/ui",
     "test:ui:headed": "npm run build && playwright test tests/ui --headed",
     "qa:ui": "node scripts/run-ui-qa.mjs",

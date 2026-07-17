@@ -1,3 +1,5 @@
+import type { SimulationResult } from '../simulation';
+
 export type TestLevel = 'unit' | 'integration' | 'runtime' | 'scenario' | 'experience' | 'regression';
 
 export interface TestResult {
@@ -22,10 +24,11 @@ export interface TestReport {
   total: number;
   duration: number;
   timestamp: string;
+  productionExecution?: SimulationResult;
 }
 
 export interface ExperienceAssertion {
   type: string;
   description: string;
-  check: () => boolean;
+  check: (state: Record<string, unknown>) => boolean;
 }

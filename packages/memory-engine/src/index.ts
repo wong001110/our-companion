@@ -1,7 +1,4 @@
 import type {
-  Concept,
-  ConceptMatchInput,
-  ConceptMatchResult,
   CreateMemoryEdgeInput,
   CreateMemoryNodeInput,
   Discovery,
@@ -10,9 +7,6 @@ import type {
   InterestGraph,
   InterestNode,
   InterestNodeType,
-  Insight,
-  Knowledge,
-  KnowledgeGraph,
   MemoryEdge,
   MemoryGraph,
   MemoryNode,
@@ -29,7 +23,7 @@ export function createMemoryNode(input: CreateMemoryNodeInput): MemoryNode {
     title: input.title,
     summary: input.summary,
     content: input.content,
-    importanceScore: input.type === 'decision' || input.type === 'outcome' ? 75 : 50,
+    importance: input.type === 'decision' || input.type === 'outcome' ? 0.75 : 0.5,
     source: input.source,
     sourceUrl: input.sourceUrl,
     isPinned: false,
@@ -100,182 +94,7 @@ function normalizeLabel(value: string): string {
     .slice(0, 80);
 }
 
-export function conceptKey(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 8)
-    .join('-');
-}
-
-export function createConcept(input: ConceptMatchInput): Concept {
-  const timestamp = nowIso();
-  const name = normalizeLabel(input.name);
-  return {
-    id: createId('concept'),
-    key: conceptKey(name),
-    name,
-    summary: input.summary ?? name,
-    topics: input.topics ?? [],
-    entities: input.entities ?? [],
-    relatedDiscoveryIds: input.discoveryId ? [input.discoveryId] : [],
-    firstSeenAt: timestamp,
-    lastSeenAt: timestamp,
-    strength: 1,
-    status: 'active'
-  };
-}
-
-export function matchConcept(input: ConceptMatchInput, existing: Concept[]): ConceptMatchResult {
-  const key = conceptKey(input.name);
-  const inputTopics = new Set((input.topics ?? []).map((topic) => topic.toLowerCase()));
-  const matched = existing.find((concept) => {
-    if (concept.key === key) return true;
-    const overlap = concept.topics.filter((topic) => inputTopics.has(topic.toLowerCase())).length;
-    return inputTopics.size > 0 && overlap >= Math.min(2, inputTopics.size);
-  });
-
-  if (!matched) {
-    return { type: 'created', concept: createConcept(input) };
-  }
-
-  const topicSet = new Set([...matched.topics, ...(input.topics ?? [])]);
-  const entitySet = new Set([...matched.entities, ...(input.entities ?? [])]);
-  const discoverySet = new Set([...matched.relatedDiscoveryIds, ...(input.discoveryId ? [input.discoveryId] : [])]);
-  return {
-    type: 'matched',
-    concept: {
-      ...matched,
-      summary: input.summary ?? matched.summary,
-      topics: [...topicSet],
-      entities: [...entitySet],
-      relatedDiscoveryIds: [...discoverySet],
-      lastSeenAt: nowIso(),
-      strength: Math.min(100, matched.strength + 1),
-      status: 'active'
-    }
-  };
-}
-
-export function createKnowledgeFromInsight(input: {
-  title?: string;
-  insight: Insight;
-  concepts?: Concept[];
-  journeyId?: string;
-}): Knowledge {
-  const timestamp = nowIso();
-  return {
-    id: createId('knowledge'),
-    title: input.title ?? input.insight.title,
-    summary: input.insight.explanation,
-    conceptIds: input.insight.relatedConceptIds,
-    insightIds: [input.insight.id],
-    journeyIds: input.journeyId ? [input.journeyId] : [],
-    experienceIds: [],
-    references: [
-      {
-        id: input.insight.id,
-        kind: 'insight',
-        title: input.insight.title,
-        summary: input.insight.explanation
-      },
-      ...(input.concepts ?? []).map((concept) => ({
-        id: concept.id,
-        kind: 'concept' as const,
-        title: concept.name,
-        summary: concept.summary
-      }))
-    ],
-    confidence: input.insight.confidence,
-    strength: Math.max(1, Math.round(input.insight.growthValue / 20)),
-    status: 'active',
-    createdAt: timestamp,
-    updatedAt: timestamp
-  };
-}
-
-export function buildKnowledgeGraph(knowledge: Knowledge[]): KnowledgeGraph {
-  const nodes = new Map<string, KnowledgeGraph['nodes'][number]>();
-  const edges: KnowledgeGraph['edges'] = [];
-
-  for (const item of knowledge) {
-    nodes.set(item.id, { id: item.id, kind: 'knowledge', title: item.title });
-    for (const reference of item.references) {
-      nodes.set(reference.id, { id: reference.id, kind: reference.kind, title: reference.title });
-      edges.push({
-        id: createId('knowledge_edge'),
-        fromId: item.id,
-        toId: reference.id,
-        type: reference.kind === 'insight' ? 'derived_from' : 'related_to',
-        confidence: item.confidence
-      });
-    }
-  }
-
-  return { nodes: [...nodes.values()], edges };
-}
-
-export function archiveKnowledge(knowledge: Knowledge, reason = 'Inactive knowledge cooled down.'): Knowledge {
-  return {
-    ...knowledge,
-    status: 'archived',
-    summary: `${knowledge.summary}\n\nArchive note: ${reason}`,
-    archivedAt: nowIso(),
-    updatedAt: nowIso()
-  };
-}
-
-export function restoreKnowledge(knowledge: Knowledge): Knowledge {
-  return {
-    ...knowledge,
-    status: 'active',
-    revivedAt: nowIso(),
-    updatedAt: nowIso()
-  };
-}
-
-export function reviveConcept(concept: Concept, reason: string): Concept {
-  return {
-    ...concept,
-    status: 'active',
-    summary: `${concept.summary}\nRevived: ${reason}`,
-    lastSeenAt: nowIso(),
-    strength: Math.max(concept.strength + 1, 2)
-  };
-}
-
-export function decayConcept(concept: Concept, inactiveDays: number): Concept {
-  if (inactiveDays >= 60) return { ...concept, status: 'archived', strength: Math.max(0, concept.strength - 2) };
-  if (inactiveDays >= 21) return { ...concept, status: 'dormant', strength: Math.max(0, concept.strength - 1) };
-  return concept;
-}
-
-export function retrieveKnowledge(input: {
-  knowledge: Knowledge[];
-  query: string;
-  activeJourneyId?: string;
-  currentConceptIds?: string[];
-  limit?: number;
-}): Knowledge[] {
-  const lowered = input.query.toLowerCase();
-  const conceptSet = new Set(input.currentConceptIds ?? []);
-  return [...input.knowledge]
-    .map((item) => {
-      const textScore = `${item.title} ${item.summary}`.toLowerCase().includes(lowered) ? 2 : 0;
-      const journeyScore = input.activeJourneyId && item.journeyIds.includes(input.activeJourneyId) ? 2 : 0;
-      const conceptScore = item.conceptIds.some((id) => conceptSet.has(id)) ? 2 : 0;
-      const activeScore = item.status === 'active' ? 1 : 0;
-      return { item, score: textScore + journeyScore + conceptScore + activeScore + item.strength / 10 };
-    })
-    .filter((entry) => entry.score > 0)
-    .sort((left, right) => right.score - left.score)
-    .slice(0, input.limit ?? 10)
-    .map((entry) => entry.item);
-}
-
-function addNode(nodes: Map<string, InterestNode>, node: Omit<InterestNode, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }) {
+ function addNode(nodes: Map<string, InterestNode>, node: Omit<InterestNode, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }) {
   const key = node.label.toLowerCase();
   const existing = nodes.get(key);
   const timestamp = nowIso();
@@ -309,7 +128,7 @@ export function buildInterestGraph(input: BuildInterestGraphInput): InterestGrap
       label,
       description: memory.summary ?? memory.content,
       type: interestTypeFromMemory(memory.type),
-      weight: clamp01(memory.importanceScore / 100),
+      weight: memory.importance,
       confidence: memory.isPinned ? 0.9 : 0.7,
       freshness: 0.85,
       source: 'memory'
@@ -336,7 +155,7 @@ export function buildInterestGraph(input: BuildInterestGraphInput): InterestGrap
       label: normalizeLabel(discovery.title),
       description: discovery.summary,
       type: discovery.source === 'github' ? 'technology' : 'topic',
-      weight: clamp01(discovery.finalScore / 100 + feedbackBoost),
+      weight: clamp01(discovery.finalScore + feedbackBoost),
       confidence: discovery.status === 'saved' ? 0.85 : 0.6,
       freshness: discovery.status === 'rejected' ? 0.35 : 0.7,
       source: 'discovery'
@@ -376,23 +195,3 @@ export function buildInterestGraph(input: BuildInterestGraphInput): InterestGrap
     updatedAt: nowIso()
   };
 }
-
-// ============================================================================
-// Memory Engine V2 — New memory architecture
-// ============================================================================
-
-export { MemoryEngine } from './memory-engine';
-export { createShortTermMemory, addToBuffer, getRecentContext, isBufferFull, classifyImportance } from './short-term-memory';
-export { promoteToLongTerm, isEligibleForLongTerm } from './long-term-memory';
-export { scoreMemory, explainRelevance, retrieveMemories } from './memory-retrieval';
-export { consolidateMemories } from './memory-consolidation';
-export { calculateDecayScore, applyDecay, reinforceMemory } from './memory-decay';
-export { buildMemoryGraph, createMemoryEdgeFromRecords } from './memory-graph';
-export {
-  STM_MAX_SIZE,
-  DEFAULT_DECAY_RATE,
-  HIGH_IMPORTANCE_THRESHOLD,
-  HIGH_CONFIDENCE_THRESHOLD,
-  MIN_IMPORTANCE_FOR_LTM,
-  SIMILARITY_THRESHOLD_FOR_MERGE,
-} from './types';

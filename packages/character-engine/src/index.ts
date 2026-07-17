@@ -13,7 +13,6 @@ import type {
   EmotionState,
   Intent,
   NormalizedDiscovery,
-  PerformanceScript,
   ValidationResult
 } from '@our-companion/shared';
 import { clampScore, createId, nowIso } from '@our-companion/shared';
@@ -335,20 +334,18 @@ export interface CharacterExpressionContext {
 
 export function emotionForDecision(decision: Pick<CompanionDecision, 'action' | 'priority'>, context: CharacterExpressionContext = {}): CompanionMood {
   if ((context.energy ?? 70) < 25) return 'tired';
-  if (decision.action === 'perform_action') return 'focused';
-  if (decision.action === 'speak' && decision.priority === 'high') return 'curious';
-  if (decision.action === 'queue_for_later') return 'thinking';
-  if (decision.action === 'remember_only') return 'focused';
-  if (decision.action === 'ignore' || decision.action === 'stay_silent') return 'neutral';
+  if (decision.action === 'execute_approved_action' || decision.action === 'suggest_action') return 'focused';
+  if ((decision.action === 'respond' || decision.action === 'share_discovery') && decision.priority === 'high') return 'curious';
+  if (decision.action === 'idle_activity') return 'thinking';
+  if (decision.action === 'stay_silent') return 'neutral';
   return 'happy';
 }
 
 export function behaviourForDecision(decision: Pick<CompanionDecision, 'action'>): BehaviourState {
-  if (decision.action === 'speak') return 'present_discovery';
-  if (decision.action === 'perform_action') return 'perform_task';
-  if (decision.action === 'queue_for_later') return 'wait';
-  if (decision.action === 'remember_only') return 'reflect';
-  if (decision.action === 'ignore' || decision.action === 'stay_silent') return 'idle';
+  if (decision.action === 'share_discovery' || decision.action === 'respond') return 'present_discovery';
+  if (decision.action === 'execute_approved_action' || decision.action === 'suggest_action') return 'perform_task';
+  if (decision.action === 'idle_activity') return 'reflect';
+  if (decision.action === 'stay_silent') return 'idle';
   return 'observe';
 }
 
@@ -413,7 +410,23 @@ export function planAnimationRequest(input: {
   };
 }
 
-export function planPerformanceScript(actionId: string, outcome: 'success' | 'failure' = 'success'): PerformanceScript {
+export interface AnimationPerformanceStep {
+  animationKey: CompanionAnimationName;
+  label: string;
+  durationMs: number;
+}
+
+export interface AnimationPerformancePlan {
+  id: string;
+  actionId: string;
+  steps: AnimationPerformanceStep[];
+  createdAt: string;
+}
+
+export function planPerformanceScript(
+  actionId: string,
+  outcome: 'success' | 'failure' = 'success'
+): AnimationPerformancePlan {
   return {
     id: createId('performance'),
     actionId,
@@ -430,41 +443,3 @@ export function planPerformanceScript(actionId: string, outcome: 'success' | 'fa
     createdAt: nowIso()
   };
 }
-
-export { getDiscoveryFetchDelay, getDiscoveryFetchDelayRange, DISCOVERY_STARTUP_DELAY_MS } from '@our-companion/discovery-engine';
-
-// ============================================================================
-// Character Runtime V2 — Runtime and presence
-// ============================================================================
-
-export {
-  createRuntimeContext,
-  canTransition,
-  transitionRuntimeState,
-  submitBehaviour,
-  startBehaviour,
-  completeBehaviour,
-  interruptBehaviour,
-  neutralEmotionState,
-  CharacterRuntime,
-} from './runtime/character-runtime';
-
-export type {
-  CharacterRuntimeDeps,
-  CharacterDiscoveryReadyInput,
-  CharacterFeedbackInput,
-  CharacterUserCommandInput,
-  CharacterSettleInput,
-} from './runtime/character-runtime';
-
-export {
-  createAttentionState,
-  determinePresenceMode,
-  shouldAllowInterruption,
-  updateAttentionState,
-} from './presence/presence-system';
-
-export {
-  PerformanceEngine,
-  defaultPerformanceScripts,
-} from './performance/performance-engine';

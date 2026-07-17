@@ -96,7 +96,7 @@ describe('DecisionCoordinator', () => {
     const pending = coordinator.ensureDeferred(shareDecision('now'), 'ann', 'disc-1', 'active_command_exists');
     const context = {
       companionId: 'ann', userId: 'local', sessionActive: false, companionDragging: false,
-      relationship: {} as never, sharedToday: 0, recentActions: [] as string[],
+      relationship: {} as never, announcedToday: 0, recentActions: [] as string[],
     };
 
     decideAction.mockReturnValueOnce(shareDecision('next_idle'));

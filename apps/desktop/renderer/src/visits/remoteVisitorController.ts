@@ -36,10 +36,10 @@ export function walkSelection(
   const vertical = dy < 0 ? 'up' : 'down';
   if (Math.abs(dx) > 8 && Math.abs(dy) > 8) {
     const diagonal = `${vertical === 'up' ? 'top' : 'bottom'}_${horizontal}` as VisualVisitFacing;
-    const legacy = `Walk_${vertical === 'up' ? 'Up' : 'Down'}${horizontal === 'left' ? 'Left' : 'Right'}`;
+    const fallbackAnimation = `Walk_${vertical === 'up' ? 'Up' : 'Down'}${horizontal === 'left' ? 'Left' : 'Right'}`;
     const preferred = `Walk_${vertical === 'up' ? 'Top' : 'Bottom'}${horizontal === 'left' ? 'Left' : 'Right'}`;
     if (available[preferred]) return { animationName: preferred, facing: diagonal };
-    if (available[legacy]) return { animationName: legacy, facing: diagonal };
+    if (available[fallbackAnimation]) return { animationName: fallbackAnimation, facing: diagonal };
     return { animationName: horizontal === 'left' ? 'Walk_Left' : 'Walk_Right', facing: diagonal };
   }
   if (Math.abs(dx) >= Math.abs(dy)) return { animationName: horizontal === 'left' ? 'Walk_Left' : 'Walk_Right', facing: horizontal };

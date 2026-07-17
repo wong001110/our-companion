@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { CharacterBehaviorSettings, CharacterProfile, CharacterRuntimeState, CompanionJourney, DiaryEntry, Discovery, ExplorationCycleResult, ExplorationLoopEvent, JourneyMilestoneV2, KnowledgeGraph } from '@our-companion/shared';
+import type { CharacterBehaviorSettings, CharacterProfile, CharacterRuntimeState, CompanionJourney, DiaryEntry, Discovery, ExplorationCycleResult, ExplorationLoopEvent, JourneyTimelineEntry, KnowledgeGraph } from '@our-companion/shared';
 import type { Lang } from '../i18n';
 
 /** Owns Panel dashboard reads and mutations, leaving PanelShell to render navigation. */
@@ -10,7 +10,7 @@ export function usePanelDashboardViewModel(onInitialLanguage: (lang: Lang) => vo
   const [primaryCompanion, setPrimaryCompanion] = useState<import('@our-companion/shared').CompanionProfile | null>(null);
   const [discoveries, setDiscoveries] = useState<Discovery[]>([]);
   const [journeys, setJourneys] = useState<CompanionJourney[]>([]);
-  const [timeline, setTimeline] = useState<JourneyMilestoneV2[]>([]);
+  const [timeline, setTimeline] = useState<JourneyTimelineEntry[]>([]);
   const [memoryGraph, setMemoryGraph] = useState<KnowledgeGraph>({ nodes: [], edges: [] });
   const [diary, setDiary] = useState<DiaryEntry[]>([]);
   const [exploration, setExploration] = useState<ExplorationCycleResult>();

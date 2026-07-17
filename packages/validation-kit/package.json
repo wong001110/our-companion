@@ -6,7 +6,6 @@
   "dependencies": {
     "@our-companion/shared": "0.1.0",
     "@our-companion/event-bus": "0.1.0",
-    "@our-companion/companion-life": "0.1.0",
     "@our-companion/character-engine": "0.1.0",
     "@our-companion/decision-engine": "0.1.0",
     "@our-companion/discovery-engine": "0.1.0",

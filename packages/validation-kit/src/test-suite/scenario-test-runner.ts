@@ -1,18 +1,28 @@
-import { createId, nowIso } from '@our-companion/shared';
+import { createId } from '@our-companion/shared';
 import type { TestResult, TestReport } from './types';
+import { SimulationEngine } from '../simulation';
+import type { SimulationConfig, SimulationResult } from '../simulation';
+import type { Clock, ProductionRuntimeGateway } from '../production-runtime';
 
 export interface ScenarioTestRunnerDeps {
-  loadScenario(scenarioId: string): boolean;
-  runSimulation(): void;
-  getState(): Record<string, unknown>;
+  loadScenario(scenarioId: string): boolean | Promise<boolean>;
+  gateway: ProductionRuntimeGateway;
+  emitEvent?(type: string, payload?: Record<string, unknown>): void;
+  clock?: Pick<Clock, 'now' | 'nowIso'>;
 }
 
 export class ScenarioTestRunner {
   private readonly deps: ScenarioTestRunnerDeps;
+  private readonly simulation: SimulationEngine;
   private reports: TestReport[] = [];
 
   constructor(deps: ScenarioTestRunnerDeps) {
     this.deps = deps;
+    this.simulation = new SimulationEngine({
+      gateway: deps.gateway,
+      emitEvent: deps.emitEvent ?? (() => undefined),
+      clock: deps.clock,
+    });
   }
 
   getReports(): TestReport[] {
@@ -21,12 +31,19 @@ export class ScenarioTestRunner {
 
   async runScenario(
     scenarioId: string,
-    assertions: Array<{ name: string; check: (state: Record<string, unknown>) => boolean }>
+    assertions: Array<{
+      name: string;
+      check: (state: Record<string, unknown>, execution: SimulationResult) => boolean;
+    }>,
+    config: SimulationConfig = {
+      category: 'runtime',
+      params: { action: 'run_scenario' },
+    },
   ): Promise<TestReport> {
-    const startTime = Date.now();
+    const startTime = this.now();
     const results: TestResult[] = [];
 
-    const loaded = this.deps.loadScenario(scenarioId);
+    const loaded = await this.deps.loadScenario(scenarioId);
     results.push({
       id: createId('test'),
       name: `Load scenario ${scenarioId}`,
@@ -35,7 +52,7 @@ export class ScenarioTestRunner {
       duration: 0,
       expected: true,
       actual: loaded,
-      timestamp: nowIso(),
+      timestamp: this.nowIso(),
     });
 
     if (!loaded) {
@@ -46,22 +63,36 @@ export class ScenarioTestRunner {
         passed: 0,
         failed: 1,
         total: 1,
-        duration: Date.now() - startTime,
-        timestamp: nowIso(),
+        duration: this.now() - startTime,
+        timestamp: this.nowIso(),
       };
       this.reports.push(report);
       return report;
     }
 
-    this.deps.runSimulation();
-    const state = this.deps.getState();
+    const execution = await this.simulation.execute({
+      ...config,
+      params: { ...config.params, scenarioId },
+    });
+    results.push({
+      id: createId('test'),
+      name: `Execute production flow for ${scenarioId}`,
+      level: 'integration',
+      passed: execution.success,
+      duration: 0,
+      expected: 'completed, empty, or skipped',
+      actual: execution.status,
+      error: execution.error,
+      timestamp: this.nowIso(),
+    });
+    const state = execution.stateDelta.after;
 
     for (const assertion of assertions) {
-      const start = Date.now();
+      const start = this.now();
       let passed = false;
       let error: string | undefined;
       try {
-        passed = assertion.check(state);
+        passed = assertion.check(state, execution);
       } catch (e) {
         error = e instanceof Error ? e.message : String(e);
       }
@@ -70,9 +101,9 @@ export class ScenarioTestRunner {
         name: assertion.name,
         level: 'scenario',
         passed,
-        duration: Date.now() - start,
+        duration: this.now() - start,
         error,
-        timestamp: nowIso(),
+        timestamp: this.nowIso(),
       });
     }
 
@@ -83,10 +114,19 @@ export class ScenarioTestRunner {
       passed: results.filter((r) => r.passed).length,
       failed: results.filter((r) => !r.passed).length,
       total: results.length,
-      duration: Date.now() - startTime,
-      timestamp: nowIso(),
+      duration: this.now() - startTime,
+      timestamp: this.nowIso(),
+      productionExecution: execution,
     };
     this.reports.push(report);
     return report;
+  }
+
+  private now(): number {
+    return this.deps.clock?.now() ?? Date.now();
+  }
+
+  private nowIso(): string {
+    return this.deps.clock?.nowIso() ?? new Date().toISOString();
   }
 }

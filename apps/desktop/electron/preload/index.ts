@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   ActionPermissionState,
-  ActionPlanV2,
+  ActionPlan,
   AddDiscoveryToJourneyInput,
   AddJourneyMilestoneInput,
   BaseEvent,
@@ -28,7 +28,7 @@ import type {
   OnlineMode,
   OurCompanionApi,
   PanelTab,
-  PerformanceScriptV2,
+  PerformanceScript,
   RegisterUserInput,
   StartExplorationInput,
   SubmitDiscoveryFeedbackInput,
@@ -74,10 +74,10 @@ const api: OurCompanionApi = {
       return () => ipcRenderer.removeListener(channel, handler);
     },
     generateNow: () => invoke('discovery:generateNow'),
-    shareNext: () => invoke('discovery:shareNext'),
-    resetStatuses: () => invoke('discovery:resetStatuses'),
-    countUnannounced: () => invoke('discovery:countUnannounced'),
-    markSharedAsUnannounced: () => invoke('discovery:markSharedAsUnannounced'),
+    presentNext: () => invoke('discovery:presentNext'),
+    resetLifecycle: () => invoke('discovery:resetLifecycle'),
+    countPendingAnnouncements: () => invoke('discovery:countPendingAnnouncements'),
+    resetAnnouncementHistory: () => invoke('discovery:resetAnnouncementHistory'),
     clearPool: () => invoke('discovery:clearPool'),
     simulateCanAnnounceDisabled: (disabled: boolean) => invoke('discovery:simulateCanAnnounceDisabled', disabled),
     simulateInterruptEnabled: (enabled: boolean) => invoke('discovery:simulateInterruptEnabled', enabled),
@@ -121,12 +121,12 @@ const api: OurCompanionApi = {
   },
   action: {
     plan: (text: string) => invoke('action:plan', text),
-    executePlan: (plan: ActionPlanV2) => invoke('action:executePlan', plan),
+    executePlan: (plan: ActionPlan) => invoke('action:executePlan', plan),
     getPermissions: () => invoke('action:getPermissions'),
     updatePermissions: (state: ActionPermissionState) => invoke('action:updatePermissions', state),
-    onPerformance: (listener: (script: PerformanceScriptV2) => void) => {
+    onPerformance: (listener: (script: PerformanceScript) => void) => {
       const channel = 'action:performanceStarted';
-      const handler = (_event: Electron.IpcRendererEvent, script: PerformanceScriptV2) => listener(script);
+      const handler = (_event: Electron.IpcRendererEvent, script: PerformanceScript) => listener(script);
       ipcRenderer.on(channel, handler);
       return () => ipcRenderer.removeListener(channel, handler);
     }

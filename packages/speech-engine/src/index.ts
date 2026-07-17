@@ -88,7 +88,7 @@ export function formatSpeechPayload(input: {
     id: createId('speech'),
     text: truncateSentence(`${prefix}${summary}`),
     mood: input.characterState.mood,
-    actionLabel: input.decision.action === 'speak' ? 'view' : undefined,
+    actionLabel: input.decision.action === 'share_discovery' ? 'view' : undefined,
     createdAt: nowIso()
   };
 }
@@ -109,21 +109,13 @@ export function createNotificationPayload(input: {
   body: string;
   focusMode?: boolean;
 }): NotificationPayload {
-  const shouldNotify = input.decision.action === 'speak' && !input.focusMode;
+  const shouldNotify = input.decision.action === 'share_discovery' && !input.focusMode;
   return {
     id: createId('notification'),
     title: input.title,
     body: truncateSentence(input.body, 160),
     shouldNotify,
-    reason: shouldNotify ? 'Decision selected speak and focus mode is off.' : 'Notification suppressed by decision or focus mode.',
+    reason: shouldNotify ? 'Decision selected discovery presentation and focus mode is off.' : 'Notification suppressed by decision or focus mode.',
     createdAt: nowIso()
   };
 }
-
-// ============================================================================
-// Speech Engine V2 — Provider interfaces and session management
-// ============================================================================
-
-export type { SpeechToTextProvider, TextToSpeechProvider } from './providers';
-export { MockSpeechToTextProvider, MockTextToSpeechProvider } from './providers';
-export { ListenManager } from './listen-manager';

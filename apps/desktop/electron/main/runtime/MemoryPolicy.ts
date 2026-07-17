@@ -6,7 +6,7 @@ import type {
   MemoryRetention,
   TypedMemoryType
 } from '@our-companion/shared';
-import { createId, nowIso } from '@our-companion/shared';
+import { createId } from '@our-companion/shared';
 
 const SENSITIVE_PATTERNS = [
   /\b(sk-[a-zA-Z0-9]{10,})\b/i,
@@ -37,7 +37,11 @@ export interface MemoryTurnInput {
 }
 
 export class MemoryPolicy {
-  constructor(private readonly db: DatabaseService) {}
+  private readonly now: () => number;
+
+  constructor(private readonly db: DatabaseService, deps: { now?: () => number } = {}) {
+    this.now = deps.now ?? (() => Date.now());
+  }
 
   processTurn(input: MemoryTurnInput): MemoryCandidate | null {
     const candidate = this.createCandidate(input);
@@ -75,7 +79,7 @@ export class MemoryPolicy {
       sensitivity: 'normal',
       retention: 'discard',
       reason: 'initial candidate',
-      createdAt: nowIso()
+      createdAt: this.timestamp()
     };
   }
 
@@ -154,7 +158,7 @@ export class MemoryPolicy {
     const scope = candidate.retention === 'temporary' ? 'session' : 'companion';
     const expiresAt =
       candidate.retention === 'temporary'
-        ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+        ? new Date(this.now() + 24 * 60 * 60 * 1000).toISOString()
         : undefined;
 
     const node = createMemoryNode({
@@ -166,7 +170,7 @@ export class MemoryPolicy {
 
     this.db.insertMemoryNode({
       ...node,
-      importanceScore: candidate.confidence,
+      importance: candidate.confidence,
       companionId: input.companionId,
       userId: input.userId,
       memoryType,
@@ -177,7 +181,7 @@ export class MemoryPolicy {
         confidence: candidate.confidence,
         sensitivity: candidate.sensitivity,
         scope,
-        createdAt: nowIso(),
+        createdAt: this.timestamp(),
         expiresAt,
         ...evidence
       }
@@ -195,5 +199,9 @@ export class MemoryPolicy {
 
   private isTranslationRequest(text: string): boolean {
     return /\b(translate|translation)\b/i.test(text) && text.length < 80;
+  }
+
+  private timestamp(): string {
+    return new Date(this.now()).toISOString();
   }
 }

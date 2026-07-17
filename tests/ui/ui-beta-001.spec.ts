@@ -96,20 +96,14 @@ test('UI-BETA-001 touched Panel surfaces remain readable and accessible', async 
   try {
     await device.launch();
     const panel = await device.panelWindow();
-    const bridgeMethodsAreMutable = await panel.evaluate(() => {
-      const previous = window.ourCompanion.network.getStatus;
-      try { window.ourCompanion.network.getStatus = async () => ({ state: 'connecting', onlineModeEnabled: true, serverUrl: 'https://fixture.invalid' }); } catch { /* context bridge may freeze its export */ }
-      const changed = window.ourCompanion.network.getStatus !== previous;
-      if (changed) window.ourCompanion.network.getStatus = previous;
-      return changed;
-    });
-    expect(bridgeMethodsAreMutable).toBe(true);
     const nav = panel.locator('nav[aria-label] button');
     await panel.setViewportSize({ width: 1180, height: 760 });
 
     for (const [name, index] of pages) {
       await nav.nth(index).click();
-      await expect(panel.getByTestId(`panel-page-${name === 'discoveries' ? 'discovery' : name === 'journeys' ? 'journey' : name === 'memories' ? 'memory' : name}`)).toHaveAttribute('data-motion-state', 'entered');
+      const page = panel.getByTestId(`panel-page-${name === 'discoveries' ? 'discovery' : name === 'journeys' ? 'journey' : name === 'memories' ? 'memory' : name}`);
+      await expect(page).toHaveAttribute('data-motion-state', 'entered');
+      await expect(page).toHaveCSS('opacity', '1');
       report[`en-${name}-1180`] = await criticalAndSerious(panel);
       await device.screenshot(panel, `ui-beta-001/en/${name}-1180.png`);
     }
@@ -123,7 +117,9 @@ test('UI-BETA-001 touched Panel surfaces remain readable and accessible', async 
 
     for (const [name, index] of pages) {
       await nav.nth(index).click();
-      await panel.waitForTimeout(250);
+      const page = panel.getByTestId(`panel-page-${name === 'discoveries' ? 'discovery' : name === 'journeys' ? 'journey' : name === 'memories' ? 'memory' : name}`);
+      await expect(page).toHaveAttribute('data-motion-state', 'entered');
+      await expect(page).toHaveCSS('opacity', '1');
       report[`zh-CN-${name}-760-reduced-motion`] = await criticalAndSerious(panel);
       await device.screenshot(panel, `ui-beta-001/zh-CN/${name}-760-reduced-motion.png`);
     }
@@ -161,9 +157,14 @@ test('UI-BETA-001 operational lifecycle state evidence', async () => {
     };
     const remount = async (pageName: 'Chat' | 'Social' | 'Settings', next: LifecycleFixture) => {
       await panel.getByRole('button', { name: 'Home' }).click();
+      await expect(panel.getByTestId('panel-page-home')).toHaveAttribute('data-motion-state', 'entered');
       await setLifecycleFixture(panel, next);
       expect(await panel.evaluate(() => window.ourCompanion.network.getStatus())).toEqual(next.status);
       await panel.getByRole('button', { name: pageName }).click();
+      await expect(panel.getByTestId(`panel-page-${pageName.toLowerCase()}`)).toHaveAttribute(
+        'data-motion-state',
+        'entered'
+      );
       await emitLifecycleStatus(panel, next);
       await panel.waitForTimeout(220);
     };

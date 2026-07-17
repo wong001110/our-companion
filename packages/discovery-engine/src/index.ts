@@ -8,6 +8,7 @@ import type {
   DiscoveryOrigin,
   DiscoveryScores,
   DiscoverySource,
+  EngineProviderMode,
   DuplicateResult,
   ExplorationPlan,
   NormalizedSignal,
@@ -15,7 +16,7 @@ import type {
   Signal,
   SignalEngine
 } from '@our-companion/shared';
-import { createId, nowIso } from '@our-companion/shared';
+import { createId, nowIso, toUnitScore } from '@our-companion/shared';
 
 export interface DiscoveryFetchInput {
   query?: string;
@@ -38,8 +39,17 @@ const TRACKING_PARAMS = new Set([
 
 export interface DiscoveryConnector {
   source: DiscoverySource;
+  providerMode: EngineProviderMode;
   fetch(input: DiscoveryFetchInput): Promise<RawDiscoveryItem[]>;
   normalize(item: RawDiscoveryItem): NormalizedDiscovery;
+}
+
+export interface DiscoveryProviderOutcome {
+  source: DiscoverySource;
+  providerMode: EngineProviderMode;
+  status: 'completed' | 'empty' | 'failed';
+  itemCount: number;
+  error?: string;
 }
 
 export interface RankingContext {
@@ -56,13 +66,14 @@ export interface RunDiscoveryAgentsInput {
   explorationPlan: ExplorationPlan;
   connectors?: DiscoveryConnector[];
   memoryCandidates?: Array<{ title: string; summary?: string; url?: string; tags?: string[] }>;
+  onProviderOutcome?: (outcome: DiscoveryProviderOutcome) => void;
 }
 
 function matchScore(tags: string[], values: string[], fallback: number): number {
   if (values.length === 0 || tags.length === 0) return fallback;
   const normalizedTags = tags.map((tag) => tag.toLowerCase());
   const matches = values.filter((value) => normalizedTags.includes(value.toLowerCase())).length;
-  return Math.min(100, Math.round((matches / Math.max(values.length, 1)) * 100));
+  return toUnitScore(matches / Math.max(values.length, 1));
 }
 
 function stableHash(value: string): string {
@@ -129,15 +140,15 @@ export function fingerprintDiscovery(input: {
 }
 
 export function qualityScoreForSignal(signal: Pick<Signal, 'title' | 'summary' | 'url' | 'rawContent'>): number {
-  const titleScore = signal.title.trim().length >= 8 ? 35 : 10;
-  const summaryScore = (signal.summary ?? signal.rawContent ?? '').trim().length >= 24 ? 35 : 10;
-  const urlScore = signal.url ? 15 : 0;
+  const titleScore = signal.title.trim().length >= 8 ? 0.35 : 0.1;
+  const summaryScore = (signal.summary ?? signal.rawContent ?? '').trim().length >= 24 ? 0.35 : 0.1;
+  const urlScore = signal.url ? 0.15 : 0;
   const specificityScore = /\b(how|why|guide|release|architecture|pattern|research|example)\b/i.test(
     `${signal.title} ${signal.summary ?? ''}`
   )
-    ? 15
-    : 8;
-  return Math.min(100, titleScore + summaryScore + urlScore + specificityScore);
+    ? 0.15
+    : 0.08;
+  return toUnitScore(titleScore + summaryScore + urlScore + specificityScore);
 }
 
 export function captureSignal(input: CaptureSignalInput): Signal {
@@ -197,7 +208,7 @@ export function signalFromNormalizedDiscovery(discovery: NormalizedDiscovery): S
   });
 }
 
-export function passesDiscoveryQuality(signal: NormalizedSignal, minimumScore = 45): boolean {
+export function passesDiscoveryQuality(signal: NormalizedSignal, minimumScore = 0.45): boolean {
   return signal.qualityScore >= minimumScore;
 }
 
@@ -245,12 +256,12 @@ export function discoveryOriginForSignal(signal: Signal): DiscoveryOrigin {
 }
 
 export function scoreDiscovery(item: NormalizedDiscovery, context: RankingContext): DiscoveryScores {
-  const userInterestScore = matchScore(item.tags, context.userInterests, 45);
-  const userHistoryScore = matchScore(item.tags, context.recentMemoryTags, 35);
-  const characterExpertiseScore = matchScore(item.tags, context.activeCharacter.expertise, 55);
-  const noveltyScore = item.url && context.seenUrls?.has(item.url) ? 10 : 70;
-  const usefulnessScore = item.summary || item.url ? 65 : 35;
-  const finalScore = Math.round(
+  const userInterestScore = matchScore(item.tags, context.userInterests, 0.45);
+  const userHistoryScore = matchScore(item.tags, context.recentMemoryTags, 0.35);
+  const characterExpertiseScore = matchScore(item.tags, context.activeCharacter.expertise, 0.55);
+  const noveltyScore = item.url && context.seenUrls?.has(item.url) ? 0.1 : 0.7;
+  const usefulnessScore = item.summary || item.url ? 0.65 : 0.35;
+  const finalScore = toUnitScore(
     0.35 * userInterestScore +
       0.25 * userHistoryScore +
       0.2 * characterExpertiseScore +
@@ -296,7 +307,7 @@ export function toDiscovery(item: NormalizedDiscovery, scores: DiscoveryScores):
       sourceType: item.source
     }),
     growthValue: scores.finalScore,
-    confidenceScore: Math.min(100, Math.round((normalizedSignal.qualityScore + scores.finalScore) / 2)),
+    confidenceScore: toUnitScore((normalizedSignal.qualityScore + scores.finalScore) / 2),
     createdAt: nowIso()
   };
 }
@@ -305,7 +316,7 @@ export function discoveryFromSignal(signal: NormalizedSignal, scores: DiscoveryS
   if (!passesDiscoveryQuality(signal)) return undefined;
   const source = signal.provider === 'github' || signal.provider === 'reddit' || signal.provider === 'hackernews' || signal.provider === 'youtube'
     ? signal.provider
-    : 'hackernews';
+    : 'internet';
   return {
     source,
     externalId: signal.id,
@@ -328,82 +339,31 @@ export function discoveryFromSignal(signal: NormalizedSignal, scores: DiscoveryS
       sourceType: signal.sourceType
     }),
     growthValue: scores.finalScore,
-    confidenceScore: Math.min(100, Math.round((signal.qualityScore + scores.finalScore) / 2)),
+    confidenceScore: toUnitScore((signal.qualityScore + scores.finalScore) / 2),
     createdAt: nowIso()
   };
 }
 
-export function applyDailyCap(discoveries: Discovery[], alreadySharedToday: number, cap = 10): Discovery[] {
-  const remaining = Math.max(0, cap - alreadySharedToday);
+export function selectEligibleDiscoveries(discoveries: Discovery[], alreadyAnnouncedToday: number, cap = 10): Discovery[] {
+  const remaining = Math.max(0, cap - alreadyAnnouncedToday);
+  const eligibleAt = nowIso();
   return discoveries
     .sort((left, right) => right.finalScore - left.finalScore)
     .slice(0, remaining)
     .map((discovery) => ({
       ...discovery,
-      status: 'shared',
-      sharedAt: nowIso()
+      status: 'eligible',
+      eligibleAt,
+      updatedAt: eligibleAt
     }));
 }
 
-function fallbackItems(source: DiscoverySource): RawDiscoveryItem[] {
-  const common = {
-    source,
-    publishedAt: nowIso()
-  };
-
-  const pools: Record<DiscoverySource, RawDiscoveryItem[]> = {
-    internet: [],
-    rss: [],
-    user: [],
-    local_file: [],
-    calendar: [],
-    companion: [],
-    community: [],
-    system: [],
-    github: [
-      { ...common, id: 'github-pixijs-desktop-pet', title: 'Building expressive desktop companions with PixiJS', summary: 'A small renderer pattern for animated companion characters.', url: 'https://github.com/pixijs/pixijs', tags: ['frontend', 'pixijs', 'web', 'ux'] },
-      { ...common, id: 'github-tldraw', title: 'tldraw Ã¢â‚¬â€ a canvas for thinking', summary: 'Infinite canvas toolkit for collaborative whiteboarding.', url: 'https://github.com/tldraw/tldraw', tags: ['canvas', 'collaboration', 'tool'] },
-      { ...common, id: 'github-excalidraw', title: 'Excalidraw Ã¢â‚¬â€ virtual whiteboard', summary: 'Hand-drawn style sketching tool for diagrams.', url: 'https://github.com/excalidraw/excalidraw', tags: ['sketch', 'diagram', 'canvas'] },
-      { ...common, id: 'github-affine', title: 'Affine Ã¢â‚¬â€ knowledge management', summary: 'Local-first knowledge base with docs and whiteboard.', url: 'https://github.com/toeverything/AFFiNE', tags: ['knowledge', 'local-first', 'docs'] },
-      { ...common, id: 'github-livekit', title: 'LiveKit Ã¢â‚¬â€ real-time audio/video', summary: 'Open-source WebRTC stack for voice and video.', url: 'https://github.com/livekit/livekit', tags: ['webrtc', 'voice', 'real-time'] },
-      { ...common, id: 'github-remotion', title: 'Remotion Ã¢â‚¬â€ programmatic video', summary: 'Create videos with React components.', url: 'https://github.com/remotion-dev/remotion', tags: ['video', 'react', 'animation'] }
-    ],
-    hackernews: [
-      { ...common, id: 'hn-local-first-memory', title: 'Local-first app patterns for personal memory tools', summary: 'Discussion about SQLite-backed personal software.', url: 'https://news.ycombinator.com/', tags: ['sqlite', 'local-first', 'memory'] },
-      { ...common, id: 'hn-ai-companion', title: 'AI companion design patterns in 2025', summary: 'How desktop AI assistants are evolving beyond chatbots.', url: 'https://news.ycombinator.com/', tags: ['ai', 'companion', 'ux'] },
-      { ...common, id: 'hn-personal-knowledge', title: 'Building a personal knowledge graph', summary: 'Tools and techniques for organizing thoughts digitally.', url: 'https://news.ycombinator.com/', tags: ['knowledge', 'graph', 'personal'] },
-      { ...common, id: 'hn-emotional-ui', title: 'Emotion-driven interfaces', summary: 'Research on UI that adapts to user mood and context.', url: 'https://news.ycombinator.com/', tags: ['emotion', 'ui', 'adaptive'] },
-      { ...common, id: 'hn-ambient-software', title: 'Ambient software design philosophy', summary: 'Software that stays present without demanding attention.', url: 'https://news.ycombinator.com/', tags: ['ambient', 'design', 'presence'] },
-      { ...common, id: 'hn-note-taking-2025', title: 'Modern note-taking beyond markdown', summary: 'Exploring spatial and visual note-taking paradigms.', url: 'https://news.ycombinator.com/', tags: ['notes', 'spatial', 'ux'] }
-    ],
-    reddit: [
-      { ...common, id: 'reddit-cozy-dev-room', title: 'Cozy developer room inspiration boards', summary: 'Workspace ideas with warm lighting and note-taking systems.', url: 'https://www.reddit.com/r/battlestations/', tags: ['ux', 'workspace', 'cozy'] },
-      { ...common, id: 'reddit-desktop-pet', title: 'Desktop pet communities and projects', summary: 'Folklore about virtual companions on your screen.', url: 'https://www.reddit.com/r/desktoppets/', tags: ['pet', 'desktop', 'companion'] },
-      { ...common, id: 'reddit-journaling', title: 'Digital journaling with personality', summary: 'Apps that make note-taking feel personal and alive.', url: 'https://www.reddit.com/r/Journaling/', tags: ['journal', 'personal', 'writing'] },
-      { ...common, id: 'reddit-notebook-aesthetic', title: 'Notebook aesthetic and paper UI', summary: 'Design inspiration from physical notebooks and scrapbooks.', url: 'https://www.reddit.com/r/Notebooks/', tags: ['notebook', 'aesthetic', 'paper'] },
-      { ...common, id: 'reddit-obsidian-graph', title: 'Obsidian graph view explorations', summary: 'Visualizing knowledge connections in personal vaults.', url: 'https://www.reddit.com/r/ObsidianMD/', tags: ['obsidian', 'graph', 'knowledge'] },
-      { ...common, id: 'reddit-creative-coding', title: 'Creative coding for personal expression', summary: 'Using code as an artistic medium for interactive pieces.', url: 'https://www.reddit.com/r/creativecoding/', tags: ['creative', 'code', 'art'] }
-    ],
-    youtube: [
-      { ...common, id: 'youtube-pixijs-tutorial', title: 'PixiJS animation basics for character sprites', summary: 'A tutorial-style resource for sprite animation loops.', url: 'https://www.youtube.com/results?search_query=PixiJS+sprite+animation', tags: ['pixijs', 'frontend', 'animation'] },
-      { ...common, id: 'youtube-character-design', title: 'Character design for indie games', summary: 'Creating expressive animated characters on a budget.', url: 'https://www.youtube.com/results?search_query=character+design+indie', tags: ['character', 'design', 'animation'] },
-      { ...common, id: 'youtube-cozy-setup', title: 'Cozy desk setup for productivity', summary: 'Warm workspace ideas with ambient lighting.', url: 'https://www.youtube.com/results?search_query=cozy+desk+setup', tags: ['workspace', 'cozy', 'ambient'] },
-      { ...common, id: 'youtube-memory-palace', title: 'Building a memory palace digitally', summary: 'Techniques for organizing knowledge spatially.', url: 'https://www.youtube.com/results?search_query=memory+palace+digital', tags: ['memory', 'knowledge', 'spatial'] },
-      { ...common, id: 'youtube-procedural-art', title: 'Procedural art with code', summary: 'Generating unique visual patterns through algorithms.', url: 'https://www.youtube.com/results?search_query=procedural+art+code', tags: ['generative', 'art', 'creative'] },
-      { ...common, id: 'youtube-voice-ui', title: 'Voice interface design patterns', summary: 'Designing natural conversational UIs for desktop apps.', url: 'https://www.youtube.com/results?search_query=voice+interface+design', tags: ['voice', 'ui', 'conversation'] }
-    ]
-  };
-
-  const pool = pools[source];
-  const index = Math.floor(Math.random() * pool.length);
-  return [pool[index]];
-}
-
-export function createFallbackConnector(source: DiscoverySource): DiscoveryConnector {
+export function createUnavailableConnector(source: DiscoverySource): DiscoveryConnector {
   return {
     source,
+    providerMode: 'unavailable',
     async fetch() {
-      return fallbackItems(source);
+      return [];
     },
     normalize(item) {
       return {
@@ -423,18 +383,43 @@ export function createFallbackConnector(source: DiscoverySource): DiscoveryConne
 export async function runDiscoveryPipeline(
   connectors: DiscoveryConnector[],
   context: RankingContext,
-  alreadySharedToday: number
+  alreadyAnnouncedToday: number,
+  onProviderOutcome?: (outcome: DiscoveryProviderOutcome) => void
 ): Promise<Discovery[]> {
-  const rawByConnector = await Promise.all(
+  const normalizedByConnector = await Promise.all(
     connectors.map(async (connector) => {
-      const raw = await connector.fetch({ limit: 10 });
-      return raw.map((item) => connector.normalize(item));
+      try {
+        const raw = await connector.fetch({ limit: 10 });
+        const normalized = raw.flatMap((item) => {
+          try {
+            return [connector.normalize(item)];
+          } catch {
+            return [];
+          }
+        });
+        onProviderOutcome?.({
+          source: connector.source,
+          providerMode: connector.providerMode,
+          status: normalized.length === 0 ? 'empty' : 'completed',
+          itemCount: normalized.length
+        });
+        return normalized;
+      } catch (error) {
+        onProviderOutcome?.({
+          source: connector.source,
+          providerMode: connector.providerMode,
+          status: 'failed',
+          itemCount: 0,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        return [];
+      }
     })
   );
 
-  const normalized = deduplicateDiscoveries(rawByConnector.flat());
+  const normalized = deduplicateDiscoveries(normalizedByConnector.flat());
   const ranked = normalized.map((item) => toDiscovery(item, scoreDiscovery(item, context)));
-  return applyDailyCap(ranked, alreadySharedToday);
+  return selectEligibleDiscoveries(ranked, alreadyAnnouncedToday);
 }
 
 function sourceTypeFor(source: DiscoverySource): DiscoveryCandidate['sourceType'] {
@@ -519,22 +504,26 @@ export function deduplicateCandidates(candidates: DiscoveryCandidate[]): Discove
 }
 
 export async function runDiscoveryAgents(input: RunDiscoveryAgentsInput): Promise<DiscoveryCandidate[]> {
-  const connectors =
-    input.connectors ??
-    (['github', 'hackernews', 'reddit', 'youtube'] as DiscoverySource[]).map(createFallbackConnector);
+  const connectors = input.connectors ?? [];
   const preferredAgents = input.explorationPlan.agents;
   const searchQuery = input.explorationPlan.searchQueries[0];
 
   const external = await Promise.all(
     connectors.map(async (connector) => {
-      const raw = await connector.fetch({ query: searchQuery, limit: input.explorationPlan.maxCandidatesPerAgent });
-      return raw.slice(0, input.explorationPlan.maxCandidatesPerAgent).map((item) => {
-        const normalized = connector.normalize(item);
-        const agentType = agentForSource(connector.source, preferredAgents);
+      try {
+        const raw = await connector.fetch({ query: searchQuery, limit: input.explorationPlan.maxCandidatesPerAgent });
+        const candidates = raw.slice(0, input.explorationPlan.maxCandidatesPerAgent).flatMap((item) => {
+          let normalized: NormalizedDiscovery;
+          try {
+            normalized = connector.normalize(item);
+          } catch {
+            return [];
+          }
+          const agentType = agentForSource(connector.source, preferredAgents);
         const tags = normalized.tags.map((tag) => tag.toLowerCase());
         const topicWords = input.curiosityTarget.topic.toLowerCase().split(/\s+/);
         const relevanceScore = topicWords.some((word) => tags.includes(word)) ? 0.82 : 0.62;
-        return {
+          return [{
           id: createId('candidate'),
           userId: input.userId,
           companionId: input.companionId,
@@ -557,8 +546,25 @@ export async function runDiscoveryAgents(input: RunDiscoveryAgentsInput): Promis
           }),
           rawEvidence: JSON.stringify(normalized.raw),
           collectedAt: nowIso()
-        } satisfies DiscoveryCandidate;
-      });
+          } satisfies DiscoveryCandidate];
+        });
+        input.onProviderOutcome?.({
+          source: connector.source,
+          providerMode: connector.providerMode,
+          status: candidates.length === 0 ? 'empty' : 'completed',
+          itemCount: candidates.length
+        });
+        return candidates;
+      } catch (error) {
+        input.onProviderOutcome?.({
+          source: connector.source,
+          providerMode: connector.providerMode,
+          status: 'failed',
+          itemCount: 0,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        return [];
+      }
     })
   );
 
@@ -594,47 +600,5 @@ export async function runDiscoveryAgents(input: RunDiscoveryAgentsInput): Promis
     (left, right) => scoreCandidate(right) - scoreCandidate(left)
   );
 }
-
-// ============================================================================
-// Discovery Engine V2 Ã¢â‚¬â€ Enhanced discovery management
-// ============================================================================
-
-export { DiscoveryEngine } from './discovery-engine';
-export { createExplorationPlan } from './discovery-planner';
-export { createEvidence, aggregateEvidence } from './discovery-evidence';
-export { generateDiscoveryResult } from './discovery-result';
-export {
-  addToQueue,
-  removeFromQueue,
-  getNextJob,
-  retryJob,
-  cancelJob,
-} from './discovery-queue';
-export {
-  MAX_RETRIES,
-  JOB_EXPIRY_HOURS,
-  MAX_QUEUE_SIZE,
-  DEFAULT_MAX_COST,
-} from './types';
-
-// ============================================================================
-// Discovery Engine V2 Ã¢â‚¬â€ Pool and Share Timing
-// ============================================================================
-
-export {
-  createPoolItem,
-  addToPool,
-  removeFromPool,
-  updatePoolItemStatus,
-  getShareCandidates,
-  filterPool,
-  expireStaleItems,
-} from './pool/discovery-pool';
-
-export {
-  evaluateShareCandidate,
-  determineInterruptionLevel,
-  shouldShareNow,
-} from './share/share-timing';
 
 export { DISCOVERY_STARTUP_DELAY_MS, getDiscoveryFetchDelay, getDiscoveryFetchDelayRange } from './timing';

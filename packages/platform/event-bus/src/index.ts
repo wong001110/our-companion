@@ -2,6 +2,7 @@ import type { BaseEvent } from '@our-companion/shared';
 import { createId, nowIso } from '@our-companion/shared';
 
 export type EventHandler<TEvent extends BaseEvent = BaseEvent> = (event: TEvent) => void | Promise<void>;
+export type EventHandlerErrorReporter = (error: unknown, event: BaseEvent) => void;
 
 export interface EventBus {
   emit(event: BaseEvent): void;
@@ -32,6 +33,15 @@ export function createEvent(input: CreateEventInput): BaseEvent {
 
 export class InProcessEventBus implements EventBus {
   private readonly handlers = new Map<string, Set<EventHandler>>();
+  private errorReporter?: EventHandlerErrorReporter;
+
+  constructor(errorReporter?: EventHandlerErrorReporter) {
+    this.errorReporter = errorReporter;
+  }
+
+  setErrorReporter(reporter?: EventHandlerErrorReporter): void {
+    this.errorReporter = reporter;
+  }
 
   emit(event: BaseEvent): void {
     const handlers = this.handlers.get(event.type);
@@ -40,10 +50,10 @@ export class InProcessEventBus implements EventBus {
     for (const handler of [...handlers]) {
       try {
         void Promise.resolve(handler(event)).catch((error) => {
-          console.warn(`[event-bus] Handler for ${event.type} failed.`, error);
+          this.reportHandlerError(error, event);
         });
       } catch (error) {
-        console.warn(`[event-bus] Handler for ${event.type} failed.`, error);
+        this.reportHandlerError(error, event);
       }
     }
   }
@@ -63,6 +73,18 @@ export class InProcessEventBus implements EventBus {
     if (handlers.size === 0) {
       this.handlers.delete(type);
     }
+  }
+
+  private reportHandlerError(error: unknown, event: BaseEvent): void {
+    if (this.errorReporter) {
+      try {
+        this.errorReporter(error, event);
+        return;
+      } catch (reportingError) {
+        console.error(`[event-bus] Failed to record handler failure for ${event.type}.`, reportingError);
+      }
+    }
+    console.warn(`[event-bus] Handler for ${event.type} failed.`, error);
   }
 }
 

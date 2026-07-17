@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { COMPANION_ANIMATION_MANIFEST, createId, nowIso, type CompanionCommand, type CompanionPersonality, type InsightV2 } from '@our-companion/shared';
+import { COMPANION_ANIMATION_MANIFEST, createId, nowIso, type CompanionCommand, type CompanionPersonality, type GeneratedInsight } from '@our-companion/shared';
 import { app } from 'electron';
 import { AppServices, MAX_COMPANION_ASSET_BYTES, MAX_COMPANION_TOTAL_ASSET_BYTES, toPersistedCompanionInsight } from './services';
 
@@ -23,8 +23,8 @@ describe('foundation event log', () => {
     vi.mocked(app.getPath).mockClear();
   });
 
-  it('maps Insight V2 output to SQLite-bindable persisted Companion insight fields', () => {
-    const insight: InsightV2 = {
+  it('maps generated insight output to SQLite-bindable persisted Companion insight fields', () => {
+    const insight: GeneratedInsight = {
       id: 'insight_1', userId: 'local', category: 'discovery', title: 'Title', summary: 'Summary', explanation: 'Explanation',
       supportingPatternIds: ['pattern_1'], supportingMemoryIds: ['memory_1'], confidence: 0.8, importance: 0.7,
       novelty: 0.6, evidenceCount: 1, status: 'active', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
@@ -276,7 +276,7 @@ describe('foundation event log', () => {
   it('records emitted foundation events and filters by source', async () => {
     const services = new AppServices(':memory:');
 
-    services.emitFoundationEvent('CompanionDecisionMade', 'decision', { action: 'speak' }, 'corr_1');
+    services.emitFoundationEvent('CompanionDecisionMade', 'decision', { action: 'respond' }, 'corr_1');
     services.emitFoundationEvent('CharacterStateChanged', 'character', { coreState: 'idle' });
 
     const all = await services.debug.getFoundationLog({ limit: 10 });

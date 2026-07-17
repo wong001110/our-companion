@@ -5,9 +5,9 @@ import type { UserCompanionRelationship } from '@our-companion/shared';
 const baseRelationship: UserCompanionRelationship = {
   userId: 'local',
   companionId: 'ann',
-  familiarity: 20,
-  trust: 30,
-  comfort: 25,
+  familiarity: 0.2,
+  trust: 0.3,
+  comfort: 0.25,
   preferredInteractionFrequency: 'normal',
   preferredInteractionStyle: 'balanced',
   recentPositiveInteractions: 0,
@@ -39,7 +39,7 @@ describe('decideUnifiedCompanionAction', () => {
         insightContext: { recentInsights: ['d1'], insightCount: 1, topInsightImportance: 0.9 },
         timestamp: new Date().toISOString(),
       },
-      userContext: { mode: 'idle', localTime: '2026-07-10T14:00:00.000Z', recentActions: [], fatigueScore: 10 },
+      userContext: { mode: 'idle', localTime: '2026-07-10T14:00:00.000Z', recentActions: [], fatigueScore: 0.1 },
       relationship: baseRelationship,
       initiativeBudget: { remaining: 0, max: 8, recoveryRate: 1 },
       discovery: {
@@ -48,13 +48,13 @@ describe('decideUnifiedCompanionAction', () => {
         title: 'Test',
         tags: [],
         raw: {},
-        userInterestScore: 80,
-        userHistoryScore: 50,
-        characterExpertiseScore: 50,
-        noveltyScore: 80,
-        usefulnessScore: 80,
-        finalScore: 85,
-        status: 'shared',
+        userInterestScore: 0.8,
+        userHistoryScore: 0.5,
+        characterExpertiseScore: 0.5,
+        noveltyScore: 0.8,
+        usefulnessScore: 0.8,
+        finalScore: 0.85,
+        status: 'announced',
         createdAt: new Date().toISOString(),
       },
       sessionActive: false,
@@ -66,12 +66,39 @@ describe('decideUnifiedCompanionAction', () => {
   it('provides displayHint for renderer', () => {
     const decision = decideUnifiedCompanionAction({
       brainInput: { timestamp: new Date().toISOString() },
-      userContext: { mode: 'idle', localTime: '2026-07-10T14:00:00.000Z', recentActions: [], fatigueScore: 10 },
+      userContext: { mode: 'idle', localTime: '2026-07-10T14:00:00.000Z', recentActions: [], fatigueScore: 0.1 },
       relationship: baseRelationship,
       initiativeBudget: { remaining: 3, max: 8, recoveryRate: 1 },
       sessionActive: false,
       companionDragging: false,
     });
     expect(decision.displayHint).toBeDefined();
+  });
+
+  it('protects an active conversation from proactive sharing', () => {
+    const decision = decideUnifiedCompanionAction({
+      brainInput: {
+        insightContext: { recentInsights: ['d1'], insightCount: 1, topInsightImportance: 0.95 },
+        timestamp: new Date().toISOString(),
+      },
+      userContext: { mode: 'idle', localTime: '2026-07-10T14:00:00.000Z', recentActions: [], fatigueScore: 0.1 },
+      relationship: baseRelationship,
+      initiativeBudget: { remaining: 3, max: 8, recoveryRate: 1 },
+      sessionActive: true,
+      companionDragging: false,
+    });
+    expect(decision.action).not.toBe('share_discovery');
+  });
+
+  it('defers while the companion is being dragged', () => {
+    const decision = decideUnifiedCompanionAction({
+      brainInput: { timestamp: new Date().toISOString() },
+      userContext: { mode: 'idle', localTime: '2026-07-10T14:00:00.000Z', recentActions: [], fatigueScore: 0.1 },
+      relationship: baseRelationship,
+      initiativeBudget: { remaining: 3, max: 8, recoveryRate: 1 },
+      sessionActive: false,
+      companionDragging: true,
+    });
+    expect(decision).toMatchObject({ action: 'stay_silent', timing: 'later' });
   });
 });

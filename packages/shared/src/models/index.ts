@@ -67,13 +67,7 @@ export type CompanionDecisionAction =
   | 'continue_conversation'
   | 'end_conversation'
   | 'suggest_action'
-  | 'execute_approved_action'
-  // Legacy aliases — mapped during migration, do not use in new code
-  | 'speak'
-  | 'queue_for_later'
-  | 'remember_only'
-  | 'ignore'
-  | 'perform_action';
+  | 'execute_approved_action';
 
 export interface MemoryEffect {
   type: string;
@@ -167,19 +161,6 @@ export interface NotificationPayload {
   createdAt: string;
 }
 
-export interface PerformanceStep {
-  animationKey: import('../index').CompanionAnimationName;
-  label: string;
-  durationMs: number;
-}
-
-export interface PerformanceScript {
-  id: string;
-  actionId: string;
-  steps: PerformanceStep[];
-  createdAt: string;
-}
-
 // Volume 05 — Desktop Action & Automation
 
 export type PermissionScope = 'browser' | 'files' | 'clipboard' | 'calendar' | 'automation';
@@ -188,15 +169,6 @@ export type PermissionDecision = 'granted' | 'denied' | 'ask';
 
 export type ActionPermissionState = Record<PermissionScope, PermissionDecision>;
 
-export type ActionExecutionState =
-  | 'idle'
-  | 'planning'
-  | 'await_permission'
-  | 'executing'
-  | 'performing'
-  | 'completed'
-  | 'failed';
-
 export interface ActionStep {
   id: string;
   toolName: string;
@@ -204,20 +176,6 @@ export interface ActionStep {
   waitMs?: number;
   requiredScopes: PermissionScope[];
 }
-
-export interface ActionPlan {
-  id: string;
-  summary: string;
-  steps: ActionStep[];
-  source: 'rule' | 'llm';
-  createdAt: string;
-}
-
-export type ActionRunResult =
-  | { status: 'completed'; planId: string; performedSteps: number }
-  | { status: 'blocked'; planId: string; reason: string }
-  | { status: 'await_permission'; planId: string; requiredScopes: PermissionScope[] }
-  | { status: 'failed'; planId: string; step?: number; errorMessage: string };
 
 export interface BaseEvent {
   id: string;
@@ -342,8 +300,8 @@ export interface AttentionAssessment {
   targetId: string;
   targetType: string;
   deservesAttention: boolean;
-  attentionCost: number;
-  attentionValue: number;
+  attentionCost: UnitScore;
+  attentionValue: UnitScore;
   reason: string;
 }
 
@@ -351,15 +309,15 @@ export interface UserContext {
   mode: 'idle' | 'focused' | 'chatting' | 'working' | 'away';
   localTime: string;
   recentActions: string[];
-  fatigueScore?: number;
+  fatigueScore?: UnitScore;
 }
 
 export interface CompanionContext {
   dailySharedCount: number;
   lastSpokenAt?: string;
-  attentionBudgetRemaining: number;
-  curiosityBudgetRemaining: number;
-  trustScore: number;
+  attentionBudgetRemaining: UnitScore;
+  curiosityBudgetRemaining: UnitScore;
+  trustScore: UnitScore;
 }
 
 export interface DecisionInput {
@@ -374,7 +332,7 @@ export interface DecisionInput {
 }
 
 // ============================================================================
-// COMPANION BRAIN V2 — Enhanced decision types
+// COMPANION BRAIN — Canonical decision types
 // ============================================================================
 
 export type CompanionDecisionCandidateType =
@@ -416,7 +374,7 @@ export interface UserContextSnapshot {
   mode: 'idle' | 'focused' | 'chatting' | 'working' | 'away';
   localTime: string;
   recentActions: string[];
-  fatigueScore?: number;
+  fatigueScore?: UnitScore;
   lastInteractionAt?: string;
 }
 
@@ -430,25 +388,25 @@ export interface ConversationContextSnapshot {
 export interface MemoryContextSnapshot {
   relevantMemories: string[];
   memoryCount: number;
-  topMemoryImportance: number;
+  topMemoryImportance: UnitScore;
 }
 
 export interface PatternContextSnapshot {
   activePatterns: string[];
   patternCount: number;
-  topPatternConfidence: number;
+  topPatternConfidence: UnitScore;
 }
 
 export interface InsightContextSnapshot {
   recentInsights: string[];
   insightCount: number;
-  topInsightImportance: number;
+  topInsightImportance: UnitScore;
 }
 
 export interface CuriosityContextSnapshot {
   curiosityTargets: string[];
   targetCount: number;
-  topCuriosityScore: number;
+  topCuriosityScore: UnitScore;
 }
 
 export interface CharacterContextSnapshot {
@@ -640,11 +598,11 @@ export interface CompanionIdentity {
 
 export interface TrustProfile {
   identityId: string;
-  sourceReputation: number;
-  sharedHistory: number;
+  sourceReputation: UnitScore;
+  sharedHistory: UnitScore;
   userPermission: boolean;
-  confidence: number;
-  freshness: number;
+  confidence: UnitScore;
+  freshness: UnitScore;
 }
 
 export type RelationshipStage = 'unknown' | 'met' | 'familiar' | 'trusted' | 'close';
@@ -654,7 +612,7 @@ export interface CompanionRelationship {
   fromCompanionId: string;
   toCompanionId: string;
   stage: RelationshipStage;
-  affinity: number;
+  affinity: UnitScore;
   successfulInteractions: number;
   updatedAt: string;
 }
@@ -699,3 +657,4 @@ export interface SyncConflict<TPayload = unknown> {
   reason: string;
   requiresReview: boolean;
 }
+import type { UnitScore } from '../utils';

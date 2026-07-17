@@ -15,15 +15,21 @@ export interface DiscoveryPresentationGateway {
 export interface DiscoverySchedulerDeps {
   refresh: () => Promise<DiscoveryRefreshResult>;
   getDiscoveryScore: () => number;
-  countSharedToday: () => number;
-  getOldestUnannouncedShared: () => Promise<Discovery | null>;
+  countAnnouncedToday: () => number;
+  getOldestQueuedDiscovery: () => Promise<Discovery | null>;
   presentationGateway: DiscoveryPresentationGateway;
-  runAutonomousCycle?: () => Promise<void>;
-  countAutonomousCyclesToday?: () => number;
-  canRunAutonomousCycle?: () => boolean;
+  setTimer?: typeof setTimeout;
+  clearTimer?: typeof clearTimeout;
 }
 
 const DAILY_SHARE_CAP = 10;
+
+export interface DiscoverySchedulerTickResult {
+  status: 'completed' | 'empty' | 'skipped' | 'failed';
+  presentedDiscoveryId?: string;
+  reason?: string;
+  error?: string;
+}
 
 export class DiscoveryScheduler {
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -40,7 +46,7 @@ export class DiscoveryScheduler {
   stop(): void {
     this.stopped = true;
     if (this.timer !== undefined) {
-      clearTimeout(this.timer);
+      (this.deps.clearTimer ?? clearTimeout)(this.timer);
       this.timer = undefined;
     }
   }
@@ -52,9 +58,9 @@ export class DiscoveryScheduler {
   private scheduleNext(delayMs: number): void {
     if (this.stopped) return;
     if (this.timer !== undefined) {
-      clearTimeout(this.timer);
+      (this.deps.clearTimer ?? clearTimeout)(this.timer);
     }
-    this.timer = setTimeout(() => {
+    this.timer = (this.deps.setTimer ?? setTimeout)(() => {
       this.timer = undefined;
       void this.tick();
     }, delayMs);
@@ -64,36 +70,43 @@ export class DiscoveryScheduler {
     if (this.stopped) return;
 
     try {
-      if (this.deps.presentationGateway.isBusy() || this.deps.presentationGateway.hasPending()) {
-        return;
-      }
-
-      if (this.deps.countSharedToday() < DAILY_SHARE_CAP) {
-        if (
-          this.deps.runAutonomousCycle &&
-          (this.deps.countAutonomousCyclesToday?.() ?? 1) < 1 &&
-          (this.deps.canRunAutonomousCycle?.() ?? true)
-        ) {
-          await this.deps.runAutonomousCycle();
-        }
-
-        const result = await this.deps.refresh();
-        const newestShared = result.newlyInserted.find((d) => d.status === 'shared');
-        if (newestShared) {
-          this.deps.presentationGateway.requestPresentation(newestShared);
-          return;
-        }
-      }
-
-      const oldest = await this.deps.getOldestUnannouncedShared();
-      if (oldest) {
-        this.deps.presentationGateway.requestPresentation(oldest);
-      }
-    } catch (error) {
-      console.warn('[our-companion] Discovery scheduler tick failed.', error);
+      await this.runOnce();
     } finally {
       this.firstRun = false;
       this.scheduleNext(this.nextDelay());
+    }
+  }
+
+  async runOnce(): Promise<DiscoverySchedulerTickResult> {
+    if (this.stopped) return { status: 'skipped', reason: 'stopped' };
+    if (this.deps.presentationGateway.isBusy() || this.deps.presentationGateway.hasPending()) {
+      return { status: 'skipped', reason: 'presentation_busy' };
+    }
+
+    try {
+      if (this.deps.countAnnouncedToday() < DAILY_SHARE_CAP) {
+        const result = await this.deps.refresh();
+        const newestEligible = result.newlyInserted.find((discovery) => discovery.status === 'eligible');
+        if (newestEligible) {
+          this.deps.presentationGateway.requestPresentation(newestEligible);
+          return { status: 'completed', presentedDiscoveryId: newestEligible.id };
+        }
+        if (result.newlyInserted.length === 0) {
+          return { status: 'empty', reason: 'no_valid_discoveries' };
+        }
+      }
+
+      const oldest = await this.deps.getOldestQueuedDiscovery();
+      if (oldest) {
+        this.deps.presentationGateway.requestPresentation(oldest);
+        return { status: 'completed', presentedDiscoveryId: oldest.id };
+      }
+      return { status: 'empty', reason: 'no_queued_discoveries' };
+    } catch (error) {
+      return {
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error)
+      };
     }
   }
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ActionPermissionState,
-  ActionPlanV2,
+  ActionPlan,
   ActionResult,
   AiDebugEntry,
   AiSettings,
@@ -19,14 +19,14 @@ import type {
   ExplorationCycleResult,
   ExplorationLoopEvent,
   CompanionJourney,
-  JourneyMilestoneV2,
+  JourneyTimelineEntry,
   KnowledgeGraph,
   KnowledgeGraphNode,
   NetworkStatus,
   VisitInvitationSummary,
   VisitSessionSummary,
   PermissionScope,
-  PerformanceScriptV2,
+  PerformanceScript,
   SpeechSettings,
   SpeechStatus,
   ToolExecutionResult,
@@ -470,7 +470,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       };
       discovery.enqueue(pc);
     });
-    const unsubscribePerformance = window.ourCompanion.action.onPerformance((script: PerformanceScriptV2) => {
+    const unsubscribePerformance = window.ourCompanion.action.onPerformance((script: PerformanceScript) => {
       performancePlaybackRef.current?.cancel();
       setPerformanceAnimation(undefined);
       performancePlaybackRef.current = startPerformancePlayback(script, setPerformanceAnimation);

@@ -7,3 +7,5 @@ export * from './overlay';
 export * from './inspector';
 export * from './performance';
 export * from './test-suite';
+export * from './production-runtime';
+export * from './testing';

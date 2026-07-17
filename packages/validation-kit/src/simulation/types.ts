@@ -38,9 +38,27 @@ export interface SimulationConfig {
 export interface SimulationResult {
   success: boolean;
   category: SimulationCategory;
+  operation: string;
+  status: 'completed' | 'empty' | 'skipped' | 'failed';
   description: string;
-  affectedSystems: string[];
+  correlationId?: string;
+  traceIds: string[];
+  inputRefs: string[];
+  outputRefs: string[];
+  stateDelta: SimulationStateDelta;
+  error?: string;
   timestamp: string;
+}
+
+export interface SimulationStateChange {
+  before?: unknown;
+  after?: unknown;
+}
+
+export interface SimulationStateDelta {
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  changes: Record<string, SimulationStateChange>;
 }
 
 export interface SimulationSnapshot {

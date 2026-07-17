@@ -21,6 +21,7 @@ import type {
   DiscoveryCandidate,
   DiscoveryFeedback,
   DiscoveryStatus,
+  EngineTrace,
   ExplorationCycle,
   ExplorationLoopEvent,
   ExplorationPlan,
@@ -39,26 +40,58 @@ import type {
   ,UserTopicPreference, NetworkCompanionLink, CachedAssetPack
 } from '@our-companion/shared';
 import type { ActionPermissionState } from '@our-companion/shared';
-import { COMPANION_CHAT_RETENTION_DAYS, createId, nowIso } from '@our-companion/shared';
+import {
+  COMPANION_CHAT_RETENTION_DAYS,
+  createId,
+  nowIso,
+  score100ToUnit,
+  unitToScore100
+} from '@our-companion/shared';
 import { sqliteSchema } from './schema';
 
 const DISCOVERY_ANNOUNCED_KEY = 'discovery.announcedIds';
-const MAX_ANNOUNCED_DISCOVERY_IDS = 500;
 const ALL_DEBUG_DATA_TARGETS: DebugDataResetTarget[] = ['discoveries', 'memory', 'journeys', 'diary', 'chat', 'autonomy'];
+
+const LEGAL_DISCOVERY_TRANSITIONS: Readonly<Record<DiscoveryStatus, readonly DiscoveryStatus[]>> = {
+  candidate: ['eligible', 'archived'],
+  eligible: ['queued', 'archived'],
+  queued: ['presenting', 'eligible', 'archived'],
+  presenting: ['announced', 'queued', 'eligible', 'archived'],
+  announced: ['saved', 'rejected', 'dismissed', 'archived'],
+  saved: ['archived'],
+  rejected: ['archived'],
+  dismissed: ['archived'],
+  archived: []
+};
+
+export interface DiscoveryLifecycleTransitionInput {
+  at?: string;
+  companionId?: string;
+  cycleId?: string;
+  commandId?: string;
+  reason?: string;
+}
+
+export interface EngineTraceQuery {
+  correlationId?: string;
+  cycleId?: string;
+  companionId?: string;
+  limit?: number;
+}
 
 type SqliteDatabase = DatabaseSync;
 
 export interface DatabaseServiceOptions {
   path?: string;
-  legacyAnnHasCustomAssets?: () => boolean;
+  priorAnnHasCustomAssets?: () => boolean;
 }
 
 export class DatabaseService {
   private readonly db: SqliteDatabase;
-  private readonly legacyAnnHasCustomAssets: () => boolean;
+  private readonly priorAnnHasCustomAssets: () => boolean;
 
   constructor(options: DatabaseServiceOptions = {}) {
-    this.legacyAnnHasCustomAssets = options.legacyAnnHasCustomAssets ?? (() => false);
+    this.priorAnnHasCustomAssets = options.priorAnnHasCustomAssets ?? (() => false);
     this.db = new DatabaseSync(options.path ?? ':memory:');
     this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec(sqliteSchema);
@@ -78,7 +111,16 @@ export class DatabaseService {
       { column: 'is_builtin', sql: 'ALTER TABLE companions ADD COLUMN is_builtin INTEGER NOT NULL DEFAULT 0' },
       { column: 'close_reason', sql: 'ALTER TABLE conversation_sessions ADD COLUMN close_reason TEXT' },
       { column: 'unfinished_topic', sql: 'ALTER TABLE conversation_sessions ADD COLUMN unfinished_topic TEXT' },
-      { column: 'feedback_domain', sql: 'ALTER TABLE discovery_feedback ADD COLUMN feedback_domain TEXT' }
+      { column: 'feedback_domain', sql: 'ALTER TABLE discovery_feedback ADD COLUMN feedback_domain TEXT' },
+      { column: 'companion_id', sql: 'ALTER TABLE discoveries ADD COLUMN companion_id TEXT' },
+      { column: 'cycle_id', sql: 'ALTER TABLE discoveries ADD COLUMN cycle_id TEXT' },
+      { column: 'presentation_command_id', sql: 'ALTER TABLE discoveries ADD COLUMN presentation_command_id TEXT' },
+      { column: 'eligible_at', sql: 'ALTER TABLE discoveries ADD COLUMN eligible_at TEXT' },
+      { column: 'queued_at', sql: 'ALTER TABLE discoveries ADD COLUMN queued_at TEXT' },
+      { column: 'presenting_at', sql: 'ALTER TABLE discoveries ADD COLUMN presenting_at TEXT' },
+      { column: 'announced_at', sql: 'ALTER TABLE discoveries ADD COLUMN announced_at TEXT' },
+      { column: 'updated_at', sql: 'ALTER TABLE discoveries ADD COLUMN updated_at TEXT' },
+      { column: 'status_reason', sql: 'ALTER TABLE discoveries ADD COLUMN status_reason TEXT' }
     ];
     for (const migration of migrations) {
       try {
@@ -94,12 +136,102 @@ export class DatabaseService {
     }
     this.ensurePendingActionsTable();
     this.ensureTopicPreferencesTable();
-    this.migrateLegacyBuiltinAnn();
+    this.migratePriorDiscoveryLifecycle();
+    this.migratePriorConversationImportance();
+    this.migratePriorBuiltinAnn();
   }
 
   private ensureCompatibilityIndexes(): void {
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_companion_messages_session ON companion_messages(session_id)');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_memory_nodes_companion ON memory_nodes(companion_id)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_discoveries_status_announced ON discoveries(status, announced_at)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_discoveries_companion_status ON discoveries(companion_id, status)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_engine_traces_correlation ON engine_traces(correlation_id, started_at)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_engine_traces_cycle ON engine_traces(cycle_id, started_at)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_engine_traces_companion ON engine_traces(companion_id, started_at)');
+  }
+
+  private migratePriorDiscoveryLifecycle(): void {
+    const announcedIds = this.getAppSetting<string[]>(DISCOVERY_ANNOUNCED_KEY) ?? [];
+
+    this.db.exec('BEGIN');
+    try {
+      this.db.prepare(
+        `UPDATE discoveries
+         SET status = 'candidate', updated_at = COALESCE(updated_at, created_at)
+         WHERE status = 'new'`
+      ).run();
+      this.db.prepare(
+        `UPDATE discoveries
+         SET status = 'dismissed',
+             announced_at = COALESCE(announced_at, shared_at, created_at),
+             updated_at = COALESCE(updated_at, created_at)
+         WHERE status = 'ignored'`
+      ).run();
+      this.db.prepare(
+        `UPDATE discoveries
+         SET status = 'saved',
+             announced_at = COALESCE(announced_at, shared_at, created_at),
+             updated_at = COALESCE(updated_at, created_at)
+         WHERE status = 'journey'`
+      ).run();
+      this.db.prepare(
+        `UPDATE discoveries
+         SET status = 'announced',
+             announced_at = COALESCE(announced_at, shared_at, created_at),
+             updated_at = COALESCE(updated_at, created_at)
+         WHERE status = 'viewed'`
+      ).run();
+
+      if (announcedIds.length > 0) {
+        const markPriorAnnounced = this.db.prepare(
+          `UPDATE discoveries
+           SET status = CASE
+             WHEN status IN ('saved', 'rejected', 'dismissed', 'archived') THEN status
+             ELSE 'announced'
+           END,
+           announced_at = COALESCE(announced_at, shared_at, created_at),
+           updated_at = COALESCE(updated_at, created_at)
+           WHERE id = ?`
+        );
+        for (const id of announcedIds) markPriorAnnounced.run(id);
+      }
+
+      this.db.prepare(
+        `UPDATE discoveries
+         SET status = 'eligible',
+             eligible_at = COALESCE(eligible_at, shared_at, created_at),
+             updated_at = COALESCE(updated_at, created_at)
+         WHERE status = 'shared' AND announced_at IS NULL`
+      ).run();
+      this.db.prepare(
+        `UPDATE discoveries
+         SET updated_at = COALESCE(updated_at, created_at),
+             eligible_at = CASE
+               WHEN status IN ('eligible', 'queued', 'presenting', 'announced', 'saved', 'rejected', 'dismissed')
+                 THEN COALESCE(eligible_at, created_at)
+               ELSE eligible_at
+             END
+         WHERE updated_at IS NULL OR (
+           eligible_at IS NULL AND status IN ('eligible', 'queued', 'presenting', 'announced', 'saved', 'rejected', 'dismissed')
+         )`
+      ).run();
+      this.db.prepare('DELETE FROM app_settings WHERE key = ?').run(DISCOVERY_ANNOUNCED_KEY);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  private migratePriorConversationImportance(): void {
+    this.db.prepare(
+      `UPDATE memory_nodes
+       SET importance_score = importance_score * 100
+       WHERE source = 'conversation'
+         AND importance_score > 0
+         AND importance_score <= 1`
+    ).run();
   }
 
   private ensureTopicPreferencesTable(): void {
@@ -152,21 +284,21 @@ export class DatabaseService {
   }
 
   /**
-   * Removes only the untouched legacy built-in profile. Any Ann record with user
+   * Removes only the untouched prior built-in profile. Any Ann record with user
    * data or customization is retained as a normal user Companion; no user data
    * is ever deleted by this migration.
    */
-  private migrateLegacyBuiltinAnn(): void {
+  private migratePriorBuiltinAnn(): void {
     const ann = this.db.prepare('SELECT * FROM companions WHERE id = ? AND is_builtin = 1').get('ann') as Record<string, unknown> | undefined;
     if (!ann) return;
-    if (this.shouldDeleteUntouchedLegacyAnn(ann)) {
+    if (this.shouldDeleteUntouchedPriorAnn(ann)) {
       this.db.prepare('DELETE FROM companions WHERE id = ?').run('ann');
       return;
     }
     this.db.prepare('UPDATE companions SET is_builtin = 0 WHERE id = ?').run('ann');
   }
 
-  private shouldDeleteUntouchedLegacyAnn(ann: Record<string, unknown>): boolean {
+  private shouldDeleteUntouchedPriorAnn(ann: Record<string, unknown>): boolean {
     const isOriginalProfile = ann.id === 'ann' &&
       ann.is_builtin === 1 &&
       ann.name === 'Ann' &&
@@ -176,8 +308,8 @@ export class DatabaseService {
     if (!isOriginalProfile) return false;
 
     try {
-      if (this.legacyAnnHasCustomAssets()) return false;
-      if (this.hasLegacyAnnOwnedRecords()) return false;
+      if (this.priorAnnHasCustomAssets()) return false;
+      if (this.hasPriorAnnOwnedRecords()) return false;
       if (this.hasMeaningfulApplicationActivity()) return false;
       return true;
     } catch {
@@ -185,7 +317,7 @@ export class DatabaseService {
     }
   }
 
-  private hasLegacyAnnOwnedRecords(): boolean {
+  private hasPriorAnnOwnedRecords(): boolean {
     const identityColumns = new Set(['companion_id', 'character_id', 'from_companion_id', 'to_companion_id']);
     for (const table of this.listUserTables()) {
       const columns = this.db.prepare(`PRAGMA table_info(${quoteIdent(table)})`).all() as Array<{ name: string }>;
@@ -445,7 +577,7 @@ export class DatabaseService {
         node.title,
         node.summary ?? null,
         node.content ?? null,
-        node.importanceScore,
+        unitToScore100(node.importance),
         node.source ?? null,
         node.sourceUrl ?? null,
         node.isPinned ? 1 : 0,
@@ -475,7 +607,7 @@ export class DatabaseService {
         node.title,
         node.summary ?? null,
         node.content ?? null,
-        node.importanceScore,
+        unitToScore100(node.importance),
         node.source ?? null,
         node.sourceUrl ?? null,
         node.isPinned ? 1 : 0,
@@ -536,10 +668,32 @@ export class DatabaseService {
   insertDiscovery(discovery: Discovery): Discovery {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO discoveries
+        `INSERT INTO discoveries
          (id, source, external_id, title, summary, url, tags_json, raw_json, interest_score, history_score, expertise_score,
-          novelty_score, usefulness_score, final_score, status, why_this_matters, recommended_action, short_message, shared_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          novelty_score, usefulness_score, final_score, status, why_this_matters, recommended_action, short_message,
+          companion_id, cycle_id, presentation_command_id, eligible_at, queued_at, presenting_at, announced_at,
+          updated_at, status_reason, shared_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           source = excluded.source,
+           external_id = excluded.external_id,
+           title = excluded.title,
+           summary = excluded.summary,
+           url = excluded.url,
+           tags_json = excluded.tags_json,
+           raw_json = excluded.raw_json,
+           interest_score = excluded.interest_score,
+           history_score = excluded.history_score,
+           expertise_score = excluded.expertise_score,
+           novelty_score = excluded.novelty_score,
+           usefulness_score = excluded.usefulness_score,
+           final_score = excluded.final_score,
+           why_this_matters = COALESCE(excluded.why_this_matters, discoveries.why_this_matters),
+           recommended_action = COALESCE(excluded.recommended_action, discoveries.recommended_action),
+           short_message = COALESCE(excluded.short_message, discoveries.short_message),
+           companion_id = COALESCE(excluded.companion_id, discoveries.companion_id),
+           cycle_id = COALESCE(excluded.cycle_id, discoveries.cycle_id),
+           updated_at = excluded.updated_at`
       )
       .run(
         discovery.id,
@@ -550,27 +704,80 @@ export class DatabaseService {
         discovery.url ?? null,
         JSON.stringify(discovery.tags),
         JSON.stringify(discovery.raw),
-        discovery.userInterestScore,
-        discovery.userHistoryScore,
-        discovery.characterExpertiseScore,
-        discovery.noveltyScore,
-        discovery.usefulnessScore,
-        discovery.finalScore,
+        unitToScore100(discovery.userInterestScore),
+        unitToScore100(discovery.userHistoryScore),
+        unitToScore100(discovery.characterExpertiseScore),
+        unitToScore100(discovery.noveltyScore),
+        unitToScore100(discovery.usefulnessScore),
+        unitToScore100(discovery.finalScore),
         discovery.status,
         discovery.whyThisMatters ?? null,
         discovery.recommendedAction ?? null,
         discovery.shortMessage ?? null,
-        discovery.sharedAt ?? null,
+        discovery.companionId ?? null,
+        discovery.cycleId ?? null,
+        discovery.presentationCommandId ?? null,
+        discovery.eligibleAt ?? null,
+        discovery.queuedAt ?? null,
+        discovery.presentingAt ?? null,
+        discovery.announcedAt ?? null,
+        discovery.updatedAt ?? discovery.createdAt,
+        discovery.statusReason ?? null,
+        null,
         discovery.createdAt
       );
     return discovery;
   }
 
-  updateDiscoveryStatus(id: string, status: DiscoveryStatus): Discovery {
-    this.db.prepare('UPDATE discoveries SET status = ? WHERE id = ?').run(status, id);
-    const discovery = this.getDiscovery(id);
-    if (!discovery) throw new Error(`Discovery not found: ${id}`);
-    return discovery;
+  transitionDiscoveryStatus(
+    id: string,
+    status: DiscoveryStatus,
+    input: DiscoveryLifecycleTransitionInput = {}
+  ): Discovery {
+    const current = this.getDiscovery(id);
+    if (!current) throw new Error(`Discovery not found: ${id}`);
+    if (current.status === status) return current;
+    if (!LEGAL_DISCOVERY_TRANSITIONS[current.status].includes(status)) {
+      throw new Error(`Illegal Discovery lifecycle transition: ${current.status} -> ${status}`);
+    }
+
+    const at = input.at ?? nowIso();
+    const eligibleAt =
+      status === 'eligible' ? current.eligibleAt ?? at : current.eligibleAt;
+    const queuedAt =
+      status === 'queued' ? current.queuedAt ?? at : current.queuedAt;
+    const presentingAt =
+      status === 'presenting' ? current.presentingAt ?? at : current.presentingAt;
+    const announcedAt =
+      status === 'announced' ? current.announcedAt ?? at : current.announcedAt;
+
+    this.db.prepare(
+      `UPDATE discoveries SET
+        status = ?,
+        companion_id = COALESCE(?, companion_id),
+        cycle_id = COALESCE(?, cycle_id),
+        presentation_command_id = COALESCE(?, presentation_command_id),
+        eligible_at = ?,
+        queued_at = ?,
+        presenting_at = ?,
+        announced_at = ?,
+        updated_at = ?,
+        status_reason = ?
+       WHERE id = ?`
+    ).run(
+      status,
+      input.companionId ?? null,
+      input.cycleId ?? null,
+      input.commandId ?? null,
+      eligibleAt ?? null,
+      queuedAt ?? null,
+      presentingAt ?? null,
+      announcedAt ?? null,
+      at,
+      input.reason ?? null,
+      id
+    );
+    return this.getDiscovery(id)!;
   }
 
   getDiscovery(id: string): Discovery | undefined {
@@ -588,50 +795,119 @@ export class DatabaseService {
     return (rows as Array<Record<string, unknown>>).map(mapDiscovery);
   }
 
-  countSharedToday(): number {
-    const today = new Date().toISOString().slice(0, 10);
-    const row = this.db
-      .prepare("SELECT COUNT(*) as count FROM discoveries WHERE status = 'shared' AND shared_at LIKE ?")
-      .get(`${today}%`) as { count: number };
+  countAnnouncedToday(companionId?: string, now: Date = new Date()): number {
+    const day = now.toISOString().slice(0, 10);
+    const start = `${day}T00:00:00.000Z`;
+    const endDate = new Date(start);
+    endDate.setUTCDate(endDate.getUTCDate() + 1);
+    const end = endDate.toISOString();
+    const row = companionId
+      ? this.db.prepare(
+          `SELECT COUNT(*) as count FROM discoveries
+           WHERE announced_at >= ? AND announced_at < ? AND companion_id = ?`
+        ).get(start, end, companionId) as { count: number }
+      : this.db.prepare(
+          `SELECT COUNT(*) as count FROM discoveries
+           WHERE announced_at >= ? AND announced_at < ?`
+        ).get(start, end) as { count: number };
     return Number(row.count);
   }
 
   getAnnouncedDiscoveryIds(): string[] {
-    return this.getAppSetting<string[]>(DISCOVERY_ANNOUNCED_KEY) ?? [];
+    return (this.db.prepare(
+      'SELECT id FROM discoveries WHERE announced_at IS NOT NULL ORDER BY announced_at ASC'
+    ).all() as Array<{ id: string }>).map((row) => String(row.id));
   }
 
   isDiscoveryAnnounced(id: string): boolean {
-    return this.getAnnouncedDiscoveryIds().includes(id);
-  }
-
-  markDiscoveryAnnounced(id: string): void {
-    const announced = this.getAnnouncedDiscoveryIds();
-    if (announced.includes(id)) return;
-    const next = [...announced, id].slice(-MAX_ANNOUNCED_DISCOVERY_IDS);
-    this.setAppSetting(DISCOVERY_ANNOUNCED_KEY, next);
+    return Boolean(this.db.prepare(
+      'SELECT 1 FROM discoveries WHERE id = ? AND announced_at IS NOT NULL'
+    ).get(id));
   }
 
   clearAnnouncedDiscoveryIds(): void {
-    this.setAppSetting(DISCOVERY_ANNOUNCED_KEY, []);
+    this.db.prepare(
+      `UPDATE discoveries
+       SET status = 'eligible', announced_at = NULL, presenting_at = NULL,
+           presentation_command_id = NULL, updated_at = ?
+       WHERE status = 'announced'`
+    ).run(nowIso());
   }
 
-  listUnannouncedShared(limit = 20): Discovery[] {
-    const announced = new Set(this.getAnnouncedDiscoveryIds());
-    return this.listDiscoveries({ status: 'shared', limit: limit + announced.size })
-      .filter((discovery) => !announced.has(discovery.id))
-      .slice(0, limit);
+  listQueuedOrEligible(limit = 20, companionId?: string): Discovery[] {
+    const rows = companionId
+      ? this.db.prepare(
+          `SELECT * FROM discoveries
+           WHERE status IN ('queued', 'eligible') AND (companion_id = ? OR companion_id IS NULL)
+           ORDER BY CASE status WHEN 'queued' THEN 0 ELSE 1 END,
+                    COALESCE(queued_at, eligible_at, created_at) ASC
+           LIMIT ?`
+        ).all(companionId, limit)
+      : this.db.prepare(
+          `SELECT * FROM discoveries
+           WHERE status IN ('queued', 'eligible')
+           ORDER BY CASE status WHEN 'queued' THEN 0 ELSE 1 END,
+                    COALESCE(queued_at, eligible_at, created_at) ASC
+           LIMIT ?`
+        ).all(limit);
+    return (rows as Array<Record<string, unknown>>).map(mapDiscovery);
   }
 
-  getOldestUnannouncedShared(): Discovery | null {
-    const announced = new Set(this.getAnnouncedDiscoveryIds());
-    const rows = this.db
-      .prepare("SELECT * FROM discoveries WHERE status = 'shared' ORDER BY created_at ASC LIMIT 50")
-      .all() as Array<Record<string, unknown>>;
-    for (const row of rows) {
-      const discovery = mapDiscovery(row);
-      if (!announced.has(discovery.id)) return discovery;
+  getOldestQueuedDiscovery(companionId?: string): Discovery | null {
+    return this.listQueuedOrEligible(1, companionId)[0] ?? null;
+  }
+
+  insertEngineTrace(trace: EngineTrace): EngineTrace {
+    this.db.prepare(
+      `INSERT OR REPLACE INTO engine_traces
+       (id, correlation_id, causation_id, cycle_id, companion_id, engine, operation, provider_mode,
+        input_refs_json, output_refs_json, state_before_hash, state_after_hash, started_at, completed_at,
+        duration_ms, status, skip_reason, error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      trace.id,
+      trace.correlationId,
+      trace.causationId ?? null,
+      trace.cycleId ?? null,
+      trace.companionId,
+      trace.engine,
+      trace.operation,
+      trace.providerMode,
+      JSON.stringify(trace.inputRefs),
+      JSON.stringify(trace.outputRefs),
+      trace.stateBeforeHash ?? null,
+      trace.stateAfterHash ?? null,
+      trace.startedAt,
+      trace.completedAt ?? null,
+      trace.durationMs ?? null,
+      trace.status,
+      trace.skipReason ?? null,
+      trace.error ?? null
+    );
+    return trace;
+  }
+
+  listEngineTraces(input: EngineTraceQuery = {}): EngineTrace[] {
+    const conditions: string[] = [];
+    const params: Array<string | number> = [];
+    if (input.correlationId) {
+      conditions.push('correlation_id = ?');
+      params.push(input.correlationId);
     }
-    return null;
+    if (input.cycleId) {
+      conditions.push('cycle_id = ?');
+      params.push(input.cycleId);
+    }
+    if (input.companionId) {
+      conditions.push('companion_id = ?');
+      params.push(input.companionId);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    params.push(input.limit ?? 100);
+    const rows = this.db.prepare(
+      `SELECT * FROM engine_traces ${where} ORDER BY started_at ASC, rowid ASC LIMIT ?`
+    ).all(...params) as Array<Record<string, unknown>>;
+    return rows.map(mapEngineTrace);
   }
 
   insertPattern(pattern: Pattern): Pattern {
@@ -1266,6 +1542,7 @@ export class DatabaseService {
         clearedTables.add('app_settings.discovery_announced');
       }
       if (targets.includes('autonomy')) {
+        clearTable('engine_traces');
         clearTable('discovery_feedback');
         clearTable('exploration_loop_events');
         clearTable('exploration_cycles');
@@ -1303,9 +1580,9 @@ export class DatabaseService {
       const defaultRel: UserCompanionRelationship = {
         userId,
         companionId,
-        familiarity: 10,
-        trust: 10,
-        comfort: 10,
+        familiarity: 0.1,
+        trust: 0.1,
+        comfort: 0.1,
         preferredInteractionFrequency: 'normal',
         preferredInteractionStyle: 'balanced',
         recentPositiveInteractions: 0,
@@ -1341,7 +1618,8 @@ export class DatabaseService {
          last_meaningful_interaction_at = excluded.last_meaningful_interaction_at,
          updated_at = excluded.updated_at`
     ).run(
-      rel.userId, rel.companionId, rel.familiarity, rel.trust, rel.comfort,
+      rel.userId, rel.companionId,
+      unitToScore100(rel.familiarity), unitToScore100(rel.trust), unitToScore100(rel.comfort),
       rel.preferredInteractionFrequency, rel.preferredInteractionStyle,
       rel.recentPositiveInteractions, rel.recentIgnoredInteractions, rel.recentCorrections,
       JSON.stringify(rel.sharedExperienceIds), JSON.stringify(rel.knownBoundaries),
@@ -1471,7 +1749,7 @@ function mapMemoryNode(row: Record<string, unknown>): MemoryNode {
     title: String(row.title),
     summary: row.summary ? String(row.summary) : undefined,
     content: row.content ? String(row.content) : undefined,
-    importanceScore: Number(row.importance_score),
+    importance: score100ToUnit(Number(row.importance_score)),
     source: row.source ? String(row.source) : undefined,
     sourceUrl: row.source_url ? String(row.source_url) : undefined,
     isPinned: Number(row.is_pinned) === 1,
@@ -1490,9 +1768,9 @@ function mapRelationship(row: Record<string, unknown>): UserCompanionRelationshi
   return {
     userId: String(row.user_id),
     companionId: String(row.companion_id),
-    familiarity: Number(row.familiarity),
-    trust: Number(row.trust),
-    comfort: Number(row.comfort),
+    familiarity: score100ToUnit(Number(row.familiarity)),
+    trust: score100ToUnit(Number(row.trust)),
+    comfort: score100ToUnit(Number(row.comfort)),
     preferredInteractionFrequency: row.preferred_interaction_frequency as UserCompanionRelationship['preferredInteractionFrequency'],
     preferredInteractionStyle: row.preferred_interaction_style as UserCompanionRelationship['preferredInteractionStyle'],
     recentPositiveInteractions: Number(row.recent_positive_interactions),
@@ -1543,18 +1821,49 @@ function mapDiscovery(row: Record<string, unknown>): Discovery {
     url: row.url ? String(row.url) : undefined,
     tags: JSON.parse(String(row.tags_json ?? '[]')),
     raw: row.raw_json ? JSON.parse(String(row.raw_json)) : {},
-    userInterestScore: Number(row.interest_score),
-    userHistoryScore: Number(row.history_score),
-    characterExpertiseScore: Number(row.expertise_score),
-    noveltyScore: Number(row.novelty_score),
-    usefulnessScore: Number(row.usefulness_score),
-    finalScore: Number(row.final_score),
+    userInterestScore: score100ToUnit(Number(row.interest_score)),
+    userHistoryScore: score100ToUnit(Number(row.history_score)),
+    characterExpertiseScore: score100ToUnit(Number(row.expertise_score)),
+    noveltyScore: score100ToUnit(Number(row.novelty_score)),
+    usefulnessScore: score100ToUnit(Number(row.usefulness_score)),
+    finalScore: score100ToUnit(Number(row.final_score)),
     status: row.status as Discovery['status'],
     whyThisMatters: row.why_this_matters ? String(row.why_this_matters) : undefined,
     recommendedAction: row.recommended_action as Discovery['recommendedAction'],
     shortMessage: row.short_message ? String(row.short_message) : undefined,
-    sharedAt: row.shared_at ? String(row.shared_at) : undefined,
+    companionId: row.companion_id ? String(row.companion_id) : undefined,
+    cycleId: row.cycle_id ? String(row.cycle_id) : undefined,
+    presentationCommandId: row.presentation_command_id ? String(row.presentation_command_id) : undefined,
+    eligibleAt: row.eligible_at ? String(row.eligible_at) : undefined,
+    queuedAt: row.queued_at ? String(row.queued_at) : undefined,
+    presentingAt: row.presenting_at ? String(row.presenting_at) : undefined,
+    announcedAt: row.announced_at ? String(row.announced_at) : undefined,
+    updatedAt: row.updated_at ? String(row.updated_at) : undefined,
+    statusReason: row.status_reason ? String(row.status_reason) : undefined,
     createdAt: String(row.created_at)
+  };
+}
+
+function mapEngineTrace(row: Record<string, unknown>): EngineTrace {
+  return {
+    id: String(row.id),
+    correlationId: String(row.correlation_id),
+    causationId: row.causation_id ? String(row.causation_id) : undefined,
+    cycleId: row.cycle_id ? String(row.cycle_id) : undefined,
+    companionId: String(row.companion_id),
+    engine: String(row.engine),
+    operation: String(row.operation),
+    providerMode: row.provider_mode as EngineTrace['providerMode'],
+    inputRefs: JSON.parse(String(row.input_refs_json ?? '[]')),
+    outputRefs: JSON.parse(String(row.output_refs_json ?? '[]')),
+    stateBeforeHash: row.state_before_hash ? String(row.state_before_hash) : undefined,
+    stateAfterHash: row.state_after_hash ? String(row.state_after_hash) : undefined,
+    startedAt: String(row.started_at),
+    completedAt: row.completed_at ? String(row.completed_at) : undefined,
+    durationMs: row.duration_ms === null || row.duration_ms === undefined ? undefined : Number(row.duration_ms),
+    status: row.status as EngineTrace['status'],
+    skipReason: row.skip_reason ? String(row.skip_reason) : undefined,
+    error: row.error ? String(row.error) : undefined
   };
 }
 

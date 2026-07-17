@@ -1,4 +1,4 @@
-import type { CompanionAnimationName, PerformanceScriptV2 } from '@our-companion/shared';
+import type { CompanionAnimationName, PerformanceScript } from '@our-companion/shared';
 import { isCompanionAnimationName } from './animationSelection';
 
 interface PlaybackScheduler {
@@ -23,7 +23,7 @@ function animationForCue(payload: unknown): CompanionAnimationName | undefined {
 
 /** Starts one renderer-owned performance timeline and returns its cancellation handle. */
 export function startPerformancePlayback(
-  script: PerformanceScriptV2,
+  script: PerformanceScript,
   setAnimation: (animation: CompanionAnimationName | undefined) => void,
   scheduler: PlaybackScheduler = window,
 ): ActivePerformancePlayback {

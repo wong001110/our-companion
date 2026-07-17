@@ -88,6 +88,35 @@ describe('planAction', () => {
     expect(plan?.status).toBe('draft');
   });
 
+  it('restores the canonical permission scope when the llm returns an empty list', async () => {
+    const llmPlan = {
+      summary: 'Open example',
+      steps: [{ tool_name: 'open_url', args: { url: 'https://example.com' }, required_scopes: [] }],
+    };
+    const llm = {
+      completeJson: vi.fn().mockResolvedValue(JSON.stringify(llmPlan)),
+      validateActionPlan: vi.fn().mockReturnValue(llmPlan),
+    };
+
+    const plan = await planAction('please navigate to example.com', llm);
+
+    expect(plan?.steps[0].requiredScopes).toEqual(['browser']);
+    expect(resolvePermissions(plan!, defaultPermissions())).toEqual(['browser']);
+  });
+
+  it('rejects an unknown tool returned by the llm', async () => {
+    const llmPlan = {
+      summary: 'Run an unsupported command',
+      steps: [{ tool_name: 'run_shell', args: {}, required_scopes: [] }],
+    };
+    const llm = {
+      completeJson: vi.fn().mockResolvedValue(JSON.stringify(llmPlan)),
+      validateActionPlan: vi.fn().mockReturnValue(llmPlan),
+    };
+
+    expect(await planAction('run a shell command', llm)).toBeUndefined();
+  });
+
   it('returns undefined when no rules match and no llm provided', async () => {
     const plan = await planAction('tell me a joke');
     expect(plan).toBeUndefined();
@@ -121,6 +150,25 @@ describe('resolvePermissions', () => {
     const perms: ActionPermissionState = defaultPermissions();
     const plan = { id: 'p1', intentId: 'i1', steps: [], requiredPermissions: [], riskLevel: 'low' as const, confirmationRequired: false, status: 'draft' as const };
     expect(resolvePermissions(plan, perms)).toBe('ok');
+  });
+
+  it('does not trust an empty requiredScopes list for a known tool', () => {
+    const plan = planActionFromRules('open url https://example.com')!;
+    plan.steps[0].requiredScopes = [];
+
+    expect(resolvePermissions(plan, defaultPermissions())).toEqual(['browser']);
+  });
+
+  it('denies unknown tools even when they declare no scopes', () => {
+    const plan = planActionFromRules('open url https://example.com')!;
+    plan.steps[0].toolName = 'run_shell';
+    plan.steps[0].requiredScopes = [];
+
+    expect(resolvePermissions(plan, {
+      ...defaultPermissions(),
+      browser: 'granted',
+      automation: 'granted',
+    })).toBe('denied');
   });
 });
 
@@ -167,6 +215,7 @@ describe('runActionPlan', () => {
     expect(result.status).toBe('cancelled');
     expect(result.errors).toBeDefined();
     expect(result.errors!.length).toBeGreaterThan(0);
+    expect(deps.executeStep).not.toHaveBeenCalled();
   });
 
   it('returns cancelled when scope is denied', async () => {
@@ -177,24 +226,65 @@ describe('runActionPlan', () => {
     const result = await runActionPlan(plan, deps);
     expect(result.status).toBe('cancelled');
     expect(result.errors).toContain('Permission denied for this action.');
+    expect(deps.executeStep).not.toHaveBeenCalled();
   });
 
-  it('returns failure and emits ActionFailed when a step fails after retry', async () => {
+  it('does not retry a failure that was not explicitly marked recoverable', async () => {
     const plan = planActionFromRules('open url https://example.com')!;
     const deps = makeDeps({
       executeStep: vi.fn().mockResolvedValue({ status: 'failed', errorMessage: 'network error' }),
     });
     const result = await runActionPlan(plan, deps);
     expect(result.status).toBe('failure');
+    expect(deps.executeStep).toHaveBeenCalledOnce();
     const types = (deps.emitEvent as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0]);
     expect(types).toContain('ActionFailed');
+  });
+
+  it('retries once when a failure is explicitly marked recoverable', async () => {
+    const plan = planActionFromRules('open url https://example.com')!;
+    const executeStep = vi.fn()
+      .mockResolvedValueOnce({ status: 'failed', errorMessage: 'temporary outage', recoverable: true })
+      .mockResolvedValueOnce({ status: 'executed' });
+    const deps = makeDeps({ executeStep });
+
+    const result = await runActionPlan(plan, deps);
+
+    expect(result.status).toBe('success');
+    expect(executeStep).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports the retry outcome when a recoverable failure remains unsuccessful', async () => {
+    const plan = planActionFromRules('open url https://example.com')!;
+    const executeStep = vi.fn()
+      .mockResolvedValueOnce({ status: 'failed', errorMessage: 'temporary outage', recoverable: true })
+      .mockResolvedValueOnce({ status: 'failed', errorMessage: 'permanent failure' });
+    const deps = makeDeps({ executeStep });
+
+    const result = await runActionPlan(plan, deps);
+
+    expect(result.status).toBe('failure');
+    expect(result.errors).toEqual(['permanent failure']);
+    expect(executeStep).toHaveBeenCalledTimes(2);
+  });
+
+  it('denies an unknown tool before reaching the execution adapter', async () => {
+    const plan = planActionFromRules('open url https://example.com')!;
+    plan.steps[0].toolName = 'run_shell';
+    plan.steps[0].requiredScopes = [];
+    const deps = makeDeps();
+
+    const result = await runActionPlan(plan, deps);
+
+    expect(result.status).toBe('cancelled');
+    expect(deps.executeStep).not.toHaveBeenCalled();
   });
 });
 
 // ─── Performance director ─────────────────────────────────────────────────
 
 describe('directPerformance', () => {
-  it('returns a PerformanceScriptV2 with animationSequence for success', () => {
+  it('returns a performance script with animationSequence for success', () => {
     const script = directPerformance('action_1', 'success');
     expect(script.name).toBe('action_1');
     expect(script.animationSequence.length).toBeGreaterThan(0);
@@ -204,7 +294,7 @@ describe('directPerformance', () => {
     expect(keys).toContain('Expedition_Return');
   });
 
-  it('returns a PerformanceScriptV2 with animationSequence for failure', () => {
+  it('returns a performance script with animationSequence for failure', () => {
     const script = directPerformance('action_2', 'failure');
     const keys = script.animationSequence.map((s) => s.payload && typeof s.payload === 'object' && 'animationKey' in s.payload
       ? (s.payload as { animationKey: string }).animationKey
