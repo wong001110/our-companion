@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeImage, protocol, screen, session } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
-import { isPanelTab } from '@our-companion/shared';
+import { createId, isPanelTab, nowIso, type CompanionCommand, type DiscoveryAnnouncePayload } from '@our-companion/shared';
 import { loadEnv } from './env';
 import { AppServices } from './services';
 import { DiscoveryScheduler } from './discoveryScheduler';
@@ -712,6 +712,56 @@ function registerSmokeIpc(): void {
       if (window && !window.isDestroyed()) window.webContents.send('network:statusChanged', smokeUiBetaFixture.status);
     }
   });
+  ipcMain.handle('smoke:presentDiscoveryFixture', async (event, input: unknown) => {
+    const fixture = input as { order?: unknown; displayHint?: unknown } | undefined;
+    if (
+      !fixture ||
+      (fixture.order !== 'command_payload' && fixture.order !== 'payload_command') ||
+      (fixture.displayHint !== undefined && fixture.displayHint !== 'show_soft_hint' && fixture.displayHint !== 'present_discovery')
+    ) throw new Error('SMOKE_DISCOVERY_FIXTURE_INVALID');
+    const displayHint = fixture.displayHint ?? 'present_discovery';
+    const discoveryId = createId('smoke_discovery');
+    const title = `Discovery handoff ${fixture.order}`;
+    const command: CompanionCommand = {
+      id: createId('smoke_command'),
+      companionId: services.db.resolveActiveCompanionId(),
+      discoveryId,
+      decision: {
+        id: createId('smoke_decision'),
+        action: 'share_discovery',
+        priority: 'normal',
+        timing: displayHint === 'show_soft_hint' ? 'next_idle' : 'now',
+        reason: 'Deterministic smoke-only Discovery presentation fixture.',
+        displayHint,
+        createdAt: nowIso(),
+      },
+      issuedAt: nowIso(),
+    };
+    const payload: DiscoveryAnnouncePayload = {
+      discoveryId,
+      title,
+      message: '',
+      cardBody: 'This fixture verifies that command and payload delivery order cannot lose the presentation.',
+      whyThisMatters: 'The presentation remains visible and clickable.',
+      recommendedAction: 'view',
+      tags: ['smoke', 'handoff'],
+      source: 'smoke fixture',
+      sourceUrl: 'https://example.test/discovery-handoff',
+    };
+    const sender = event.sender;
+    const sendCommand = () => sender.send('companion:command', command);
+    const sendPayload = () => sender.send('discovery:announce', payload);
+    if (fixture.order === 'command_payload') {
+      sendCommand();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      sendPayload();
+    } else {
+      sendPayload();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      sendCommand();
+    }
+    return { discoveryId, title };
+  });
 }
 
 function resolveUiBetaSmokeRoute(channel: string, input: unknown): { handled: false } | { handled: true; result: unknown } {
@@ -836,7 +886,11 @@ function startDiscoveryAutomation(): void {
     getDiscoveryScore: () => services.getEffectiveDiscoveryScore(),
     countSharedToday: () => services.db.countSharedToday(),
     getOldestUnannouncedShared: () => Promise.resolve(services.db.getOldestUnannouncedShared()),
-    announcer: discoveryShareOrchestrator,
+    presentationGateway: {
+      isBusy: () => services.isDiscoveryPresentationBusy(),
+      hasPending: () => services.hasPendingDiscoveryPresentation(),
+      requestPresentation: (discovery) => { services.requestDiscoveryPresentation(discovery); },
+    },
     runAutonomousCycle: () => services.autonomy.startExploration({ trigger: 'scheduled' }).then(() => undefined),
     countAutonomousCyclesToday: () => services.countAutonomousCyclesToday(),
     canRunAutonomousCycle: () => services.canAnnounceDiscovery()

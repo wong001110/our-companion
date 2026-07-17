@@ -283,6 +283,9 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     }
   });
   const [softHintVisible, setSoftHintVisible] = useState(false);
+  const [softHintDiscoveryId, setSoftHintDiscoveryId] = useState<string>();
+  const softHintPresentationCancelRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => softHintPresentationCancelRef.current?.(), []);
   const behaviorCommandActionsRef = useRef<{ recordSpeech: () => void; recordDiscoveryPresented: () => void }>({
     recordSpeech: () => undefined,
     recordDiscoveryPresented: () => undefined,
@@ -300,6 +303,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     const started = new Promise<void>((resolve, reject) => { resolveStarted = resolve; rejectStarted = reject; });
     const completed = new Promise<void>((resolve, reject) => { resolveCompleted = resolve; rejectCompleted = reject; });
     let phase: LocalExecutionPhase = 'waiting_to_start';
+    let stopWaitingForDiscovery: () => void = () => undefined;
     const fail = (reason: string) => {
       if (phase === 'completed' || phase === 'cancelled' || phase === 'failed') return;
       const wasWaitingToStart = phase === 'waiting_to_start';
@@ -321,6 +325,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     };
     const cancel = (reason: string) => {
       if (phase === 'completed' || phase === 'cancelled' || phase === 'failed') return;
+      stopWaitingForDiscovery();
       const wasWaitingToStart = phase === 'waiting_to_start';
       phase = 'cancelled';
       if (commandCompletionRef.current?.commandId === command.id) commandCompletionRef.current = null;
@@ -329,25 +334,23 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     };
     const displayHint = command.decision.displayHint;
     if (displayHint === 'show_soft_hint' && !presentation.discovery.popup && !presentation.softHintVisible) {
+      setSoftHintDiscoveryId(command.discoveryId);
       setSoftHintVisible(true);
       behaviorCommandActionsRef.current.recordSpeech();
       presentation.speech.showInstant(`${presentation.companionName} found something interesting. Want to see it?`);
       beginVisiblePresentation();
       window.requestAnimationFrame(completePresentation);
-    } else if (displayHint === 'present_discovery' && !presentation.discovery.popup) {
-      const next = presentation.discovery.presentNext();
-      if (next) {
+    } else if (displayHint === 'present_discovery') {
+      stopWaitingForDiscovery = presentation.discovery.presentWhenAvailable(command.discoveryId, (next) => {
         const completedImmediately = presentation.speech.showTypewriter(next.shareMessage);
         behaviorCommandActionsRef.current.recordDiscoveryPresented();
         beginVisiblePresentation();
         if (completedImmediately) {
           window.requestAnimationFrame(completePresentation);
-          return { started, completed, cancel };
+          return;
         }
         commandCompletionRef.current = { commandId: command.id, complete: completePresentation };
-      } else {
-        fail('missing_discovery');
-      }
+      });
     } else {
       fail('unsupported_command');
     }
@@ -917,17 +920,21 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           <p>{t(lang, 'companion_discovery_hint', { name: companion.name })}</p>
           <div className="soft-hint-actions">
             <button className="companion-quick-btn" onClick={() => {
-              setSoftHintVisible(false);
-              behavior.setDiscoveryPresentationState('presented');
-              const next = discovery.presentNext();
-              if (next) {
+              softHintPresentationCancelRef.current?.();
+              softHintPresentationCancelRef.current = discovery.presentWhenAvailable(softHintDiscoveryId, (next) => {
+                setSoftHintVisible(false);
+                setSoftHintDiscoveryId(undefined);
+                behavior.setDiscoveryPresentationState('presented');
                 const completedImmediately = speech.showTypewriter(next.shareMessage);
                 behavior.recordDiscoveryPresented();
                 if (completedImmediately) onTypewriterComplete();
-              }
+              });
             }}>{t(lang, 'companion_show_me')}</button>
             <button className="companion-quick-btn soft-hint-dismiss" onClick={() => {
+              softHintPresentationCancelRef.current?.();
+              softHintPresentationCancelRef.current = null;
               setSoftHintVisible(false);
+              setSoftHintDiscoveryId(undefined);
               behavior.recordDismiss();
             }}>{t(lang, 'companion_not_now')}</button>
           </div>

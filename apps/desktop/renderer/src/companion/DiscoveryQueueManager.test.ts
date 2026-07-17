@@ -72,6 +72,26 @@ describe('DiscoveryQueueManager', () => {
     expect(manager.getStats().presenting).toBe(1);
   });
 
+  it('presents the Discovery matching the authoritative command instead of queue order', () => {
+    const manager = new DiscoveryQueueManager();
+    manager.enqueue(candidate('payload-first'));
+    manager.enqueue(candidate('command-target'));
+
+    const presented = manager.present('command-target');
+
+    expect(presented?.candidate.id).toBe('command-target');
+    expect(manager.getNext()?.candidate.id).toBe('payload-first');
+  });
+
+  it('waits when the authoritative command target has not arrived', () => {
+    const manager = new DiscoveryQueueManager();
+    manager.enqueue(candidate('different-discovery'));
+
+    expect(manager.present('missing-target')).toBeUndefined();
+    expect(manager.getCurrent()).toBeUndefined();
+    expect(manager.getStats().queued).toBe(1);
+  });
+
   it('does not change current when presentNext called while presenting', () => {
     const manager = new DiscoveryQueueManager();
     manager.enqueue(candidate('d1'));

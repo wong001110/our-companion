@@ -37,17 +37,27 @@ export class DiscoveryQueueManager {
     return this.candidates.find((c) => c.status === 'queued');
   }
 
-  presentNext(): QueuedCandidate | undefined {
-    const current = this.getCurrent();
-    if (current) return current;
+  getQueued(discoveryId: string): QueuedCandidate | undefined {
+    return this.candidates.find((c) => c.status === 'queued' && c.candidate.id === discoveryId);
+  }
 
-    const next = this.getNext();
+  present(discoveryId?: string): QueuedCandidate | undefined {
+    const current = this.getCurrent();
+    if (current) {
+      return discoveryId === undefined || current.candidate.id === discoveryId ? current : undefined;
+    }
+
+    const next = discoveryId === undefined ? this.getNext() : this.getQueued(discoveryId);
     if (!next) return undefined;
 
     next.status = 'presenting';
     next.presentedAt = new Date().toISOString();
     this.notify();
     return next;
+  }
+
+  presentNext(): QueuedCandidate | undefined {
+    return this.present();
   }
 
   dismissCurrent(): void {

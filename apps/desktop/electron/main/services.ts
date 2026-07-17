@@ -163,6 +163,9 @@ export class AppServices {
   companionSessionPhase: CompanionSessionPhase = 'inactive';
   companionDragging = false;
   private shareOrchestrator?: DiscoveryShareOrchestrator;
+  private readonly presentationDiscoveries = new Map<string, Discovery>();
+  private readonly presentationDecisions = new Map<string, CompanionDecision>();
+  private readonly startedDiscoveryPayloads = new Set<string>();
   private readonly companionRuntime: CompanionRuntime;
   private explorationBroadcaster?: (event: ExplorationLoopEvent) => void;
   private commandBroadcaster?: (command: CompanionCommand) => void;
@@ -233,7 +236,7 @@ export class AppServices {
       (command) => {
         if (!this.tryActivateCommand(command)) return false;
         this.commandBroadcaster?.(command);
-        this.tryPresentPendingDiscovery(command);
+        this.tryStartDiscoveryPayload(command);
         return true;
       }
     );
@@ -655,10 +658,10 @@ export class AppServices {
       return result.discoveries;
     },
     shareNext: async () => {
-      if (!this.shareOrchestrator) return false;
       const oldest = this.db.getOldestUnannouncedShared();
       if (!oldest) return false;
-      return this.shareOrchestrator.enqueue(oldest);
+      this.requestDiscoveryPresentation(oldest);
+      return true;
     },
     resetStatuses: async () => {
       const discoveries = this.db.listDiscoveries({ limit: 200 });
@@ -1168,6 +1171,7 @@ export class AppServices {
 
   attachShareOrchestrator(orchestrator: DiscoveryShareOrchestrator): void {
     this.shareOrchestrator = orchestrator;
+    if (this.activeCommand) this.tryStartDiscoveryPayload(this.activeCommand.command);
   }
 
   attachNetworkStatusBroadcaster(broadcaster: (status: NetworkStatus) => void): void {
@@ -1178,15 +1182,46 @@ export class AppServices {
     this.visualVisitBroadcaster = broadcaster;
   }
 
-  private tryPresentPendingDiscovery(command: CompanionCommand): void {
-    if (!this.shareOrchestrator || !this.companionRuntime.shouldPresentNow(command.decision)) return;
-    const pending = this.db.listPendingActions(command.companionId).find(
-      (a) => a.decision.id === command.decision.id || a.status === 'pending' || a.status === 'ready'
+  requestDiscoveryPresentation(discovery: Discovery): CompanionDecision {
+    const existingDecision = this.presentationDecisions.get(discovery.id);
+    if (existingDecision) return existingDecision;
+    this.presentationDiscoveries.set(discovery.id, discovery);
+    const decision = this.companionRuntime.decideForDiscovery(
+      discovery,
+      this.companionSessionPhase !== 'inactive' && this.companionSessionPhase !== 'idle',
+      this.companionDragging
     );
-    const discoveryId = pending?.discoveryId;
-    if (!discoveryId) return;
-    const discovery = this.db.getDiscovery(discoveryId);
-    if (discovery) this.shareOrchestrator.enqueue(discovery);
+    this.presentationDecisions.set(discovery.id, decision);
+    const deferred = decision.timing === 'next_idle';
+    if (!this.companionRuntime.shouldPresentNow(decision) && !deferred) {
+      this.presentationDiscoveries.delete(discovery.id);
+      const persisted = this.db.getDiscovery(discovery.id);
+      if (persisted?.status === 'shared') this.db.updateDiscoveryStatus(discovery.id, 'candidate');
+    }
+    return decision;
+  }
+
+  isDiscoveryPresentationBusy(): boolean {
+    return this.shareOrchestrator?.isBusy() ?? false;
+  }
+
+  hasPendingDiscoveryPresentation(): boolean {
+    return this.presentationDiscoveries.size > 0 || (this.shareOrchestrator?.hasPending() ?? false);
+  }
+
+  private tryStartDiscoveryPayload(command: CompanionCommand): void {
+    if (
+      !this.shareOrchestrator ||
+      !command.discoveryId ||
+      !this.companionRuntime.shouldPresentNow(command.decision) ||
+      this.startedDiscoveryPayloads.has(command.discoveryId)
+    ) return;
+    const discovery = this.presentationDiscoveries.get(command.discoveryId) ?? this.db.getDiscovery(command.discoveryId);
+    if (!discovery) return;
+    if (this.shareOrchestrator.enqueue(discovery)) {
+      this.startedDiscoveryPayloads.add(discovery.id);
+      this.presentationDiscoveries.delete(discovery.id);
+    }
   }
 
   attachAutonomyBroadcasters(callbacks: {
@@ -1376,7 +1411,7 @@ export class AppServices {
 
     cycle = this.saveCycleState(cycle, 'sharing');
     this.setAutonomyCharacterState('talking', 'sharing_discovery', 'Expedition_Present');
-    if (selectedInsight && this.shareOrchestrator) {
+    if (selectedInsight) {
       const discoveryPayload: Discovery = {
         id: selectedInsight.id,
         source: 'companion',
@@ -1393,18 +1428,11 @@ export class AppServices {
         status: 'shared',
         createdAt: nowIso(),
       };
-      const decision = this.companionRuntime.decideForDiscovery(
-        discoveryPayload,
-        this.companionSessionPhase !== 'inactive' && this.companionSessionPhase !== 'idle',
-        this.companionDragging
-      );
-      if (this.companionRuntime.shouldPresentNow(decision)) {
-        this.shareOrchestrator.enqueue(discoveryPayload);
-      }
-      this.emitFoundationEvent('CompanionMessageQueued', 'speech', {
+      this.db.insertDiscovery(discoveryPayload);
+      const decision = this.requestDiscoveryPresentation(discoveryPayload);
+      this.emitFoundationEvent('DiscoveryPresentationEvaluated', 'decision', {
         discoveryId: selectedInsight.id,
         cycleId: cycle.id,
-        message: selectedInsight.summary,
         gated: !this.companionRuntime.shouldPresentNow(decision),
       });
     }
@@ -1544,17 +1572,6 @@ export class AppServices {
           status: discovery.status,
           url: discovery.url
         }, correlationId);
-        const decision = this.companionRuntime.decideForDiscovery(
-          discovery,
-          this.companionSessionPhase !== 'inactive' && this.companionSessionPhase !== 'idle',
-          this.companionDragging
-        );
-        if (!this.companionRuntime.shouldPresentNow(decision) && discovery.status === 'shared') {
-          this.db.updateDiscoveryStatus(discovery.id, 'candidate');
-        }
-        if (decision.action === 'stay_silent') {
-          this.emitFoundationEvent('SilenceChosen', 'decision', { decisionId: decision.id, targetId: discovery.id }, correlationId);
-        }
       }
     }
 

@@ -33,11 +33,6 @@ export function useDiscoveryPresentation(opts: {
   const queueRef = useRef(new DiscoveryQueueManager());
   const debugCountersRef = useRef({ dismissed: 0, saved: 0, ignored: 0 });
 
-  useEffect(() => {
-    window.__discoveryQueue = queueRef.current;
-    return () => { delete window.__discoveryQueue; };
-  }, []);
-
   const updateDebugCounters = useCallback(() => {
     const queue = queueRef.current;
     const stats = queue.getStats();
@@ -51,6 +46,21 @@ export function useDiscoveryPresentation(opts: {
       ignored: counters.ignored,
     }));
   }, []);
+
+  useEffect(() => {
+    const queue = queueRef.current;
+    const syncFromQueue = () => {
+      setPopup(queue.getCurrent()?.candidate ?? null);
+      updateDebugCounters();
+    };
+    window.__discoveryQueue = queue;
+    const unsubscribe = queue.subscribe(syncFromQueue);
+    syncFromQueue();
+    return () => {
+      unsubscribe();
+      delete window.__discoveryQueue;
+    };
+  }, [updateDebugCounters]);
 
   const recordDebug = useCallback((action: string, status: 'success' | 'error', error?: string) => {
     setDebug((prev) => ({
@@ -66,13 +76,49 @@ export function useDiscoveryPresentation(opts: {
     return queueRef.current.enqueue(candidate);
   }, []);
 
-  const presentNext = useCallback((): PresentationCandidate | null => {
-    const next = queueRef.current.presentNext();
-    if (next) {
-      setPopup(next.candidate);
+  const present = useCallback((discoveryId?: string): PresentationCandidate | null => {
+    const queue = queueRef.current;
+    const previous = queue.getCurrent();
+    const next = queue.present(discoveryId);
+    if (next && !previous) {
       onAnnounce?.(next.candidate);
     }
     return next?.candidate ?? null;
+  }, [onAnnounce]);
+
+  const presentNext = useCallback((): PresentationCandidate | null => present(), [present]);
+
+  const presentWhenAvailable = useCallback((
+    discoveryId: string | undefined,
+    onPresented: (candidate: PresentationCandidate) => void
+  ): (() => void) => {
+    const queue = queueRef.current;
+    let active = true;
+    let unsubscribe: () => void = () => undefined;
+    const tryPresent = () => {
+      if (!active) return;
+      const current = queue.getCurrent();
+      if (current && (discoveryId === undefined || current.candidate.id === discoveryId)) {
+        active = false;
+        unsubscribe();
+        onPresented(current.candidate);
+        return;
+      }
+      const queued = discoveryId === undefined ? queue.getNext() : queue.getQueued(discoveryId);
+      if (!queued) return;
+      active = false;
+      unsubscribe();
+      const next = queue.present(discoveryId);
+      if (!next) return;
+      onAnnounce?.(next.candidate);
+      onPresented(next.candidate);
+    };
+    unsubscribe = queue.subscribe(tryPresent);
+    tryPresent();
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, [onAnnounce]);
 
   const save = useCallback(async (candidate: PresentationCandidate) => {
@@ -166,7 +212,9 @@ export function useDiscoveryPresentation(opts: {
     actionError,
     actionLoading,
     enqueue,
+    present,
     presentNext,
+    presentWhenAvailable,
     save,
     addToJourney,
     ignore,

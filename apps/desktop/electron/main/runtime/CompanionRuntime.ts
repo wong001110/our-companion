@@ -288,7 +288,7 @@ export class CompanionRuntime {
     if (shouldDeferDiscovery(decision)) {
       this.decisions.enqueueDeferred(decision, companionId, discovery.id, LOCAL_USER_ID);
     } else if (shouldEmitCompanionCommand(decision)) {
-      if (!this.emitCompanionCommand(companionId, decision)) {
+      if (!this.emitCompanionCommand(companionId, decision, discovery.id)) {
         this.decisions.ensureDeferred(decision, companionId, discovery.id, 'active_command_exists', LOCAL_USER_ID);
       }
     }
@@ -358,7 +358,7 @@ export class CompanionRuntime {
     if (decision) {
       this.lastDecision = decision;
       this.emitDecision(decision);
-      if (shouldEmitCompanionCommand(decision) && this.emitCompanionCommand(id, decision)) {
+      if (shouldEmitCompanionCommand(decision) && this.emitCompanionCommand(id, decision, result.pendingAction?.discoveryId)) {
         if (result.pendingAction) this.decisions.completePendingAction(result.pendingAction.id);
       }
     }
@@ -396,11 +396,12 @@ export class CompanionRuntime {
     return this.db.listInteractionFeedbackActions(20);
   }
 
-  private emitCompanionCommand(companionId: string, decision: CompanionDecision): boolean {
+  private emitCompanionCommand(companionId: string, decision: CompanionDecision, discoveryId?: string): boolean {
     if (!this.emitCommand || !shouldEmitCompanionCommand(decision)) return false;
     const command: CompanionCommand = {
       id: createId('cmd'),
       companionId,
+      discoveryId,
       decision,
       issuedAt: nowIso()
     };

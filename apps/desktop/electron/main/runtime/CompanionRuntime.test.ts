@@ -14,6 +14,20 @@ describe('CompanionRuntime command emission', () => {
     expect(shouldEmitCompanionCommand(decision('share_discovery', 'later'))).toBe(false);
     expect(shouldEmitCompanionCommand(decision('stay_silent', 'now'))).toBe(false);
   });
+
+  it('carries the selected Discovery id on the authoritative command', () => {
+    const emitCommand = vi.fn(() => true);
+    const runtime = new CompanionRuntime({ listActiveConversationSessions: () => [] } as any, vi.fn(), vi.fn(), emitCommand);
+    const internals = runtime as unknown as {
+      emitCompanionCommand(companionId: string, value: CompanionDecision, discoveryId?: string): boolean;
+    };
+
+    expect(internals.emitCompanionCommand('companion', decision('share_discovery', 'now'), 'discovery-1')).toBe(true);
+    expect(emitCommand).toHaveBeenCalledWith(expect.objectContaining({
+      companionId: 'companion',
+      discoveryId: 'discovery-1',
+    }));
+  });
 });
 
 describe('CompanionRuntime session animation state', () => {

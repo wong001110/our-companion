@@ -42,6 +42,14 @@ describe('DecisionCoordinator', () => {
     db.close();
   });
 
+  it('defers a next_idle discovery even when the current action is stay_silent', () => {
+    expect(shouldDeferDiscovery({
+      ...shareDecision('next_idle'),
+      action: 'stay_silent',
+      displayHint: 'stay_silent',
+    })).toBe(true);
+  });
+
   it('stale pending action expires', () => {
     const db = new DatabaseService();
     const coordinator = new DecisionCoordinator(db);

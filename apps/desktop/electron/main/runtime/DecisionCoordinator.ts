@@ -16,7 +16,7 @@ export function shouldPresentNow(decision: CompanionDecision): boolean {
 }
 
 export function shouldDeferDiscovery(decision: CompanionDecision): boolean {
-  return decision.action === 'share_discovery' && decision.timing === 'next_idle';
+  return decision.timing === 'next_idle';
 }
 
 export interface ReevaluateContext {

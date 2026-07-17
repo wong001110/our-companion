@@ -6,10 +6,10 @@ export interface DiscoveryRefreshResult {
   newlyInserted: Discovery[];
 }
 
-export interface DiscoveryAnnouncer {
+export interface DiscoveryPresentationGateway {
   isBusy(): boolean;
   hasPending(): boolean;
-  enqueue(discovery: Discovery): boolean;
+  requestPresentation(discovery: Discovery): void;
 }
 
 export interface DiscoverySchedulerDeps {
@@ -17,7 +17,7 @@ export interface DiscoverySchedulerDeps {
   getDiscoveryScore: () => number;
   countSharedToday: () => number;
   getOldestUnannouncedShared: () => Promise<Discovery | null>;
-  announcer: DiscoveryAnnouncer;
+  presentationGateway: DiscoveryPresentationGateway;
   runAutonomousCycle?: () => Promise<void>;
   countAutonomousCyclesToday?: () => number;
   canRunAutonomousCycle?: () => boolean;
@@ -64,7 +64,7 @@ export class DiscoveryScheduler {
     if (this.stopped) return;
 
     try {
-      if (this.deps.announcer.isBusy() || this.deps.announcer.hasPending()) {
+      if (this.deps.presentationGateway.isBusy() || this.deps.presentationGateway.hasPending()) {
         return;
       }
 
@@ -80,14 +80,14 @@ export class DiscoveryScheduler {
         const result = await this.deps.refresh();
         const newestShared = result.newlyInserted.find((d) => d.status === 'shared');
         if (newestShared) {
-          this.deps.announcer.enqueue(newestShared);
+          this.deps.presentationGateway.requestPresentation(newestShared);
           return;
         }
       }
 
       const oldest = await this.deps.getOldestUnannouncedShared();
       if (oldest) {
-        this.deps.announcer.enqueue(oldest);
+        this.deps.presentationGateway.requestPresentation(oldest);
       }
     } catch (error) {
       console.warn('[our-companion] Discovery scheduler tick failed.', error);

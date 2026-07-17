@@ -224,6 +224,8 @@ export interface CompanionLifeState {
 export interface CompanionCommand {
   id: string;
   companionId: string;
+  /** Presentation target used to match an authoritative command with its renderer payload. */
+  discoveryId?: string;
   decision: import('./models').CompanionDecision;
   issuedAt: string;
   expiresAt?: string;
@@ -1796,6 +1798,10 @@ export interface OurCompanionApi {
     bootstrapFixtureCompanion(): Promise<void>;
     setFriendLookupFixture(input: FriendLookupResult): Promise<void>;
     setUiBetaFixture(input: unknown): Promise<void>;
+    presentDiscoveryFixture(input: {
+      order: 'command_payload' | 'payload_command';
+      displayHint?: 'show_soft_hint' | 'present_discovery';
+    }): Promise<{ discoveryId: string; title: string }>;
     onVisualWorkAreaChanged(listener: (workArea?: { x: number; y: number; width: number; height: number }) => void): () => void;
   };
 }
