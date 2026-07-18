@@ -30,6 +30,7 @@ import {
   evaluateTopicSaturation,
   findSeenDiscoveryCandidates,
   normalizeDiscoveryUrl,
+  selectDiscoveryBasesForExecution,
   selectDiscoveryMode,
   startDiscoveryTrial,
   transitionDiscoveryBase,
@@ -2103,13 +2104,14 @@ export class AppServices {
         this.db.upsertDiscoveryBase(transitioned);
       }
     }
-    const selectedDiscoveryBases = this.db.listDiscoveryBases(companionId, undefined, 32)
-      .filter((base) => base.state === 'active' || base.state === 'trial')
-      .slice(0, 3)
-      .map((base) => ({
+    const selectedDiscoveryBases = selectDiscoveryBasesForExecution({
+      bases: this.db.listDiscoveryBasesForExecution(companionId, 32).map((base) => ({
         ...base,
         origin: base.origin as DiscoveryBase['origin'],
-      }));
+      })),
+      intent: adaptiveIntent,
+      limit: 3,
+    });
     const discoveryInspection: DiscoveryInspectionRecord = {
       cycleId,
       companionId,
@@ -2157,6 +2159,7 @@ export class AppServices {
       explorationIntent: adaptiveIntent,
       discoveryBases: selectedDiscoveryBases,
       seenCanonicalUrls: new Set(discoveryHistory.map((discovery) => discovery.canonicalUrl ?? discovery.url).filter(Boolean) as string[]),
+      materialUpdateProbe: requiresMaterialUpdate,
       onTrace: (event) => trace(
         'research',
         event.operation,

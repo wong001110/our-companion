@@ -210,12 +210,17 @@ export function selectResearchPages(input: {
   plan: ResearchPlan;
   results: WebSearchResult[];
   seenCanonicalUrls?: Set<string>;
+  seenCanonicalUrlProbeAllowlist?: Set<string>;
+  seenCanonicalUrlProbeLimit?: number;
+  preferSeenCanonicalUrlProbes?: boolean;
+  prioritySearchResultIds?: Set<string>;
 }): SelectedResearchPage[] {
   const seen = input.seenCanonicalUrls ?? new Set<string>();
+  const probeAllowlist = input.seenCanonicalUrlProbeAllowlist ?? new Set<string>();
+  const prioritySearchResultIds = input.prioritySearchResultIds ?? new Set<string>();
   const selected: SelectedResearchPage[] = [];
   const usedDomains = new Set<string>();
-  const ranked = [...input.results]
-    .filter((result) => !seen.has(normalizeDiscoveryUrl(result.url) ?? result.url))
+  const rankedResults = [...input.results]
     .filter((result) => !input.intent.excludedDomains?.some((domain) => result.domain === domain || result.domain.endsWith(`.${domain}`)))
     .sort((left, right) => {
       const priority = (result: WebSearchResult) =>
@@ -223,6 +228,40 @@ export function selectResearchPages(input: {
         (input.intent.evidenceRequirements.requireContrastingSource && isContrastingResult(result) ? 2 : 0) - result.rank / 100;
       return priority(right) - priority(left);
     });
+  const priorityResults = rankedResults.filter((result) => {
+    if (!prioritySearchResultIds.has(result.id)) return false;
+    const canonicalUrl = normalizeDiscoveryUrl(result.url) ?? result.url;
+    return !seen.has(canonicalUrl) || probeAllowlist.has(canonicalUrl);
+  });
+  const unseenResults = rankedResults.filter((result) =>
+    !prioritySearchResultIds.has(result.id)
+    && !seen.has(normalizeDiscoveryUrl(result.url) ?? result.url)
+  );
+  const probeLimit = Math.max(
+    0,
+    Math.min(input.plan.limits.maxPagesToRead, input.seenCanonicalUrlProbeLimit ?? 0)
+  );
+  const seenProbes = probeLimit
+    ? rankedResults
+      .filter((result) => {
+        const canonicalUrl = normalizeDiscoveryUrl(result.url) ?? result.url;
+        return !prioritySearchResultIds.has(result.id)
+          && seen.has(canonicalUrl)
+          && probeAllowlist.has(canonicalUrl);
+      })
+      .slice(0, probeLimit)
+    : [];
+  // Re-reading a bounded known page is the only way to verify a same-URL
+  // material update. Normal research still spends its budget on unseen pages
+  // first; an explicit material-update probe prioritizes one known page.
+  // Explicitly selected persistent page/feed Bases come first so unrelated
+  // search results cannot consume their bounded execution budget.
+  const ranked = [
+    ...priorityResults,
+    ...(input.preferSeenCanonicalUrlProbes
+      ? [...seenProbes, ...unseenResults]
+      : [...unseenResults, ...seenProbes]),
+  ];
   for (const result of ranked) {
     if (selected.length >= input.plan.limits.maxPagesToRead) break;
     if (usedDomains.has(result.domain) && usedDomains.size >= (input.intent.evidenceRequirements.requireIndependentDomains ?? 1)) continue;

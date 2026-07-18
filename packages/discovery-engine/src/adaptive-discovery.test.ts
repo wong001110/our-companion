@@ -14,6 +14,7 @@ import {
   evaluateTopicSaturation,
   findSeenDiscoveryCandidates,
   MVP_DISCOVERY_CONNECTOR_MANIFESTS,
+  selectDiscoveryBasesForExecution,
   selectDiscoveryMode,
   startDiscoveryTrial,
   transitionDiscoveryBase,
@@ -163,6 +164,31 @@ describe('open-ended bases, manifests, and bounded trials', () => {
     expect(transitionDiscoveryBase({
       base: trial, feedback: 'none', now: '2026-08-02T00:00:00.000Z'
     }).state).toBe('expired');
+  });
+
+  it('schedules never-checked and oldest Bases before relevance with a stable tie-breaker', () => {
+    const intent = createExplorationIntent({
+      mode: 'core',
+      topic: 'local first companion',
+      createdAt: now,
+    });
+    const candidates: DiscoveryBase[] = [
+      { ...base, id: 'checked-old', locator: 'unrelated archive', state: 'active', lastCheckedAt: '2026-07-10T00:00:00.000Z' },
+      { ...base, id: 'checked-new', locator: 'local first companion', state: 'active', lastCheckedAt: '2026-07-17T00:00:00.000Z' },
+      { ...base, id: 'never-unrelated', locator: 'unrelated archive', state: 'active', lastCheckedAt: undefined },
+      { ...base, id: 'never-relevant-z', locator: 'local first companion', state: 'active', lastCheckedAt: undefined },
+      { ...base, id: 'never-relevant-a', locator: 'local first companion', state: 'trial', lastCheckedAt: undefined },
+      { ...base, id: 'muted', locator: 'local first companion', state: 'muted', lastCheckedAt: undefined },
+    ];
+
+    expect(selectDiscoveryBasesForExecution({ bases: candidates, intent, limit: 5 }).map((item) => item.id))
+      .toEqual([
+        'never-relevant-a',
+        'never-relevant-z',
+        'never-unrelated',
+        'checked-old',
+        'checked-new',
+      ]);
   });
 });
 

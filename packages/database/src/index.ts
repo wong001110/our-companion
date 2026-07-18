@@ -163,6 +163,13 @@ export class DatabaseService {
     return this.adaptiveDiscovery.listBases({ companionId, state, limit });
   }
 
+  listDiscoveryBasesForExecution(
+    companionId: string,
+    limit = 32,
+  ): readonly PersistedDiscoveryBase[] {
+    return this.adaptiveDiscovery.listBasesForExecution({ companionId, limit });
+  }
+
   upsertDiscoveryBase(base: PersistedDiscoveryBase): PersistedDiscoveryBase {
     return this.adaptiveDiscovery.upsertBase(base);
   }

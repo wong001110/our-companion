@@ -272,6 +272,51 @@ describe('ResearchOrchestrator', () => {
     expect(outcome.coverage.requirementsSatisfied).toBe(true);
   });
 
+  it.each([
+    { label: 'historical', seenCanonicalUrls: new Set(['https://base.example/feed']) },
+    { label: 'new', seenCanonicalUrls: new Set<string>() },
+  ])('fetches a $label selected Base only once across a forced second pass', async ({ seenCanonicalUrls }) => {
+    const baseUrl = 'https://base.example/feed';
+    const search = vi.fn<WebSearchProvider['search']>(async ({ query }) => {
+      if (/limitations criticism/.test(query)) {
+        return [result('critical', 'critique.example', 'Critical limitations', query)];
+      }
+      return [result('implementation', 'code.example', 'Implementation example', query)];
+    });
+    const fetchPage = vi.fn(fetcher.fetchPage);
+    const base: DiscoveryBase = {
+      id: 'base-page',
+      companionId: 'owner',
+      connectorId: 'generic-web',
+      scope: 'page',
+      locator: baseUrl,
+      data: { title: 'Selected durable page' },
+      origin: 'user',
+      state: 'active',
+      discoveredAt: '2026-07-17T00:00:00.000Z',
+      updatedAt: '2026-07-18T00:00:00.000Z',
+    };
+    const orchestrator = new ResearchOrchestrator({
+      searchProvider: { id: 'fixture-search', mode: 'fixture', search },
+      pageFetcher: { ...fetcher, fetchPage },
+      structuredConnectors: [],
+    });
+
+    const outcome = await orchestrator.run({
+      userId: 'user',
+      companionId: 'owner',
+      cycleId: 'cycle',
+      curiosityTarget: target,
+      discoveryBases: [base],
+      seenCanonicalUrls,
+      materialUpdateProbe: true,
+    });
+
+    expect(outcome.additionalPasses).toBe(1);
+    expect(fetchPage.mock.calls.filter(([input]) => input.searchResult.url === baseUrl)).toHaveLength(1);
+    expect(outcome.usedBaseIds).toContain(base.id);
+  });
+
   it('treats unavailable search as an empty healthy research result without fake candidates', async () => {
     const provider: WebSearchProvider = { id: 'search', mode: 'unavailable', search: async () => [] };
     const orchestrator = new ResearchOrchestrator({ searchProvider: provider, pageFetcher: fetcher, structuredConnectors: [] });

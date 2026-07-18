@@ -201,6 +201,57 @@ describe('discovery engine', () => {
     expect(selected.find((item) => item.searchResultId === 'trusted-hint')?.expectedEvidenceType).toBe('official');
   });
 
+  it('keeps same-URL material-update checks bounded and prioritizes them only for an explicit probe', () => {
+    const target = {
+      id: 'material-update-probe', userId: 'default', companionId: 'ann', topic: 'Desktop companion', description: 'Check for meaningful updates.',
+      source: 'memory_trigger' as const, explorationType: 'practical' as const, priority: 0.8, confidence: 0.7,
+      reason: 'saved discovery', expectedValue: 'updated evidence', createdAt: 'now'
+    };
+    const intent = createResearchIntent({ userId: 'default', companionId: 'ann', cycleId: 'cycle', curiosityTarget: target, now: 'now' });
+    const plan = createDeterministicResearchPlan({ intent, capabilities: [], now: 'now' });
+    const results = [
+      { id: 'known-a', query: intent.topic, title: 'Known release page', url: 'https://updates.example.test/release', domain: 'updates.example.test', rank: 1, provider: 'fixture' },
+      { id: 'known-b', query: intent.topic, title: 'Known changelog', url: 'https://updates.example.test/changelog', domain: 'updates.example.test', rank: 2, provider: 'fixture' },
+      { id: 'unseen', query: intent.topic, title: 'New analysis', url: 'https://analysis.example.test/new', domain: 'analysis.example.test', rank: 3, provider: 'fixture' },
+    ];
+    const seenCanonicalUrls = new Set([
+      'https://updates.example.test/release',
+      'https://updates.example.test/changelog',
+    ]);
+
+    const normal = selectResearchPages({
+      intent,
+      plan,
+      results,
+      seenCanonicalUrls,
+      seenCanonicalUrlProbeAllowlist: seenCanonicalUrls,
+      seenCanonicalUrlProbeLimit: 1,
+    });
+    const materialUpdateProbe = selectResearchPages({
+      intent,
+      plan,
+      results,
+      seenCanonicalUrls,
+      seenCanonicalUrlProbeAllowlist: seenCanonicalUrls,
+      seenCanonicalUrlProbeLimit: 1,
+      preferSeenCanonicalUrlProbes: true,
+    });
+    const persistentBaseRefresh = selectResearchPages({
+      intent,
+      plan,
+      results,
+      seenCanonicalUrls,
+      seenCanonicalUrlProbeAllowlist: seenCanonicalUrls,
+      seenCanonicalUrlProbeLimit: 1,
+      prioritySearchResultIds: new Set(['known-b']),
+    });
+
+    expect(normal.map((item) => item.searchResultId)).toEqual(['unseen', 'known-a']);
+    expect(materialUpdateProbe.map((item) => item.searchResultId)).toEqual(['known-a', 'unseen']);
+    expect(materialUpdateProbe.map((item) => item.searchResultId)).not.toContain('known-b');
+    expect(persistentBaseRefresh.map((item) => item.searchResultId)).toEqual(['known-b', 'unseen']);
+  });
+
   it('falls back from invalid AI planning and clamps valid AI limits without accepting URLs', () => {
     const target = {
       id: 'target', userId: 'default', companionId: 'ann', topic: 'Local-first AI', description: 'Practical research.',

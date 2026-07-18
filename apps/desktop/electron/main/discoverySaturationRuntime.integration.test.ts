@@ -339,32 +339,33 @@ describe('Discovery saturation runtime integration', () => {
         }];
       },
     };
+    const fetchMaterialPage = vi.fn<WebPageFetcher['fetchPage']>(async (input) => {
+      return {
+        id: 'material-evidence',
+        userId: input.userId,
+        companionId: input.companionId,
+        cycleId: input.cycleId,
+        researchIntentId: input.researchIntentId,
+        researchPlanId: input.researchPlanId,
+        searchResultId: input.searchResult.id,
+        query: input.searchResult.query,
+        provider: 'material-search',
+        url,
+        canonicalUrl: url,
+        domain: 'updates.example.test',
+        title,
+        extractedText: 'New accessibility controls launched. Battery usage dropped by twenty percent.',
+        excerpt: 'New accessibility controls launched. Battery usage dropped by twenty percent.',
+        contentHash: 'material-content-v2',
+        contentType: 'text/html',
+        fetchedAt: now,
+        sourceType: input.sourceType,
+      };
+    });
     const pageFetcher: WebPageFetcher = {
       id: 'material-fetcher',
       mode: 'fixture',
-      async fetchPage(input) {
-        return {
-          id: 'material-evidence',
-          userId: input.userId,
-          companionId: input.companionId,
-          cycleId: input.cycleId,
-          researchIntentId: input.researchIntentId,
-          researchPlanId: input.researchPlanId,
-          searchResultId: input.searchResult.id,
-          query: input.searchResult.query,
-          provider: 'material-search',
-          url,
-          canonicalUrl: url,
-          domain: 'updates.example.test',
-          title,
-          extractedText: 'New accessibility controls launched. Battery usage dropped by twenty percent.',
-          excerpt: 'New accessibility controls launched. Battery usage dropped by twenty percent.',
-          contentHash: 'material-content-v2',
-          contentType: 'text/html',
-          fetchedAt: now,
-          sourceType: input.sourceType,
-        };
-      },
+      fetchPage: fetchMaterialPage,
     };
     const { services, companionId } = createServices(search, pageFetcher);
     const saved = saturatedDiscovery(
@@ -376,6 +377,8 @@ describe('Discovery saturation runtime integration', () => {
       ...saved,
       status: 'saved',
       fingerprint: candidateFingerprint,
+      url,
+      canonicalUrl: url,
     });
     const topicFingerprint = createTopicFingerprint([materialTopic])!;
     const oldIdentity = createDiscoverySeenIdentities({
@@ -415,6 +418,31 @@ describe('Discovery saturation runtime integration', () => {
       mode: 'core',
       materialUpdateCount: 1,
       candidatesAccepted: [result.discoveryCandidates[0]!.id],
+    }));
+    expect(fetchMaterialPage).toHaveBeenCalledTimes(1);
+
+    const duplicateProbeTopic = 'Same URL unchanged content verification';
+    await services.memory.createNode({
+      companionId,
+      type: 'topic',
+      title: duplicateProbeTopic,
+      summary: duplicateProbeTopic,
+      content: duplicateProbeTopic,
+    });
+    const duplicateResult = await services.autonomy.startExploration({
+      companionId,
+      trigger: 'manual',
+    });
+    const duplicateSnapshot = await services.debug.getEngineSnapshot();
+
+    expect(fetchMaterialPage).toHaveBeenCalledTimes(2);
+    expect(duplicateResult.discoveryCandidates).toEqual([]);
+    expect(duplicateSnapshot.discoveryInspection).toEqual(expect.objectContaining({
+      duplicateCount: 1,
+      candidatesAccepted: [],
+      candidatesRejected: [expect.objectContaining({
+        reason: expect.stringContaining('already_seen'),
+      })],
     }));
   });
 
@@ -518,6 +546,61 @@ describe('Discovery saturation runtime integration', () => {
       'external_id',
       'unrelated-orphan-hash',
     )?.discoveryId).toBeUndefined();
+  });
+
+  it('fairly executes every eligible Discovery Base across bounded rounds', async () => {
+    const search = vi.fn<WebSearchProvider['search']>(async () => []);
+    const { services, companionId } = createServices({
+      id: 'base-scheduler-search',
+      mode: 'fixture',
+      search,
+    });
+    await seedTopic(services, companionId);
+    for (let index = 1; index <= 5; index += 1) {
+      services.db.upsertDiscoveryBase({
+        id: `scheduler-base-${index}`,
+        companionId,
+        connectorId: 'generic-web',
+        scope: 'query',
+        locator: `${topic} source ${index}`,
+        data: { topic },
+        origin: 'user',
+        state: 'active',
+        discoveredAt: `2026-07-${String(10 + index).padStart(2, '0')}T00:00:00.000Z`,
+        // Deliberately make the newest three sort first under the old
+        // updated_at DESC behavior.
+        updatedAt: `2026-07-${String(10 + index).padStart(2, '0')}T00:00:00.000Z`,
+      });
+    }
+
+    await services.autonomy.startExploration({ companionId, trigger: 'manual' });
+    const firstRound = (await services.debug.getEngineSnapshot()).discoveryInspection?.executedBases
+      .map((base) => base.id) ?? [];
+    expect(services.db.listDiscoveryBasesForExecution(companionId, 5).map((base) => base.id).slice(0, 2))
+      .toEqual(['scheduler-base-4', 'scheduler-base-5']);
+    const secondTopic = 'Fair persistent source scheduling';
+    await services.memory.createNode({
+      companionId,
+      type: 'topic',
+      title: secondTopic,
+      summary: secondTopic,
+      content: secondTopic,
+    });
+    const secondResult = await services.autonomy.startExploration({ companionId, trigger: 'manual' });
+    expect(secondResult.selectedCuriosityTarget?.topic).toContain(secondTopic);
+    const secondRound = (await services.debug.getEngineSnapshot()).discoveryInspection?.executedBases
+      .map((base) => base.id) ?? [];
+
+    expect(firstRound).toHaveLength(3);
+    expect(secondRound).toHaveLength(3);
+    expect(new Set([...firstRound, ...secondRound])).toEqual(new Set([
+      'scheduler-base-1',
+      'scheduler-base-2',
+      'scheduler-base-3',
+      'scheduler-base-4',
+      'scheduler-base-5',
+    ]));
+    expect(services.db.listDiscoveryBasesForExecution(companionId, 5).every((base) => base.lastCheckedAt)).toBe(true);
   });
 
   it('accepts a structured-connector material update using normalized content provenance', async () => {

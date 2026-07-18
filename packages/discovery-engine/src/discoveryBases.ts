@@ -88,6 +88,58 @@ export interface DynamicDiscoveryConnector {
   }): Promise<readonly DiscoveryConnectorResult[]>;
 }
 
+function schedulingWords(value: string): Set<string> {
+  return new Set(
+    value
+      .normalize('NFKC')
+      .toLocaleLowerCase('en-US')
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter((word) => word.length > 2)
+  );
+}
+
+function schedulingRelevance(base: DiscoveryBase, intent: Pick<ExplorationIntent, 'topic' | 'question' | 'searchTasks'>): number {
+  const intentWords = schedulingWords(`${intent.topic} ${intent.question} ${intent.searchTasks.join(' ')}`);
+  if (!intentWords.size) return 0;
+  const baseWords = schedulingWords(
+    `${base.connectorId} ${base.scope} ${base.locator} ${JSON.stringify(base.data)}`
+  );
+  let overlap = 0;
+  for (const word of intentWords) {
+    if (baseWords.has(word)) overlap += 1;
+  }
+  return overlap / intentWords.size;
+}
+
+/**
+ * Fair bounded scheduler for persistent Discovery Bases. Never-checked and
+ * least-recently checked Bases always win before relevance, so a currently
+ * fashionable Base cannot permanently starve the rest of the bounded pool.
+ */
+export function selectDiscoveryBasesForExecution(input: {
+  bases: readonly DiscoveryBase[];
+  intent: Pick<ExplorationIntent, 'topic' | 'question' | 'searchTasks'>;
+  limit?: number;
+}): DiscoveryBase[] {
+  const limit = Math.max(0, Math.min(input.bases.length, input.limit ?? 3));
+  return input.bases
+    .filter((base) => base.state === 'active' || base.state === 'trial')
+    .map((base) => ({ base, relevance: schedulingRelevance(base, input.intent) }))
+    .sort((left, right) => {
+      const leftChecked = left.base.lastCheckedAt ? Date.parse(left.base.lastCheckedAt) : Number.NEGATIVE_INFINITY;
+      const rightChecked = right.base.lastCheckedAt ? Date.parse(right.base.lastCheckedAt) : Number.NEGATIVE_INFINITY;
+      const safeLeftChecked = Number.isFinite(leftChecked) ? leftChecked : Number.NEGATIVE_INFINITY;
+      const safeRightChecked = Number.isFinite(rightChecked) ? rightChecked : Number.NEGATIVE_INFINITY;
+      return safeLeftChecked - safeRightChecked
+        || right.relevance - left.relevance
+        || left.base.id.localeCompare(right.base.id);
+    })
+    .slice(0, limit)
+    .map(({ base }) => base);
+}
+
 export class DiscoveryConnectorRegistry {
   private readonly connectors = new Map<string, DynamicDiscoveryConnector>();
 

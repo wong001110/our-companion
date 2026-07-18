@@ -371,6 +371,7 @@ export class ResearchOrchestrator {
     explorationIntent?: ExplorationIntent;
     discoveryBases?: readonly DiscoveryBase[];
     seenCanonicalUrls?: Set<string>;
+    materialUpdateProbe?: boolean;
     onTrace?: (event: ResearchTraceEvent) => void;
   }): Promise<ResearchExecution> {
     const capabilities = toCapabilities(this.deps);
@@ -529,8 +530,14 @@ export class ResearchOrchestrator {
         provider: `discovery-base:${base.connectorId}`,
       }];
     });
+    const priorityBaseResultIds = new Set(baseIdsBySearchResult.keys());
     const evidence: WebPageEvidence[] = [];
     const seenUrls = input.seenCanonicalUrls ?? new Set<string>();
+    // Keep the refresh allowlist fixed to URLs known before this cycle. URLs
+    // fetched in the first pass join `seenUrls`, but must never be re-fetched
+    // as update probes during the optional second pass.
+    const historicalSeenUrls = new Set(seenUrls);
+    const selectedCanonicalUrlsThisCycle = new Set<string>();
     const canSearch = selectedCapabilityIds.has(this.deps.searchProvider.id) && selectedCapabilityIds.has(this.deps.pageFetcher.id);
     const canFetchBaseUrls = baseIdsBySearchResult.size > 0
       && selectedCapabilityIds.has(this.deps.pageFetcher.id);
@@ -590,12 +597,25 @@ export class ResearchOrchestrator {
         input.onTrace?.({ operation: 'web-search:select-results', status: 'skipped', inputRefs: [plan.id], outputRefs: [], skipReason: budgetStopReason });
         return;
       }
+      const selectionSeenUrls = new Set([...seenUrls, ...selectedCanonicalUrlsThisCycle]);
+      const selectionProbeAllowlist = new Set(
+        [...historicalSeenUrls].filter((url) => !selectedCanonicalUrlsThisCycle.has(url))
+      );
       const selected = selectResearchPages({
         intent,
         plan: { ...plan, limits: { ...plan.limits, maxPagesToRead: remainingPages } },
         results,
-        seenCanonicalUrls: seenUrls
+        seenCanonicalUrls: selectionSeenUrls,
+        seenCanonicalUrlProbeAllowlist: selectionProbeAllowlist,
+        seenCanonicalUrlProbeLimit: 1,
+        preferSeenCanonicalUrlProbes: input.materialUpdateProbe,
+        prioritySearchResultIds: priorityBaseResultIds,
       });
+      for (const selection of selected) {
+        const result = results.find((item) => item.id === selection.searchResultId);
+        const canonicalUrl = result && (normalizeDiscoveryUrl(result.url) ?? result.url);
+        if (canonicalUrl) selectedCanonicalUrlsThisCycle.add(canonicalUrl);
+      }
       for (const selection of selected) {
         for (const baseId of baseIdsBySearchResult.get(selection.searchResultId) ?? []) {
           usedBaseIds.add(baseId);

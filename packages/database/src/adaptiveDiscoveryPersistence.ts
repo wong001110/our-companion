@@ -445,6 +445,23 @@ export class AdaptiveDiscoveryPersistence {
     return (rows as Array<Record<string, unknown>>).map(mapBase);
   }
 
+  listBasesForExecution(input: {
+    companionId: string;
+    limit?: number;
+  }): readonly PersistedDiscoveryBase[] {
+    const limit = Math.min(1_000, Math.max(1, input.limit ?? 32));
+    const rows = this.db.prepare(
+      `SELECT * FROM discovery_bases
+       WHERE companion_id = ? AND state IN ('active', 'trial')
+       ORDER BY
+         CASE WHEN last_checked_at IS NULL THEN 0 ELSE 1 END ASC,
+         last_checked_at ASC,
+         id ASC
+       LIMIT ?`
+    ).all(input.companionId, limit);
+    return (rows as Array<Record<string, unknown>>).map(mapBase);
+  }
+
   insertBaseFeedback(feedback: PersistedDiscoveryBaseFeedback): PersistedDiscoveryBaseFeedback {
     const base = this.getBase(feedback.discoveryBaseId, feedback.companionId);
     if (!base) throw new Error('discovery_base_feedback_owner_mismatch');
