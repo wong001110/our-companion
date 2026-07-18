@@ -11,6 +11,7 @@ import {
   FakeWebSearchProvider,
   SimulationEngine
 } from '@our-companion/validation-kit';
+import { createDiscoverySeenIdentities } from '@our-companion/discovery-engine';
 import { ProductionValidationGateway } from './productionValidationGateway';
 
 vi.mock('electron', () => ({
@@ -312,6 +313,117 @@ describe('production Validation Kit gateway', () => {
     ]));
   });
 
+  it('deduplicates same-cycle candidates against identities accepted earlier in that cycle', async () => {
+    const provider = new FakeDiscoveryProvider([[
+      {
+        id: 'same-content-a',
+        title: 'Primary content mirror',
+        summary: 'The same durable artifact appears at the primary source.',
+        url: 'https://primary.example.test/artifact',
+        tags: ['dedup'],
+        source: 'github',
+        raw: { contentHash: 'shared-content-hash' },
+      },
+      {
+        id: 'same-content-b',
+        title: 'Secondary content mirror',
+        summary: 'The same durable artifact appears at a secondary mirror.',
+        url: 'https://mirror.example.test/artifact',
+        tags: ['dedup'],
+        source: 'github',
+        raw: { contentHash: 'shared-content-hash' },
+      },
+    ]]);
+    const ai = new FakeAiProvider(['I will remember that.', reasonFixture]);
+    const { gateway } = createGateway({ provider, ai });
+    const companionId = gateway.services.db.resolveActiveCompanionId();
+
+    await gateway.execute({
+      category: 'memory',
+      params: {
+        operation: 'conversation-turn',
+        message: 'I prefer local-first TypeScript state machines and durable artifact deduplication.',
+      },
+    });
+    const result = await gateway.execute({
+      category: 'discovery',
+      params: { operation: 'autonomous-cycle' },
+    });
+    const snapshot = await gateway.services.debug.getEngineSnapshot();
+
+    expect(result.status).toBe('completed');
+    expect(gateway.services.db.listDiscoveryCandidates('default', 20, companionId)).toHaveLength(1);
+    expect(snapshot.discoveryInspection).toEqual(expect.objectContaining({
+      duplicateCount: 1,
+      candidatesAccepted: [expect.any(String)],
+      candidatesRejected: [
+        expect.objectContaining({ reason: expect.stringContaining('content_hash') }),
+      ],
+    }));
+  });
+
+  it('defers a fourth unique artifact without poisoning Seen and preserves final Discovery lineage', async () => {
+    const fixtures = [
+      ['atlas', 'Atlas offline architecture', 'Offline state architecture for a local-first desktop Companion.'],
+      ['beacon', 'Beacon synchronization model', 'Conflict-free synchronization for durable desktop state.'],
+      ['cipher', 'Cipher renderer lifecycle', 'Renderer isolation and lifecycle boundaries for desktop clients.'],
+      ['delta', 'Delta memory graph', 'Incremental graph updates for long-lived Companion memory.'],
+    ] as const;
+    const items = fixtures.map(([id, title, summary]) => ({
+      id,
+      title,
+      summary,
+      url: `https://example.com/${id}`,
+      tags: ['local-first', 'desktop'],
+      source: 'github',
+    }));
+    const provider = new FakeDiscoveryProvider([items]);
+    const ai = new FakeAiProvider(['I will remember that.', reasonFixture]);
+    const { gateway } = createGateway({ provider, ai });
+    const companionId = gateway.services.db.resolveActiveCompanionId();
+
+    await gateway.execute({
+      category: 'memory',
+      params: {
+        operation: 'conversation-turn',
+        message: 'I prefer local-first TypeScript state machines for desktop products.',
+      },
+    });
+    const first = await gateway.execute({
+      category: 'discovery',
+      params: { operation: 'autonomous-cycle' },
+    });
+    expect(first.status).toBe('completed');
+    expect(gateway.services.db.listDiscoveryCandidates('default', 20, companionId)).toHaveLength(3);
+
+    const deferredIdentities = createDiscoverySeenIdentities({
+      connectorId: 'github',
+      externalId: 'delta',
+      canonicalUrl: 'https://example.com/delta',
+      title: 'Delta memory graph',
+      topics: ['local-first desktop'],
+      observedAt: '2026-07-17T10:00:00.000Z',
+    });
+    expect(deferredIdentities.every((identity) => gateway.services.db.getDiscoverySeenIdentity(
+      companionId,
+      identity.type,
+      identity.hash,
+    ) === undefined)).toBe(true);
+
+    const firstDiscovery = gateway.services.db.listDiscoveries({ companionId, limit: 10 })[0];
+    expect(firstDiscovery).toEqual(expect.objectContaining({
+      source: 'github',
+      url: 'https://example.com/atlas',
+      canonicalUrl: 'https://example.com/atlas',
+      fingerprint: expect.any(String),
+      raw: expect.objectContaining({
+        candidateId: expect.any(String),
+        candidateIds: expect.any(Array),
+      }),
+    }));
+
+  });
+
   it('defers exactly once in focus mode and emits at most one command after focus ends', async () => {
     const provider = new FakeDiscoveryProvider([[
       {
@@ -387,8 +499,23 @@ describe('production Validation Kit gateway', () => {
       'I will remember that preference.',
       reasonFixture
     ]);
-    const { gateway } = createGateway({ provider, ai });
+    const { gateway } = createGateway({ provider, ai, ...webFixtures() });
     const firstCompanionId = gateway.services.db.resolveActiveCompanionId();
+    const baseCreatedAt = '2026-07-17T00:00:00.000Z';
+    gateway.services.db.upsertDiscoveryBase({
+      id: 'feedback-base',
+      companionId: firstCompanionId,
+      connectorId: 'generic-web',
+      scope: 'query',
+      locator: 'local-first feedback loops',
+      data: { purpose: 'feedback-lineage-regression' },
+      origin: 'user',
+      state: 'trial',
+      discoveredAt: baseCreatedAt,
+      trialStartedAt: baseCreatedAt,
+      trialExpiresAt: '2026-07-27T00:00:00.000Z',
+      updatedAt: baseCreatedAt,
+    });
     await gateway.execute({
       category: 'memory',
       params: {
@@ -402,6 +529,11 @@ describe('production Validation Kit gateway', () => {
     });
     const cycle = gateway.services.db.listExplorationCycles(1)[0]!;
     const insightId = cycle.selectedInsightId!;
+    const snapshot = await gateway.services.debug.getEngineSnapshot();
+    expect(snapshot.discoveryInspection).toEqual(expect.objectContaining({
+      selectedBases: [expect.objectContaining({ id: 'feedback-base' })],
+      executedBases: [expect.objectContaining({ id: 'feedback-base' })],
+    }));
     const before = {
       memories: gateway.services.db.listMemoryNodes(firstCompanionId).length,
       milestones: gateway.services.db.listMilestones().length,
@@ -427,6 +559,70 @@ describe('production Validation Kit gateway', () => {
     expect(gateway.services.db.listDiscoveryFeedback(100)).toHaveLength(before.feedback + 1);
     expect(gateway.services.db.getRelationship('local', firstCompanionId).trust)
       .toBeCloseTo(before.trust + 0.0025);
+    expect(gateway.services.db.listDiscoveryBaseFeedback(
+      firstCompanionId,
+      'feedback-base',
+    )).toEqual([
+      expect.objectContaining({
+        discoveryBaseId: 'feedback-base',
+        value: 'saved',
+      }),
+    ]);
+    expect(gateway.services.db.listDiscoveryBases(firstCompanionId, 'active'))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'feedback-base' }),
+      ]));
+    await gateway.services.autonomy.submitFeedback({
+      cycleId: cycle.id,
+      insightId,
+      value: 'not_interested',
+      note: 'first low-quality source signal',
+    });
+    expect(gateway.services.db.listDiscoveryBases(firstCompanionId, 'active'))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'feedback-base' }),
+      ]));
+
+    const repeatCycle = gateway.services.db.insertExplorationCycle({
+      ...cycle,
+      id: 'repeat-low-quality-cycle',
+      state: 'sharing',
+      insightIds: [insightId],
+      selectedInsightId: insightId,
+      startedAt: '2026-07-17T11:00:00.000Z',
+      completedAt: undefined,
+    });
+    await gateway.services.autonomy.submitFeedback({
+      cycleId: repeatCycle.id,
+      insightId,
+      value: 'not_interested',
+      note: 'second low-quality source signal',
+    });
+    expect(gateway.services.db.listDiscoveryBases(firstCompanionId, 'rejected'))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'feedback-base' }),
+      ]));
+
+    await gateway.services.autonomy.submitFeedback({
+      cycleId: repeatCycle.id,
+      insightId,
+      value: 'mute_source',
+      note: 'mute this source',
+    });
+    expect(gateway.services.db.listDiscoveryBases(firstCompanionId, 'muted'))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'feedback-base' }),
+      ]));
+    await gateway.services.autonomy.submitFeedback({
+      cycleId: repeatCycle.id,
+      insightId,
+      value: 'block_source',
+      note: 'block this source',
+    });
+    expect(gateway.services.db.listDiscoveryBases(firstCompanionId, 'blocked'))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'feedback-base' }),
+      ]));
 
     const personality: CompanionPersonality = {
       energy: 50,

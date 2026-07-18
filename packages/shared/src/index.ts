@@ -1167,7 +1167,15 @@ export interface ExplorationLoopEvent {
   createdAt: string;
 }
 
-export type DiscoveryFeedbackValue = 'saved' | 'not_interested' | 'not_now' | 'later' | 'talk_about_this' | 'opened_evidence';
+export type DiscoveryFeedbackValue =
+  | 'saved'
+  | 'not_interested'
+  | 'not_now'
+  | 'later'
+  | 'talk_about_this'
+  | 'opened_evidence'
+  | 'mute_source'
+  | 'block_source';
 
 export interface DiscoveryFeedback {
   id: string;
@@ -1818,6 +1826,12 @@ export interface DiscoveryInspectionRecord {
     available: boolean;
   }>;
   selectedBases: Array<{
+    id: string;
+    connectorId: string;
+    state: string;
+    locator: string;
+  }>;
+  executedBases: Array<{
     id: string;
     connectorId: string;
     state: string;

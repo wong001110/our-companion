@@ -224,6 +224,14 @@ describe('foundation event log', () => {
     });
     expect(created.isPrimary).toBe(true);
     expect(internals.personalityAnalyses.has('success-fixture')).toBe(false);
+    expect(services.db.listDiscoveryBases(created.id, 'trial')).toEqual([
+      expect.objectContaining({
+        companionId: created.id,
+        connectorId: 'generic-web',
+        scope: 'query',
+        origin: 'personality',
+      }),
+    ]);
     await expect(services.companionNew.create({
       name: 'Reuse', personalityDescription: 'Success fixture', personalityAnalysisId: 'success-fixture', assetRoot: '', assets: requiredAssets(),
     })).rejects.toThrow('invalid, expired, or already used');

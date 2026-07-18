@@ -12,6 +12,7 @@ import {
   createTopicFingerprint,
   DiscoveryConnectorRegistry,
   evaluateTopicSaturation,
+  findSeenDiscoveryCandidates,
   MVP_DISCOVERY_CONNECTOR_MANIFESTS,
   selectDiscoveryMode,
   startDiscoveryTrial,
@@ -79,6 +80,13 @@ describe('adaptive discovery mode and intent policy', () => {
     ];
     expect(evaluateTopicSaturation({ topicFingerprint: 'other', eventKey: 'event-1', history, now }).reason)
       .toBe('same_event_seen');
+    expect(evaluateTopicSaturation({
+      topicFingerprint: 'topic',
+      eventKey: 'event-1',
+      materialUpdate: true,
+      history,
+      now
+    })).toEqual(expect.objectContaining({ blocked: false }));
     expect(evaluateTopicSaturation({
       topicFingerprint: 'topic',
       history: [{ topicFingerprint: 'topic', disposition: 'ignored', occurredAt: '2026-05-01T00:00:00.000Z' }],
@@ -255,6 +263,34 @@ describe('persistent identity and layered dedup policy', () => {
       candidate: { ...candidate, topics: ['gardening'], externalId: 'garden', canonicalUrl: 'https://garden.test', contentHash: 'garden', eventKey: 'garden' },
       existing: [topicOnly]
     }).outcome).toBe('new');
+  });
+
+  it('rehydrates topic candidates even when no exact identity matches', () => {
+    const candidateIdentities = createDiscoverySeenIdentities(candidate);
+    const topicFingerprint = createTopicFingerprint(candidate.topics);
+    const records = findSeenDiscoveryCandidates({
+      candidateIdentities,
+      topicFingerprint,
+      persisted: [{
+        discoveryId: 'old-topic',
+        type: 'canonical_url',
+        hash: 'unrelated-identity',
+        lastSeenAt: '2026-06-01T00:00:00.000Z',
+        metadata: {
+          normalizedValue: 'https://old.test/event',
+          topicFingerprint,
+        },
+      }],
+    });
+
+    expect(records).toEqual([expect.objectContaining({
+      discoveryId: 'old-topic',
+      topicFingerprint,
+    })]);
+    expect(classifyDiscoveryAgainstSeen({
+      candidate: { ...candidate, canonicalUrl: 'https://new.test/event' },
+      existing: records,
+    })).toEqual(expect.objectContaining({ outcome: 'revival', layer: 'topic' }));
   });
 });
 

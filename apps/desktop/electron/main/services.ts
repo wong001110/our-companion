@@ -28,6 +28,8 @@ import {
   createTopicFingerprint,
   createUnavailableConnector,
   evaluateTopicSaturation,
+  findSeenDiscoveryCandidates,
+  normalizeDiscoveryUrl,
   selectDiscoveryMode,
   startDiscoveryTrial,
   transitionDiscoveryBase,
@@ -514,6 +516,48 @@ export class AppServices {
     }
   }
 
+  private seedPersonalityDiscoveryBase(companion: CompanionProfile): void {
+    const now = this.now().toISOString();
+    const topic = companion.personalityDescription.trim().replace(/\s+/g, ' ').slice(0, 240);
+    if (!topic) return;
+    const intent = createAdaptiveExplorationIntent({
+      mode: companion.personality.curiosity >= 65 ? 'wildcard' : 'adjacent',
+      topic,
+      expectedValue: `Find evidence-backed ideas that fit ${companion.name}'s personality and can broaden future exploration.`,
+      freshness: 'any',
+      trustRequirement: 'corroborated',
+      languages: [this.getAiSettings().replyLanguage === 'zh-CN' ? 'zh-CN' : 'en'],
+      searchTasks: [`${topic} useful ideas developments`],
+      createdAt: now,
+    });
+    const locator = intent.searchTasks[0]?.trim();
+    if (!locator) return;
+    const id = createSemanticFingerprint('discovery_base', [
+      companion.id,
+      'generic-web',
+      'personality',
+      locator,
+    ]);
+    if (this.db.listDiscoveryBases(companion.id, undefined, 32).some((base) => base.id === id)) return;
+    this.db.upsertDiscoveryBase(startDiscoveryTrial({
+      base: {
+        id,
+        companionId: companion.id,
+        connectorId: 'generic-web',
+        scope: 'query',
+        locator,
+        data: {
+          intentQuestion: intent.question,
+          mode: intent.mode,
+          expectedValue: intent.expectedValue,
+        },
+        origin: 'personality',
+        discoveredAt: now,
+      },
+      now,
+    }));
+  }
+
   private requireActiveCompanion(): CompanionProfile {
     const companion = this.db.getPrimaryCompanion();
     if (!companion) throw new Error('NO_ACTIVE_COMPANION: No active Companion. Complete Companion creation first.');
@@ -600,6 +644,7 @@ export class AppServices {
         }
         companion = this.db.updateCompanion(companion.id, { assetRoot: `companion://${companion.id}/assets` });
         if (shouldBecomePrimary) companion = this.db.setPrimaryCompanion(companion.id);
+        this.seedPersonalityDiscoveryBase(companion);
         this.personalityAnalyses.delete(input.personalityAnalysisId);
         return companion;
       } catch (error) {
@@ -925,8 +970,14 @@ export class AppServices {
     },
     deleteNode: async (id: string) => {
       const companionId = this.db.resolveActiveCompanionId();
-      if (!this.db.getMemoryNode(id, companionId)) throw new Error(`Memory node not found: ${id}`);
+      const existing = this.db.getMemoryNode(id, companionId);
+      if (!existing) throw new Error(`Memory node not found: ${id}`);
       this.db.deleteMemoryNode(id);
+      this.reconcileDeletedMemoryTombstones(
+        companionId,
+        existing.userId ?? 'default',
+        this.runtimeClock.now().toISOString(),
+      );
       return { id, deleted: true as const };
     },
     createEdge: async (input: CreateMemoryEdgeInput) => {
@@ -1695,6 +1746,62 @@ export class AppServices {
     return operation;
   }
 
+  private reconcileDeletedMemoryTombstones(
+    companionId: string,
+    fallbackUserId: string,
+    evaluatedAt: string,
+  ): {
+    deletedMemoryIds: string[];
+    deletedPatternIds: string[];
+    removedInterestNodeIds: string[];
+    closedCuriosityTargetIds: string[];
+  } {
+    const tombstones = this.db.listDirtyMemoryProcessing(companionId, 10_000)
+      .filter((state) => Boolean(state.deletedAt));
+    const deletedMemoryIds = tombstones.map((state) => state.memoryId);
+    const report = {
+      deletedMemoryIds,
+      deletedPatternIds: [] as string[],
+      removedInterestNodeIds: [] as string[],
+      closedCuriosityTargetIds: [] as string[],
+    };
+    if (deletedMemoryIds.length === 0) return report;
+
+    const memoryNodes = this.db.listMemoryNodes(companionId);
+    const discoveries = this.db.listDiscoveries({ limit: 10_000, companionId });
+    const feedback = this.db.listDiscoveryFeedback(10_000, undefined, companionId);
+    for (const userId of this.db.listCognitiveUserIds(companionId, fallbackUserId)) {
+      const patternCleanup = this.db.pruneDeletedMemoryPatternEvidence(
+        userId,
+        companionId,
+        deletedMemoryIds,
+        evaluatedAt,
+      );
+      report.deletedPatternIds.push(...patternCleanup.deletedPatternIds);
+      const patterns = this.db.listPatterns(userId, 10_000, companionId);
+      const interestGraph = buildInterestGraph({
+        userId: `${userId}:${companionId}`,
+        memoryNodes,
+        patterns,
+        discoveries,
+        feedback,
+      });
+      const graphReplacement = this.db.replaceInterestGraph(interestGraph);
+      report.removedInterestNodeIds.push(...graphReplacement.removedNodeIds);
+      const curiosityCleanup = this.db.reconcileCuriositySources({
+        userId,
+        companionId,
+        validMemoryIds: memoryNodes.map((memory) => memory.id),
+        validPatternIds: patterns.map((pattern) => pattern.id),
+        validInterestNodeIds: interestGraph.nodes.map((node) => node.id),
+        updatedAt: evaluatedAt,
+      });
+      report.closedCuriosityTargetIds.push(...curiosityCleanup.closedTargetIds);
+    }
+    this.db.markDeletedMemoriesProcessed(deletedMemoryIds, evaluatedAt);
+    return report;
+  }
+
   private async runAutonomousExplorationCycle(input: StartExplorationInput = {}): Promise<ExplorationCycleResult> {
     const userId = input.userId ?? 'default';
     const companionId = this.db.resolveActiveCompanionId(input.companionId);
@@ -1725,6 +1832,21 @@ export class AppServices {
       causationId = recorded.id;
       return recorded;
     };
+    const evaluatedAt = this.runtimeClock.now().toISOString();
+    const deletionCleanup = this.reconcileDeletedMemoryTombstones(companionId, userId, evaluatedAt);
+    if (deletionCleanup.deletedMemoryIds.length > 0) {
+      trace(
+        'memory',
+        'consume-deletion-tombstones',
+        'completed',
+        deletionCleanup.deletedMemoryIds,
+        [
+          ...deletionCleanup.deletedPatternIds,
+          ...deletionCleanup.removedInterestNodeIds,
+          ...deletionCleanup.closedCuriosityTargetIds,
+        ],
+      );
+    }
     const characterState = this.db.getCharacterState(companionId);
     const characterProfile = this.db.getActiveCharacters().find((character) => character.id === companionId);
     const memoryNodes = this.db.listCognitionMemoryCandidates(companionId, undefined, 30);
@@ -1744,7 +1866,6 @@ export class AppServices {
       memoryNodes.map((memory) => memory.id)
     );
 
-    const evaluatedAt = this.runtimeClock.now().toISOString();
     const detectedPatterns = detectPatterns({
       userId,
       companionId,
@@ -1832,9 +1953,54 @@ export class AppServices {
     );
     this.db.markMemoriesProcessed(memoryNodes.map((memory) => memory.id), evaluatedAt);
 
-    const selectedCuriosityTarget = persistedCuriosityTargets
+    const rankedCuriosityTargets = persistedCuriosityTargets
       .filter((target) => target.status === 'open' || target.status === 'exploring')
-      .sort((left, right) => right.priority - left.priority)[0];
+      .sort((left, right) => right.priority - left.priority);
+    const topicSaturationHistory = discoveryHistory.map((discovery) => ({
+      topicFingerprint: createTopicFingerprint(
+        discovery.tags.length ? discovery.tags : [discovery.title],
+      ) ?? createSemanticFingerprint('discovery_topic', [discovery.title]),
+      eventKey: discovery.fingerprint,
+      disposition: discovery.status === 'saved'
+        ? 'saved' as const
+        : discovery.status === 'rejected' || discovery.status === 'dismissed'
+          ? 'ignored' as const
+          : 'presented' as const,
+      occurredAt: discovery.updatedAt ?? discovery.createdAt,
+    }));
+    let selectedCuriosityTarget: typeof rankedCuriosityTargets[number] | undefined;
+    let selectedTopicSaturation: ReturnType<typeof evaluateTopicSaturation> | undefined;
+    let savedTopicProbe: {
+      target: typeof rankedCuriosityTargets[number];
+      saturation: ReturnType<typeof evaluateTopicSaturation>;
+    } | undefined;
+    let saturationStopReason: ReturnType<typeof evaluateTopicSaturation>['reason'];
+    for (const target of rankedCuriosityTargets) {
+      const targetTopicFingerprint = createTopicFingerprint([target.topic])
+        ?? createSemanticFingerprint('discovery_topic', [target.topic]);
+      const targetSaturation = evaluateTopicSaturation({
+        topicFingerprint: targetTopicFingerprint,
+        history: topicSaturationHistory,
+        now: evaluatedAt,
+      });
+      if (!targetSaturation.blocked) {
+        selectedCuriosityTarget = target;
+        selectedTopicSaturation = targetSaturation;
+        break;
+      }
+      saturationStopReason ??= targetSaturation.reason;
+      if (targetSaturation.reason === 'saved_requires_material_update' && !savedTopicProbe) {
+        savedTopicProbe = { target, saturation: targetSaturation };
+      }
+    }
+    // A saved topic may be researched only as a bounded material-update probe.
+    // Candidate-level saturation must still reject anything that is not a
+    // verified material update.
+    const requiresMaterialUpdate = !selectedCuriosityTarget && Boolean(savedTopicProbe);
+    if (!selectedCuriosityTarget && savedTopicProbe) {
+      selectedCuriosityTarget = savedTopicProbe.target;
+      selectedTopicSaturation = savedTopicProbe.saturation;
+    }
     if (selectedCuriosityTarget) {
       this.db.setCuriosityTargetStatus(selectedCuriosityTarget.id, 'exploring', evaluatedAt);
     }
@@ -1862,13 +2028,20 @@ export class AppServices {
         ['decision', 'evaluate'],
         ['presentation', 'enqueue']
       ] as const) {
-        trace(engine, operation, 'skipped', [], [], { skipReason: 'no_curiosity_target' });
+        trace(engine, operation, 'skipped', [], [], {
+          skipReason: saturationStopReason ?? 'no_curiosity_target',
+        });
       }
       cycle = this.saveCycleState(cycle, 'returning');
       this.setAutonomyCharacterState(companionId, 'returning', 'sharing_discovery');
       cycle = this.saveCycleState(cycle, 'reflecting', { completedAt: this.now().toISOString() }, {
-        message: 'I could not find enough reliable information this time.',
-        metadata: { outcome: 'empty' },
+        message: saturationStopReason
+          ? 'I switched away from a saturated topic, but no eligible direction remained.'
+          : 'I could not find enough reliable information this time.',
+        metadata: {
+          outcome: 'empty',
+          ...(saturationStopReason ? { saturationReason: saturationStopReason } : {}),
+        },
       });
       this.companionRuntime.settleDiscoveryPresentation(companionId);
       return { cycle, curiosityTargets: persistedCuriosityTargets, discoveryCandidates: [], insights: [] };
@@ -1876,22 +2049,12 @@ export class AppServices {
 
     const topicFingerprint = createTopicFingerprint([selectedCuriosityTarget.topic])
       ?? createSemanticFingerprint('discovery_topic', [selectedCuriosityTarget.topic]);
-    const saturation = evaluateTopicSaturation({
-      topicFingerprint,
-      history: discoveryHistory.map((discovery) => ({
-        topicFingerprint: createTopicFingerprint(
-          discovery.tags.length ? discovery.tags : [discovery.title],
-        ) ?? createSemanticFingerprint('discovery_topic', [discovery.title]),
-        eventKey: discovery.fingerprint,
-        disposition: discovery.status === 'saved'
-          ? 'saved'
-          : discovery.status === 'rejected' || discovery.status === 'dismissed'
-            ? 'ignored'
-            : 'presented',
-        occurredAt: discovery.updatedAt ?? discovery.createdAt,
-      })),
-      now: evaluatedAt,
-    });
+    const saturation = selectedTopicSaturation
+      ?? evaluateTopicSaturation({
+        topicFingerprint,
+        history: topicSaturationHistory,
+        now: evaluatedAt,
+      });
     const companionProfile = this.db.getCompanion(companionId);
     const personalityBias = companionProfile
       ? {
@@ -1906,7 +2069,9 @@ export class AppServices {
       personalityBias,
       saturationPenalty: saturation.penalty,
     });
-    const discoveryMode = selectDiscoveryMode(this.random(), modeWeights);
+    const discoveryMode = requiresMaterialUpdate
+      ? 'core'
+      : selectDiscoveryMode(this.random(), modeWeights);
     const adaptiveIntent = createAdaptiveExplorationIntent({
       mode: discoveryMode,
       topic: selectedCuriosityTarget.topic,
@@ -1938,6 +2103,13 @@ export class AppServices {
         this.db.upsertDiscoveryBase(transitioned);
       }
     }
+    const selectedDiscoveryBases = this.db.listDiscoveryBases(companionId, undefined, 32)
+      .filter((base) => base.state === 'active' || base.state === 'trial')
+      .slice(0, 3)
+      .map((base) => ({
+        ...base,
+        origin: base.origin as DiscoveryBase['origin'],
+      }));
     const discoveryInspection: DiscoveryInspectionRecord = {
       cycleId,
       companionId,
@@ -1954,14 +2126,13 @@ export class AppServices {
         mode: capability.mode,
         available: capability.available,
       })),
-      selectedBases: this.db.listDiscoveryBases(companionId, undefined, 32)
-        .filter((base) => base.state === 'active' || base.state === 'trial')
-        .map((base) => ({
+      selectedBases: selectedDiscoveryBases.map((base) => ({
           id: base.id,
           connectorId: base.connectorId,
           state: base.state,
           locator: base.locator,
         })),
+      executedBases: [],
       candidatesAccepted: [],
       candidatesRejected: [],
       dedupHits: {},
@@ -1984,6 +2155,7 @@ export class AppServices {
       cycleId,
       curiosityTarget: selectedCuriosityTarget,
       explorationIntent: adaptiveIntent,
+      discoveryBases: selectedDiscoveryBases,
       seenCanonicalUrls: new Set(discoveryHistory.map((discovery) => discovery.canonicalUrl ?? discovery.url).filter(Boolean) as string[]),
       onTrace: (event) => trace(
         'research',
@@ -1998,6 +2170,23 @@ export class AppServices {
         }
       )
     });
+    const executedBaseIds = new Set(research.usedBaseIds);
+    discoveryInspection.executedBases = selectedDiscoveryBases
+      .filter((base) => executedBaseIds.has(base.id))
+      .map((base) => ({
+        id: base.id,
+        connectorId: base.connectorId,
+        state: base.state,
+        locator: base.locator,
+      }));
+    for (const base of selectedDiscoveryBases) {
+      if (!executedBaseIds.has(base.id)) continue;
+      this.db.upsertDiscoveryBase({
+        ...base,
+        lastCheckedAt: evaluatedAt,
+        updatedAt: evaluatedAt,
+      });
+    }
     this.db.insertResearchIntent(research.intent);
     this.db.insertResearchPlan(research.plan);
     for (const record of research.searchRecords) this.db.insertResearchSearchRecord({
@@ -2045,12 +2234,6 @@ export class AppServices {
             now: evaluatedAt,
           });
           this.db.upsertDiscoveryBase(trial);
-          discoveryInspection.selectedBases.push({
-            id: trial.id,
-            connectorId: trial.connectorId,
-            state: trial.state,
-            locator: trial.locator,
-          });
         }
       }
     }
@@ -2059,6 +2242,20 @@ export class AppServices {
       researchPlanId: research.plan.id
     });
     const discoveryCandidates: DiscoveryCandidate[] = [];
+    const persistedSeen = this.db.listDiscoverySeenIdentities(companionId, 1_000);
+    const durableTargetCache = new Map<string, boolean>();
+    const durableSeen = persistedSeen.filter((seen) => {
+      if (!seen.discoveryId) return false;
+      const cached = durableTargetCache.get(seen.discoveryId);
+      if (cached !== undefined) return cached;
+      const durableCandidate = this.db.getDiscoveryCandidate(seen.discoveryId);
+      const durableDiscovery = durableCandidate ? undefined : this.db.getDiscovery(seen.discoveryId);
+      const durable = durableCandidate?.companionId === companionId
+        || durableDiscovery?.companionId === companionId;
+      durableTargetCache.set(seen.discoveryId, durable);
+      if (!durable) this.db.clearDiscoverySeenIdentityTarget(seen.id, companionId);
+      return durable;
+    });
     for (const candidate of research.candidates) {
       let rawEvidence: Record<string, unknown> = {};
       try {
@@ -2078,54 +2275,26 @@ export class AppServices {
         connectorId: candidate.sourceName,
         externalId: typeof rawEvidence.externalId === 'string' ? rawEvidence.externalId : undefined,
         canonicalUrl: candidate.sourceUrl,
-        contentHash: pageEvidence?.contentHash,
+        contentHash: pageEvidence?.contentHash
+          ?? (typeof rawEvidence.contentHash === 'string' ? rawEvidence.contentHash : undefined),
         eventKey: typeof rawEvidence.eventKey === 'string' ? rawEvidence.eventKey : undefined,
         title: candidate.title,
         topics: [selectedCuriosityTarget.topic],
-        publishedAt: pageEvidence?.publishedAt,
+        publishedAt: pageEvidence?.publishedAt
+          ?? (typeof rawEvidence.publishedAt === 'string' ? rawEvidence.publishedAt : undefined),
         observedAt: candidate.collectedAt,
         materialFacts,
         version: typeof rawEvidence.version === 'string' ? rawEvidence.version : undefined,
       };
       const identities = createDiscoverySeenIdentities(identityCandidate);
-      const existingByDiscovery = new Map<string, {
-        discoveryId: string;
-        identities: Array<{ type: typeof identities[number]['type']; hash: string; normalizedValue: string }>;
-        seenAt: string;
-        contentHash?: string;
-        materialFacts?: string[];
-        publishedAt?: string;
-        version?: string;
-        topicFingerprint?: string;
-      }>();
-      for (const identity of identities) {
-        const persisted = this.db.getDiscoverySeenIdentity(companionId, identity.type, identity.hash);
-        if (!persisted?.discoveryId) continue;
-        const metadata = persisted.metadata;
-        const existing = existingByDiscovery.get(persisted.discoveryId) ?? {
-          discoveryId: persisted.discoveryId,
-          identities: [],
-          seenAt: persisted.lastSeenAt,
-          contentHash: typeof metadata.contentHash === 'string' ? metadata.contentHash : undefined,
-          materialFacts: Array.isArray(metadata.materialFacts)
-            ? metadata.materialFacts.filter((fact): fact is string => typeof fact === 'string')
-            : undefined,
-          publishedAt: typeof metadata.publishedAt === 'string' ? metadata.publishedAt : undefined,
-          version: typeof metadata.version === 'string' ? metadata.version : undefined,
-          topicFingerprint: typeof metadata.topicFingerprint === 'string'
-            ? metadata.topicFingerprint
-            : undefined,
-        };
-        existing.identities.push({
-          type: persisted.type,
-          hash: persisted.hash,
-          normalizedValue: typeof metadata.normalizedValue === 'string' ? metadata.normalizedValue : '',
-        });
-        existingByDiscovery.set(persisted.discoveryId, existing);
-      }
+      const existing = findSeenDiscoveryCandidates({
+        candidateIdentities: identities,
+        topicFingerprint,
+        persisted: durableSeen,
+      });
       const dedup = classifyDiscoveryAgainstSeen({
         candidate: identityCandidate,
-        existing: [...existingByDiscovery.values()],
+        existing,
       });
       if (dedup.layer) {
         discoveryInspection.dedupHits[dedup.layer] =
@@ -2136,34 +2305,21 @@ export class AppServices {
       else if (dedup.outcome === 'material_update') discoveryInspection.materialUpdateCount += 1;
       else discoveryInspection.newCount += 1;
 
-      const accepted = dedup.outcome !== 'duplicate' && discoveryCandidates.length < 3;
-      const linkedDiscoveryId = accepted ? candidate.id : dedup.existingDiscoveryId ?? candidate.id;
-      for (const identity of identities) {
-        this.db.upsertDiscoverySeenIdentity({
-          id: createSemanticFingerprint('discovery_seen_identity', [
-            companionId,
-            identity.type,
-            identity.hash,
-          ]),
-          companionId,
-          type: identity.type,
-          hash: identity.hash,
-          discoveryId: linkedDiscoveryId,
-          firstSeenAt: candidate.collectedAt,
-          lastSeenAt: candidate.collectedAt,
-          metadata: {
-            normalizedValue: identity.normalizedValue,
-            contentHash: pageEvidence?.contentHash,
-            materialFacts,
-            publishedAt: pageEvidence?.publishedAt,
-            version: identityCandidate.version,
-            topicFingerprint,
-            outcome: dedup.outcome,
-            attachEvidenceOnly: dedup.attachEvidenceOnly,
-          },
-        });
-      }
+      const candidateSaturation = evaluateTopicSaturation({
+        topicFingerprint,
+        eventKey: identityCandidate.eventKey ?? candidate.fingerprint,
+        materialUpdate: dedup.outcome === 'material_update',
+        history: topicSaturationHistory,
+        now: evaluatedAt,
+      });
+      const accepted = dedup.outcome !== 'duplicate'
+        && !candidateSaturation.blocked
+        && (!requiresMaterialUpdate || dedup.outcome === 'material_update')
+        && discoveryCandidates.length < 3;
+      const durableIdentityTargetId = accepted ? candidate.id : dedup.existingDiscoveryId;
       if (accepted) {
+        // Persist the durable artifact before any Seen identity can point at it.
+        this.db.insertDiscoveryCandidate(candidate);
         discoveryCandidates.push(candidate);
         discoveryInspection.candidatesAccepted.push(candidate.id);
       } else {
@@ -2171,12 +2327,46 @@ export class AppServices {
           candidateId: candidate.id,
           reason: dedup.outcome === 'duplicate'
             ? `${dedup.reason}${dedup.attachEvidenceOnly ? ':evidence_attached' : ''}`
-            : 'candidate_limit_reached',
+            : candidateSaturation.reason
+              ?? (requiresMaterialUpdate ? 'saved_requires_material_update' : 'candidate_limit_reached'),
         });
       }
-    }
-    for (const candidate of discoveryCandidates) {
-      this.db.insertDiscoveryCandidate(candidate);
+      // A cap- or saturation-rejected new artifact remains eligible next cycle.
+      // Genuine duplicates may refresh aliases/evidence, but only against an
+      // already durable Candidate or final Discovery target.
+      if (durableIdentityTargetId && (accepted || dedup.outcome === 'duplicate')) {
+        for (const identity of identities) {
+          const persistedIdentity = this.db.upsertDiscoverySeenIdentity({
+            id: createSemanticFingerprint('discovery_seen_identity', [
+              companionId,
+              identity.type,
+              identity.hash,
+            ]),
+            companionId,
+            type: identity.type,
+            hash: identity.hash,
+            discoveryId: durableIdentityTargetId,
+            firstSeenAt: candidate.collectedAt,
+            lastSeenAt: candidate.collectedAt,
+            metadata: {
+              normalizedValue: identity.normalizedValue,
+              contentHash: identityCandidate.contentHash,
+              materialFacts,
+              publishedAt: identityCandidate.publishedAt,
+              version: identityCandidate.version,
+              topicFingerprint,
+              outcome: dedup.outcome,
+              attachEvidenceOnly: dedup.attachEvidenceOnly,
+              durableTargetKind: accepted ? 'candidate' : 'existing',
+            },
+          });
+          const existingSeenIndex = durableSeen.findIndex(
+            (seen) => seen.type === persistedIdentity.type && seen.hash === persistedIdentity.hash
+          );
+          if (existingSeenIndex >= 0) durableSeen[existingSeenIndex] = persistedIdentity;
+          else durableSeen.push(persistedIdentity);
+        }
+      }
     }
     trace(
       'discovery',
@@ -2251,13 +2441,61 @@ export class AppServices {
     cycle = this.saveCycleState(cycle, 'sharing', { completedAt: this.runtimeClock.now().toISOString() });
     if (selectedInsight) {
       const createdAt = this.now().toISOString();
+      const sourceCandidate = [...discoveryCandidates].sort(
+        (left, right) =>
+          right.relevanceScore + right.noveltyScore + right.usefulnessScore
+          - (left.relevanceScore + left.noveltyScore + left.usefulnessScore)
+      )[0];
+      let sourceRaw: Record<string, unknown> = {};
+      try {
+        sourceRaw = sourceCandidate?.rawEvidence
+          ? JSON.parse(sourceCandidate.rawEvidence) as Record<string, unknown>
+          : {};
+      } catch {
+        sourceRaw = {};
+      }
+      const source: DiscoverySource = sourceCandidate?.sourceName === 'github'
+        || sourceCandidate?.sourceName === 'rss'
+        || sourceCandidate?.sourceName === 'youtube'
+        || sourceCandidate?.sourceName === 'reddit'
+        || sourceCandidate?.sourceName === 'hackernews'
+        ? sourceCandidate.sourceName
+        : sourceCandidate?.sourceType === 'github'
+          ? 'github'
+          : sourceCandidate?.sourceType === 'video'
+            ? 'youtube'
+            : sourceCandidate?.sourceType === 'community_discussion'
+              ? 'community'
+              : 'internet';
+      const sourceEvidence = sourceCandidate?.evidenceIds?.length
+        ? research.evidence.find((evidence) => sourceCandidate.evidenceIds?.includes(evidence.id))
+        : undefined;
       const discoveryPayload: Discovery = {
         id: selectedInsight.id,
-        source: 'companion',
+        source,
+        externalId: typeof sourceRaw.externalId === 'string' ? sourceRaw.externalId : undefined,
         title: selectedInsight.title,
         summary: selectedInsight.summary,
-        tags: [],
-        raw: {},
+        url: sourceCandidate?.sourceUrl,
+        canonicalUrl: normalizeDiscoveryUrl(sourceCandidate?.sourceUrl),
+        tags: [selectedCuriosityTarget.topic],
+        publishedAt: sourceEvidence?.publishedAt
+          ?? (typeof sourceRaw.publishedAt === 'string' ? sourceRaw.publishedAt : undefined),
+        raw: {
+          candidateId: sourceCandidate?.id,
+          candidateIds: discoveryCandidates.map((candidate) => candidate.id),
+          evidenceIds: sourceCandidate?.evidenceIds ?? [],
+          researchPlanId: sourceCandidate?.researchPlanId,
+          sourceName: sourceCandidate?.sourceName,
+          sourceType: sourceCandidate?.sourceType,
+          contentHash: typeof sourceRaw.contentHash === 'string' ? sourceRaw.contentHash : undefined,
+          version: typeof sourceRaw.version === 'string' ? sourceRaw.version : undefined,
+          eventKey: typeof sourceRaw.eventKey === 'string' ? sourceRaw.eventKey : undefined,
+          discoveryBaseIds: Array.isArray(sourceRaw.discoveryBaseIds)
+            ? sourceRaw.discoveryBaseIds
+            : [],
+        },
+        fingerprint: sourceCandidate?.fingerprint,
         userInterestScore: 0.5,
         userHistoryScore: 0.5,
         characterExpertiseScore: 0.5,
@@ -2272,6 +2510,21 @@ export class AppServices {
         updatedAt: createdAt
       };
       this.db.insertDiscovery(discoveryPayload);
+      if (sourceCandidate) {
+        for (const seen of this.db.listDiscoverySeenIdentities(companionId, 1_000)) {
+          if (seen.discoveryId !== sourceCandidate.id) continue;
+          this.db.upsertDiscoverySeenIdentity({
+            ...seen,
+            discoveryId: discoveryPayload.id,
+            metadata: {
+              ...seen.metadata,
+              durableTargetKind: 'discovery',
+              candidateId: sourceCandidate.id,
+              finalDiscoveryId: discoveryPayload.id,
+            },
+          });
+        }
+      }
       const decision = this.requestDiscoveryPresentation(discoveryPayload);
       if (decision.reason === 'discovery_companion_mismatch') {
         this.companionRuntime.settleDiscoveryPresentation(companionId);
@@ -2383,6 +2636,68 @@ export class AppServices {
       createdAt: this.runtimeClock.now().toISOString()
     });
     trace('feedback', 'record', 'completed', [cycle.id, ...(insightId ? [insightId] : [])], [feedback.id]);
+    const candidateIdsForBaseFeedback = input.discoveryCandidateId
+      ? [input.discoveryCandidateId]
+      : persistedInsight?.supportingCandidateIds ?? [];
+    const discoveryBaseIds = new Set<string>();
+    for (const candidateId of candidateIdsForBaseFeedback) {
+      const candidate = this.db.getDiscoveryCandidate(candidateId);
+      if (!candidate?.rawEvidence) continue;
+      try {
+        const raw = JSON.parse(candidate.rawEvidence) as Record<string, unknown>;
+        if (!Array.isArray(raw.discoveryBaseIds)) continue;
+        for (const baseId of raw.discoveryBaseIds) {
+          if (typeof baseId === 'string') discoveryBaseIds.add(baseId);
+        }
+      } catch {
+        // Invalid legacy evidence has no durable base lineage to update.
+      }
+    }
+    const baseTransitionFeedback = input.value === 'saved'
+      ? 'saved' as const
+      : input.value === 'opened_evidence' || input.value === 'talk_about_this'
+        ? 'useful' as const
+        : input.value === 'mute_source'
+          ? 'mute' as const
+          : input.value === 'block_source'
+            ? 'block' as const
+          : 'none' as const;
+    for (const baseId of discoveryBaseIds) {
+      const base = this.db.listDiscoveryBases(cycle.companionId, undefined, 32)
+        .find((item) => item.id === baseId);
+      if (!base) continue;
+      this.db.insertDiscoveryBaseFeedback({
+        id: createId('discovery_base_feedback'),
+        companionId: cycle.companionId,
+        discoveryBaseId: base.id,
+        value: input.value,
+        note: input.note,
+        createdAt: feedback.createdAt,
+      });
+      const lowQualityFeedbackCount = this.db.listDiscoveryBaseFeedback(
+        cycle.companionId,
+        base.id,
+        100,
+      ).filter((item) => item.value === 'not_interested').length;
+      const transitioned = transitionDiscoveryBase({
+        base: {
+          ...base,
+          origin: base.origin as DiscoveryBase['origin'],
+        },
+        feedback: input.value === 'not_interested' && lowQualityFeedbackCount >= 2
+          ? 'disliked'
+          : baseTransitionFeedback,
+        now: feedback.createdAt,
+      });
+      this.db.upsertDiscoveryBase(transitioned);
+      trace(
+        'discovery',
+        'update-base-feedback',
+        'completed',
+        [feedback.id, base.id],
+        [transitioned.id, transitioned.state],
+      );
+    }
 
     const insight = feedback.insightId ? (this.db.getCompanionInsight(feedback.insightId) as unknown as GeneratedInsight | undefined) : undefined;
     const reflected = this.db.insertExplorationCycle({
@@ -2950,6 +3265,7 @@ export class AppServices {
     if (!memory) throw new Error('MEMORY_IMPACT_NOT_FOUND');
     const userId = memory.userId ?? 'default';
     const evaluatedAt = this.runtimeClock.now().toISOString();
+    this.reconcileDeletedMemoryTombstones(companionId, userId, evaluatedAt);
     const correlationId = createId('corr');
     this.emitFoundationEvent('memory-impact:evaluate', 'memory', { memoryId: memory.id, companionId }, correlationId);
     const report: MemoryImpactRecomputeReport = {

@@ -156,6 +156,7 @@ describe('DiscoveryInspector', () => {
         contextCount: 32,
         connectorCapabilities: [{ id: 'brave-search', mode: 'live', available: true }],
         selectedBases: [{ id: 'base-1', connectorId: 'rss', state: 'trial', locator: 'https://example.test/feed' }],
+        executedBases: [{ id: 'base-1', connectorId: 'rss', state: 'trial', locator: 'https://example.test/feed' }],
         candidatesAccepted: ['candidate-1'],
         candidatesRejected: [{ candidateId: 'candidate-2', reason: 'content_hash_already_seen' }],
         dedupHits: { content_hash: 1 },

@@ -40,6 +40,14 @@ export interface SeenDiscoveryRecord {
   topicFingerprint?: string;
 }
 
+export interface PersistedSeenIdentityLike {
+  discoveryId?: string;
+  type: DiscoverySeenIdentityType;
+  hash: string;
+  lastSeenAt: string;
+  metadata: Readonly<Record<string, unknown>>;
+}
+
 export type DiscoveryDedupOutcome = 'duplicate' | 'revival' | 'material_update' | 'new';
 export type DiscoveryDedupLayer =
   | 'external_id'
@@ -126,6 +134,75 @@ export function createDiscoverySeenIdentities(candidate: DiscoveryIdentityCandid
   if (candidate.eventKey) identities.push(identity('event_key', normalizedText(candidate.eventKey)));
   identities.push(identity('fingerprint', createEventFingerprint(candidate)));
   return identities;
+}
+
+/**
+ * Rehydrates the Seen Index records relevant to a candidate. Topic matches are
+ * intentionally included even when no exact identity matches, so a later event
+ * is classified as a revival rather than as a brand-new topic.
+ */
+export function findSeenDiscoveryCandidates(input: {
+  candidateIdentities: readonly DiscoverySeenIdentity[];
+  topicFingerprint?: string;
+  persisted: readonly PersistedSeenIdentityLike[];
+}): readonly SeenDiscoveryRecord[] {
+  const exactIdentityKeys = new Set(
+    input.candidateIdentities.map((item) => `${item.type}:${item.hash}`)
+  );
+  const relevantDiscoveryIds = new Set(
+    input.persisted.flatMap((item) => {
+      if (!item.discoveryId) return [];
+      const metadataTopic = typeof item.metadata.topicFingerprint === 'string'
+        ? item.metadata.topicFingerprint
+        : undefined;
+      return exactIdentityKeys.has(`${item.type}:${item.hash}`)
+        || Boolean(input.topicFingerprint && metadataTopic === input.topicFingerprint)
+        ? [item.discoveryId]
+        : [];
+    })
+  );
+  const records = new Map<string, SeenDiscoveryRecord>();
+  for (const item of input.persisted) {
+    if (!item.discoveryId || !relevantDiscoveryIds.has(item.discoveryId)) continue;
+    const metadata = item.metadata;
+    const existing = records.get(item.discoveryId);
+    const newer = !existing || Date.parse(item.lastSeenAt) > Date.parse(existing.seenAt);
+    const record: SeenDiscoveryRecord = existing ?? {
+      discoveryId: item.discoveryId,
+      identities: [],
+      seenAt: item.lastSeenAt,
+    };
+    records.set(item.discoveryId, {
+      ...record,
+      identities: [
+        ...record.identities,
+        {
+          type: item.type,
+          hash: item.hash,
+          normalizedValue: typeof metadata.normalizedValue === 'string'
+            ? metadata.normalizedValue
+            : '',
+        },
+      ],
+      seenAt: newer ? item.lastSeenAt : record.seenAt,
+      contentHash: newer && typeof metadata.contentHash === 'string'
+        ? metadata.contentHash
+        : record.contentHash,
+      materialFacts: newer && Array.isArray(metadata.materialFacts)
+        ? metadata.materialFacts.filter((fact): fact is string => typeof fact === 'string')
+        : record.materialFacts,
+      publishedAt: newer && typeof metadata.publishedAt === 'string'
+        ? metadata.publishedAt
+        : record.publishedAt,
+      version: newer && typeof metadata.version === 'string'
+        ? metadata.version
+        : record.version,
+      topicFingerprint: newer && typeof metadata.topicFingerprint === 'string'
+        ? metadata.topicFingerprint
+        : record.topicFingerprint,
+    });
+  }
+  return [...records.values()];
 }
 
 function materialUpdateReason(

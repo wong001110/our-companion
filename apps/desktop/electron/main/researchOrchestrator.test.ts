@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { WebPageEvidence, WebSearchResult } from '@our-companion/shared';
-import type { DiscoveryConnector } from '@our-companion/discovery-engine';
+import type { DiscoveryBase, DiscoveryConnector } from '@our-companion/discovery-engine';
 import { ResearchAdapterError, type WebPageFetcher, type WebSearchProvider } from './researchAdapters';
 import { ResearchOrchestrator } from './researchOrchestrator';
 
@@ -31,6 +31,147 @@ const fetcher: WebPageFetcher = {
 };
 
 describe('ResearchOrchestrator', () => {
+  it('executes a bounded durable structured base and records its lineage', async () => {
+    const fetch = vi.fn(async () => [{
+      id: 'rss-entry',
+      title: 'Durable feed update',
+      url: 'https://feed.example/items/1',
+    }]);
+    const connector: DiscoveryConnector = {
+      source: 'rss',
+      providerMode: 'fixture',
+      fetch,
+      normalize: (item) => ({
+        source: 'rss',
+        externalId: String(item.id),
+        title: String(item.title),
+        summary: 'A durable feed update.',
+        url: String(item.url),
+        tags: [],
+        raw: item,
+      }),
+    };
+    const base: DiscoveryBase = {
+      id: 'base-rss',
+      companionId: 'owner',
+      connectorId: 'rss',
+      scope: 'feed',
+      locator: 'https://feed.example/rss.xml',
+      data: {},
+      origin: 'feed_detection',
+      state: 'active',
+      discoveredAt: '2026-07-17T00:00:00.000Z',
+      updatedAt: '2026-07-18T00:00:00.000Z',
+    };
+    const orchestrator = new ResearchOrchestrator({
+      searchProvider: { id: 'search', mode: 'unavailable', search: async () => [] },
+      pageFetcher: { id: 'fetcher', mode: 'unavailable', fetchPage: async () => { throw new Error('unavailable'); } },
+      structuredConnectors: [connector],
+    });
+
+    const outcome = await orchestrator.run({
+      userId: 'user',
+      companionId: 'owner',
+      cycleId: 'cycle',
+      curiosityTarget: target,
+      discoveryBases: [base],
+    });
+
+    expect(fetch).toHaveBeenCalledWith({ query: base.locator, limit: 10 });
+    expect(outcome.plan.selectedCapabilities).toContain('structured:rss');
+    expect(outcome.usedBaseIds).toEqual(['base-rss']);
+    expect(JSON.parse(outcome.candidates[0]?.rawEvidence ?? '{}')).toMatchObject({
+      discoveryBaseIds: ['base-rss'],
+    });
+  });
+
+  it('uses active generic-web bases as fetch targets and domain hints while ignoring inactive bases', async () => {
+    const search = vi.fn<WebSearchProvider['search']>(async () => []);
+    const provider: WebSearchProvider = { id: 'fixture-search', mode: 'fixture', search };
+    const active: DiscoveryBase = {
+      id: 'base-active',
+      companionId: 'owner',
+      connectorId: 'generic-web',
+      scope: 'domain',
+      locator: 'base.example',
+      data: { title: 'Durable source' },
+      origin: 'user',
+      state: 'trial',
+      discoveredAt: '2026-07-17T00:00:00.000Z',
+      trialStartedAt: '2026-07-17T00:00:00.000Z',
+      trialExpiresAt: '2026-07-27T00:00:00.000Z',
+      updatedAt: '2026-07-17T00:00:00.000Z',
+    };
+    const muted: DiscoveryBase = {
+      ...active,
+      id: 'base-muted',
+      locator: 'muted.example',
+      state: 'muted',
+    };
+    const orchestrator = new ResearchOrchestrator({
+      searchProvider: provider,
+      pageFetcher: fetcher,
+      structuredConnectors: [],
+    });
+
+    const outcome = await orchestrator.run({
+      userId: 'user',
+      companionId: 'owner',
+      cycleId: 'cycle',
+      curiosityTarget: target,
+      discoveryBases: [active, muted],
+    });
+
+    expect(search).toHaveBeenCalled();
+    expect(search.mock.calls.every(([input]) => input.domainHints?.includes('base.example'))).toBe(true);
+    expect(search.mock.calls.every(([input]) => !input.domainHints?.includes('muted.example'))).toBe(true);
+    expect(outcome.usedBaseIds).toEqual(['base-active']);
+    expect(outcome.evidence).toEqual([
+      expect.objectContaining({ canonicalUrl: 'https://base.example/' }),
+    ]);
+  });
+
+  it('executes query-scoped generic-web bases and attaches their lineage to fetched candidates', async () => {
+    const query = 'durable local-first research base';
+    const search = vi.fn<WebSearchProvider['search']>(async (input) => [
+      result('query-base-result', 'query-base.example', 'Query base evidence', input.query),
+    ]);
+    const base: DiscoveryBase = {
+      id: 'base-query',
+      companionId: 'owner',
+      connectorId: 'generic-web',
+      scope: 'query',
+      locator: query,
+      data: { purpose: 'personality-seed' },
+      origin: 'personality',
+      state: 'trial',
+      discoveredAt: '2026-07-17T00:00:00.000Z',
+      trialStartedAt: '2026-07-17T00:00:00.000Z',
+      trialExpiresAt: '2026-07-27T00:00:00.000Z',
+      updatedAt: '2026-07-17T00:00:00.000Z',
+    };
+    const orchestrator = new ResearchOrchestrator({
+      searchProvider: { id: 'fixture-search', mode: 'fixture', search },
+      pageFetcher: fetcher,
+      structuredConnectors: [],
+    });
+
+    const outcome = await orchestrator.run({
+      userId: 'user',
+      companionId: 'owner',
+      cycleId: 'cycle',
+      curiosityTarget: target,
+      discoveryBases: [base],
+    });
+
+    expect(outcome.plan.queries[0]).toBe(query);
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({ query }));
+    expect(outcome.usedBaseIds).toEqual(['base-query']);
+    expect(JSON.parse(outcome.candidates[0]?.rawEvidence ?? '{}')).toMatchObject({
+      discoveryBaseIds: ['base-query'],
+    });
+  });
+
   it('treats successful structured-only output as compatible while keeping page coverage separate', async () => {
     const connector: DiscoveryConnector = {
       source: 'github', providerMode: 'fixture',
@@ -62,8 +203,28 @@ describe('ResearchOrchestrator', () => {
     const duplicateUrl = 'https://example.test/implementation?utm_source=structured';
     const connector: DiscoveryConnector = {
       source: 'github', providerMode: 'fixture',
-      fetch: async () => [{ title: 'Shared implementation', url: duplicateUrl }],
-      normalize: (item) => ({ source: 'github', title: String(item.title), summary: 'Structured summary.', url: String(item.url), tags: [], raw: item })
+      fetch: async () => [{ id: 'github-item', title: 'Shared implementation', url: duplicateUrl, version: 'v2' }],
+      normalize: (item) => ({
+        source: 'github',
+        externalId: String(item.id),
+        title: String(item.title),
+        summary: 'Structured summary.',
+        url: String(item.url),
+        tags: [],
+        raw: item,
+      })
+    };
+    const base: DiscoveryBase = {
+      id: 'duplicate-structured-base',
+      companionId: 'owner',
+      connectorId: 'github',
+      scope: 'query',
+      locator: 'shared implementation',
+      data: {},
+      origin: 'user',
+      state: 'active',
+      discoveredAt: '2026-07-17T00:00:00.000Z',
+      updatedAt: '2026-07-18T00:00:00.000Z',
     };
     const provider: WebSearchProvider = {
       id: 'fixture-search', mode: 'fixture',
@@ -73,11 +234,22 @@ describe('ResearchOrchestrator', () => {
 
     const outcome = await orchestrator.run({
       userId: 'user', companionId: 'owner', cycleId: 'cycle',
-      curiosityTarget: { ...target, explorationType: 'practical' }
+      curiosityTarget: { ...target, explorationType: 'practical' },
+      discoveryBases: [base],
     });
 
     expect(outcome.candidates).toHaveLength(1);
     expect(outcome.candidates[0]?.evidenceIds).toHaveLength(1);
+    expect(outcome.candidates[0]).toEqual(expect.objectContaining({
+      sourceName: 'github',
+      sourceType: 'github',
+    }));
+    expect(JSON.parse(outcome.candidates[0]?.rawEvidence ?? '{}')).toEqual(expect.objectContaining({
+      externalId: 'github-item',
+      discoveryBaseIds: ['duplicate-structured-base'],
+      mergedSourceNames: expect.arrayContaining(['github']),
+    }));
+    expect(outcome.usedBaseIds).toContain('duplicate-structured-base');
   });
 
   it('performs one bounded contrasting-evidence pass and keeps all artifacts owned by the captured Companion', async () => {

@@ -143,6 +143,7 @@ export function DiscoveryInspector({ snapshot }: { snapshot?: EngineSnapshot }) 
             <div><dt>Languages / regions</dt><dd>{report.languages.join(', ')} / {report.regions.join(', ') || 'any'}</dd></div>
             <div><dt>Bounded context</dt><dd>{report.contextCount}/40 summaries</dd></div>
             <div><dt>Selected bases</dt><dd>{report.selectedBases.map((base) => `${base.connectorId}:${base.state}`).join(', ') || 'none'}</dd></div>
+            <div><dt>Executed bases</dt><dd>{report.executedBases.map((base) => `${base.connectorId}:${base.state}`).join(', ') || 'none'}</dd></div>
             <div><dt>Capabilities</dt><dd>{report.connectorCapabilities.map((capability) => `${capability.id}:${capability.available ? capability.mode : 'unavailable'}`).join(', ')}</dd></div>
             <div><dt>Accepted / rejected</dt><dd>{report.candidatesAccepted.length} / {report.candidatesRejected.length}</dd></div>
             <div><dt>Dedup hits</dt><dd>{Object.entries(report.dedupHits).map(([layer, count]) => `${layer}:${count}`).join(', ') || 'none'}</dd></div>

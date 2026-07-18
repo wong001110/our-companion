@@ -176,7 +176,11 @@ export function evaluateTopicSaturation(input: {
   const nowMs = Date.parse(input.now);
   if (!Number.isFinite(nowMs)) throw new Error('invalid_topic_saturation_time');
 
-  if (input.eventKey && input.history.some((item) => item.eventKey === input.eventKey)) {
+  if (
+    !input.materialUpdate
+    && input.eventKey
+    && input.history.some((item) => item.eventKey === input.eventKey)
+  ) {
     return {
       blocked: true,
       reason: 'same_event_seen',

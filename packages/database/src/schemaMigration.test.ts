@@ -92,6 +92,71 @@ describe('schema compatibility migrations', () => {
     fs.rmSync(directory, { recursive: true, force: true });
   });
 
+  it('adds durable canonical, publication, and fingerprint provenance to legacy discoveries', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'our-companion-discovery-provenance-db-'));
+    const dbPath = path.join(directory, 'legacy.sqlite');
+    const legacy = new DatabaseSync(dbPath);
+    legacy.exec(`
+      CREATE TABLE discoveries (
+        id TEXT PRIMARY KEY, source TEXT NOT NULL, external_id TEXT, title TEXT NOT NULL, summary TEXT,
+        url TEXT, tags_json TEXT NOT NULL DEFAULT '[]', raw_json TEXT,
+        interest_score REAL NOT NULL DEFAULT 0, history_score REAL NOT NULL DEFAULT 0,
+        expertise_score REAL NOT NULL DEFAULT 0, novelty_score REAL NOT NULL DEFAULT 0,
+        usefulness_score REAL NOT NULL DEFAULT 0, final_score REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'candidate', why_this_matters TEXT, recommended_action TEXT,
+        short_message TEXT, shared_at TEXT, created_at TEXT NOT NULL
+      );
+    `);
+    legacy.close();
+
+    const db = new DatabaseService({ path: dbPath });
+    const raw = (db as unknown as { db: DatabaseSync }).db;
+    const columns = raw.prepare('PRAGMA table_info(discoveries)').all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      'canonical_url',
+      'published_at',
+      'fingerprint',
+    ]));
+
+    const createdAt = '2026-07-18T00:00:00.000Z';
+    db.insertDiscovery({
+      id: 'discovery-provenance',
+      source: 'internet',
+      externalId: 'source-42',
+      title: 'Durable research result',
+      summary: 'Preserves source lineage across process restarts.',
+      url: 'https://example.test/article?utm_source=test',
+      canonicalUrl: 'https://example.test/article',
+      publishedAt: '2026-07-17T00:00:00.000Z',
+      tags: ['research'],
+      raw: { evidenceIds: ['evidence-1'] },
+      fingerprint: 'fingerprint-42',
+      userInterestScore: 0.8,
+      userHistoryScore: 0.7,
+      characterExpertiseScore: 0.6,
+      noveltyScore: 0.9,
+      usefulnessScore: 0.85,
+      finalScore: 0.82,
+      status: 'candidate',
+      createdAt,
+    });
+    expect(db.getDiscovery('discovery-provenance')).toEqual(expect.objectContaining({
+      canonicalUrl: 'https://example.test/article',
+      publishedAt: '2026-07-17T00:00:00.000Z',
+      fingerprint: 'fingerprint-42',
+    }));
+    db.close();
+
+    const reopened = new DatabaseService({ path: dbPath });
+    expect(reopened.getDiscovery('discovery-provenance')).toEqual(expect.objectContaining({
+      canonicalUrl: 'https://example.test/article',
+      publishedAt: '2026-07-17T00:00:00.000Z',
+      fingerprint: 'fingerprint-42',
+    }));
+    reopened.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
   it('adds session_id before creating its index for an existing companion_messages table', () => {
     const dbPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'our-companion-db-')), 'legacy.sqlite');
     const legacy = new DatabaseSync(dbPath);

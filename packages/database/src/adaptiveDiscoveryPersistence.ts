@@ -368,6 +368,15 @@ export class AdaptiveDiscoveryPersistence {
     return rows.map(mapSeen);
   }
 
+  clearSeenIdentityTarget(id: string, companionId: string): boolean {
+    const result = this.db.prepare(
+      `UPDATE discovery_seen_identity
+       SET discovery_id = NULL
+       WHERE id = ? AND companion_id = ? AND discovery_id IS NOT NULL`
+    ).run(id, companionId);
+    return result.changes > 0;
+  }
+
   upsertBase(base: PersistedDiscoveryBase): PersistedDiscoveryBase {
     this.db.prepare(
       `INSERT INTO discovery_bases

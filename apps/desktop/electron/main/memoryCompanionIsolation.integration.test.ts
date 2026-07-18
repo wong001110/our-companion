@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   CompanionPersonality,
+  CuriosityTarget,
   Discovery,
-  NormalizedDiscovery
+  NormalizedDiscovery,
+  Pattern,
 } from '@our-companion/shared';
-import { DebugRuntimeClock } from '@our-companion/shared';
+import { DebugRuntimeClock, createSemanticFingerprint } from '@our-companion/shared';
 import type { DiscoveryConnector, RawDiscoveryItem } from '@our-companion/discovery-engine';
+import { buildInterestGraph } from '@our-companion/memory-engine';
 import type { WebPageFetcher, WebSearchProvider } from './researchAdapters';
 import { AppServices } from './services';
 
@@ -73,6 +76,126 @@ afterEach(() => {
 });
 
 describe('production memory companion isolation', () => {
+  it('consumes Memory deletion tombstones and clears unsupported derived cognition', async () => {
+    const clock = new DebugRuntimeClock(() => Date.parse('2026-07-18T04:00:00.000Z'));
+    const services = new AppServices(':memory:', undefined, { clock });
+    openServices.push(services);
+    const companion = createCompanion(services, 'First');
+    services.db.setPrimaryCompanion(companion.id);
+    const timestamp = '2026-07-18T00:00:00.000Z';
+    const deletedMemory = services.db.insertMemoryNode({
+      id: 'memory-to-delete',
+      userId: 'local',
+      companionId: companion.id,
+      type: 'topic',
+      title: 'Disposable local-first direction',
+      summary: 'A direction that should disappear from cognition.',
+      importance: 0.8,
+      isPinned: false,
+      isMarkedWrong: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const retainedMemory = services.db.insertMemoryNode({
+      id: 'memory-to-retain',
+      userId: 'local',
+      companionId: companion.id,
+      type: 'topic',
+      title: 'Retained private architecture',
+      summary: 'A still-supported direction.',
+      importance: 0.7,
+      isPinned: false,
+      isMarkedWrong: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const doomedPattern: Pattern = {
+      id: 'pattern-doomed',
+      userId: 'local',
+      companionId: companion.id,
+      type: 'repeated_theme',
+      title: 'Disposable theme keeps appearing',
+      summary: 'Only one observation remains after deletion.',
+      confidence: 0.8,
+      strength: 0.75,
+      freshness: 0.9,
+      evidence: [
+        { sourceType: 'memory', sourceId: deletedMemory.id, summary: deletedMemory.title, weight: 0.8 },
+        { sourceType: 'memory', sourceId: retainedMemory.id, summary: retainedMemory.title, weight: 0.7 },
+      ],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const survivingPattern: Pattern = {
+      ...doomedPattern,
+      id: 'pattern-survives',
+      semanticFingerprint: createSemanticFingerprint('pattern', ['repeated_theme', 'private architecture']),
+      normalizedTopics: ['private architecture'],
+      title: 'Private architecture keeps appearing',
+      evidence: [
+        ...doomedPattern.evidence,
+        { sourceType: 'journey_event', sourceId: 'milestone-retained', summary: 'Private architecture milestone', weight: 0.65 },
+      ],
+    };
+    services.db.insertPattern(doomedPattern);
+    services.db.insertPattern(survivingPattern);
+    const initialGraph = buildInterestGraph({
+      userId: `local:${companion.id}`,
+      memoryNodes: [deletedMemory, retainedMemory],
+      patterns: [doomedPattern, survivingPattern],
+      discoveries: [],
+      feedback: [],
+    });
+    services.db.upsertInterestGraph(initialGraph);
+    const target: CuriosityTarget = {
+      id: 'curiosity-from-deleted-memory',
+      userId: 'local',
+      companionId: companion.id,
+      topic: 'Disposable local-first direction',
+      description: 'Explore the now-deleted direction.',
+      source: 'memory_trigger',
+      explorationType: 'adjacent',
+      priority: 0.8,
+      confidence: 0.8,
+      reason: 'Derived only from the deleted memory and its unsupported Pattern.',
+      expectedValue: 'This should close after deletion.',
+      relatedMemoryIds: [deletedMemory.id],
+      relatedPatternIds: [doomedPattern.id],
+      generatedFromIds: [deletedMemory.id, doomedPattern.id],
+      status: 'open',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    services.db.insertCuriosityTarget(target);
+    services.db.markMemoriesProcessed([deletedMemory.id, retainedMemory.id], timestamp);
+
+    await services.memory.deleteNode(deletedMemory.id);
+
+    const tombstone = services.db.getMemoryProcessingState(deletedMemory.id);
+    expect(tombstone?.deletedAt).toBeTruthy();
+    expect(tombstone?.processedRevision).toBe(tombstone?.revision);
+    expect(services.db.listPatterns('local', 100, companion.id).map((pattern) => pattern.id))
+      .not.toContain(doomedPattern.id);
+    const recomputedPattern = services.db.listPatterns('local', 100, companion.id)
+      .find((pattern) => pattern.id === survivingPattern.id);
+    expect(recomputedPattern?.evidence.map((evidence) => evidence.sourceId))
+      .toEqual([retainedMemory.id, 'milestone-retained']);
+    expect(recomputedPattern?.strength).toBeLessThan(survivingPattern.strength);
+
+    const graph = services.db.getInterestGraph(`local:${companion.id}`);
+    expect(graph.nodes.map((node) => node.label)).not.toContain(deletedMemory.title);
+    expect(graph.nodes.map((node) => node.label)).not.toContain(doomedPattern.title);
+    const graphNodeIds = new Set(graph.nodes.map((node) => node.id));
+    expect(graph.edges.every((edge) => graphNodeIds.has(edge.fromNodeId) && graphNodeIds.has(edge.toNodeId))).toBe(true);
+
+    expect(services.db.getCuriosityTarget(target.id)).toEqual(expect.objectContaining({
+      status: 'completed',
+      relatedMemoryIds: [],
+      relatedPatternIds: [],
+      generatedFromIds: [],
+    }));
+  });
+
   it('inspects scoped cognition lineage and keeps repeated Memory recompute idempotent', async () => {
     const clock = new DebugRuntimeClock(() => Date.parse('2026-07-18T00:00:00.000Z'));
     const services = new AppServices(':memory:', undefined, { clock });

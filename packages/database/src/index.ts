@@ -151,6 +151,10 @@ export class DatabaseService {
     return this.adaptiveDiscovery.listSeenIdentities({ companionId, limit });
   }
 
+  clearDiscoverySeenIdentityTarget(id: string, companionId: string): boolean {
+    return this.adaptiveDiscovery.clearSeenIdentityTarget(id, companionId);
+  }
+
   listDiscoveryBases(
     companionId: string,
     state?: PersistedDiscoveryBaseState,
@@ -167,6 +171,18 @@ export class DatabaseService {
     feedback: PersistedDiscoveryBaseFeedback,
   ): PersistedDiscoveryBaseFeedback {
     return this.adaptiveDiscovery.insertBaseFeedback(feedback);
+  }
+
+  listDiscoveryBaseFeedback(
+    companionId: string,
+    discoveryBaseId?: string,
+    limit = 100,
+  ): readonly PersistedDiscoveryBaseFeedback[] {
+    return this.adaptiveDiscovery.listBaseFeedback({
+      companionId,
+      discoveryBaseId,
+      limit,
+    });
   }
 
   loadBoundedDiscoveryContext(
@@ -205,6 +221,9 @@ export class DatabaseService {
       { column: 'announced_at', sql: 'ALTER TABLE discoveries ADD COLUMN announced_at TEXT' },
       { column: 'updated_at', sql: 'ALTER TABLE discoveries ADD COLUMN updated_at TEXT' },
       { column: 'status_reason', sql: 'ALTER TABLE discoveries ADD COLUMN status_reason TEXT' },
+      { column: 'canonical_url', sql: 'ALTER TABLE discoveries ADD COLUMN canonical_url TEXT' },
+      { column: 'published_at', sql: 'ALTER TABLE discoveries ADD COLUMN published_at TEXT' },
+      { column: 'fingerprint', sql: 'ALTER TABLE discoveries ADD COLUMN fingerprint TEXT' },
       { column: 'research_plan_id', sql: 'ALTER TABLE discovery_candidates ADD COLUMN research_plan_id TEXT' },
       { column: 'evidence_ids_json', sql: "ALTER TABLE discovery_candidates ADD COLUMN evidence_ids_json TEXT NOT NULL DEFAULT '[]'" },
       { column: 'research_intent_id', sql: 'ALTER TABLE exploration_cycles ADD COLUMN research_intent_id TEXT' },
@@ -238,6 +257,17 @@ export class DatabaseService {
       } catch {
         // Column may already exist in fresh schema
       }
+    }
+    const discoveryColumns = new Set(
+      (this.db.prepare('PRAGMA table_info(discoveries)').all() as Array<{ name: string }>)
+        .map((column) => column.name)
+    );
+    const missingDiscoveryProvenance = ['canonical_url', 'published_at', 'fingerprint']
+      .filter((column) => !discoveryColumns.has(column));
+    if (missingDiscoveryProvenance.length > 0) {
+      throw new Error(
+        `discovery_provenance_migration_failed:${missingDiscoveryProvenance.join(',')}`
+      );
     }
     this.ensurePendingActionsTable();
     this.ensureTopicPreferencesTable();
@@ -1000,11 +1030,41 @@ export class DatabaseService {
     ).all(companionId, Math.max(1, limit)) as Array<Record<string, unknown>>).map(mapMemoryProcessingState);
   }
 
+  listCognitiveUserIds(companionId: string, fallbackUserId = 'default'): string[] {
+    const rows = this.db.prepare(
+      `SELECT user_id FROM memory_nodes WHERE companion_id = ?
+       UNION SELECT user_id FROM patterns WHERE companion_id = ?
+       UNION SELECT user_id FROM curiosity_targets WHERE companion_id = ?`
+    ).all(companionId, companionId, companionId) as Array<{ user_id: string | null }>;
+    const interestScopeSuffix = `:${companionId}`;
+    const interestUserIds = (this.db.prepare(
+      'SELECT DISTINCT user_id FROM interest_nodes WHERE user_id LIKE ?'
+    ).all(`%${interestScopeSuffix}`) as Array<{ user_id: string | null }>)
+      .map((row) => String(row.user_id ?? ''))
+      .filter((scopeId) => scopeId.endsWith(interestScopeSuffix))
+      .map((scopeId) => scopeId.slice(0, -interestScopeSuffix.length))
+      .filter(Boolean);
+    return [...new Set([
+      fallbackUserId,
+      ...rows.map((row) => String(row.user_id ?? '')).filter(Boolean),
+      ...interestUserIds,
+    ])];
+  }
+
   markMemoriesProcessed(memoryIds: string[], processedAt = nowIso()): void {
     const statement = this.db.prepare(
       `UPDATE memory_processing_state
        SET processed_revision = revision, processed_at = ?
        WHERE memory_id = ? AND deleted_at IS NULL`
+    );
+    for (const memoryId of new Set(memoryIds)) statement.run(processedAt, memoryId);
+  }
+
+  markDeletedMemoriesProcessed(memoryIds: string[], processedAt = nowIso()): void {
+    const statement = this.db.prepare(
+      `UPDATE memory_processing_state
+       SET processed_revision = revision, processed_at = ?
+       WHERE memory_id = ? AND deleted_at IS NOT NULL`
     );
     for (const memoryId of new Set(memoryIds)) statement.run(processedAt, memoryId);
   }
@@ -1079,19 +1139,22 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT INTO discoveries
-         (id, source, external_id, title, summary, url, tags_json, raw_json, interest_score, history_score, expertise_score,
+         (id, source, external_id, title, summary, url, canonical_url, published_at, tags_json, raw_json, fingerprint, interest_score, history_score, expertise_score,
           novelty_score, usefulness_score, final_score, status, why_this_matters, recommended_action, short_message,
           companion_id, cycle_id, presentation_command_id, eligible_at, queued_at, presenting_at, announced_at,
           updated_at, status_reason, shared_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            source = excluded.source,
            external_id = excluded.external_id,
            title = excluded.title,
            summary = excluded.summary,
            url = excluded.url,
+           canonical_url = COALESCE(excluded.canonical_url, discoveries.canonical_url),
+           published_at = COALESCE(excluded.published_at, discoveries.published_at),
            tags_json = excluded.tags_json,
            raw_json = excluded.raw_json,
+           fingerprint = COALESCE(excluded.fingerprint, discoveries.fingerprint),
            interest_score = excluded.interest_score,
            history_score = excluded.history_score,
            expertise_score = excluded.expertise_score,
@@ -1112,8 +1175,11 @@ export class DatabaseService {
         discovery.title,
         discovery.summary ?? null,
         discovery.url ?? null,
+        discovery.canonicalUrl ?? null,
+        discovery.publishedAt ?? null,
         JSON.stringify(discovery.tags),
         JSON.stringify(discovery.raw),
+        discovery.fingerprint ?? null,
         unitToScore100(discovery.userInterestScore),
         unitToScore100(discovery.userHistoryScore),
         unitToScore100(discovery.characterExpertiseScore),
@@ -1418,6 +1484,48 @@ export class DatabaseService {
     return (rows as Array<Record<string, unknown>>).map(mapPattern);
   }
 
+  pruneDeletedMemoryPatternEvidence(
+    userId: string,
+    companionId: string,
+    deletedMemoryIds: readonly string[],
+    updatedAt = nowIso(),
+  ): { deletedPatternIds: string[]; updatedPatternIds: string[] } {
+    const deletedIds = new Set(deletedMemoryIds);
+    const deletedPatternIds: string[] = [];
+    const updatedPatternIds: string[] = [];
+    if (deletedIds.size === 0) return { deletedPatternIds, updatedPatternIds };
+
+    for (const pattern of this.listPatterns(userId, 10_000, companionId)) {
+      const evidence = pattern.evidence.filter(
+        (item) => item.sourceType !== 'memory' || !item.sourceId || !deletedIds.has(item.sourceId)
+      );
+      if (evidence.length === pattern.evidence.length) continue;
+
+      // Every persisted Pattern currently represents recurrence across at least
+      // two observations. A single surviving observation is no longer a Pattern.
+      if (evidence.length < 2) {
+        this.db.prepare('DELETE FROM patterns WHERE id = ?').run(pattern.id);
+        deletedPatternIds.push(pattern.id);
+        continue;
+      }
+
+      const averageWeight = evidence.reduce((sum, item) => sum + item.weight, 0) / evidence.length;
+      const retainedRatio = evidence.length / pattern.evidence.length;
+      const updated: Pattern = {
+        ...pattern,
+        evidence,
+        confidence: Math.min(pattern.confidence, Math.max(0.4, averageWeight)),
+        strength: Math.min(pattern.strength, Math.max(0, averageWeight * retainedRatio)),
+        frequency: Math.min(pattern.frequency ?? 1, retainedRatio),
+        observationCount: Math.min(pattern.observationCount ?? evidence.length, evidence.length),
+        updatedAt,
+      };
+      this.writePattern(updated);
+      updatedPatternIds.push(pattern.id);
+    }
+    return { deletedPatternIds, updatedPatternIds };
+  }
+
   upsertInterestGraph(graph: InterestGraph): InterestGraph {
     for (const node of graph.nodes) {
       this.insertInterestNode(node);
@@ -1427,6 +1535,26 @@ export class DatabaseService {
     }
     this.setAppSetting(`interestGraph.${graph.userId}.recommendedExpansionPaths`, graph.recommendedExpansionPaths ?? []);
     return graph;
+  }
+
+  replaceInterestGraph(graph: InterestGraph): { graph: InterestGraph; removedNodeIds: string[] } {
+    const existingNodeIds = new Set(this.getInterestGraph(graph.userId).nodes.map((node) => node.id));
+    const nextNodeIds = new Set(graph.nodes.map((node) => node.id));
+    const removedNodeIds = [...existingNodeIds].filter((id) => !nextNodeIds.has(id));
+
+    this.db.exec('BEGIN');
+    try {
+      this.db.prepare('DELETE FROM interest_edges WHERE user_id = ?').run(graph.userId);
+      this.db.prepare('DELETE FROM interest_nodes WHERE user_id = ?').run(graph.userId);
+      for (const node of graph.nodes) this.insertInterestNode(node);
+      for (const edge of graph.edges) this.insertInterestEdge(edge);
+      this.setAppSetting(`interestGraph.${graph.userId}.recommendedExpansionPaths`, graph.recommendedExpansionPaths ?? []);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return { graph, removedNodeIds };
   }
 
   insertInterestNode(node: InterestNode): InterestNode {
@@ -1546,6 +1674,71 @@ export class DatabaseService {
 
   insertCuriosityTarget(target: CuriosityTarget): CuriosityTarget {
     return this.upsertCuriosityTarget(target).record;
+  }
+
+  reconcileCuriositySources(input: {
+    userId: string;
+    companionId: string;
+    validMemoryIds: readonly string[];
+    validPatternIds: readonly string[];
+    validInterestNodeIds: readonly string[];
+    updatedAt?: string;
+  }): { updatedTargetIds: string[]; closedTargetIds: string[] } {
+    const validMemoryIds = new Set(input.validMemoryIds);
+    const validPatternIds = new Set(input.validPatternIds);
+    const validInterestNodeIds = new Set(input.validInterestNodeIds);
+    const validSourceIds = new Set([
+      ...validMemoryIds,
+      ...validPatternIds,
+      ...validInterestNodeIds,
+    ]);
+    const updatedAt = input.updatedAt ?? nowIso();
+    const updatedTargetIds: string[] = [];
+    const closedTargetIds: string[] = [];
+
+    for (const target of this.listCuriosityTargets(input.userId, 10_000, input.companionId)) {
+      const relatedMemoryIds = (target.relatedMemoryIds ?? []).filter((id) => validMemoryIds.has(id));
+      const relatedPatternIds = (target.relatedPatternIds ?? []).filter((id) => validPatternIds.has(id));
+      const relatedInterestNodeIds = (target.relatedInterestNodeIds ?? []).filter((id) => validInterestNodeIds.has(id));
+      const previousSourceIds = [
+        ...(target.relatedMemoryIds ?? []),
+        ...(target.relatedPatternIds ?? []),
+        ...(target.relatedInterestNodeIds ?? []),
+      ];
+      const generatedFromIds = [...new Set([
+        ...(target.generatedFromIds ?? previousSourceIds).filter((id) => validSourceIds.has(id)),
+        ...relatedMemoryIds,
+        ...relatedPatternIds,
+        ...relatedInterestNodeIds,
+      ])].sort();
+      const priorGeneratedFromIds = target.generatedFromIds ?? previousSourceIds;
+      const changed = (target.relatedMemoryIds ?? []).length !== relatedMemoryIds.length
+        || (target.relatedPatternIds ?? []).length !== relatedPatternIds.length
+        || (target.relatedInterestNodeIds ?? []).length !== relatedInterestNodeIds.length
+        || priorGeneratedFromIds.length !== generatedFromIds.length
+        || priorGeneratedFromIds.some((id) => !generatedFromIds.includes(id));
+      if (!changed) continue;
+
+      const unsupported = (previousSourceIds.length > 0 || priorGeneratedFromIds.length > 0)
+        && generatedFromIds.length === 0;
+      const updated: CuriosityTarget = {
+        ...target,
+        relatedMemoryIds,
+        relatedPatternIds,
+        relatedInterestNodeIds,
+        generatedFromIds,
+        sourceFingerprint: createSemanticFingerprint('curiosity_source', [target.source, ...generatedFromIds]),
+        status: unsupported ? 'completed' : target.status,
+        cooldownUntil: unsupported
+          ? new Date(Date.parse(updatedAt) + CURIOSITY_COOLDOWN_MS.completed).toISOString()
+          : target.cooldownUntil,
+        updatedAt,
+      };
+      this.writeCuriosityTarget(updated);
+      updatedTargetIds.push(target.id);
+      if (unsupported) closedTargetIds.push(target.id);
+    }
+    return { updatedTargetIds, closedTargetIds };
   }
 
   private writeCuriosityTarget(target: CuriosityTarget): void {
@@ -2625,8 +2818,11 @@ function mapDiscovery(row: Record<string, unknown>): Discovery {
     title: String(row.title),
     summary: row.summary ? String(row.summary) : undefined,
     url: row.url ? String(row.url) : undefined,
+    canonicalUrl: row.canonical_url ? String(row.canonical_url) : undefined,
+    publishedAt: row.published_at ? String(row.published_at) : undefined,
     tags: JSON.parse(String(row.tags_json ?? '[]')),
     raw: row.raw_json ? JSON.parse(String(row.raw_json)) : {},
+    fingerprint: row.fingerprint ? String(row.fingerprint) : undefined,
     userInterestScore: score100ToUnit(Number(row.interest_score)),
     userHistoryScore: score100ToUnit(Number(row.history_score)),
     characterExpertiseScore: score100ToUnit(Number(row.expertise_score)),
