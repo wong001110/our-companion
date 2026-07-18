@@ -46,6 +46,8 @@ describe('VisualVisitService', () => {
     expect(service.getState()).toMatchObject({ ownerPresenceMode: 'home', visitors: {}, visitorOrder: [], errors: {} });
     expect(service.getState().departingVisitors['session-1']).toMatchObject({ sessionId: 'session-1' });
     expect(service.readVerifiedCachedAsset('session-1', 'pack-1', 'assets/animations/Leave.png')).toEqual({ bytes: Buffer.from('sprite'), mimeType: 'image/png' });
+    expect(() => service.readVerifiedCachedAsset('session-1', 'pack-1', 'assets/animations/Idle_Neutral.png')).toThrow('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    expect(() => service.readVerifiedCachedAsset('session-1', 'pack-1', 'assets/animations/Walk_Left.png')).toThrow('VISUAL_VISIT_ASSET_UNAVAILABLE');
     service.completeRendererDeparture('session-1');
     expect(() => service.readVerifiedCachedAsset('session-1', 'pack-1', 'assets/animations/Leave.png')).toThrow('VISUAL_VISIT_ASSET_UNAVAILABLE');
   });

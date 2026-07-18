@@ -47,7 +47,9 @@ export function RemoteVisitorLayer({ localCompanion }: { localCompanion?: Visito
           .filter(([sessionId]) => sessionId !== visitor.sessionId)
           .map(([, position]) => position),
       ];
-      return <RemoteVisitor key={departing ? `departing:${visitor.sessionId}` : visitor.sessionId} visitor={visitor} occupants={occupants} departing={departing} onPositionChange={updatePosition} onDepartureComplete={completeDeparture} />;
+      // Keep the same React identity across active → departing so Leave starts
+      // exactly where the visitor last stood instead of remounting at its slot.
+      return <RemoteVisitor key={visitor.sessionId} visitor={visitor} occupants={occupants} departing={departing} onPositionChange={updatePosition} onDepartureComplete={completeDeparture} />;
     })}
   </>;
 }

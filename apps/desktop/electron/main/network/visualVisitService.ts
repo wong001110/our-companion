@@ -40,8 +40,12 @@ export class VisualVisitService {
    * previously cached Pack after its authoritative Visit becomes terminal.
    */
   readVerifiedCachedAsset = (sessionId: string, assetPackId: string, relativePath: string): { bytes: Buffer; mimeType: string } => {
-    const visitor = this.state.visitors[sessionId] ?? this.state.departingVisitors[sessionId];
-    if (!visitor || visitor.assetPackId !== assetPackId) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    const activeVisitor = this.state.visitors[sessionId];
+    const departingVisitor = this.state.departingVisitors[sessionId];
+    const visitor = activeVisitor ?? departingVisitor;
+    if (!visitor || visitor.assetPackId !== assetPackId || (departingVisitor && !activeVisitor && !isDepartureAsset(visitor, relativePath))) {
+      throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    }
     return this.companions.readVerifiedCachedAsset(assetPackId, relativePath);
   };
 
@@ -239,6 +243,15 @@ export class VisualVisitService {
       errors: {},
     };
   }
+}
+
+function isDepartureAsset(visitor: VisualVisitRenderModel, relativePath: string): boolean {
+  const leaveUrl = visitor.assetUrls.Leave;
+  if (!leaveUrl) return false;
+  try {
+    const url = new URL(leaveUrl);
+    return url.hostname === visitor.sessionId && url.pathname.slice(1) === `${visitor.assetPackId}/${relativePath}`;
+  } catch { return false; }
 }
 
 function supportsVisualManifest(manifest: CompanionAssetManifest): boolean {
