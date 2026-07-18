@@ -88,7 +88,7 @@ test('S5 logical three-device multi-Visitor smoke', async () => {
     await expect.poll(() => hostPage.evaluate(async ({ session, pack }) => (await fetch(`companion-network://${session}/${pack}/assets/animations/Idle_Neutral.png`)).status, { session: secondSessionId, pack: ownerBPublished.assetPackId })).toBe(200);
     expect(await hostPage.evaluate(async ({ session, pack }) => (await fetch(`companion-network://${session}/${pack}/assets/animations/Idle_Neutral.png`)).status, { session: firstSessionId, pack: ownerBPublished.assetPackId })).toBeGreaterThanOrEqual(400);
     checks.independentAssets = true;
-    await host.screenshot('two-visitors-active');
+    await hostPage.screenshot({ path: path.join(artifactRoot, 'host', 'two-visitors-active.png') });
 
     await endVisit(ownerA, firstSessionId);
     await host.waitForState((state) => !state.visual.visitors.some((visitor) => visitor.sessionId === firstSessionId && !visitor.departing)

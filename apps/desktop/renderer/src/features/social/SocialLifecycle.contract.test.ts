@@ -38,4 +38,11 @@ describe('Social lifecycle UI contract', () => {
     expect(page).toContain('disabledReason={mutationReason}');
     expect(page).toContain('<LoadingState label={mutationReason} />');
   });
+
+  it('maps Visit admission machine codes to translated UI messages', () => {
+    expect(page).toContain('visitAdmissionMessage');
+    expect(page).toContain('VISIT_HOST_CAPACITY_REACHED');
+    expect(page).toContain('VISIT_HOST_COMPANION_SWITCH_BLOCKED');
+    expect(page).not.toContain("disabledReason={mutationReason ?? (hostAtCapacity ? 'VISIT_HOST_CAPACITY_REACHED'");
+  });
 });

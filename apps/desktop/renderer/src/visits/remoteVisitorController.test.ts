@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampVisitorPosition, initialVisitorPosition, nextWalkTarget, resolveVisitorPosition, walkSelection } from './remoteVisitorController';
+import { clampVisitorPosition, initialVisitorPosition, nextWalkTarget, resolveVisitorPosition, sceneDepth, walkSelection } from './remoteVisitorController';
 
 describe('remote visitor movement controller', () => {
   it('spawns and clamps inside the current display work area', () => {
@@ -21,5 +21,11 @@ describe('remote visitor movement controller', () => {
     const assets = { Walk_Left: 'left', Walk_Right: 'right', Walk_Up: 'up', Walk_Down: 'down' };
     expect(walkSelection({ x: 100, y: 100 }, { x: 10, y: 10 }, assets)).toEqual({ animationName: 'Walk_Left', facing: 'top_left' });
     expect(nextWalkTarget('session-1', 3, { x: 300, y: 200 }, { width: 800, height: 600 })).toEqual(nextWalkTarget('session-1', 3, { x: 300, y: 200 }, { width: 800, height: 600 }));
+  });
+
+  it('uses one deterministic depth plane for local and remote scene occupants', () => {
+    expect(sceneDepth({ x: 0, y: 410 }, 'local-companion')).toBeGreaterThan(sceneDepth({ x: 0, y: 409 }, 'visitor-a'));
+    expect(sceneDepth({ x: 0, y: 300 }, 'visitor-a')).toBe(sceneDepth({ x: 0, y: 300 }, 'visitor-a'));
+    expect(sceneDepth({ x: 0, y: 300 }, 'visitor-a')).not.toBe(sceneDepth({ x: 0, y: 300 }, 'visitor-b'));
   });
 });

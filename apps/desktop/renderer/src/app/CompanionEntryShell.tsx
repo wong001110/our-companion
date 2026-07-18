@@ -84,6 +84,7 @@ import { getCreationCompletionAction, switchToSelectedCompanion } from '../compa
 import { isCompanionAnimationName, resolveWalkDirection } from '../character/animationSelection';
 import { startPerformancePlayback, type ActivePerformancePlayback } from '../character/performancePlayback';
 import { RemoteVisitorLayer, useVisualVisitState } from '../visits/RemoteVisitorLayer';
+import { sceneDepth } from '../visits/remoteVisitorController';
 import { Presence } from '../components/motion/Presence';
 
 export function PresenceActivityReporter() {
@@ -798,7 +799,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           position: 'absolute',
           left: companionPosition.x,
           top: companionPosition.y,
-          zIndex: 1,
+          zIndex: sceneDepth(companionPosition, companion.id),
           pointerEvents: 'all',
         }}
         onMouseEnter={handleCompanionHoverEnter}

@@ -7,6 +7,15 @@ export interface VisitorBounds { x?: number; y?: number; width: number; height: 
 export interface VisitorPosition { x: number; y: number; }
 export interface VisitorOccupant extends VisitorPosition { width?: number; height?: number; }
 
+/**
+ * Draw every character in one scene depth plane.  The y coordinate is the
+ * primary ordering (a character lower on screen is in front); identity is a
+ * stable tie-breaker so two characters on the same row do not flicker.
+ */
+export function sceneDepth(position: VisitorPosition, identity: string): number {
+  return Math.round(position.y) * 1_000 + stableIdentityOffset(identity);
+}
+
 export function initialVisitorPosition(bounds: VisitorBounds, sceneSlotIndex = 0, occupants: VisitorOccupant[] = []): VisitorPosition {
   const x = bounds.x ?? 0; const y = bounds.y ?? 0;
   const slot = Math.abs(sceneSlotIndex) % 2;
@@ -29,6 +38,12 @@ export function seededUnit(seed: string, index: number): number {
   let value = 2166136261;
   for (const char of `${seed}:${index}`) value = Math.imul(value ^ char.charCodeAt(0), 16777619);
   return ((value >>> 0) % 10_000) / 10_000;
+}
+
+function stableIdentityOffset(identity: string): number {
+  let value = 2166136261;
+  for (const char of identity) value = Math.imul(value ^ char.charCodeAt(0), 16777619);
+  return (value >>> 0) % 1_000;
 }
 
 export function walkSelection(

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { VisualVisitRenderModel, VisualVisitRendererState } from '@our-companion/shared';
 import { SpriteAnimator } from '../character/SpriteAnimator';
-import { REMOTE_VISITOR_SIZE, REMOTE_VISITOR_SPEED_PX_PER_SECOND, clampVisitorPosition, initialVisitorPosition, nextWalkTarget, resolveVisitorPosition, walkSelection, type VisitorOccupant, type VisitorPosition } from './remoteVisitorController';
+import { REMOTE_VISITOR_SIZE, REMOTE_VISITOR_SPEED_PX_PER_SECOND, clampVisitorPosition, initialVisitorPosition, nextWalkTarget, resolveVisitorPosition, sceneDepth, walkSelection, type VisitorOccupant, type VisitorPosition } from './remoteVisitorController';
 
 export function useVisualVisitState(): VisualVisitRendererState {
   const [state, setState] = useState<VisualVisitRendererState>({ ownerPresenceMode: 'home', capacity: 2, visitors: {}, departingVisitors: {}, visitorOrder: [], errors: {} });
@@ -181,7 +181,7 @@ function RemoteVisitor({ visitor: initialVisitor, occupants, departing, onPositi
   }, [runtime, animationName, position]);
 
   if (!runtime || !animationName) return null;
-  return <div data-testid="remote-visual-visitor" data-runtime-id={runtime.runtimeId} data-session-id={runtime.sessionId} data-animation={animationName} data-slot={runtime.sceneSlotIndex} style={{ position: 'absolute', left: position.x, top: position.y, zIndex: 2 + Math.round(position.y), pointerEvents: 'none' }} aria-label={`${runtime.name} is visiting`}>
+  return <div data-testid="remote-visual-visitor" data-runtime-id={runtime.runtimeId} data-session-id={runtime.sessionId} data-animation={animationName} data-slot={runtime.sceneSlotIndex} style={{ position: 'absolute', left: position.x, top: position.y, zIndex: sceneDepth(position, runtime.sessionId), pointerEvents: 'none' }} aria-label={`${runtime.name} is visiting`}>
     <RemoteVisitorSprite model={runtime} animationName={animationName} onComplete={handleComplete} onFailure={handleFailure} />
   </div>;
 }
