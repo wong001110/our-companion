@@ -315,7 +315,13 @@ function registerIpc(): void {
     'character:getActive': services.character.getActive,
     'character:getBehaviorSettings': services.character.getBehaviorSettings,
     'character:updateBehaviorSettings': services.character.updateBehaviorSettings,
-    'character:setPrimary': services.character.setPrimary,
+    // Character and Companion profile APIs both switch the active local
+    // Companion. Keep the Visit host-slot invariant at this IPC boundary so
+    // no renderer-facing path can bypass it.
+    'character:setPrimary': async (characterId: string) => {
+      await services.visits.assertCanSwitchLocalCompanion();
+      return services.character.setPrimary(characterId);
+    },
     'character:updatePosition': services.character.updatePosition,
     'character:triggerBehavior': services.character.triggerBehavior,
     'discovery:getFeed': services.discovery.getFeed,
