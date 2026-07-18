@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { DatabaseService } from './index';
 
 describe('schema compatibility migrations', () => {
-  it('removes legacy persisted search-result IDs while preserving fetched page evidence', () => {
+  it('keeps web page evidence search-result provenance while trimming search-record domains', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'our-companion-page-evidence-db-'));
     const dbPath = path.join(directory, 'legacy.sqlite');
     const legacy = new DatabaseSync(dbPath);
@@ -43,12 +43,9 @@ describe('schema compatibility migrations', () => {
     const db = new DatabaseService({ path: dbPath });
     const raw = (db as unknown as { db: DatabaseSync }).db;
     const columns = raw.prepare('PRAGMA table_info(web_page_evidence)').all() as Array<{ name: string }>;
-    expect(columns.some((column) => column.name === 'search_result_id')).toBe(false);
-    expect(raw.prepare('PRAGMA index_list(web_page_evidence)').all()).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'idx_web_page_evidence_search_result' })
-    ]));
+    expect(columns.some((column) => column.name === 'search_result_id')).toBe(true);
     expect(db.getWebPageEvidence('evidence', 'companion')).toEqual(expect.objectContaining({
-      id: 'evidence', url: 'https://example.test/page', title: 'Page title'
+      id: 'evidence', url: 'https://example.test/page', title: 'Page title', searchResultId: 'transient-result-id'
     }));
     const searchRecordColumns = raw.prepare('PRAGMA table_info(research_search_records)').all() as Array<{ name: string }>;
     expect(searchRecordColumns.some((column) => column.name === 'domains_json')).toBe(false);

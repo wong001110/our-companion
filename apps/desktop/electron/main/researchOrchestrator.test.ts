@@ -21,7 +21,7 @@ const fetcher: WebPageFetcher = {
     return {
       id: `evidence_${input.searchResult.id}`, userId: input.userId, companionId: input.companionId, cycleId: input.cycleId,
       researchIntentId: input.researchIntentId, researchPlanId: input.researchPlanId,
-      query: input.searchResult.query, provider: 'fixture', url: input.searchResult.url, canonicalUrl: input.searchResult.url,
+      searchResultId: input.searchResult.id, query: input.searchResult.query, provider: 'fixture', url: input.searchResult.url, canonicalUrl: input.searchResult.url,
       domain: input.searchResult.domain, title: input.searchResult.title,
       extractedText: contrasting ? 'Independent criticism identifies practical limitations and risk.' : 'Official implementation evidence describes offline-first architecture.',
       excerpt: contrasting ? 'Critical limitations and risk.' : 'Implementation evidence.', contentHash: `hash_${input.searchResult.id}`,

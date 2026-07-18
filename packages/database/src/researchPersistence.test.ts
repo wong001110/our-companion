@@ -51,6 +51,7 @@ function evidence(researchPlan: ResearchPlan): WebPageEvidence {
     cycleId: researchPlan.cycleId,
     researchIntentId: researchPlan.researchIntentId,
     researchPlanId: researchPlan.id,
+    searchResultId: `result-${researchPlan.companionId}`,
     query: researchPlan.queries[0]!,
     provider: 'fixture-search',
     url: 'https://docs.example.test/article?ref=search',

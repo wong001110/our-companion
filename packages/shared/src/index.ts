@@ -870,6 +870,7 @@ export interface WebPageEvidence {
   cycleId: string;
   researchIntentId: string;
   researchPlanId: string;
+  searchResultId: string;
   query: string;
   provider: string;
   url: string;

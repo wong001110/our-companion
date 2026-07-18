@@ -340,12 +340,12 @@ describe('production memory companion isolation', () => {
       id: 'switch-fetcher', mode: 'fixture',
       async fetchPage(input) {
         return {
-          id: 'owner-evidence', userId: input.userId, companionId: input.companionId, cycleId: input.cycleId,
-          researchIntentId: input.researchIntentId, researchPlanId: input.researchPlanId,
-          query: input.searchResult.query, provider: 'switch-search', url: input.searchResult.url, canonicalUrl: input.searchResult.url,
-          domain: input.searchResult.domain, title: input.searchResult.title, extractedText: 'Fetched public evidence owned by the original Companion.',
-          excerpt: 'Fetched public evidence owned by the original Companion.', contentHash: 'owner-hash', contentType: 'text/html',
-          fetchedAt: '2026-07-18T00:00:00.000Z', sourceType: input.sourceType
+      id: 'owner-evidence', userId: input.userId, companionId: input.companionId, cycleId: input.cycleId,
+      researchIntentId: input.researchIntentId, researchPlanId: input.researchPlanId,
+      searchResultId: input.searchResult.id, query: input.searchResult.query, provider: 'switch-search', url: input.searchResult.url, canonicalUrl: input.searchResult.url,
+      domain: input.searchResult.domain, title: input.searchResult.title, extractedText: 'Fetched public evidence owned by the original Companion.',
+      excerpt: 'Fetched public evidence owned by the original Companion.', contentHash: 'owner-hash', contentType: 'text/html',
+      fetchedAt: '2026-07-18T00:00:00.000Z', sourceType: input.sourceType
         };
       }
     };
@@ -393,7 +393,13 @@ describe('production memory companion isolation', () => {
     const pending = services.autonomy.startExploration({ companionId: owner.id, trigger: 'manual' });
     await vi.waitFor(() => expect(resolvePage).toBeTypeOf('function'));
     services.db.setPrimaryCompanion(newlyActive.id);
-    resolvePage({ id: 'page-owner-evidence', userId: pendingPageInput.userId, companionId: pendingPageInput.companionId, cycleId: pendingPageInput.cycleId, researchIntentId: pendingPageInput.researchIntentId, researchPlanId: pendingPageInput.researchPlanId, query: pendingPageInput.searchResult.query, provider: 'page-switch-search', url: pendingPageInput.searchResult.url, canonicalUrl: pendingPageInput.searchResult.url, domain: pendingPageInput.searchResult.domain, title: pendingPageInput.searchResult.title, extractedText: 'Fetched evidence remains private to its original owner.', excerpt: 'Fetched evidence remains private to its original owner.', contentHash: 'page-owner-hash', contentType: 'text/html', fetchedAt: '2026-07-18T00:00:00.000Z', sourceType: pendingPageInput.sourceType });
+    resolvePage({
+      id: 'page-owner-evidence', userId: pendingPageInput.userId, companionId: pendingPageInput.companionId, cycleId: pendingPageInput.cycleId,
+      researchIntentId: pendingPageInput.researchIntentId, researchPlanId: pendingPageInput.researchPlanId, searchResultId: pendingPageInput.searchResult.id,
+      query: pendingPageInput.searchResult.query, provider: 'page-switch-search', url: pendingPageInput.searchResult.url, canonicalUrl: pendingPageInput.searchResult.url,
+      domain: pendingPageInput.searchResult.domain, title: pendingPageInput.searchResult.title, extractedText: 'Fetched evidence remains private to its original owner.', excerpt: 'Fetched evidence remains private to its original owner.',
+      contentHash: 'page-owner-hash', contentType: 'text/html', fetchedAt: '2026-07-18T00:00:00.000Z', sourceType: pendingPageInput.sourceType
+    });
     const result = await pending;
 
     expect(result.cycle.companionId).toBe(owner.id);

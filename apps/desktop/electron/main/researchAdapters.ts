@@ -408,7 +408,7 @@ export class SafeWebPageFetcher implements WebPageFetcher {
         return {
           id: createId('page_evidence'), userId: input.userId, companionId: input.companionId, cycleId: input.cycleId,
           researchIntentId: input.researchIntentId, researchPlanId: input.researchPlanId,
-          query: input.searchResult.query, provider: input.searchResult.provider,
+          searchResultId: input.searchResult.id, query: input.searchResult.query, provider: input.searchResult.provider,
           url: target.toString(), canonicalUrl: canonical.toString(), domain: canonical.hostname.toLowerCase(),
           title: extracted.title, extractedText: extracted.extractedText, excerpt: extracted.excerpt,
           contentHash: createHash('sha256').update(extracted.extractedText).digest('hex'), contentType,

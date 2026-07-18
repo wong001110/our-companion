@@ -254,6 +254,7 @@ CREATE TABLE IF NOT EXISTS web_page_evidence (
   cycle_id TEXT NOT NULL,
   research_intent_id TEXT NOT NULL,
   research_plan_id TEXT NOT NULL,
+  search_result_id TEXT NOT NULL DEFAULT '',
   query TEXT NOT NULL,
   provider TEXT NOT NULL,
   url TEXT NOT NULL,

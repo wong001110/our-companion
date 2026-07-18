@@ -355,7 +355,7 @@ function toWebPageFetcher(provider: ValidationWebPageFetcher | undefined, nowIso
       return {
         id: createId('page_evidence'), userId: input.userId, companionId: input.companionId, cycleId: input.cycleId,
         researchIntentId: input.researchIntentId, researchPlanId: input.researchPlanId,
-        query: input.searchResult.query, provider: input.searchResult.provider, url: input.searchResult.url,
+        searchResultId: input.searchResult.id, query: input.searchResult.query, provider: input.searchResult.provider, url: input.searchResult.url,
         canonicalUrl: result.canonicalUrl, domain: input.searchResult.domain, title: result.title,
         extractedText: result.extractedText, excerpt: result.excerpt, contentHash: result.contentHash,
         contentType: result.contentType, fetchedAt: nowIso(), publishedAt: result.publishedAt, sourceType: input.sourceType

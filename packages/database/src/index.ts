@@ -151,7 +151,7 @@ export class DatabaseService {
     }
     this.ensurePendingActionsTable();
     this.ensureTopicPreferencesTable();
-    this.removePersistedSearchResultIds();
+    this.addSearchResultIdToWebEvidence();
     this.removePersistedSearchDomains();
     this.migratePriorDiscoveryLifecycle();
     this.migratePriorConversationImportance();
@@ -159,15 +159,13 @@ export class DatabaseService {
   }
 
   /**
-   * Search result IDs are coordinator-local handles, not durable provenance.
-   * Page evidence keeps the independently fetched public page and its research
-   * context, while this migration removes the legacy selected-result handle.
+   * Ensure search-result provenance survives durable research evidence rows for
+   * offline review and deterministic insight tracing.
    */
-  private removePersistedSearchResultIds(): void {
+  private addSearchResultIdToWebEvidence(): void {
     const columns = this.db.prepare('PRAGMA table_info(web_page_evidence)').all() as Array<{ name: string }>;
-    if (!columns.some((column) => column.name === 'search_result_id')) return;
-    this.db.exec('DROP INDEX IF EXISTS idx_web_page_evidence_search_result');
-    this.db.exec('ALTER TABLE web_page_evidence DROP COLUMN search_result_id');
+    if (columns.some((column) => column.name === 'search_result_id')) return;
+    this.db.exec("ALTER TABLE web_page_evidence ADD COLUMN search_result_id TEXT NOT NULL DEFAULT ''");
   }
 
   /** Result-domain lists are derived from transient provider payloads and are not durable metadata. */
@@ -1243,9 +1241,9 @@ export class DatabaseService {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO web_page_evidence
-         (id, user_id, companion_id, cycle_id, research_intent_id, research_plan_id, query, provider,
+         (id, user_id, companion_id, cycle_id, research_intent_id, research_plan_id, search_result_id, query, provider,
           url, canonical_url, domain, title, extracted_text, excerpt, content_hash, content_type, fetched_at, published_at, source_type)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         evidence.id,
@@ -1254,6 +1252,7 @@ export class DatabaseService {
         evidence.cycleId,
         evidence.researchIntentId,
         evidence.researchPlanId,
+        evidence.searchResultId,
         evidence.query,
         evidence.provider,
         evidence.url,
@@ -2250,6 +2249,7 @@ function mapWebPageEvidence(row: Record<string, unknown>): WebPageEvidence {
     cycleId: String(row.cycle_id),
     researchIntentId: String(row.research_intent_id),
     researchPlanId: String(row.research_plan_id),
+    searchResultId: String(row.search_result_id),
     query: String(row.query),
     provider: String(row.provider),
     url: String(row.url),
