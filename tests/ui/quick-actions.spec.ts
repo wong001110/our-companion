@@ -272,9 +272,11 @@ test('Quick Action bubbles settle into a gentle staggered float', async () => {
     ]);
 
     const samples: number[][] = [];
-    for (let sample = 0; sample < 4; sample += 1) {
+    // Observe for longer than half of the 2.6 s cycle so sampling cannot land
+    // entirely inside the eased plateau around a float extremum.
+    for (let sample = 0; sample < 7; sample += 1) {
       samples.push(await floatLayers.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().y)));
-      await main.waitForTimeout(220);
+      if (sample < 6) await main.waitForTimeout(260);
     }
     for (let index = 0; index < 4; index += 1) {
       const positions = samples.map((sample) => sample[index]);
