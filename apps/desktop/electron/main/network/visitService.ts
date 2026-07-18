@@ -108,7 +108,16 @@ export class VisitService {
     // Offline mode has no authoritative host session to preserve, so it must
     // not prevent normal local Companion selection/onboarding flows.
     if (!status.onlineModeEnabled || status.state !== 'online' || !status.account) return;
-    const sessions = await this.network.listVisitSessions();
+    // A stale optimistic status can briefly report online before an
+    // authenticated transport exists (notably during local onboarding). It
+    // cannot represent an authoritative hosted Visit, so retain local switch
+    // behavior until a real Session list is available.
+    const sessions = await this.network.listVisitSessions().catch((error: unknown) => {
+      const code = error instanceof Error ? error.message : String(error);
+      if (code.includes('ONLINE_MODE_DISABLED')) return undefined;
+      throw error;
+    });
+    if (!sessions) return;
     sessions.forEach((session) => this.track(session));
     if (this.hostOccupancy(sessions, status.account.id) > 0) throw new Error('VISIT_HOST_COMPANION_SWITCH_BLOCKED');
   };

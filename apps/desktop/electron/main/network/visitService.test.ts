@@ -144,6 +144,12 @@ describe('VisitService main-process coordinator', () => {
     await expect(service.assertCanSwitchLocalCompanion()).rejects.toThrow('VISIT_HOST_COMPANION_SWITCH_BLOCKED');
   });
 
+  it('permits local switching while optimistic online status has no authenticated Session transport', async () => {
+    const { service, network } = dependencies(host);
+    network.listVisitSessions.mockRejectedValue(new Error('ONLINE_MODE_DISABLED'));
+    await expect(service.assertCanSwitchLocalCompanion()).resolves.toBeUndefined();
+  });
+
   it('recreates heartbeat timers with the current server cadence after reconciliation', async () => {
     vi.useFakeTimers();
     const { service, network } = dependencies(owner, { heartbeatIntervalSeconds: 15, heartbeatTimeoutSeconds: 30 });
