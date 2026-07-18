@@ -71,6 +71,7 @@ test('All required application surfaces have no critical or serious axe violatio
     await main.keyboard.press('Escape');
     await main.getByTestId('quick-action-talk').click();
     await expect(main.locator('.companion-text-input')).toBeVisible();
+    await main.waitForTimeout(250);
     surfaces.composer = await scan(main, '.companion-text-input');
 
     const totals = Object.values(surfaces).reduce((sum, result) => ({
