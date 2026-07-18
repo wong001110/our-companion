@@ -94,7 +94,7 @@ export function buildEngineSnapshot(
     discoveryCandidates: db.listDiscoveryCandidates(userId, 20, characterId),
     insights: db.listCompanionInsights(userId, 20, characterId).map(mapGeneratedInsight),
     explorationEvents: focusCycle ? db.listExplorationEventsForCycle(focusCycle.id) : [],
-    recentDiscoveries: db.listDiscoveries({ limit: 10 }),
+    recentDiscoveries: db.listDiscoveries({ limit: 10, companionId: characterId }),
     actionPermissions: db.getActionPermissions(),
     discoveryScheduling: schedulingDebug,
     engineTraces: db.listEngineTraces({
@@ -102,6 +102,7 @@ export function buildEngineSnapshot(
       correlationId: input.correlationId,
       companionId: characterId,
       limit: input.traceLimit ?? 100
-    })
+    }),
+    turnInspections: []
   };
 }

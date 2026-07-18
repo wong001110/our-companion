@@ -107,6 +107,7 @@ function makePlan(steps: ActionStep[], opts?: { riskLevel?: 'low' | 'medium' | '
 export function planActionFromRules(text: string): ActionPlan | undefined {
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
+  const openDirective = trimmed.replace(/^(?:please\s+|could\s+you\s+|帮我|请)\s*/i, '').trim();
 
   // Composite: "open <app> and search <query>"
   const compositeAppSearch = lower.match(/^open\s+(\w+)\s+and\s+search\s+(.+)$/);
@@ -134,16 +135,59 @@ export function planActionFromRules(text: string): ActionPlan | undefined {
     return url ? makePlan([makeStep('open_url', { url })]) : undefined;
   }
 
+  // Browser navigation commands in English and Chinese.
+  if (/^(?:go\s+back|返回上一页)$/i.test(trimmed)) {
+    return makePlan([makeStep('browser_navigation', { action: 'go_back' })]);
+  }
+  if (/^(?:go\s+forward|前进)$/i.test(trimmed)) {
+    return makePlan([makeStep('browser_navigation', { action: 'go_forward' })]);
+  }
+  if (/^(?:reload(?:\s+(?:the\s+)?page)?|刷新页面)$/i.test(trimmed)) {
+    return makePlan([makeStep('browser_navigation', { action: 'reload' })]);
+  }
+
+  // Opening a tab is deterministic only when its target is a safe public URL.
+  const englishTabTarget = trimmed.match(/^open\s+(?:a\s+)?(?:new\s+)?tab(?:\s+to)?\s+(.+)$/i)?.[1];
+  const chineseTabTarget = trimmed.match(/^打开(?:一个)?新标签页(?:到)?\s*(.+)$/)?.[1];
+  const tabTarget = englishTabTarget ?? chineseTabTarget;
+  if (tabTarget) {
+    const url = normalizeActionUrl(tabTarget);
+    return url
+      ? makePlan([makeStep('browser_navigation', { action: 'open_tab', url })])
+      : undefined;
+  }
+
+  // A small explicit alias set resolves otherwise ambiguous natural names.
+  const namedOpen = openDirective.match(/^(?:open|go\s+to|打开)\s+(.+)$/i)?.[1]?.trim();
+  const knownApps: Record<string, string> = {
+    brave: 'Brave',
+    chrome: 'Chrome',
+    chromium: 'Chromium',
+    edge: 'Edge',
+    firefox: 'Firefox',
+    safari: 'Safari',
+    notepad: 'Notepad',
+    calculator: 'Calculator',
+    vscode: 'VSCode',
+  };
+  if (namedOpen?.toLowerCase() === 'youtube') {
+    return makePlan([makeStep('open_url', { url: 'youtube.com' })]);
+  }
+  const knownApp = namedOpen ? knownApps[namedOpen.toLowerCase()] : undefined;
+  if (knownApp) {
+    return makePlan([makeStep('open_app', { appName: knownApp })]);
+  }
+
   // English and Chinese URL commands, including a safe bare domain.
-  const openTarget = trimmed.match(/^(?:open|go\s+to|打开)\s+(.+)$/i);
+  const openTarget = openDirective.match(/^(?:open|go\s+to|打开)\s+(.+)$/i);
   if (openTarget) {
     const url = normalizeActionUrl(openTarget[1]);
     if (url) return makePlan([makeStep('open_url', { url })]);
   }
 
-  // "open app <name>"
-  if (lower.startsWith('open app ')) {
-    const appName = trimmed.slice('open app '.length).trim();
+  // Explicit English and Chinese app commands.
+  const appName = openDirective.match(/^(?:open\s+(?:app|application)|打开应用)\s*(.+)$/i)?.[1]?.trim();
+  if (appName) {
     return makePlan([makeStep('open_app', { appName })]);
   }
 
@@ -158,6 +202,12 @@ export function planActionFromRules(text: string): ActionPlan | undefined {
   if (searchTarget) {
     const [, target, query] = searchTarget;
     return makePlan([makeStep('search_web', { query, target })]);
+  }
+
+  // Chinese search commands preserve the user's query casing and spacing.
+  const chineseSearch = trimmed.match(/^(?:帮我)?搜索\s*(.+)$/)?.[1]?.trim();
+  if (chineseSearch) {
+    return makePlan([makeStep('search_web', { query: chineseSearch, target: 'google' })]);
   }
 
   return undefined;

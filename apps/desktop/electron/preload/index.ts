@@ -149,6 +149,8 @@ const api: OurCompanionApi = {
   },
   companion: {
     turn: (input) => invoke('companion:turn', input),
+    resolveTurnPermission: (input) => invoke('companion:resolveTurnPermission', input),
+    undoRememberedMemory: (undoToken: string) => invoke('companion:undoRememberedMemory', undoToken),
     getHistory: (input?: CompanionHistoryInput) => invoke('companion:getHistory', input),
     appendMessage: (input: CompanionAppendMessageInput) => invoke('companion:appendMessage', input),
     clearHistory: (input?: { characterId?: string }) => invoke('companion:clearHistory', input),

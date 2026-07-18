@@ -28,6 +28,17 @@ describe('tool engine', () => {
     expect(preview.requiresConfirmation).toBe(true);
   });
 
+  it('executes an open-tab ActionStep after the Action orchestrator resolved permission', async () => {
+    const adapters = makeAdapters();
+    const result = await executeActionStep(
+      'browser_navigation',
+      { action: 'open_tab', url: 'https://example.com' },
+      adapters,
+    );
+    expect(result.status).toBe('executed');
+    expect(adapters.browserNavigation).toHaveBeenCalledWith('open_tab', 'https://example.com');
+  });
+
   it('blocks an unknown tool at runtime', async () => {
     const adapters = makeAdapters();
     const input = { toolName: 'run_shell', args: {} } as never;

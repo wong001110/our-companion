@@ -10,6 +10,7 @@ import {
   validateDiscoveryReason,
   validateMemorySummary,
   validateActionPlan,
+  validateCompanionTurnProposal,
   validateToolIntent
 } from './index';
 
@@ -60,6 +61,24 @@ describe('ai engine', () => {
       '{"tool_name":"search_web","args":{"query":"PixiJS"},"requires_confirmation":false,"user_facing_summary":"Search"}'
     );
     expect(parsed.tool_name).toBe('search_web');
+  });
+
+  it('strictly validates a structured Companion turn and safely extracts wrapper JSON', () => {
+    const proposal = validateCompanionTurnProposal(
+      'Result:\n{"reply":"I can help.","intent":"conversation_and_action","actions":[{"toolName":"search_web","args":{"query":"PixiJS"},"reason":"The user asked."}],"memoryCandidates":[{"type":"goal","summary":"build Our Companion","evidence":"My goal is build Our Companion","confidence":0.9}]}'
+    );
+    expect(proposal?.actions[0].toolName).toBe('search_web');
+    expect(proposal?.memoryCandidates[0].type).toBe('goal');
+  });
+
+  it('rejects malformed, over-permissive, or internally inconsistent turn proposals', () => {
+    expect(validateCompanionTurnProposal('not json')).toBeUndefined();
+    expect(validateCompanionTurnProposal(
+      '{"reply":"x","intent":"conversation","actions":[{"toolName":"open_url","args":{"url":"example.com"},"reason":"x"}],"memoryCandidates":[]}'
+    )).toBeUndefined();
+    expect(validateCompanionTurnProposal(
+      '{"reply":"x","intent":"conversation","actions":[],"memoryCandidates":[],"internalEvent":"arbitrary"}'
+    )).toBeUndefined();
   });
 
   it('validates and normalizes registry-backed action plans from the live snake-case prompt contract', () => {

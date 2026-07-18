@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const chatSource = readFileSync(new URL('./ChatPage.tsx', import.meta.url), 'utf8');
+const companionSessionSource = readFileSync(new URL('../companion/useCompanionSession.ts', import.meta.url), 'utf8');
+const companionShellSource = readFileSync(new URL('../app/CompanionEntryShell.tsx', import.meta.url), 'utf8');
 const enSource = readFileSync(new URL('../i18n/en.ts', import.meta.url), 'utf8');
 const zhCNSource = readFileSync(new URL('../i18n/zh-CN.ts', import.meta.url), 'utf8');
 
@@ -60,6 +62,30 @@ describe('Chat operational-state contract', () => {
 
   it('provides matching localized loading and failure keys', () => {
     for (const key of ['chat_loading', 'chat_history_error', 'chat_send_error']) {
+      expect(enSource).toContain(`${key}:`);
+      expect(zhCNSource).toContain(`"${key}":`);
+    }
+  });
+});
+
+describe('Unified Companion Turn surface contract', () => {
+  it('routes Panel, floating text, and Voice through companion.turn', () => {
+    expect(chatSource).toContain("companion.turn({ message, source: 'panel_text' })");
+    expect(companionSessionSource).toContain("source: 'voice' | 'companion_text'");
+    expect(companionSessionSource).toContain('window.ourCompanion.companion.turn');
+    expect(chatSource).not.toContain('window.ourCompanion.ai.chat');
+  });
+
+  it('offers permission continuation and Memory Undo on both Panel and floating surfaces', () => {
+    for (const source of [chatSource, companionSessionSource]) {
+      expect(source).toContain('resolveTurnPermission');
+    }
+    expect(companionShellSource).toContain("resolvePermission('allow_once')");
+    expect(companionShellSource).toContain("resolvePermission('always_allow')");
+    expect(companionShellSource).toContain("resolvePermission('cancel')");
+    expect(chatSource).toContain('undoRememberedMemory');
+    expect(companionSessionSource).toContain('undoRememberedMemory');
+    for (const key of ['turn_allow_once', 'turn_always_allow', 'turn_cancel', 'memory_remembered', 'memory_undo']) {
       expect(enSource).toContain(`${key}:`);
       expect(zhCNSource).toContain(`"${key}":`);
     }

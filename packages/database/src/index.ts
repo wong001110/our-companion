@@ -31,6 +31,7 @@ import type {
   JourneyMilestone,
   MemoryEdge,
   MemoryNode,
+  MemoryProcessingState,
   Pattern,
   UserCompanionRelationship,
   PendingCompanionAction,
@@ -54,6 +55,17 @@ import {
   unitToScore100
 } from '@our-companion/shared';
 import { sqliteSchema } from './schema';
+import {
+  AdaptiveDiscoveryPersistence,
+  ensureAdaptiveDiscoveryPersistence,
+  type PersistedDiscoveryBase,
+  type PersistedDiscoveryBaseFeedback,
+  type PersistedDiscoveryBaseState,
+  type PersistedDiscoveryContextSource,
+  type PersistedDiscoverySeenIdentity,
+  type PersistedDiscoverySeenIdentityType,
+} from './adaptiveDiscoveryPersistence';
+export * from './adaptiveDiscoveryPersistence';
 
 const DISCOVERY_ANNOUNCED_KEY = 'discovery.announcedIds';
 const ALL_DEBUG_DATA_TARGETS: DebugDataResetTarget[] = ['discoveries', 'memory', 'journeys', 'diary', 'chat', 'autonomy'];
@@ -106,6 +118,7 @@ export interface DatabaseServiceOptions {
 
 export class DatabaseService {
   private readonly db: SqliteDatabase;
+  private readonly adaptiveDiscovery: AdaptiveDiscoveryPersistence;
   private readonly priorAnnHasCustomAssets: () => boolean;
 
   constructor(options: DatabaseServiceOptions = {}) {
@@ -115,6 +128,55 @@ export class DatabaseService {
     this.db.exec(sqliteSchema);
     this.runMigrations();
     this.ensureCompatibilityIndexes();
+    ensureAdaptiveDiscoveryPersistence(this.db);
+    this.adaptiveDiscovery = new AdaptiveDiscoveryPersistence(this.db);
+  }
+
+  getDiscoverySeenIdentity(
+    companionId: string,
+    type: PersistedDiscoverySeenIdentityType,
+    hash: string,
+  ): PersistedDiscoverySeenIdentity | undefined {
+    return this.adaptiveDiscovery.getSeenIdentity(companionId, type, hash);
+  }
+
+  upsertDiscoverySeenIdentity(identity: PersistedDiscoverySeenIdentity): PersistedDiscoverySeenIdentity {
+    return this.adaptiveDiscovery.upsertSeenIdentity(identity);
+  }
+
+  listDiscoverySeenIdentities(
+    companionId: string,
+    limit = 100,
+  ): readonly PersistedDiscoverySeenIdentity[] {
+    return this.adaptiveDiscovery.listSeenIdentities({ companionId, limit });
+  }
+
+  listDiscoveryBases(
+    companionId: string,
+    state?: PersistedDiscoveryBaseState,
+    limit = 100,
+  ): readonly PersistedDiscoveryBase[] {
+    return this.adaptiveDiscovery.listBases({ companionId, state, limit });
+  }
+
+  upsertDiscoveryBase(base: PersistedDiscoveryBase): PersistedDiscoveryBase {
+    return this.adaptiveDiscovery.upsertBase(base);
+  }
+
+  insertDiscoveryBaseFeedback(
+    feedback: PersistedDiscoveryBaseFeedback,
+  ): PersistedDiscoveryBaseFeedback {
+    return this.adaptiveDiscovery.insertBaseFeedback(feedback);
+  }
+
+  loadBoundedDiscoveryContext(
+    companionId: string,
+    maximumItems = 40,
+  ): readonly PersistedDiscoveryContextSource[] {
+    return this.adaptiveDiscovery.loadBoundedDiscoveryContext({
+      companionId,
+      maximumItems,
+    });
   }
 
   private runMigrations(): void {
@@ -125,6 +187,10 @@ export class DatabaseService {
       { column: 'user_id', sql: "ALTER TABLE memory_nodes ADD COLUMN user_id TEXT DEFAULT 'local'" },
       { column: 'memory_type', sql: 'ALTER TABLE memory_nodes ADD COLUMN memory_type TEXT' },
       { column: 'metadata_json', sql: 'ALTER TABLE memory_nodes ADD COLUMN metadata_json TEXT' },
+      { column: 'memory_fingerprint', sql: "ALTER TABLE memory_nodes ADD COLUMN memory_fingerprint TEXT NOT NULL DEFAULT ''" },
+      { column: 'confidence', sql: 'ALTER TABLE memory_nodes ADD COLUMN confidence REAL NOT NULL DEFAULT 0.5' },
+      { column: 'observation_count', sql: 'ALTER TABLE memory_nodes ADD COLUMN observation_count INTEGER NOT NULL DEFAULT 1' },
+      { column: 'last_observed_at', sql: 'ALTER TABLE memory_nodes ADD COLUMN last_observed_at TEXT' },
       { column: 'session_id', sql: 'ALTER TABLE companion_messages ADD COLUMN session_id TEXT' },
       { column: 'is_builtin', sql: 'ALTER TABLE companions ADD COLUMN is_builtin INTEGER NOT NULL DEFAULT 0' },
       { column: 'close_reason', sql: 'ALTER TABLE conversation_sessions ADD COLUMN close_reason TEXT' },
@@ -180,7 +246,32 @@ export class DatabaseService {
     this.migratePriorDiscoveryLifecycle();
     this.migratePriorConversationImportance();
     this.migratePriorBuiltinAnn();
+    this.backfillMemoryFingerprints();
     this.backfillCognitiveFingerprints();
+  }
+
+  private backfillMemoryFingerprints(): void {
+    const rows = this.db.prepare(
+      "SELECT id, companion_id, memory_type, type, title, summary, created_at, updated_at FROM memory_nodes WHERE memory_fingerprint = ''"
+    ).all() as Array<Record<string, unknown>>;
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const companionId = String(row.companion_id ?? '');
+      if (!companionId) continue;
+      const memoryType = String(row.memory_type || row.type);
+      const summary = String(row.summary || row.title);
+      const canonical = createSemanticFingerprint('memory', [companionId, memoryType, normalizeSemanticText(summary)]);
+      const identity = `${companionId}:${memoryType}:${canonical}`;
+      const fingerprint = seen.has(identity)
+        ? createSemanticFingerprint('memory_legacy_duplicate', [canonical, String(row.id)])
+        : canonical;
+      seen.add(identity);
+      this.db.prepare(
+        `UPDATE memory_nodes
+         SET memory_fingerprint = ?, last_observed_at = COALESCE(last_observed_at, updated_at, created_at)
+         WHERE id = ?`
+      ).run(fingerprint, String(row.id));
+    }
   }
 
   private backfillCognitiveFingerprints(): void {
@@ -282,6 +373,8 @@ export class DatabaseService {
   private ensureCompatibilityIndexes(): void {
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_companion_messages_session ON companion_messages(session_id)');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_memory_nodes_companion ON memory_nodes(companion_id)');
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_nodes_fingerprint ON memory_nodes(companion_id, memory_type, memory_fingerprint) WHERE memory_fingerprint <> ''");
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_memory_processing_dirty ON memory_processing_state(companion_id, processed_revision, revision)');
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_patterns_identity ON patterns(user_id, companion_id, semantic_fingerprint) WHERE semantic_fingerprint <> ''");
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_curiosity_identity ON curiosity_targets(user_id, companion_id, topic_fingerprint) WHERE topic_fingerprint <> ''");
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_discoveries_status_announced ON discoveries(status, announced_at)');
@@ -719,8 +812,9 @@ export class DatabaseService {
       .prepare(
         `INSERT INTO memory_nodes
          (id, type, title, summary, content, importance_score, source, source_url, is_pinned, is_marked_wrong,
-          companion_id, user_id, memory_type, metadata_json, created_at, updated_at, compressed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          companion_id, user_id, memory_type, metadata_json, memory_fingerprint, confidence, observation_count,
+          last_observed_at, created_at, updated_at, compressed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         node.id,
@@ -737,10 +831,15 @@ export class DatabaseService {
         node.userId ?? 'local',
         node.memoryType ?? null,
         node.metadata ? JSON.stringify(node.metadata) : null,
+        node.fingerprint ?? '',
+        node.confidence ?? node.metadata?.confidence ?? 0.5,
+        node.observationCount ?? 1,
+        node.lastObservedAt ?? node.updatedAt,
         node.createdAt,
         node.updatedAt,
         node.compressedAt ?? null
       );
+    this.markMemoryDirty(node);
     return node;
   }
 
@@ -753,6 +852,7 @@ export class DatabaseService {
         `UPDATE memory_nodes SET
           type = ?, title = ?, summary = ?, content = ?, importance_score = ?, source = ?, source_url = ?,
           is_pinned = ?, is_marked_wrong = ?, companion_id = ?, user_id = ?, memory_type = ?, metadata_json = ?,
+          memory_fingerprint = ?, confidence = ?, observation_count = ?, last_observed_at = ?,
           updated_at = ?, compressed_at = ?
          WHERE id = ?`
       )
@@ -770,16 +870,23 @@ export class DatabaseService {
         node.userId ?? 'local',
         node.memoryType ?? null,
         node.metadata ? JSON.stringify(node.metadata) : null,
+        node.fingerprint ?? '',
+        node.confidence ?? node.metadata?.confidence ?? 0.5,
+        node.observationCount ?? 1,
+        node.lastObservedAt ?? node.updatedAt,
         node.updatedAt,
         node.compressedAt ?? null,
         node.id
       );
+    this.markMemoryDirty(node);
     return node;
   }
 
   deleteMemoryNode(id: string): void {
+    const existing = this.getMemoryNode(id);
     this.db.prepare('DELETE FROM memory_edges WHERE from_node_id = ? OR to_node_id = ?').run(id, id);
     this.db.prepare('DELETE FROM memory_nodes WHERE id = ?').run(id);
+    if (existing?.companionId) this.markMemoryDirty(existing, true);
   }
 
   getMemoryNode(id: string, companionId?: string): MemoryNode | undefined {
@@ -795,6 +902,144 @@ export class DatabaseService {
     }
     return (this.db.prepare('SELECT * FROM memory_nodes ORDER BY updated_at DESC').all() as Array<Record<string, unknown>>).map(
       mapMemoryNode
+    );
+  }
+
+  listMemoryContextCandidates(companionId: string, limit = 80): MemoryNode[] {
+    return (this.db.prepare(
+      `SELECT * FROM memory_nodes
+       WHERE companion_id = ?
+       ORDER BY is_pinned DESC, is_marked_wrong ASC, importance_score DESC, updated_at DESC
+       LIMIT ?`
+    ).all(companionId, Math.max(1, limit)) as Array<Record<string, unknown>>).map(mapMemoryNode);
+  }
+
+  listCognitionMemoryCandidates(companionId: string, focusMemoryId?: string, limit = 30): MemoryNode[] {
+    return (this.db.prepare(
+      `SELECT memory_nodes.* FROM memory_nodes
+       LEFT JOIN memory_processing_state processing ON processing.memory_id = memory_nodes.id
+       WHERE memory_nodes.companion_id = ? AND memory_nodes.is_marked_wrong = 0
+       ORDER BY CASE WHEN memory_nodes.id = ? THEN 0
+                     WHEN COALESCE(processing.processed_revision, 0) < COALESCE(processing.revision, 0) THEN 1
+                     WHEN memory_nodes.is_pinned = 1 THEN 2 ELSE 3 END,
+                memory_nodes.importance_score DESC, memory_nodes.updated_at DESC
+       LIMIT ?`
+    ).all(companionId, focusMemoryId ?? '', Math.max(1, limit)) as Array<Record<string, unknown>>).map(mapMemoryNode);
+  }
+
+  getMemoryByFingerprint(
+    companionId: string,
+    memoryType: NonNullable<MemoryNode['memoryType']>,
+    fingerprint: string,
+  ): MemoryNode | undefined {
+    const row = this.db.prepare(
+      'SELECT * FROM memory_nodes WHERE companion_id = ? AND memory_type = ? AND memory_fingerprint = ?'
+    ).get(companionId, memoryType, fingerprint) as Record<string, unknown> | undefined;
+    return row ? mapMemoryNode(row) : undefined;
+  }
+
+  upsertCapturedMemory(node: MemoryNode): { record: MemoryNode; outcome: 'created' | 'updated' | 'observed'; previous?: MemoryNode } {
+    if (!node.companionId || !node.memoryType || !node.fingerprint) {
+      throw new Error('Captured Memory requires companion, type, and fingerprint.');
+    }
+    this.db.exec('BEGIN');
+    try {
+      const existing = this.getMemoryByFingerprint(node.companionId, node.memoryType, node.fingerprint);
+      if (!existing) {
+        const record = this.insertMemoryNode(node);
+        this.db.exec('COMMIT');
+        return { record, outcome: 'created' };
+      }
+      const stronger = (node.confidence ?? 0) > (existing.confidence ?? existing.metadata?.confidence ?? 0)
+        || node.importance > existing.importance
+        || (node.summary?.length ?? 0) > (existing.summary?.length ?? 0);
+      const next: MemoryNode = {
+        ...existing,
+        ...(stronger ? {
+          title: node.title,
+          summary: node.summary,
+          content: node.content,
+          importance: Math.max(existing.importance, node.importance),
+          confidence: Math.max(existing.confidence ?? 0, node.confidence ?? 0),
+          metadata: node.metadata ? {
+            ...node.metadata,
+            ...existing.metadata,
+            ...node.metadata,
+            createdAt: existing.metadata?.createdAt ?? node.metadata.createdAt,
+          } : existing.metadata,
+        } : {}),
+        observationCount: (existing.observationCount ?? 1) + 1,
+        lastObservedAt: node.lastObservedAt ?? node.updatedAt,
+        updatedAt: node.updatedAt,
+      };
+      if (stronger) this.updateMemoryNode(next);
+      else {
+        this.db.prepare(
+          'UPDATE memory_nodes SET observation_count = ?, last_observed_at = ?, updated_at = ? WHERE id = ?'
+        ).run(next.observationCount ?? 1, next.lastObservedAt ?? next.updatedAt, next.updatedAt, next.id);
+      }
+      this.db.exec('COMMIT');
+      return { record: next, outcome: stronger ? 'updated' : 'observed', previous: existing };
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  getMemoryProcessingState(memoryId: string): MemoryProcessingState | undefined {
+    const row = this.db.prepare('SELECT * FROM memory_processing_state WHERE memory_id = ?')
+      .get(memoryId) as Record<string, unknown> | undefined;
+    return row ? mapMemoryProcessingState(row) : undefined;
+  }
+
+  listDirtyMemoryProcessing(companionId: string, limit = 30): MemoryProcessingState[] {
+    return (this.db.prepare(
+      `SELECT * FROM memory_processing_state
+       WHERE companion_id = ? AND processed_revision < revision
+       ORDER BY revision DESC LIMIT ?`
+    ).all(companionId, Math.max(1, limit)) as Array<Record<string, unknown>>).map(mapMemoryProcessingState);
+  }
+
+  markMemoriesProcessed(memoryIds: string[], processedAt = nowIso()): void {
+    const statement = this.db.prepare(
+      `UPDATE memory_processing_state
+       SET processed_revision = revision, processed_at = ?
+       WHERE memory_id = ? AND deleted_at IS NULL`
+    );
+    for (const memoryId of new Set(memoryIds)) statement.run(processedAt, memoryId);
+  }
+
+  private markMemoryDirty(node: MemoryNode, deleted = false): void {
+    if (!node.companionId) return;
+    const contentHash = createSemanticFingerprint('memory_content', [
+      node.type,
+      node.memoryType ?? '',
+      normalizeSemanticText(node.title),
+      normalizeSemanticText(node.summary ?? ''),
+      normalizeSemanticText(node.content ?? ''),
+      String(Boolean(node.isPinned)),
+      String(Boolean(node.isMarkedWrong)),
+    ]);
+    const existing = this.getMemoryProcessingState(node.id);
+    const changed = !existing || existing.contentHash !== contentHash || Boolean(existing.deletedAt) !== deleted;
+    const revision = existing ? existing.revision + (changed ? 1 : 0) : 1;
+    this.db.prepare(
+      `INSERT INTO memory_processing_state
+       (memory_id, companion_id, content_hash, revision, processed_revision, processed_at, deleted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(memory_id) DO UPDATE SET
+         companion_id = excluded.companion_id,
+         content_hash = excluded.content_hash,
+         revision = excluded.revision,
+         deleted_at = excluded.deleted_at`
+    ).run(
+      node.id,
+      node.companionId,
+      contentHash,
+      revision,
+      existing?.processedRevision ?? 0,
+      existing?.processedAt ?? null,
+      deleted ? nowIso() : null,
     );
   }
 
@@ -2072,14 +2317,18 @@ export class DatabaseService {
       }
       if (targets.includes('memory')) {
         clearTable('memory_edges');
+        clearTable('memory_processing_state');
         clearTable('memory_nodes');
       }
       if (targets.includes('discoveries')) {
+        clearTable('discovery_seen_identity');
         clearTable('discoveries');
         this.db.prepare('DELETE FROM app_settings WHERE key = ?').run(DISCOVERY_ANNOUNCED_KEY);
         clearedTables.add('app_settings.discovery_announced');
       }
       if (targets.includes('autonomy')) {
+        clearTable('discovery_base_feedback');
+        clearTable('discovery_bases');
         clearTable('engine_traces');
         clearTable('discovery_feedback');
         clearTable('exploration_loop_events');
@@ -2299,9 +2548,25 @@ function mapMemoryNode(row: Record<string, unknown>): MemoryNode {
     userId: row.user_id ? String(row.user_id) : undefined,
     memoryType: row.memory_type ? (row.memory_type as MemoryNode['memoryType']) : undefined,
     metadata: row.metadata_json ? JSON.parse(String(row.metadata_json)) : undefined,
+    fingerprint: row.memory_fingerprint ? String(row.memory_fingerprint) : undefined,
+    confidence: row.confidence === undefined ? undefined : Number(row.confidence),
+    observationCount: row.observation_count === undefined ? undefined : Number(row.observation_count),
+    lastObservedAt: row.last_observed_at ? String(row.last_observed_at) : undefined,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     compressedAt: row.compressed_at ? String(row.compressed_at) : undefined
+  };
+}
+
+function mapMemoryProcessingState(row: Record<string, unknown>): MemoryProcessingState {
+  return {
+    memoryId: String(row.memory_id),
+    companionId: String(row.companion_id),
+    contentHash: String(row.content_hash),
+    revision: Number(row.revision),
+    processedRevision: Number(row.processed_revision),
+    processedAt: row.processed_at ? String(row.processed_at) : undefined,
+    deletedAt: row.deleted_at ? String(row.deleted_at) : undefined,
   };
 }
 

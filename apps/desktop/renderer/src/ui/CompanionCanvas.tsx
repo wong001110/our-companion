@@ -21,6 +21,7 @@ interface CompanionCanvasProps {
   compact?: boolean;
   animationOverride?: AnimationName;
   movementAnimation?: AnimationName;
+  walkPlaybackRate?: number;
   idleAnimation?: AnimationName;
   companionId?: string;
   assetRoot: string;
@@ -47,6 +48,7 @@ export function CompanionCanvas({
   compact = false,
   animationOverride,
   movementAnimation,
+  walkPlaybackRate = 1,
   idleAnimation,
   companionId,
   assetRoot,
@@ -64,6 +66,7 @@ export function CompanionCanvas({
 }: CompanionCanvasProps) {
   const lang = useLang();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animatorRef = useRef<SpriteAnimator | undefined>(undefined);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const isPointerHitRef = useRef(false);
   const dragCandidateRef = useRef<{ pointerId: number; startX: number; startY: number } | undefined>(undefined);
@@ -123,6 +126,8 @@ export function CompanionCanvas({
         onAnimationComplete?.(resolved.name);
       },
     });
+    animator.setPlaybackRate(animation.name.startsWith('Walk_') ? walkPlaybackRate : 1);
+    animatorRef.current = animator;
 
     let active = true;
 
@@ -139,8 +144,13 @@ export function CompanionCanvas({
     return () => {
       active = false;
       animator.destroy();
+      if (animatorRef.current === animator) animatorRef.current = undefined;
     };
   }, [animation, compact, assetRoot, resolved.name, onAnimationComplete]);
+
+  useEffect(() => {
+    animatorRef.current?.setPlaybackRate(resolved.name.startsWith('Walk_') ? walkPlaybackRate : 1);
+  }, [resolved.name, walkPlaybackRate]);
 
   useEffect(() => {
     return () => {

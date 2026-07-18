@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CompanionMessage, CompanionMessageSource } from '@our-companion/shared';
+import type {
+  CompanionMessage,
+  CompanionMessageSource,
+  CompanionTurnResult,
+  RememberedMemoryMutation,
+} from '@our-companion/shared';
 import { COMPANION_CHAT_RETENTION_DAYS } from '@our-companion/shared';
 import { t } from '../i18n';
 import { ConfirmDialog } from '../components/feedback/ConfirmDialog';
@@ -23,6 +28,8 @@ export function ChatPage() {
   const [historyError, setHistoryError] = useState('');
   const [sendError, setSendError] = useState('');
   const [clearError, setClearError] = useState('');
+  const [pendingPermission, setPendingPermission] = useState<CompanionTurnResult>();
+  const [remembered, setRemembered] = useState<RememberedMemoryMutation[]>([]);
   const messagesRef = useRef<HTMLDivElement>(null);
   const followMessagesRef = useRef(true);
 
@@ -58,7 +65,9 @@ export function ChatPage() {
     setSending(true);
     setSendError('');
     try {
-      await window.ourCompanion.ai.chat({ message });
+      const result = await window.ourCompanion.companion.turn({ message, source: 'panel_text' });
+      setPendingPermission(result.kind === 'awaiting_permission' ? result : undefined);
+      setRemembered(result.remembered ?? []);
       setInput((current) => current === draft ? '' : current);
       await loadHistory();
     } catch {
@@ -66,6 +75,28 @@ export function ChatPage() {
     } finally {
       setSending(false);
     }
+  }
+  async function resolvePermission(decision: 'allow_once' | 'always_allow' | 'cancel') {
+    if (!pendingPermission) return;
+    setSending(true);
+    setSendError('');
+    try {
+      const result = await window.ourCompanion.companion.resolveTurnPermission({
+        turnId: pendingPermission.turnId,
+        decision,
+      });
+      setPendingPermission(undefined);
+      setRemembered(result.remembered ?? remembered);
+      await loadHistory();
+    } catch {
+      setSendError(t(lang, 'chat_send_error'));
+    } finally {
+      setSending(false);
+    }
+  }
+  async function undoMemory(item: RememberedMemoryMutation) {
+    const result = await window.ourCompanion.companion.undoRememberedMemory(item.undoToken);
+    if (result.undone) setRemembered((current) => current.filter((memory) => memory.undoToken !== item.undoToken));
   }
   async function clearHistory() {
     setClearing(true);
@@ -106,6 +137,29 @@ export function ChatPage() {
             <textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder={t(lang, 'chat_composer_placeholder')} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} />
             <div className="action-row"><button onClick={() => void sendMessage()} disabled={sending || clearing || !input.trim()}>{sending ? t(lang, 'chat_sending') : t(lang, 'chat_send')}</button><button className="btn-ghost" disabled={sending || clearing} onClick={() => { setClearError(''); setConfirmClear(true); }}>{t(lang, 'chat_clear')}</button></div>
             {sendError && <InlineNotice tone="error">{sendError}</InlineNotice>}
+            {pendingPermission && (
+              <InlineNotice
+                tone="warning"
+                action={(
+                <div className="action-row">
+                  <button disabled={sending} onClick={() => void resolvePermission('allow_once')}>{t(lang, 'turn_allow_once')}</button>
+                  <button disabled={sending} onClick={() => void resolvePermission('always_allow')}>{t(lang, 'turn_always_allow')}</button>
+                  <button disabled={sending} onClick={() => void resolvePermission('cancel')}>{t(lang, 'turn_cancel')}</button>
+                </div>
+                )}
+              >
+                {pendingPermission.message}
+              </InlineNotice>
+            )}
+            {remembered.map((item) => (
+              <InlineNotice
+                key={item.undoToken}
+                tone="success"
+                action={<button type="button" onClick={() => void undoMemory(item)}>{t(lang, 'memory_undo')}</button>}
+              >
+                {t(lang, 'memory_remembered', { summary: item.summary })}
+              </InlineNotice>
+            ))}
             {clearError && <InlineNotice tone="error">{clearError}</InlineNotice>}
             <p className="chat-retention-note">{t(lang, 'chat_retention_note', { days: COMPANION_CHAT_RETENTION_DAYS })}</p>
           </div>

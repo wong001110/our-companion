@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CharacterRuntimeState, CompanionSessionPhase } from '@our-companion/shared';
+import type {
+  CharacterRuntimeState,
+  CompanionSessionPhase,
+  CompanionTurnResult,
+  RememberedMemoryMutation,
+} from '@our-companion/shared';
 import { useAudioCapture } from './useAudioCapture';
 import { t, type Lang } from '../i18n';
 
@@ -44,6 +49,8 @@ export function useCompanionSession({
   pauseAmbient
 }: UseCompanionSessionOptions) {
   const [phase, setPhase] = useState<CompanionSessionPhase>('idle');
+  const [pendingPermission, setPendingPermission] = useState<CompanionTurnResult>();
+  const [remembered, setRemembered] = useState<RememberedMemoryMutation[]>([]);
   const phaseRef = useRef<CompanionSessionPhase>('idle');
   const busyRef = useRef(false);
 
@@ -102,6 +109,8 @@ export function useCompanionSession({
 
       try {
         const reply = await window.ourCompanion.companion.turn({ characterId, message: trimmed, source });
+        setPendingPermission(reply.kind === 'awaiting_permission' ? reply : undefined);
+        setRemembered(reply.remembered ?? []);
         setSessionPhase('talking');
         applyPreview('talking', 'helping_task');
         if (onTypewriterSpeech(reply.message)) finishToIdle();
@@ -202,6 +211,45 @@ export function useCompanionSession({
     finishToIdle();
   }, [finishToIdle]);
 
+  const resolvePermission = useCallback(async (
+    decision: 'allow_once' | 'always_allow' | 'cancel',
+  ) => {
+    if (!pendingPermission) return;
+    busyRef.current = true;
+    setSessionPhase('thinking');
+    applyPreview('thinking', 'asking_permission');
+    try {
+      const result = await window.ourCompanion.companion.resolveTurnPermission({
+        turnId: pendingPermission.turnId,
+        decision,
+      });
+      setPendingPermission(undefined);
+      setRemembered(result.remembered ?? remembered);
+      setSessionPhase('talking');
+      applyPreview('talking', 'helping_task');
+      if (onTypewriterSpeech(result.message)) finishToIdle();
+    } catch {
+      onInstantSpeech(t(lang, 'voice_thinking_failed'));
+      finishToIdle();
+    }
+  }, [
+    applyPreview,
+    finishToIdle,
+    lang,
+    onInstantSpeech,
+    onTypewriterSpeech,
+    pendingPermission,
+    remembered,
+    setSessionPhase,
+  ]);
+
+  const undoRemembered = useCallback(async (item: RememberedMemoryMutation) => {
+    const result = await window.ourCompanion.companion.undoRememberedMemory(item.undoToken);
+    if (result.undone) {
+      setRemembered((current) => current.filter((memory) => memory.undoToken !== item.undoToken));
+    }
+  }, []);
+
   useEffect(() => {
     const unsubscribe = window.ourCompanion.companion.onToggleListen(toggleListening);
     return unsubscribe;
@@ -211,6 +259,10 @@ export function useCompanionSession({
     phase,
     toggleListening,
     runTurn,
+    pendingPermission,
+    remembered,
+    resolvePermission,
+    undoRemembered,
     onTypewriterComplete,
     isSessionActive: phase !== 'idle'
   };

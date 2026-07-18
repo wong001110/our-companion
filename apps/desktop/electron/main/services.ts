@@ -19,7 +19,19 @@ import { DatabaseService } from '@our-companion/database';
 import type { CommandAckStatus, CompanionDecision, CompanionCommand, CompanionCommandAck, VisualVisitRendererState } from '@our-companion/shared';
 import { generateDailyDiary } from '@our-companion/diary-engine';
 import {
+  adjustDiscoveryModeWeights,
+  buildBoundedDiscoveryContext,
+  canStartDiscoveryTrial,
+  classifyDiscoveryAgainstSeen,
+  createDiscoverySeenIdentities,
+  createExplorationIntent as createAdaptiveExplorationIntent,
+  createTopicFingerprint,
   createUnavailableConnector,
+  evaluateTopicSaturation,
+  selectDiscoveryMode,
+  startDiscoveryTrial,
+  transitionDiscoveryBase,
+  type DiscoveryBase,
   type DiscoveryConnector
 } from '@our-companion/discovery-engine';
 import { generateInsights, selectPrimaryInsight } from '@our-companion/insight-engine';
@@ -61,9 +73,11 @@ import type {
   CuriosityTarget,
   DebugDataResetInput,
   Discovery,
+  DiscoveryCandidate,
   DiscoveryAnnouncePayload,
   DiscoveryFeedInput,
   DiscoveryFeedback,
+  DiscoveryInspectionRecord,
   DiscoverySource,
   EngineProviderMode,
   EngineTrace,
@@ -145,6 +159,9 @@ import {
   type WebSearchProvider
 } from './researchAdapters';
 import { ResearchOrchestrator } from './researchOrchestrator';
+import { CompanionTurnOrchestrator } from './application/CompanionTurnOrchestrator';
+import { SqliteMemoryContextProvider } from './application/MemoryContextProvider';
+import { MemoryPolicy } from './runtime/MemoryPolicy';
 
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
@@ -234,6 +251,7 @@ export class AppServices {
   private readonly presentationDecisionAttempts = new Map<string, number>();
   private readonly startedDiscoveryPayloads = new Set<string>();
   private readonly activeExplorations = new Map<string, Promise<ExplorationCycleResult>>();
+  private readonly latestDiscoveryInspections = new Map<string, DiscoveryInspectionRecord>();
   private readonly companionRuntime: CompanionRuntime;
   private explorationBroadcaster?: (event: ExplorationLoopEvent) => void;
   private commandBroadcaster?: (command: CompanionCommand) => void;
@@ -253,6 +271,7 @@ export class AppServices {
   private localCompanionAway = false;
   readonly runtimeClock: RuntimeClock;
   private readonly now: () => Date;
+  private readonly random: () => number;
   private readonly discoveryConnectors: DiscoveryConnector[];
   private readonly researchOrchestrator: ResearchOrchestrator;
   private readonly manualResearchPageFetcher: SafeWebPageFetcher;
@@ -260,6 +279,8 @@ export class AppServices {
   private readonly aiProvider: AppRuntimeDependencies['aiProvider'];
   private readonly speechProvider: NonNullable<AppRuntimeDependencies['speechProvider']>;
   private readonly toolAdapters: ToolAdapters;
+  private readonly turnMemoryPolicy: MemoryPolicy;
+  private readonly turnOrchestrator: CompanionTurnOrchestrator;
 
   get runtime(): CompanionRuntime {
     return this.companionRuntime;
@@ -277,6 +298,7 @@ export class AppServices {
           ? new DebugRuntimeClock()
           : new SystemRuntimeClock());
     this.now = () => this.runtimeClock.now();
+    this.random = runtimeDependencies.random ?? Math.random;
     this.aiProvider = runtimeDependencies.aiProvider;
     this.speechProvider = runtimeDependencies.speechProvider ?? {
       getStatus: getWhisperStatus,
@@ -360,6 +382,23 @@ export class AppServices {
         });
       });
     }
+
+    this.turnMemoryPolicy = new MemoryPolicy(this.db, { now: () => this.now().getTime() });
+    this.turnOrchestrator = new CompanionTurnOrchestrator({
+      db: this.db,
+      memoryContext: new SqliteMemoryContextProvider(this.db, this.now),
+      memoryPolicy: this.turnMemoryPolicy,
+      now: this.now,
+      getReplyLanguage: () => this.getAiSettings().replyLanguage,
+      getSessionId: () => this.companionRuntime?.getActiveSessionId() ?? undefined,
+      sendToAi: async ({ messages, source }) => this.sendToAi({ messages, channel: 'turn', source }),
+      getPermissions: () => this.db.getActionPermissions(),
+      setPermissions: (state) => this.db.setActionPermissions(state),
+      executePlan: (plan, permissions) => this.executeActionPlan(plan, permissions),
+      onAssistantMessage: ({ companionId, source, message, status }) => {
+        this.emitFoundationEvent('CompanionMessageQueued', 'speech', { companionId, source, status, message });
+      },
+    });
 
     this.companionRuntime = new CompanionRuntime(
       this.db,
@@ -868,7 +907,9 @@ export class AppServices {
   memory = {
     createNode: async (input: CreateMemoryNodeInput) => {
       const companionId = this.db.resolveActiveCompanionId(input.companionId);
-      return this.db.insertMemoryNode(createMemoryNode({ ...input, companionId }));
+      const memory = this.db.insertMemoryNode(createMemoryNode({ ...input, companionId }));
+      await this.recomputeMemoryImpact({ id: memory.id, companionId });
+      return memory;
     },
     getNode: async (id: string) => {
       const companionId = this.db.resolveActiveCompanionId();
@@ -878,7 +919,9 @@ export class AppServices {
       const companionId = this.db.resolveActiveCompanionId(input.companionId);
       const existing = this.db.getMemoryNode(input.id, companionId);
       if (!existing) throw new Error(`Memory node not found: ${input.id}`);
-      return this.db.updateMemoryNode(updateMemoryNodePure(existing, { ...input, companionId }));
+      const memory = this.db.updateMemoryNode(updateMemoryNodePure(existing, { ...input, companionId }));
+      await this.recomputeMemoryImpact({ id: memory.id, companionId });
+      return memory;
     },
     deleteNode: async (id: string) => {
       const companionId = this.db.resolveActiveCompanionId();
@@ -1006,23 +1049,32 @@ export class AppServices {
       return planAction(text, llmDeps);
     },
     executePlan: async (plan: ActionPlan) => {
-      const correlationId = createId('corr');
-      this.emitFoundationEvent('ActionRequested', 'action', { planId: plan.id, intentId: plan.intentId }, correlationId);
-      const orchDeps: ActionOrchestratorDeps = {
-        executeStep: (toolName: string, args: Record<string, unknown>) =>
-          executeActionStep(toolName, args, this.toolAdapters),
-        emitEvent: (type: string, payload?: Record<string, unknown>, cid?: string) => this.emitFoundationEvent(type, 'action', payload, cid ?? correlationId),
-        getPermissions: () => this.db.getActionPermissions(),
-        directPerformance: (actionId: string, outcome: 'success' | 'failure') => directPerformance(actionId, outcome),
-        broadcastPerformance: (script: PerformanceScript) => {
-          for (const listener of this.onPerformanceListeners) listener(script);
-        },
-      };
-      return runActionPlan(plan, orchDeps, correlationId);
+      return this.executeActionPlan(plan, this.db.getActionPermissions());
     },
     getPermissions: async (): Promise<ActionPermissionState> => this.db.getActionPermissions(),
     updatePermissions: async (state: ActionPermissionState): Promise<ActionPermissionState> => this.db.setActionPermissions(state),
   };
+
+  private async executeActionPlan(
+    plan: ActionPlan,
+    permissions: ActionPermissionState,
+  ): Promise<ActionResult> {
+    const correlationId = createId('corr');
+    this.emitFoundationEvent('ActionRequested', 'action', { planId: plan.id, intentId: plan.intentId }, correlationId);
+    const orchDeps: ActionOrchestratorDeps = {
+      executeStep: (toolName: string, args: Record<string, unknown>) =>
+        executeActionStep(toolName, args, this.toolAdapters),
+      emitEvent: (type: string, payload?: Record<string, unknown>, cid?: string) =>
+        this.emitFoundationEvent(type, 'action', payload, cid ?? correlationId),
+      getPermissions: () => permissions,
+      directPerformance: (actionId: string, outcome: 'success' | 'failure') =>
+        directPerformance(actionId, outcome),
+      broadcastPerformance: (script: PerformanceScript) => {
+        for (const listener of this.onPerformanceListeners) listener(script);
+      },
+    };
+    return runActionPlan(plan, orchDeps, correlationId);
+  }
 
   private pushDebugEntry(entry: Omit<AiDebugEntry, 'id' | 'createdAt'>): void {
     this.debugLog.unshift({ ...entry, id: createId('dbg'), createdAt: nowIso() });
@@ -1058,21 +1110,12 @@ export class AppServices {
     getSettings: async () => this.getAiSettings(),
     updateSettings: async (input: UpdateAiSettingsInput) => this.updateAiSettings(input),
     chat: async (input: ChatInput) => {
-      const characterId = this.db.resolveActiveCompanionId(input.characterId);
-      const builtMessages = this.buildChatMessages(characterId, input.message);
-      this.db.insertCompanionMessage({ role: 'user', content: input.message, source: 'panel', characterId });
-      try {
-        const { content: message } = await this.sendToAi({ messages: builtMessages, channel: 'chat', source: 'panel' });
-        this.db.insertCompanionMessage({ role: 'assistant', content: message, source: 'panel', characterId });
-        this.emitFoundationEvent('CompanionMessageQueued', 'speech', { characterId, source: 'panel', message });
-        return { message };
-      } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
-        const reply = `DeepSeek request failed. Check Settings > model, endpoint, and API key. Details: ${errMsg}`;
-        this.db.insertCompanionMessage({ role: 'assistant', content: reply, source: 'panel', characterId, status: 'error', metadata: { error: errMsg } });
-        this.emitFoundationEvent('CompanionMessageQueued', 'speech', { characterId, source: 'panel', status: 'error', message: reply });
-        return { message: reply };
-      }
+      const result = await this.companion.turn({
+        characterId: input.characterId,
+        message: input.message,
+        source: 'panel_text',
+      });
+      return { message: result.message };
     },
     generateDiscoveryReason: async (input: { discovery: NormalizedDiscovery }) => {
       const primary = this.requireActiveCompanion();
@@ -1188,28 +1231,16 @@ export class AppServices {
   companion = {
     turn: async (input: CompanionTurnInput) => {
       if (this.localCompanionAway) throw new Error('COMPANION_AWAY_VISITING');
-      const characterId = this.db.resolveActiveCompanionId(input.characterId);
-      const source = input.source === 'voice' ? 'voice' : 'companion_text';
-      const sessionId = this.companionRuntime.getActiveSessionId() ?? undefined;
-      const builtMessages = this.buildChatMessages(characterId, input.message);
-      this.db.insertCompanionMessage({ role: 'user', content: input.message, source, characterId, sessionId });
-      try {
-        const { content: message } = await this.sendToAi({ messages: builtMessages, channel: 'turn', source });
-        this.db.insertCompanionMessage({ role: 'assistant', content: message, source, characterId, sessionId });
-        this.companionRuntime.processMemoryFromTurn(characterId, input.message, message, sessionId);
-        if (input.source === 'voice') {
-          this.applyCharacterEmotion(characterId, 'expertise_topic_match');
-        }
-        this.emitFoundationEvent('CompanionMessageQueued', 'speech', { characterId, source, message });
-        return { message };
-      } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
-        const reply = `DeepSeek request failed. Check Settings > model, endpoint, and API key. Details: ${errMsg}`;
-        this.db.insertCompanionMessage({ role: 'assistant', content: reply, source, characterId, status: 'error', metadata: { error: errMsg } });
-        this.emitFoundationEvent('CompanionMessageQueued', 'speech', { characterId, source, status: 'error', message: reply });
-        return { message: reply };
+      const result = await this.turnOrchestrator.handle(input);
+      if (input.source === 'voice') {
+        this.applyCharacterEmotion(input.characterId, 'expertise_topic_match');
       }
+      return result;
     },
+    resolveTurnPermission: async (input: import('@our-companion/shared').ResolveCompanionTurnPermissionInput) =>
+      this.turnOrchestrator.resolvePermission(input),
+    undoRememberedMemory: async (undoToken: string) =>
+      this.turnMemoryPolicy.undo(undoToken, this.db.resolveActiveCompanionId()),
     getHistory: async (input?: CompanionHistoryInput): Promise<CompanionMessage[]> => {
       return this.db.listCompanionMessages(input);
     },
@@ -1342,7 +1373,14 @@ export class AppServices {
   debug = {
     resetData: async (input: DebugDataResetInput) => this.db.resetDebugData(input),
     getFoundationLog: async (input: FoundationEventLogInput = {}) => this.getFoundationLog(input),
-    getEngineSnapshot: async (input: EngineSnapshotInput = {}) => buildEngineSnapshot(this.db, input, undefined, this.shareOrchestrator, this.researchOrchestrator.getCapabilities()),
+    getEngineSnapshot: async (input: EngineSnapshotInput = {}) => {
+      const companionId = this.db.tryResolveActiveCompanionId() ?? undefined;
+      return {
+        ...buildEngineSnapshot(this.db, input, companionId, this.shareOrchestrator, this.researchOrchestrator.getCapabilities()),
+        discoveryInspection: companionId ? this.latestDiscoveryInspections.get(companionId) : undefined,
+        turnInspections: this.turnOrchestrator.getInspections(companionId),
+      };
+    },
     getRuntimeTime: async () => this.getRuntimeTimeStatus(),
     advanceRuntimeTime: async (input: { milliseconds: number; runScheduledTick?: boolean }) => this.advanceRuntimeTime(input),
     resetRuntimeTime: async () => this.resetRuntimeTime(),
@@ -1689,10 +1727,15 @@ export class AppServices {
     };
     const characterState = this.db.getCharacterState(companionId);
     const characterProfile = this.db.getActiveCharacters().find((character) => character.id === companionId);
-    const memoryNodes = this.db.listMemoryNodes(companionId);
+    const memoryNodes = this.db.listCognitionMemoryCandidates(companionId, undefined, 30);
     const journeyMilestones = this.db.listMilestones();
     const discoveryHistory = this.db.listDiscoveries({ limit: 100, companionId });
     const feedbackHistory = this.db.listDiscoveryFeedback(100, undefined, companionId);
+    const discoveryContext = buildBoundedDiscoveryContext({
+      items: this.db.loadBoundedDiscoveryContext(companionId, 40),
+      maximumItems: 40,
+      maximumSummaryCharacters: 500,
+    });
     trace(
       'memory',
       'load-context',
@@ -1787,6 +1830,7 @@ export class AppServices {
       [...memoryNodes.map((memory) => memory.id), ...persistedPatterns.map((pattern) => pattern.id)],
       persistedCuriosityTargets.map((target) => target.id)
     );
+    this.db.markMemoriesProcessed(memoryNodes.map((memory) => memory.id), evaluatedAt);
 
     const selectedCuriosityTarget = persistedCuriosityTargets
       .filter((target) => target.status === 'open' || target.status === 'exploring')
@@ -1830,6 +1874,106 @@ export class AppServices {
       return { cycle, curiosityTargets: persistedCuriosityTargets, discoveryCandidates: [], insights: [] };
     }
 
+    const topicFingerprint = createTopicFingerprint([selectedCuriosityTarget.topic])
+      ?? createSemanticFingerprint('discovery_topic', [selectedCuriosityTarget.topic]);
+    const saturation = evaluateTopicSaturation({
+      topicFingerprint,
+      history: discoveryHistory.map((discovery) => ({
+        topicFingerprint: createTopicFingerprint(
+          discovery.tags.length ? discovery.tags : [discovery.title],
+        ) ?? createSemanticFingerprint('discovery_topic', [discovery.title]),
+        eventKey: discovery.fingerprint,
+        disposition: discovery.status === 'saved'
+          ? 'saved'
+          : discovery.status === 'rejected' || discovery.status === 'dismissed'
+            ? 'ignored'
+            : 'presented',
+        occurredAt: discovery.updatedAt ?? discovery.createdAt,
+      })),
+      now: evaluatedAt,
+    });
+    const companionProfile = this.db.getCompanion(companionId);
+    const personalityBias = companionProfile
+      ? {
+        core: (companionProfile.personality.diligence - 0.5) * 0.08,
+        adjacent: (companionProfile.personality.curiosity - 0.5) * 0.05,
+        wildcard: (companionProfile.personality.playfulness - 0.5) * 0.08,
+        challenge: (companionProfile.personality.confidence - 0.5) * 0.05,
+      }
+      : undefined;
+    const modeWeights = adjustDiscoveryModeWeights({
+      base: saturation.modeWeights,
+      personalityBias,
+      saturationPenalty: saturation.penalty,
+    });
+    const discoveryMode = selectDiscoveryMode(this.random(), modeWeights);
+    const adaptiveIntent = createAdaptiveExplorationIntent({
+      mode: discoveryMode,
+      topic: selectedCuriosityTarget.topic,
+      expectedValue: selectedCuriosityTarget.expectedValue,
+      freshness: discoveryMode === 'core' ? 'recent' : 'any',
+      trustRequirement: discoveryMode === 'wildcard' ? 'open' : 'corroborated',
+      languages: [this.getAiSettings().replyLanguage === 'zh-CN' ? 'zh-CN' : 'en'],
+      searchTasks: [
+        discoveryMode === 'core'
+          ? `${selectedCuriosityTarget.topic} recent developments evidence`
+          : discoveryMode === 'adjacent'
+            ? `${selectedCuriosityTarget.topic} adjacent approaches`
+            : discoveryMode === 'wildcard'
+              ? `${selectedCuriosityTarget.topic} unexpected cross-domain ideas`
+              : `${selectedCuriosityTarget.topic} credible contrarian evidence`,
+      ],
+      createdAt: evaluatedAt,
+    });
+    for (const persistedBase of this.db.listDiscoveryBases(companionId, 'trial', 32)) {
+      const transitioned = transitionDiscoveryBase({
+        base: {
+          ...persistedBase,
+          origin: persistedBase.origin as DiscoveryBase['origin'],
+        },
+        feedback: 'none',
+        now: evaluatedAt,
+      });
+      if (transitioned.state !== persistedBase.state) {
+        this.db.upsertDiscoveryBase(transitioned);
+      }
+    }
+    const discoveryInspection: DiscoveryInspectionRecord = {
+      cycleId,
+      companionId,
+      mode: discoveryMode,
+      intentQuestion: adaptiveIntent.question,
+      expectedValue: adaptiveIntent.expectedValue,
+      freshness: adaptiveIntent.freshness,
+      trustRequirement: adaptiveIntent.trustRequirement,
+      languages: [...adaptiveIntent.languages],
+      regions: [...adaptiveIntent.regions],
+      contextCount: discoveryContext.count,
+      connectorCapabilities: this.researchOrchestrator.getCapabilities().map((capability) => ({
+        id: capability.id,
+        mode: capability.mode,
+        available: capability.available,
+      })),
+      selectedBases: this.db.listDiscoveryBases(companionId, undefined, 32)
+        .filter((base) => base.state === 'active' || base.state === 'trial')
+        .map((base) => ({
+          id: base.id,
+          connectorId: base.connectorId,
+          state: base.state,
+          locator: base.locator,
+        })),
+      candidatesAccepted: [],
+      candidatesRejected: [],
+      dedupHits: {},
+      duplicateCount: 0,
+      revivalCount: 0,
+      materialUpdateCount: 0,
+      newCount: 0,
+      saturationPenalty: saturation.penalty,
+      createdAt: evaluatedAt,
+    };
+    this.latestDiscoveryInspections.set(companionId, discoveryInspection);
+
     cycle = this.saveCycleState(cycle, 'planning');
     this.setAutonomyCharacterState(companionId, 'discovering', 'sharing_discovery');
 
@@ -1839,6 +1983,7 @@ export class AppServices {
       companionId,
       cycleId,
       curiosityTarget: selectedCuriosityTarget,
+      explorationIntent: adaptiveIntent,
       seenCanonicalUrls: new Set(discoveryHistory.map((discovery) => discovery.canonicalUrl ?? discovery.url).filter(Boolean) as string[]),
       onTrace: (event) => trace(
         'research',
@@ -1870,12 +2015,166 @@ export class AppServices {
       errorCode: record.error,
       createdAt: this.now().toISOString()
     });
-    for (const evidence of research.evidence) this.db.insertWebPageEvidence(evidence);
+    for (const evidence of research.evidence) {
+      this.db.insertWebPageEvidence(evidence);
+      if (evidence.sourceType === 'rss') {
+        const existingBases = this.db.listDiscoveryBases(companionId, undefined, 32);
+        const alreadyKnown = existingBases.some((base) =>
+          base.connectorId === 'rss' && base.scope === 'feed' && base.locator === evidence.canonicalUrl
+        );
+        const trialCheck = canStartDiscoveryTrial({
+          companionId,
+          bases: existingBases.map((base) => ({
+            ...base,
+            origin: base.origin as DiscoveryBase['origin'],
+          })),
+          now: evaluatedAt,
+        });
+        if (!alreadyKnown && trialCheck.allowed) {
+          const trial = startDiscoveryTrial({
+            base: {
+              id: createSemanticFingerprint('discovery_base', [companionId, 'rss', evidence.canonicalUrl]),
+              companionId,
+              connectorId: 'rss',
+              scope: 'feed',
+              locator: evidence.canonicalUrl,
+              data: { title: evidence.title, contentType: evidence.contentType },
+              origin: 'feed_detection',
+              discoveredAt: evaluatedAt,
+            },
+            now: evaluatedAt,
+          });
+          this.db.upsertDiscoveryBase(trial);
+          discoveryInspection.selectedBases.push({
+            id: trial.id,
+            connectorId: trial.connectorId,
+            state: trial.state,
+            locator: trial.locator,
+          });
+        }
+      }
+    }
     cycle = this.saveCycleState(cycle, 'planning', {
       researchIntentId: research.intent.id,
       researchPlanId: research.plan.id
     });
-    const discoveryCandidates = research.candidates;
+    const discoveryCandidates: DiscoveryCandidate[] = [];
+    for (const candidate of research.candidates) {
+      let rawEvidence: Record<string, unknown> = {};
+      try {
+        rawEvidence = candidate.rawEvidence ? JSON.parse(candidate.rawEvidence) as Record<string, unknown> : {};
+      } catch {
+        rawEvidence = {};
+      }
+      const pageEvidence = research.evidence.find((evidence) =>
+        evidence.canonicalUrl === candidate.sourceUrl || evidence.url === candidate.sourceUrl
+      );
+      const materialFacts = candidate.summary
+        .split(/[.!?。！？]+/)
+        .map((fact) => fact.trim())
+        .filter((fact) => fact.length >= 12)
+        .slice(0, 5);
+      const identityCandidate = {
+        connectorId: candidate.sourceName,
+        externalId: typeof rawEvidence.externalId === 'string' ? rawEvidence.externalId : undefined,
+        canonicalUrl: candidate.sourceUrl,
+        contentHash: pageEvidence?.contentHash,
+        eventKey: typeof rawEvidence.eventKey === 'string' ? rawEvidence.eventKey : undefined,
+        title: candidate.title,
+        topics: [selectedCuriosityTarget.topic],
+        publishedAt: pageEvidence?.publishedAt,
+        observedAt: candidate.collectedAt,
+        materialFacts,
+        version: typeof rawEvidence.version === 'string' ? rawEvidence.version : undefined,
+      };
+      const identities = createDiscoverySeenIdentities(identityCandidate);
+      const existingByDiscovery = new Map<string, {
+        discoveryId: string;
+        identities: Array<{ type: typeof identities[number]['type']; hash: string; normalizedValue: string }>;
+        seenAt: string;
+        contentHash?: string;
+        materialFacts?: string[];
+        publishedAt?: string;
+        version?: string;
+        topicFingerprint?: string;
+      }>();
+      for (const identity of identities) {
+        const persisted = this.db.getDiscoverySeenIdentity(companionId, identity.type, identity.hash);
+        if (!persisted?.discoveryId) continue;
+        const metadata = persisted.metadata;
+        const existing = existingByDiscovery.get(persisted.discoveryId) ?? {
+          discoveryId: persisted.discoveryId,
+          identities: [],
+          seenAt: persisted.lastSeenAt,
+          contentHash: typeof metadata.contentHash === 'string' ? metadata.contentHash : undefined,
+          materialFacts: Array.isArray(metadata.materialFacts)
+            ? metadata.materialFacts.filter((fact): fact is string => typeof fact === 'string')
+            : undefined,
+          publishedAt: typeof metadata.publishedAt === 'string' ? metadata.publishedAt : undefined,
+          version: typeof metadata.version === 'string' ? metadata.version : undefined,
+          topicFingerprint: typeof metadata.topicFingerprint === 'string'
+            ? metadata.topicFingerprint
+            : undefined,
+        };
+        existing.identities.push({
+          type: persisted.type,
+          hash: persisted.hash,
+          normalizedValue: typeof metadata.normalizedValue === 'string' ? metadata.normalizedValue : '',
+        });
+        existingByDiscovery.set(persisted.discoveryId, existing);
+      }
+      const dedup = classifyDiscoveryAgainstSeen({
+        candidate: identityCandidate,
+        existing: [...existingByDiscovery.values()],
+      });
+      if (dedup.layer) {
+        discoveryInspection.dedupHits[dedup.layer] =
+          (discoveryInspection.dedupHits[dedup.layer] ?? 0) + 1;
+      }
+      if (dedup.outcome === 'duplicate') discoveryInspection.duplicateCount += 1;
+      else if (dedup.outcome === 'revival') discoveryInspection.revivalCount += 1;
+      else if (dedup.outcome === 'material_update') discoveryInspection.materialUpdateCount += 1;
+      else discoveryInspection.newCount += 1;
+
+      const accepted = dedup.outcome !== 'duplicate' && discoveryCandidates.length < 3;
+      const linkedDiscoveryId = accepted ? candidate.id : dedup.existingDiscoveryId ?? candidate.id;
+      for (const identity of identities) {
+        this.db.upsertDiscoverySeenIdentity({
+          id: createSemanticFingerprint('discovery_seen_identity', [
+            companionId,
+            identity.type,
+            identity.hash,
+          ]),
+          companionId,
+          type: identity.type,
+          hash: identity.hash,
+          discoveryId: linkedDiscoveryId,
+          firstSeenAt: candidate.collectedAt,
+          lastSeenAt: candidate.collectedAt,
+          metadata: {
+            normalizedValue: identity.normalizedValue,
+            contentHash: pageEvidence?.contentHash,
+            materialFacts,
+            publishedAt: pageEvidence?.publishedAt,
+            version: identityCandidate.version,
+            topicFingerprint,
+            outcome: dedup.outcome,
+            attachEvidenceOnly: dedup.attachEvidenceOnly,
+          },
+        });
+      }
+      if (accepted) {
+        discoveryCandidates.push(candidate);
+        discoveryInspection.candidatesAccepted.push(candidate.id);
+      } else {
+        discoveryInspection.candidatesRejected.push({
+          candidateId: candidate.id,
+          reason: dedup.outcome === 'duplicate'
+            ? `${dedup.reason}${dedup.attachEvidenceOnly ? ':evidence_attached' : ''}`
+            : 'candidate_limit_reached',
+        });
+      }
+    }
     for (const candidate of discoveryCandidates) {
       this.db.insertDiscoveryCandidate(candidate);
     }
@@ -2644,9 +2943,9 @@ export class AppServices {
   }
 
   private async recomputeMemoryImpact(
-    input: { id: string; explore?: boolean },
+    input: { id: string; explore?: boolean; companionId?: string },
   ): Promise<MemoryImpactRecomputeReport> {
-    const companionId = this.db.resolveActiveCompanionId();
+    const companionId = this.db.resolveActiveCompanionId(input.companionId);
     const memory = this.db.getMemoryNode(input.id, companionId);
     if (!memory) throw new Error('MEMORY_IMPACT_NOT_FOUND');
     const userId = memory.userId ?? 'default';
@@ -2667,7 +2966,7 @@ export class AppServices {
       evaluatedAt,
     };
     try {
-      const memoryNodes = this.db.listMemoryNodes(companionId);
+      const memoryNodes = this.db.listCognitionMemoryCandidates(companionId, memory.id, 30);
       const journeyMilestones = this.db.listMilestones();
       const discoveryHistory = this.db.listDiscoveries({ limit: 100, companionId });
       const feedbackHistory = this.db.listDiscoveryFeedback(100, undefined, companionId);
@@ -2719,6 +3018,7 @@ export class AppServices {
         else if (result.outcome === 'cooldown' || result.outcome === 'deduplicated') report.duplicatesSkipped += 1;
         else report.curiosityTargetsUpdated += 1;
       }
+      this.db.markMemoriesProcessed(memoryNodes.map((item) => item.id), evaluatedAt);
       if (input.explore) {
         await this.runAutonomousExploration({ companionId, userId, trigger: 'memory_updated' });
         report.researchCyclesStarted = 1;

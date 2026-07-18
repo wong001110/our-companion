@@ -73,6 +73,20 @@ describe('SafeWebPageFetcher', () => {
     expect(first.contentHash).toBe(second.contentHash);
   });
 
+  it.each([
+    ['application/rss+xml', `<?xml version="1.0"?><rss><channel><title>Independent Feed</title><item><title>Release 2</title><description>Material release details for the companion.</description><pubDate>2026-07-18</pubDate></item></channel></rss>`],
+    ['application/atom+xml', `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Independent Atom</title><entry><title>Research note</title><summary>Corroborated adaptive discovery evidence.</summary><updated>2026-07-18T00:00:00Z</updated></entry></feed>`],
+  ])('accepts and extracts bounded RSS/Atom evidence for %s', async (contentType, body) => {
+    const fetcher = new SafeWebPageFetcher({
+      fetch: async () => new Response(body, { headers: { 'content-type': contentType } }),
+      lookup: publicLookup,
+    });
+    const evidence = await fetcher.fetchPage(fetchInput('https://public.example.test/feed'));
+    expect(evidence.sourceType).toBe('rss');
+    expect(evidence.extractedText).toMatch(/release details|adaptive discovery evidence/i);
+    expect(evidence.contentType).toBe(contentType);
+  });
+
   it('connects through the exact approved DNS address rather than resolving again in the transport', async () => {
     const request = vi.fn(async (_url: URL, _init: RequestInit, address: string) => new Response('Public page', { headers: { 'content-type': 'text/plain' } }));
     const fetcher = new SafeWebPageFetcher({ request, lookup: publicLookup });

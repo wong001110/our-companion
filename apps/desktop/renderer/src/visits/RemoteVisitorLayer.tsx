@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { VisualVisitRenderModel, VisualVisitRendererState } from '@our-companion/shared';
 import { SpriteAnimator } from '../character/SpriteAnimator';
-import { REMOTE_VISITOR_SIZE, REMOTE_VISITOR_SPEED_PX_PER_SECOND, clampVisitorPosition, initialVisitorPosition, nextWalkTarget, resolveVisitorPosition, sceneDepth, walkSelection, type VisitorOccupant, type VisitorPosition } from './remoteVisitorController';
+import { SceneOccupancyController } from '../motion/SceneOccupancyController';
+import { computeWalkPlaybackRate } from '../motion/sceneMotion';
+import { REMOTE_VISITOR_SIZE, clampVisitorPosition, initialVisitorPosition, nextWalkTarget, sceneDepth, walkSelection, type VisitorOccupant, type VisitorPosition } from './remoteVisitorController';
 
 export function useVisualVisitState(): VisualVisitRendererState {
   const [state, setState] = useState<VisualVisitRendererState>({ ownerPresenceMode: 'home', capacity: 2, visitors: {}, departingVisitors: {}, visitorOrder: [], errors: {} });
@@ -14,18 +16,25 @@ export function useVisualVisitState(): VisualVisitRendererState {
   return state;
 }
 
-export function RemoteVisitorLayer({ localCompanion }: { localCompanion?: VisitorOccupant } = {}) {
+export function RemoteVisitorLayer({ localCompanion, controller: sharedController }: { localCompanion?: VisitorOccupant; controller?: SceneOccupancyController } = {}) {
   const visualVisits = useVisualVisitState();
   const [positions, setPositions] = useState<Record<string, VisitorPosition>>({});
+  const ownedController = useRef<SceneOccupancyController | null>(null);
+  if (!ownedController.current) ownedController.current = new SceneOccupancyController(viewport());
+  const controller = sharedController ?? ownedController.current;
   const visitors = visualVisits.visitorOrder
     .map((sessionId) => visualVisits.visitors[sessionId])
     .filter((visitor): visitor is VisualVisitRenderModel => Boolean(visitor));
   const departingVisitors = Object.values(visualVisits.departingVisitors);
 
   useEffect(() => {
-    const active = new Set([...visitors, ...departingVisitors].map((visitor) => visitor.sessionId));
-    setPositions((current) => Object.fromEntries(Object.entries(current).filter(([sessionId]) => active.has(sessionId))));
-  }, [visualVisits.visitorOrder, visualVisits.departingVisitors]);
+    if (sharedController || !localCompanion) {
+      controller.unregister('local-compatibility-occupant', 'local-hidden');
+      return;
+    }
+    controller.register({ id: 'local-compatibility-occupant', type: 'local_companion', position: localCompanion, phase: 'stationary' });
+    return () => controller.unregister('local-compatibility-occupant', 'local-hidden');
+  }, [controller, localCompanion?.x, localCompanion?.y, sharedController]);
 
   const updatePosition = useCallback((sessionId: string, position: VisitorPosition) => {
     setPositions((current) => {
@@ -35,43 +44,51 @@ export function RemoteVisitorLayer({ localCompanion }: { localCompanion?: Visito
     });
   }, []);
   const completeDeparture = useCallback((sessionId: string) => {
+    setPositions((current) => {
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    controller.unregister(`visit:${sessionId}`, 'departure-complete');
     void window.ourCompanion.network.visits.visual.completeRendererDeparture(sessionId).catch(() => undefined);
-  }, []);
+  }, [controller]);
 
   return <>
     {[...visitors, ...departingVisitors].map((visitor) => {
       const departing = Boolean(visualVisits.departingVisitors[visitor.sessionId]);
-      const occupants: VisitorOccupant[] = [
-        ...(localCompanion ? [localCompanion] : []),
-        ...Object.entries(positions)
-          .filter(([sessionId]) => sessionId !== visitor.sessionId)
-          .map(([, position]) => position),
-      ];
       // Keep the same React identity across active → departing so Leave starts
       // exactly where the visitor last stood instead of remounting at its slot.
-      return <RemoteVisitor key={visitor.sessionId} visitor={visitor} occupants={occupants} departing={departing} onPositionChange={updatePosition} onDepartureComplete={completeDeparture} />;
+      return <RemoteVisitor key={visitor.sessionId} visitor={visitor} controller={controller} continuityPosition={positions[visitor.sessionId]} departing={departing} onPositionChange={updatePosition} onDepartureComplete={completeDeparture} />;
     })}
   </>;
 }
 
-function RemoteVisitor({ visitor: initialVisitor, occupants, departing, onPositionChange, onDepartureComplete }: { visitor: VisualVisitRenderModel; occupants: VisitorOccupant[]; departing: boolean; onPositionChange: (sessionId: string, position: VisitorPosition) => void; onDepartureComplete: (sessionId: string) => void }) {
+function RemoteVisitor({ visitor: initialVisitor, controller, continuityPosition, departing, onPositionChange, onDepartureComplete }: { visitor: VisualVisitRenderModel; controller: SceneOccupancyController; continuityPosition?: VisitorPosition; departing: boolean; onPositionChange: (sessionId: string, position: VisitorPosition) => void; onDepartureComplete: (sessionId: string) => void }) {
   const [runtime, setRuntime] = useState<VisualVisitRenderModel | undefined>(initialVisitor);
   const [phase, setPhase] = useState<'entering' | 'idle' | 'walking' | 'leaving'>(departing ? 'leaving' : 'entering');
   const [bounds, setBounds] = useState(() => viewport());
-  const [position, setPosition] = useState<VisitorPosition>(() => initialVisitorPosition(viewport(), initialVisitor.sceneSlotIndex, occupants));
+  const actorId = initialVisitor.runtimeId;
+  const [position, setPosition] = useState<VisitorPosition>(() => continuityPosition ?? initialVisitorPosition(viewport(), initialVisitor.sceneSlotIndex));
+  const [actualSpeed, setActualSpeed] = useState(0);
   const movementIndex = useRef(0);
   const targetRef = useRef<VisitorPosition | undefined>(undefined);
   const failedRuntimeId = useRef<string | undefined>(undefined);
   const departureReported = useRef(false);
-  const occupantsRef = useRef(occupants);
 
   useEffect(() => {
-    occupantsRef.current = occupants;
-  }, [occupants]);
+    controller.register({ id: actorId, type: 'remote_visitor', position, phase: departing ? 'transition' : 'stationary' });
+    if (continuityPosition) controller.recordContinuityEvent(`restored-position:${actorId}`);
+    return () => controller.unregister(actorId, departing ? 'departure-unmounted' : 'runtime-suspended');
+  }, [actorId, controller]);
+
+  useEffect(() => {
+    controller.update(actorId, { position, phase: phase === 'walking' ? 'wandering' : phase === 'idle' ? 'stationary' : 'transition' });
+  }, [actorId, controller, phase, position]);
 
   useEffect(() => {
     if (departing) {
       targetRef.current = undefined;
+      setActualSpeed(0);
       setPhase('leaving');
       return;
     }
@@ -80,7 +97,8 @@ function RemoteVisitor({ visitor: initialVisitor, occupants, departing, onPositi
       if (!current || current.sessionId !== initialVisitor.sessionId) {
         failedRuntimeId.current = undefined;
         setPhase('entering');
-        setPosition(initialVisitorPosition(bounds, initialVisitor.sceneSlotIndex, occupantsRef.current));
+        const retained = controller.getPosition(actorId) ?? continuityPosition;
+        if (retained) setPosition(retained);
         movementIndex.current = 0;
         targetRef.current = undefined;
         return initialVisitor;
@@ -97,7 +115,7 @@ function RemoteVisitor({ visitor: initialVisitor, occupants, departing, onPositi
         name: initialVisitor.name,
       };
     });
-  }, [initialVisitor, bounds, departing]);
+  }, [initialVisitor, departing, controller, actorId, continuityPosition]);
 
   const handleComplete = useCallback(() => {
     if (phase === 'entering') setPhase('idle');
@@ -114,6 +132,7 @@ function RemoteVisitor({ visitor: initialVisitor, occupants, departing, onPositi
     if (runtime?.runtimeId !== failed.runtimeId) return;
     failedRuntimeId.current = failed.runtimeId;
     targetRef.current = undefined;
+    setActualSpeed(0);
     setRuntime(undefined);
     if (departing) onDepartureComplete(failed.sessionId);
     else void window.ourCompanion.network.visits.visual.reportRendererFailure(failed.sessionId).catch(() => undefined);
@@ -122,7 +141,12 @@ function RemoteVisitor({ visitor: initialVisitor, occupants, departing, onPositi
   useEffect(() => {
     const applyBounds = (next: ReturnType<typeof viewport>) => {
       setBounds(next);
-      setPosition((current) => resolveVisitorPosition(clampVisitorPosition(current, next), next, occupantsRef.current));
+      controller.setBounds(next);
+      setPosition((current) => {
+        const clamped = clampVisitorPosition(current, next);
+        controller.updatePosition(actorId, clamped, 'display_recovery');
+        return clamped;
+      });
     };
     const clamp = () => applyBounds(viewport());
     window.addEventListener('resize', clamp);
@@ -133,7 +157,7 @@ function RemoteVisitor({ visitor: initialVisitor, occupants, departing, onPositi
       unsubscribeDisplay();
       unsubscribeSmoke?.();
     };
-  }, []);
+  }, [actorId, controller]);
 
   useEffect(() => {
     if (runtime) onPositionChange(runtime.sessionId, position);
@@ -144,14 +168,14 @@ function RemoteVisitor({ visitor: initialVisitor, occupants, departing, onPositi
     if (phase !== 'idle') return;
     const delay = 2000 + Math.round((movementIndex.current % 5) * 1000);
     const timer = window.setTimeout(() => {
-      const target = resolveVisitorPosition(nextWalkTarget(runtime.sessionId, movementIndex.current++, position, bounds), bounds, occupantsRef.current);
-      if (target.x !== position.x || target.y !== position.y) {
+      const target = controller.planTarget(actorId, nextWalkTarget(runtime.sessionId, movementIndex.current++, position, bounds));
+      if (target && (target.x !== position.x || target.y !== position.y)) {
         targetRef.current = target;
         setPhase('walking');
       }
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [runtime, phase, position, bounds]);
+  }, [runtime, phase, position, bounds, actorId, controller]);
 
   useEffect(() => {
     if (phase !== 'walking') return;
@@ -161,17 +185,20 @@ function RemoteVisitor({ visitor: initialVisitor, occupants, departing, onPositi
       const target = targetRef.current;
       if (!target) { setPhase('idle'); return; }
       const elapsed = Math.min(100, now - previous); previous = now;
-      setPosition((current) => {
-        const dx = target.x - current.x; const dy = target.y - current.y;
-        const remaining = Math.hypot(dx, dy); const travel = REMOTE_VISITOR_SPEED_PX_PER_SECOND * (elapsed / 1000);
-        if (remaining <= travel || remaining === 0) { targetRef.current = undefined; window.cancelAnimationFrame(frame); window.setTimeout(() => setPhase('idle'), 0); return target; }
-        return resolveVisitorPosition({ x: current.x + dx / remaining * travel, y: current.y + dy / remaining * travel }, bounds, occupantsRef.current);
-      });
+      const result = controller.step(actorId, target, elapsed);
+      setActualSpeed(result.speed);
+      setPosition(result.position);
+      if (result.reachedTarget || result.cancelPath) {
+        targetRef.current = undefined;
+        window.cancelAnimationFrame(frame);
+        window.setTimeout(() => setPhase('idle'), 0);
+        return;
+      }
       frame = window.requestAnimationFrame(step);
     };
     frame = window.requestAnimationFrame(step);
     return () => window.cancelAnimationFrame(frame);
-  }, [phase, bounds]);
+  }, [phase, actorId, controller]);
 
   const target = targetRef.current ?? position;
   const walk = runtime ? walkSelection(position, target, runtime.assetUrls) : undefined;
@@ -184,22 +211,28 @@ function RemoteVisitor({ visitor: initialVisitor, occupants, departing, onPositi
 
   if (!runtime || !animationName) return null;
   return <div data-testid="remote-visual-visitor" data-runtime-id={runtime.runtimeId} data-session-id={runtime.sessionId} data-animation={animationName} data-slot={runtime.sceneSlotIndex} style={{ position: 'absolute', left: position.x, top: position.y, zIndex: sceneDepth(position, runtime.sessionId), pointerEvents: 'none' }} aria-label={`${runtime.name} is visiting`}>
-    <RemoteVisitorSprite model={runtime} animationName={animationName} onComplete={handleComplete} onFailure={handleFailure} />
+    <RemoteVisitorSprite model={runtime} animationName={animationName} playbackRate={computeWalkPlaybackRate(actualSpeed)} onComplete={handleComplete} onFailure={handleFailure} />
   </div>;
 }
 
-function RemoteVisitorSprite({ model, animationName, onComplete, onFailure }: { model: VisualVisitRenderModel; animationName: string; onComplete: () => void; onFailure: (model: VisualVisitRenderModel) => void }) {
+function RemoteVisitorSprite({ model, animationName, playbackRate, onComplete, onFailure }: { model: VisualVisitRenderModel; animationName: string; playbackRate: number; onComplete: () => void; onFailure: (model: VisualVisitRenderModel) => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const animatorRef = useRef<SpriteAnimator | undefined>(undefined);
   useEffect(() => {
     const url = model.assetUrls[animationName] ?? model.assetUrls.Idle_Neutral;
     const timing = model.frameTiming[animationName] ?? model.frameTiming.Idle_Neutral;
     const canvas = ref.current;
     if (!url || !timing || !canvas) return;
     const animator = new SpriteAnimator({ sheet: url, frameWidth: REMOTE_VISITOR_SIZE.width, frameHeight: REMOTE_VISITOR_SIZE.height, frameMs: timing.frameDurationMs, loop: timing.loop }, { cacheKey: `${model.runtimeId}:${animationName}`, onComplete });
+    animator.setPlaybackRate(animationName.startsWith('Walk_') ? playbackRate : 1);
+    animatorRef.current = animator;
     let active = true;
     void animator.load().then(() => { if (active) animator.start(canvas, REMOTE_VISITOR_SIZE); }).catch(() => { if (active) onFailure(model); });
-    return () => { active = false; animator.destroy(); };
+    return () => { active = false; animator.destroy(); if (animatorRef.current === animator) animatorRef.current = undefined; };
   }, [model, animationName, onComplete, onFailure]);
+  useEffect(() => {
+    animatorRef.current?.setPlaybackRate(animationName.startsWith('Walk_') ? playbackRate : 1);
+  }, [animationName, playbackRate]);
   return <canvas ref={ref} aria-hidden="true" />;
 }
 

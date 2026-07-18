@@ -8,6 +8,8 @@ const ENGINE_PANELS = [
   { key: 'discovery', label: 'Discovery' },
   { key: 'discoveryScheduling', label: 'Scheduling' },
   { key: 'insight', label: 'Insight' },
+  { key: 'motion', label: 'Motion' },
+  { key: 'social', label: 'Social' },
 ] as const;
 
 export type EnginePanelKey = (typeof ENGINE_PANELS)[number]['key'];

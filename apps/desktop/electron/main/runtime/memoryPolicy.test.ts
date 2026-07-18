@@ -79,4 +79,71 @@ describe('MemoryPolicy', () => {
     expect(db.listMemoryNodes('ann')).toHaveLength(0);
     db.close();
   });
+
+  it.each([
+    ['我比较喜欢 local-first 软件。', 'user_preference'],
+    ['不要再提加班。', 'user_boundary'],
+    ['我的目标是完成 Our Companion MVP。', 'goal'],
+    ['记住我住在吉隆坡。', 'user_fact'],
+  ])('captures grounded Chinese Memory: %s', (userMessage, memoryType) => {
+    const db = new DatabaseService();
+    const policy = new MemoryPolicy(db, { now: () => Date.parse('2026-07-18T00:00:00.000Z') });
+    const outcomes = policy.captureTurn({
+      userId: 'local',
+      companionId: 'ann',
+      userMessage,
+      assistantReply: '好的。',
+    });
+    expect(outcomes[0]).toMatchObject({ outcome: 'created' });
+    expect(db.listMemoryNodes('ann')[0]).toMatchObject({ memoryType });
+    db.close();
+  });
+
+  it('deduplicates normalized observations, retains the ID, and supports Undo', () => {
+    const db = new DatabaseService();
+    let now = Date.parse('2026-07-18T00:00:00.000Z');
+    const policy = new MemoryPolicy(db, { now: () => now });
+    const first = policy.captureTurn({
+      userId: 'local',
+      companionId: 'ann',
+      userMessage: 'I prefer local-first software.',
+      assistantReply: 'Got it.',
+    })[0];
+    const memoryId = first.memoryId!;
+    const createdAt = db.getMemoryNode(memoryId, 'ann')!.createdAt;
+    now += 1_000;
+    const duplicate = policy.captureTurn({
+      userId: 'local',
+      companionId: 'ann',
+      userMessage: 'I prefer   LOCAL-FIRST software!',
+      assistantReply: 'Got it.',
+    })[0];
+    expect(duplicate.outcome).toBe('observed');
+    expect(duplicate.memoryId).toBe(memoryId);
+    expect(db.listMemoryNodes('ann')).toHaveLength(1);
+    expect(db.getMemoryNode(memoryId, 'ann')).toMatchObject({ createdAt, observationCount: 2 });
+    expect(policy.undo(duplicate.mutation!.undoToken, 'ann')).toEqual({ undone: true, memoryId });
+    expect(db.getMemoryNode(memoryId, 'ann')).toMatchObject({ observationCount: 1, createdAt });
+    expect(policy.undo(first.mutation!.undoToken, 'ann')).toEqual({ undone: true, memoryId });
+    expect(db.listMemoryNodes('ann')).toEqual([]);
+    db.close();
+  });
+
+  it.each([
+    '不要记住：我喜欢蓝色。',
+    '我的 token=secret-value',
+    '只是测试，我喜欢蓝色。',
+    '今天先暂时记住我喜欢蓝色。',
+  ])('rejects unsafe or temporary Chinese/credential input: %s', (userMessage) => {
+    const db = new DatabaseService();
+    const policy = new MemoryPolicy(db);
+    expect(policy.captureTurn({
+      userId: 'local',
+      companionId: 'ann',
+      userMessage,
+      assistantReply: 'Okay.',
+    })).toEqual([]);
+    expect(db.listMemoryNodes('ann')).toEqual([]);
+    db.close();
+  });
 });

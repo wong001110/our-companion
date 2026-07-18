@@ -33,6 +33,7 @@ describe('planActionFromRules', () => {
     ['go to docs.example.co.uk/path', 'https://docs.example.co.uk/path'],
     ['打开 youtube.com', 'https://youtube.com'],
     ['打开 https://youtube.com', 'https://youtube.com'],
+    ['打开 YouTube', 'https://youtube.com'],
   ])('normalizes safe URL command %s', (command, expected) => {
     const plan = planActionFromRules(command);
     expect(plan?.steps[0]).toMatchObject({ toolName: 'open_url', args: { url: expected } });
@@ -56,6 +57,18 @@ describe('planActionFromRules', () => {
     expect(plan?.steps[0].args.appName).toBe('chrome');
   });
 
+  it.each([
+    ['open Chrome', 'Chrome'],
+    ['打开 Chrome', 'Chrome'],
+    ['帮我打开 Brave', 'Brave'],
+    ['please open Firefox', 'Firefox'],
+    ['请打开应用 Safari', 'Safari'],
+  ])('parses natural app command %s', (command, appName) => {
+    const plan = planActionFromRules(command);
+    expect(plan?.steps[0]).toMatchObject({ toolName: 'open_app', args: { appName } });
+    expect(plan?.steps[0].requiredScopes).toEqual(['automation']);
+  });
+
   it('parses search web for command', () => {
     const plan = planActionFromRules('search web for PixiJS tutorials');
     expect(plan?.steps[0].toolName).toBe('search_web');
@@ -67,6 +80,48 @@ describe('planActionFromRules', () => {
     expect(plan?.steps[0].toolName).toBe('search_web');
     expect(plan?.steps[0].args.target).toBe('youtube');
     expect(plan?.steps[0].args.query).toBe('lo-fi music');
+  });
+
+  it.each([
+    ['搜索 PixiJS', 'PixiJS'],
+    ['帮我搜索 PixiJS animation', 'PixiJS animation'],
+  ])('parses Chinese search command %s', (command, query) => {
+    const plan = planActionFromRules(command);
+    expect(plan?.steps[0]).toMatchObject({ toolName: 'search_web', args: { query, target: 'google' } });
+    expect(plan?.steps[0].requiredScopes).toEqual(['browser']);
+  });
+
+  it.each([
+    ['go back', 'go_back'],
+    ['返回上一页', 'go_back'],
+    ['go forward', 'go_forward'],
+    ['前进', 'go_forward'],
+    ['reload', 'reload'],
+    ['刷新页面', 'reload'],
+  ])('parses browser navigation command %s', (command, action) => {
+    const plan = planActionFromRules(command);
+    expect(plan?.steps[0]).toMatchObject({ toolName: 'browser_navigation', args: { action } });
+    expect(plan?.steps[0].requiredScopes).toEqual(['browser']);
+  });
+
+  it.each([
+    ['open tab example.com/path', 'https://example.com/path'],
+    ['open a new tab to https://example.com/path', 'https://example.com/path'],
+    ['打开新标签页 example.com/path', 'https://example.com/path'],
+  ])('parses safe open-tab command %s', (command, url) => {
+    const plan = planActionFromRules(command);
+    expect(plan?.steps[0]).toMatchObject({
+      toolName: 'browser_navigation',
+      args: { action: 'open_tab', url },
+    });
+    expect(plan?.steps[0].requiredScopes).toEqual(['browser']);
+  });
+
+  it.each([
+    'open tab javascript:alert(1)',
+    '打开新标签页 file:///tmp/private',
+  ])('rejects unsafe open-tab command %s', (command) => {
+    expect(planActionFromRules(command)).toBeUndefined();
   });
 
   it('parses composite open app and search', () => {

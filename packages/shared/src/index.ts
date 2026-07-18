@@ -265,6 +265,7 @@ export type TypedMemoryType =
   | 'user_fact'
   | 'user_preference'
   | 'user_boundary'
+  | 'goal'
   | 'shared_experience'
   | 'relationship_memory'
   | 'companion_experience'
@@ -292,6 +293,9 @@ export interface MemoryMetadata {
   expiresAt?: string;
   supersedesMemoryId?: string;
   correctedByMemoryId?: string;
+  userEvidence?: string;
+  assistantInterpretation?: string;
+  sourceMessageIds?: string[];
 }
 
 export interface UserCompanionRelationship {
@@ -380,6 +384,10 @@ export interface MemoryNode {
   userId?: string;
   memoryType?: TypedMemoryType;
   metadata?: MemoryMetadata;
+  fingerprint?: string;
+  confidence?: UnitScore;
+  observationCount?: number;
+  lastObservedAt?: string;
   createdAt: string;
   updatedAt: string;
   compressedAt?: string;
@@ -1515,8 +1523,120 @@ export interface TranscribeAudioInput {
 
 export interface CompanionTurnInput {
   message: string;
-  source: 'voice' | 'companion_text';
+  source: 'voice' | 'panel_text' | 'companion_text';
   characterId?: string;
+}
+
+export type CompanionTurnIntent =
+  | 'conversation'
+  | 'action'
+  | 'conversation_and_action'
+  | 'cannot_complete';
+
+export interface CompanionTurnActionRequest {
+  toolName: string;
+  args: Record<string, unknown>;
+  reason: string;
+}
+
+export interface CompanionTurnMemoryCandidate {
+  type: 'user_preference' | 'user_fact' | 'user_boundary' | 'goal';
+  summary: string;
+  evidence: string;
+  confidence: number;
+}
+
+export interface CompanionTurnProposal {
+  reply: string;
+  intent: CompanionTurnIntent;
+  actions: CompanionTurnActionRequest[];
+  memoryCandidates: CompanionTurnMemoryCandidate[];
+}
+
+export interface MemoryContextItem {
+  memoryId: string;
+  type: TypedMemoryType | MemoryNodeType;
+  summary: string;
+  confidence: number;
+  importance: number;
+  pinned: boolean;
+  selectedBecause: string;
+}
+
+export interface CompanionMemoryContext {
+  pinned: MemoryContextItem[];
+  boundaries: MemoryContextItem[];
+  preferences: MemoryContextItem[];
+  goals: MemoryContextItem[];
+  relevant: MemoryContextItem[];
+  recent: MemoryContextItem[];
+  selectedCount: number;
+  characterCount: number;
+  maxItems: number;
+  maxCharacters: number;
+}
+
+export interface RememberedMemoryMutation {
+  memoryId: string;
+  summary: string;
+  mutation: 'created' | 'updated' | 'observed';
+  undoToken: string;
+}
+
+export type CompanionTurnActionStatus =
+  | 'executed'
+  | 'blocked'
+  | 'permission_denied'
+  | 'cancelled'
+  | 'adapter_failed'
+  | 'invalid_arguments'
+  | 'unsupported_tool';
+
+export interface CompanionTurnResult {
+  turnId: string;
+  message: string;
+  kind: 'conversation' | 'action_completed' | 'action_failed' | 'awaiting_permission';
+  actionPlan?: ActionPlan;
+  actionResult?: ActionResult;
+  actionStatus?: CompanionTurnActionStatus;
+  requiredScopes?: PermissionScope[];
+  remembered?: RememberedMemoryMutation[];
+}
+
+export interface ResolveCompanionTurnPermissionInput {
+  turnId: string;
+  decision: 'allow_once' | 'always_allow' | 'cancel';
+}
+
+export interface TurnInspectionRecord {
+  turnId: string;
+  companionId: string;
+  inputSource: CompanionTurnInput['source'];
+  inputSummary: string;
+  memoryItemsSelected: Array<{ memoryId: string; category: string; selectedBecause: string }>;
+  memoryBudget: { itemCount: number; characterCount: number; maxItems: number; maxCharacters: number };
+  deterministicActionMatch?: string;
+  aiStructuredResult?: CompanionTurnProposal;
+  validatedActions: CompanionTurnActionRequest[];
+  rejectedActions: Array<CompanionTurnActionRequest & { reason: string }>;
+  permissionState?: 'not_required' | 'awaiting_permission' | 'granted' | 'denied' | 'cancelled';
+  executionResult?: CompanionTurnActionStatus;
+  memoryCandidates: CompanionTurnMemoryCandidate[];
+  memoryOutcomes: Array<{ memoryId?: string; summary: string; outcome: 'created' | 'updated' | 'observed' | 'discarded'; reason?: string }>;
+  finalReplySource?: 'ai_conversation' | 'deterministic_action_result' | 'safe_fallback' | 'permission_cancelled';
+  finalReply?: string;
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface MemoryProcessingState {
+  memoryId: string;
+  companionId: string;
+  contentHash: string;
+  revision: number;
+  processedRevision: number;
+  processedAt?: string;
+  deletedAt?: string;
 }
 
 export const COMPANION_CHAT_RETENTION_DAYS = 7;
@@ -1681,6 +1801,45 @@ export interface ResearchDeveloperReport {
   correlationId: string;
 }
 
+export interface DiscoveryInspectionRecord {
+  cycleId: string;
+  companionId: string;
+  mode: 'core' | 'adjacent' | 'wildcard' | 'challenge';
+  intentQuestion: string;
+  expectedValue: string;
+  freshness: string;
+  trustRequirement: string;
+  languages: string[];
+  regions: string[];
+  contextCount: number;
+  connectorCapabilities: Array<{
+    id: string;
+    mode: EngineProviderMode;
+    available: boolean;
+  }>;
+  selectedBases: Array<{
+    id: string;
+    connectorId: string;
+    state: string;
+    locator: string;
+  }>;
+  candidatesAccepted: string[];
+  candidatesRejected: Array<{
+    candidateId: string;
+    reason: string;
+  }>;
+  dedupHits: Partial<Record<
+    'external_id' | 'canonical_url' | 'content_hash' | 'event_key' | 'fingerprint' | 'topic',
+    number
+  >>;
+  duplicateCount: number;
+  revivalCount: number;
+  materialUpdateCount: number;
+  newCount: number;
+  saturationPenalty: number;
+  createdAt: string;
+}
+
 export interface MemoryImpactReport {
   memory: MemoryNode;
   normalizedTopics: string[];
@@ -1798,7 +1957,9 @@ export interface EngineSnapshot {
   recentDiscoveries: Discovery[];
   actionPermissions: ActionPermissionState;
   discoveryScheduling: DiscoverySchedulingDebug;
+  discoveryInspection?: DiscoveryInspectionRecord;
   engineTraces: EngineTrace[];
+  turnInspections: TurnInspectionRecord[];
 }
 
 export interface DiscoveryReason {
@@ -2132,7 +2293,9 @@ export interface OurCompanionApi {
     updateSettings(input: UpdateSpeechSettingsInput): Promise<SpeechSettings>;
   };
   companion: {
-    turn(input: CompanionTurnInput): Promise<{ message: string }>;
+    turn(input: CompanionTurnInput): Promise<CompanionTurnResult>;
+    resolveTurnPermission(input: ResolveCompanionTurnPermissionInput): Promise<CompanionTurnResult>;
+    undoRememberedMemory(undoToken: string): Promise<{ undone: boolean; memoryId?: string }>;
     onToggleListen(listener: () => void): () => void;
     onRefresh(listener: () => void): () => void;
     reportSessionPhase(phase: CompanionSessionPhase): Promise<void>;

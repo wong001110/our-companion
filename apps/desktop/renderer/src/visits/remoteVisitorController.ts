@@ -1,7 +1,13 @@
 import type { VisualVisitFacing, VisualVisitRenderModel } from '@our-companion/shared';
+import {
+  SCENE_SPRITE_SIZE,
+  clampScenePosition,
+  footprintForPosition,
+  footprintsOverlap,
+  sceneDepthForPosition,
+} from '../motion/sceneMotion';
 
-export const REMOTE_VISITOR_SPEED_PX_PER_SECOND = 60;
-export const REMOTE_VISITOR_SIZE = { width: 220, height: 230 };
+export const REMOTE_VISITOR_SIZE = SCENE_SPRITE_SIZE;
 
 export interface VisitorBounds { x?: number; y?: number; width: number; height: number; }
 export interface VisitorPosition { x: number; y: number; }
@@ -13,7 +19,7 @@ export interface VisitorOccupant extends VisitorPosition { width?: number; heigh
  * stable tie-breaker so two characters on the same row do not flicker.
  */
 export function sceneDepth(position: VisitorPosition, identity: string): number {
-  return Math.round(position.y) * 1_000 + stableIdentityOffset(identity);
+  return sceneDepthForPosition(position, identity);
 }
 
 export function initialVisitorPosition(bounds: VisitorBounds, sceneSlotIndex = 0, occupants: VisitorOccupant[] = []): VisitorPosition {
@@ -27,23 +33,14 @@ export function initialVisitorPosition(bounds: VisitorBounds, sceneSlotIndex = 0
 }
 
 export function clampVisitorPosition(position: VisitorPosition, bounds: VisitorBounds): VisitorPosition {
-  const x = bounds.x ?? 0; const y = bounds.y ?? 0;
-  return {
-    x: Math.max(x, Math.min(Math.round(position.x), Math.max(x, x + bounds.width - REMOTE_VISITOR_SIZE.width))),
-    y: Math.max(y, Math.min(Math.round(position.y), Math.max(y, y + bounds.height - REMOTE_VISITOR_SIZE.height))),
-  };
+  const clamped = clampScenePosition(position, bounds, REMOTE_VISITOR_SIZE);
+  return { x: Math.round(clamped.x), y: Math.round(clamped.y) };
 }
 
 export function seededUnit(seed: string, index: number): number {
   let value = 2166136261;
   for (const char of `${seed}:${index}`) value = Math.imul(value ^ char.charCodeAt(0), 16777619);
   return ((value >>> 0) % 10_000) / 10_000;
-}
-
-function stableIdentityOffset(identity: string): number {
-  let value = 2166136261;
-  for (const char of identity) value = Math.imul(value ^ char.charCodeAt(0), 16777619);
-  return (value >>> 0) % 1_000;
 }
 
 export function walkSelection(
@@ -74,35 +71,31 @@ export function nextWalkTarget(sessionId: string, moveIndex: number, current: Vi
 }
 
 /**
- * Keeps independently animated visitors out of one another's sprite bounds.
- * The caller supplies the currently-known positions; no visitor owns global
- * movement state or can move the local Companion.
+ * Spawn-only compatibility helper. Runtime movement is resolved by the shared
+ * SceneOccupancyController and never relocates to a preset fallback.
  */
 export function resolveVisitorPosition(candidate: VisitorPosition, bounds: VisitorBounds, occupants: VisitorOccupant[] = []): VisitorPosition {
   const desired = clampVisitorPosition(candidate, bounds);
   if (isClear(desired, occupants)) return desired;
-
-  const separation = 28;
-  const candidates = [
-    { x: desired.x, y: desired.y - REMOTE_VISITOR_SIZE.height - separation },
-    { x: desired.x, y: desired.y + REMOTE_VISITOR_SIZE.height + separation },
-    { x: desired.x - REMOTE_VISITOR_SIZE.width - separation, y: desired.y },
-    { x: desired.x + REMOTE_VISITOR_SIZE.width + separation, y: desired.y },
-    { x: bounds.x ?? 0, y: bounds.y ?? 0 },
-  ].map((position) => clampVisitorPosition(position, bounds));
+  const candidates = Array.from({ length: 8 }, (_, index) => {
+    const angle = index * Math.PI / 4;
+    return clampVisitorPosition({
+      x: desired.x + Math.cos(angle) * 96,
+      y: desired.y + Math.sin(angle) * 64,
+    }, bounds);
+  });
   return candidates.find((position) => isClear(position, occupants)) ?? desired;
 }
 
 function isClear(position: VisitorPosition, occupants: VisitorOccupant[]): boolean {
-  const padding = 12;
-  return occupants.every((occupant) => {
-    const width = occupant.width ?? REMOTE_VISITOR_SIZE.width;
-    const height = occupant.height ?? REMOTE_VISITOR_SIZE.height;
-    return position.x + REMOTE_VISITOR_SIZE.width + padding <= occupant.x
-      || occupant.x + width + padding <= position.x
-      || position.y + REMOTE_VISITOR_SIZE.height + padding <= occupant.y
-      || occupant.y + height + padding <= position.y;
-  });
+  const footprint = footprintForPosition(position, REMOTE_VISITOR_SIZE);
+  return occupants.every((occupant) => !footprintsOverlap(
+    footprint,
+    footprintForPosition(occupant, {
+      width: occupant.width ?? REMOTE_VISITOR_SIZE.width,
+      height: occupant.height ?? REMOTE_VISITOR_SIZE.height,
+    }),
+  ));
 }
 
 export function isVisualVisitModel(value: unknown): value is VisualVisitRenderModel {

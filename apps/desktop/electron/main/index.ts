@@ -375,6 +375,8 @@ function registerIpc(): void {
     'speech:updateSettings': services.speech.updateSettings,
     'speech:transcribe': services.speech.transcribe,
     'companion:turn': services.companion.turn,
+    'companion:resolveTurnPermission': services.companion.resolveTurnPermission,
+    'companion:undoRememberedMemory': services.companion.undoRememberedMemory,
     'companion:getHistory': services.companion.getHistory,
     'companion:appendMessage': services.companion.appendMessage,
     'companion:clearHistory': services.companion.clearHistory,
@@ -868,8 +870,18 @@ function resolveUiBetaSmokeRoute(channel: string, input: unknown): { handled: fa
       if (fixture.historyMode === 'failed') throw new Error('SMOKE_UI_BETA_HISTORY_FAILED');
       return { handled: true, result: [{ id: 'message-1', role: 'assistant', source: 'panel', content: 'I saved a small thought from our last conversation.', status: 'ok', createdAt: '2026-07-17T09:30:00.000Z' }] };
     case 'ai:chat':
+    case 'companion:turn':
       if (fixture.chatSendFails) throw new Error('SMOKE_UI_BETA_CHAT_FAILED');
-      return { handled: true, result: { content: 'fixture' } };
+      return channel === 'ai:chat'
+        ? { handled: true, result: { content: 'fixture' } }
+        : {
+            handled: true,
+            result: {
+              turnId: 'fixture-turn',
+              message: 'fixture',
+              kind: 'conversation'
+            }
+          };
     default: return { handled: false };
   }
 }

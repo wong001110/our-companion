@@ -145,7 +145,11 @@ test('Quick Action bubbles stay inside the work area at five Companion positions
       const inBounds = await bubbles.evaluateAll((elements) => elements.every((element) => {
         const rect = element.querySelector('.quick-action-bubble-surface')?.getBoundingClientRect();
         if (!rect) return false;
-        return rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight;
+        const visualBleed = 32;
+        return rect.left >= visualBleed
+          && rect.top >= visualBleed
+          && rect.right <= window.innerWidth - visualBleed
+          && rect.bottom <= window.innerHeight - visualBleed;
       }));
       expect(inBounds).toBe(true);
       const nonOverlapping = await bubbles.evaluateAll((elements) => elements.every((element, index) => {

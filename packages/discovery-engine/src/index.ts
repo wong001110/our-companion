@@ -18,6 +18,10 @@ import type {
 import { createId, nowIso, toUnitScore } from '@our-companion/shared';
 
 export * from './research';
+export * from './adaptiveDiscovery';
+export * from './discoveryBases';
+export * from './discoverySeen';
+export * from './discoveryContext';
 
 export interface DiscoveryFetchInput {
   query?: string;

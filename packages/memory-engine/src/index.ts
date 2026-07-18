@@ -13,7 +13,7 @@ import type {
   Pattern,
   UpdateMemoryNodeInput
 } from '@our-companion/shared';
-import { clamp01, createId, nowIso } from '@our-companion/shared';
+import { clamp01, createId, createSemanticFingerprint, nowIso } from '@our-companion/shared';
 
 export function createMemoryNode(input: CreateMemoryNodeInput): MemoryNode {
   const timestamp = nowIso();
@@ -111,7 +111,7 @@ function normalizeLabel(value: string): string {
   }
   nodes.set(key, {
     ...node,
-    id: node.id ?? createId('interest'),
+    id: node.id ?? createSemanticFingerprint('interest', [node.userId, node.type, key]),
     createdAt: timestamp,
     updatedAt: timestamp
   });
@@ -168,7 +168,7 @@ export function buildInterestGraph(input: BuildInterestGraphInput): InterestGrap
     const current = sorted[index];
     const next = sorted[index + 1];
     edges.push({
-      id: createId('interest_edge'),
+      id: createSemanticFingerprint('interest_edge', [input.userId, current.id, next.id, index === 0 ? 'frequently_appears_with' : 'adjacent_to']),
       userId: input.userId,
       fromNodeId: current.id,
       toNodeId: next.id,

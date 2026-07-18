@@ -1,31 +1,50 @@
 import type { DatabaseService } from '@our-companion/database';
 import { createMemoryNode } from '@our-companion/memory-engine';
 import type {
-  CommittedMemoryEvidence,
+  CompanionTurnMemoryCandidate,
   MemoryCandidate,
-  MemoryRetention,
-  TypedMemoryType
+  MemoryNode,
+  RememberedMemoryMutation,
+  TypedMemoryType,
 } from '@our-companion/shared';
-import { createId } from '@our-companion/shared';
+import {
+  createId,
+  createSemanticFingerprint,
+  normalizeSemanticText,
+} from '@our-companion/shared';
 
 const SENSITIVE_PATTERNS = [
   /\b(sk-[a-zA-Z0-9]{10,})\b/i,
-  /\b(api[_-]?key|apikey)\s*[:=]\s*\S+/i,
-  /\b(password|passwd|pwd)\s*[:=]\s*\S+/i,
+  /\b(api[_-]?key|apikey|password|passwd|pwd|access[_-]?token|token|credentials?)\s*[:=]\s*\S+/i,
   /\b(bearer\s+[a-zA-Z0-9._-]+)/i,
-  /\b(access[_-]?token)\s*[:=]\s*\S+/i,
   /\b\d{3}-\d{2}-\d{4}\b/,
-  /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i
+  /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i,
 ];
 
 const REJECT_PHRASES = [
   /do not remember/i,
   /don't remember/i,
   /forget this/i,
-  /^test\s*$/i,
-  /^testing\s*$/i,
-  /translate this/i,
-  /just testing/i
+  /不要记住/,
+  /别记住/,
+  /不要保存/,
+  /忘掉这/,
+  /^test(?:ing)?[.!]?$/i,
+  /just testing/i,
+  /测试内容/,
+  /只是测试/,
+  /\btranslate (?:this|the following)\b/i,
+  /(?:翻译|译成|翻成).{0,12}(?:这|以下|英文|中文)/,
+];
+
+const TEMPORARY_PATTERNS = [
+  /\b(?:for now|just this once|this time|today only|temporarily)\b/i,
+  /(?:暂时|这一次|这次就|仅今天|今天先)/,
+];
+
+const AMBIGUOUS_CORRECTION_PATTERNS = [
+  /^(?:actually|correction|to correct that|instead)[,:\s]/i,
+  /^(?:其实|更正一下|纠正一下|不是这样)[，,:：\s]?/,
 ];
 
 export interface MemoryTurnInput {
@@ -34,171 +53,270 @@ export interface MemoryTurnInput {
   userMessage: string;
   assistantReply: string;
   sessionId?: string;
+  candidates?: CompanionTurnMemoryCandidate[];
 }
+
+export interface MemoryCaptureOutcome {
+  candidate: CompanionTurnMemoryCandidate;
+  outcome: 'created' | 'updated' | 'observed' | 'discarded';
+  memoryId?: string;
+  reason?: string;
+  mutation?: RememberedMemoryMutation;
+}
+
+type UndoRecord = {
+  companionId: string;
+  memoryId: string;
+  previous?: MemoryNode;
+  created: boolean;
+};
 
 export class MemoryPolicy {
   private readonly now: () => number;
+  private readonly undoRecords = new Map<string, UndoRecord>();
 
   constructor(private readonly db: DatabaseService, deps: { now?: () => number } = {}) {
     this.now = deps.now ?? (() => Date.now());
   }
 
+  /** Compatibility entry point retained for existing runtime callers/tests. */
   processTurn(input: MemoryTurnInput): MemoryCandidate | null {
-    const candidate = this.createCandidate(input);
-    if (!candidate) return null;
+    const candidates = this.extractDeterministicCandidates(input);
+    const first = candidates[0];
+    if (!first) return null;
+    const candidate = this.toLegacyCandidate(first, input);
+    const outcomes = this.captureTurn({ ...input, candidates: [first] });
+    return outcomes.some((outcome) => outcome.outcome !== 'discarded') ? candidate : null;
+  }
 
-    const afterSafety = this.safetyCheck(candidate);
-    if (!afterSafety) return null;
-
-    const classified = this.classify(afterSafety);
-    const retained = this.retentionDecision(classified);
-    if (retained.retention === 'discard') return null;
-
-    if (retained.retention === 'requires_confirmation') {
-      console.info(`[memory] Discarded confirmation-required candidate ${retained.id}: ${retained.reason}`);
-      return null;
+  captureTurn(input: MemoryTurnInput): MemoryCaptureOutcome[] {
+    const proposed = [
+      ...(input.candidates ?? []),
+      ...this.extractDeterministicCandidates(input),
+    ];
+    const unique = new Map<string, CompanionTurnMemoryCandidate>();
+    for (const candidate of proposed) {
+      const normalized = normalizeSemanticText(candidate.summary);
+      if (!normalized) continue;
+      unique.set(`${candidate.type}:${normalized}`, candidate);
     }
+    return [...unique.values()].map((candidate) => this.captureCandidate(candidate, input));
+  }
 
-    this.commitMemory(retained, input);
-    return retained;
+  undo(undoToken: string, companionId: string): { undone: boolean; memoryId?: string } {
+    const record = this.undoRecords.get(undoToken);
+    if (!record || record.companionId !== companionId) return { undone: false };
+    if (record.created) {
+      const current = this.db.getMemoryNode(record.memoryId, companionId);
+      if (current) this.db.deleteMemoryNode(record.memoryId);
+    } else if (record.previous) {
+      this.db.updateMemoryNode(record.previous);
+    }
+    this.undoRecords.delete(undoToken);
+    return { undone: true, memoryId: record.memoryId };
   }
 
   createCandidate(input: MemoryTurnInput): MemoryCandidate | null {
-    const text = input.userMessage.trim();
-    if (!text) return null;
+    const first = this.extractDeterministicCandidates(input)[0];
+    return first ? this.toLegacyCandidate(first, input) : null;
+  }
 
+  safetyCheck(candidate: MemoryCandidate): MemoryCandidate | null {
+    return this.isSafe(candidate.sourceText ?? candidate.summary) ? candidate : null;
+  }
+
+  classify(candidate: MemoryCandidate): MemoryCandidate {
+    return candidate;
+  }
+
+  retentionDecision(candidate: MemoryCandidate): MemoryCandidate {
+    const retained = ['user_preference', 'user_boundary', 'user_fact', 'goal'].includes(candidate.proposedType);
+    return { ...candidate, retention: retained ? 'long_term' : 'discard' };
+  }
+
+  private captureCandidate(
+    candidate: CompanionTurnMemoryCandidate,
+    input: MemoryTurnInput,
+  ): MemoryCaptureOutcome {
+    const evidence = candidate.evidence.trim();
+    if (!this.isSafe(`${candidate.summary}\n${evidence}`)) {
+      return { candidate, outcome: 'discarded', reason: 'memory_safety_policy' };
+    }
+    const normalizedMessage = normalizeSemanticText(input.userMessage);
+    const normalizedEvidence = normalizeSemanticText(evidence);
+    if (!normalizedEvidence || !normalizedMessage.includes(normalizedEvidence)) {
+      return { candidate, outcome: 'discarded', reason: 'evidence_not_grounded_in_user_message' };
+    }
+    if (candidate.confidence < 0.7) {
+      return { candidate, outcome: 'discarded', reason: 'confidence_below_threshold' };
+    }
+
+    const timestamp = this.timestamp();
+    const normalizedSummary = normalizeSemanticText(candidate.summary);
+    const fingerprint = createSemanticFingerprint('memory', [
+      input.companionId,
+      candidate.type,
+      normalizedSummary,
+    ]);
+    const node = createMemoryNode({
+      type: candidate.type === 'goal' ? 'outcome' : 'topic',
+      title: candidate.summary.slice(0, 80),
+      summary: candidate.summary.slice(0, 500),
+      content: evidence.slice(0, 1_000),
+      source: 'conversation',
+      companionId: input.companionId,
+    });
+    const captured: MemoryNode = {
+      ...node,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      lastObservedAt: timestamp,
+      companionId: input.companionId,
+      userId: input.userId,
+      memoryType: candidate.type,
+      fingerprint,
+      confidence: candidate.confidence,
+      observationCount: 1,
+      importance: candidate.type === 'user_boundary' || candidate.type === 'goal'
+        ? Math.max(0.8, candidate.confidence)
+        : candidate.confidence,
+      metadata: {
+        ownerCompanionId: input.companionId,
+        ownerUserId: input.userId,
+        sourceType: 'user_explicit',
+        confidence: candidate.confidence,
+        sensitivity: candidate.type === 'user_boundary' ? 'personal' : 'normal',
+        scope: 'companion',
+        createdAt: timestamp,
+        userEvidence: input.userMessage.slice(0, 500),
+        assistantInterpretation: input.assistantReply.slice(0, 300),
+      },
+    };
+    const result = this.db.upsertCapturedMemory(captured);
+    const undoToken = createId('memory_undo');
+    this.undoRecords.set(undoToken, {
+      companionId: input.companionId,
+      memoryId: result.record.id,
+      previous: result.previous,
+      created: result.outcome === 'created',
+    });
+    while (this.undoRecords.size > 100) {
+      const oldest = this.undoRecords.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.undoRecords.delete(oldest);
+    }
+    const mutation: RememberedMemoryMutation = {
+      memoryId: result.record.id,
+      summary: result.record.summary ?? result.record.title,
+      mutation: result.outcome,
+      undoToken,
+    };
+    return {
+      candidate,
+      outcome: result.outcome,
+      memoryId: result.record.id,
+      mutation,
+    };
+  }
+
+  private extractDeterministicCandidates(input: MemoryTurnInput): CompanionTurnMemoryCandidate[] {
+    const text = input.userMessage.trim();
+    if (!this.isSafe(text)) return [];
+    // A correction needs an explicit target before it can safely replace or add
+    // durable Memory. The structured turn path may still propose a grounded
+    // candidate when it can express that target unambiguously.
+    if (AMBIGUOUS_CORRECTION_PATTERNS.some((pattern) => pattern.test(text))) return [];
+    const rules: Array<{
+      type: CompanionTurnMemoryCandidate['type'];
+      confidence: number;
+      patterns: RegExp[];
+    }> = [
+      {
+        type: 'user_preference',
+        confidence: 0.85,
+        patterns: [
+          /\b(?:i prefer|i like|i love|my favorite(?: is)?)\s+(.+)/i,
+          /(?:我(?:比较)?喜欢|我偏好)\s*(.+)/,
+          /以后优先(?:推荐|考虑)?\s*(.+)/,
+        ],
+      },
+      {
+        type: 'user_boundary',
+        confidence: 0.92,
+        patterns: [
+          /\b(?:do not|don't|never|please don't)\s+(?:mention|bring up|recommend|talk about)\s+(.+)/i,
+          /(?:不要再提|不要提|别再提|不要推荐|我不喜欢)\s*(.+)/,
+        ],
+      },
+      {
+        type: 'goal',
+        confidence: 0.88,
+        patterns: [
+          /\b(?:my goal is|my long[- ]term goal is|i am working long[- ]term on|i'm working long[- ]term on)\s+(.+)/i,
+          /(?:我的(?:长期)?目标是|我正在长期做|我长期在做)\s*(.+)/,
+        ],
+      },
+      {
+        type: 'user_fact',
+        confidence: 0.82,
+        patterns: [
+          /\b(?:remember that|remember|keep in mind|for future)\s+(.+)/i,
+          /(?:记住|请记住|以后要记得)\s*(.+)/,
+        ],
+      },
+    ];
+    const results: CompanionTurnMemoryCandidate[] = [];
+    for (const rule of rules) {
+      for (const pattern of rule.patterns) {
+        const match = text.match(pattern);
+        const summary = match?.[1]?.trim().replace(/[。.!]+$/, '');
+        if (!summary || summary.length < 2) continue;
+        results.push({
+          type: rule.type,
+          summary,
+          evidence: match![0].trim(),
+          confidence: rule.confidence,
+        });
+        break;
+      }
+    }
+    return results;
+  }
+
+  private toLegacyCandidate(
+    candidate: CompanionTurnMemoryCandidate,
+    input: MemoryTurnInput,
+  ): MemoryCandidate {
     return {
       id: createId('memcand'),
       userId: input.userId,
       companionId: input.companionId,
       sessionId: input.sessionId,
-      proposedType: 'conversation_episode',
-      sourceText: text,
-      summary: text.slice(0, 200),
-      confidence: 0.5,
-      sensitivity: 'normal',
-      retention: 'discard',
-      reason: 'initial candidate',
-      createdAt: this.timestamp()
-    };
-  }
-
-  safetyCheck(candidate: MemoryCandidate): MemoryCandidate | null {
-    const text = candidate.sourceText ?? '';
-    for (const pattern of SENSITIVE_PATTERNS) {
-      if (pattern.test(text)) {
-        return null;
-      }
-    }
-    for (const phrase of REJECT_PHRASES) {
-      if (phrase.test(text)) return null;
-    }
-    if (this.isPureCodeBlock(text)) return null;
-    if (this.isTranslationRequest(text)) return null;
-    return candidate;
-  }
-
-  classify(candidate: MemoryCandidate): MemoryCandidate {
-    const text = (candidate.sourceText ?? '').toLowerCase();
-
-    if (/\b(actually|that's wrong|not true|i meant)\b/.test(text)) {
-      return { ...candidate, proposedType: 'user_fact', confidence: 0.8, reason: 'user correction' };
-    }
-    if (/\b(i prefer|i like|my favorite|i love|prefer)\b/.test(text)) {
-      return { ...candidate, proposedType: 'user_preference', confidence: 0.85, reason: 'explicit preference' };
-    }
-    if (/\b(don't|do not|never|please don't)\b/.test(text) && /\b(ask|talk|mention|bring up)\b/.test(text)) {
-      return { ...candidate, proposedType: 'user_boundary', confidence: 0.9, sensitivity: 'personal', reason: 'explicit boundary' };
-    }
-    if (/\b(remember that|keep in mind|for future)\b/.test(text)) {
-      return { ...candidate, proposedType: 'user_fact', confidence: 0.75, reason: 'explicit remember request' };
-    }
-    if (text.length < 12) {
-      return { ...candidate, retention: 'discard', reason: 'too short for memory' };
-    }
-
-    return { ...candidate, proposedType: 'conversation_episode', confidence: 0.35, reason: 'general turn' };
-  }
-
-  retentionDecision(candidate: MemoryCandidate): MemoryCandidate {
-    if (candidate.proposedType === 'user_preference' || candidate.proposedType === 'user_boundary') {
-      return { ...candidate, retention: 'long_term' };
-    }
-    if (candidate.proposedType === 'user_fact' && candidate.reason === 'user correction') {
-      return {
-        ...candidate,
-        retention: 'requires_confirmation',
-        reason: 'uncertain correction requires confirmation'
-      };
-    }
-    if (candidate.retention === 'discard') return candidate;
-    if (candidate.proposedType === 'user_fact' && candidate.confidence >= 0.7) {
-      return { ...candidate, retention: 'long_term' };
-    }
-    if (candidate.proposedType === 'user_fact') {
-      return { ...candidate, retention: 'requires_confirmation' };
-    }
-    if (candidate.proposedType === 'conversation_episode' && candidate.confidence < 0.5) {
-      return { ...candidate, retention: 'discard', reason: 'low confidence episode' };
-    }
-    if (candidate.proposedType === 'conversation_episode') {
-      return { ...candidate, retention: 'temporary' };
-    }
-
-    return { ...candidate, retention: 'discard' };
-  }
-
-  commitMemory(candidate: MemoryCandidate, input: MemoryTurnInput): void {
-    const evidence: CommittedMemoryEvidence = {
-      userEvidence: input.userMessage.slice(0, 500),
-      assistantInterpretation: input.assistantReply.slice(0, 300)
-    };
-
-    const memoryType: TypedMemoryType = candidate.proposedType;
-    const scope = candidate.retention === 'temporary' ? 'session' : 'companion';
-    const expiresAt =
-      candidate.retention === 'temporary'
-        ? new Date(this.now() + 24 * 60 * 60 * 1000).toISOString()
-        : undefined;
-
-    const node = createMemoryNode({
-      type: 'topic',
-      title: (candidate.sourceText ?? candidate.summary).slice(0, 80),
+      proposedType: candidate.type as TypedMemoryType,
+      sourceText: input.userMessage,
       summary: candidate.summary,
-      source: 'conversation'
-    });
+      confidence: candidate.confidence,
+      sensitivity: candidate.type === 'user_boundary' ? 'personal' : 'normal',
+      retention: 'long_term',
+      reason: 'explicit stable user statement',
+      createdAt: this.timestamp(),
+    };
+  }
 
-    this.db.insertMemoryNode({
-      ...node,
-      importance: candidate.confidence,
-      companionId: input.companionId,
-      userId: input.userId,
-      memoryType,
-      metadata: {
-        ownerCompanionId: input.companionId,
-        ownerUserId: input.userId,
-        sourceType: candidate.reason === 'user correction' ? 'user_correction' : 'conversation',
-        confidence: candidate.confidence,
-        sensitivity: candidate.sensitivity,
-        scope,
-        createdAt: this.timestamp(),
-        expiresAt,
-        ...evidence
-      }
-    });
+  private isSafe(text: string): boolean {
+    if (!text.trim()) return false;
+    if (SENSITIVE_PATTERNS.some((pattern) => pattern.test(text))) return false;
+    if (REJECT_PHRASES.some((pattern) => pattern.test(text))) return false;
+    if (TEMPORARY_PATTERNS.some((pattern) => pattern.test(text))) return false;
+    if (this.isPureCodeBlock(text)) return false;
+    return true;
   }
 
   private isPureCodeBlock(text: string): boolean {
     const trimmed = text.trim();
     if (/^```[\s\S]*```$/.test(trimmed)) return true;
-    if (/^(import |export |function |const |let |class )/.test(trimmed) && !/\b(i|my|me)\b/i.test(trimmed)) {
-      return true;
-    }
-    return false;
-  }
-
-  private isTranslationRequest(text: string): boolean {
-    return /\b(translate|translation)\b/i.test(text) && text.length < 80;
+    return /^(import |export |function |const |let |class )/.test(trimmed)
+      && !/\b(i|my|me)\b/i.test(trimmed);
   }
 
   private timestamp(): string {

@@ -8,14 +8,17 @@ import { loadNetworkEnvironment, ManagedSmokeNetwork, preflightSmokeServer, reso
 import { establishFriendship, publishOwnerFixture, registerDevice } from './network-seed';
 import { assertTerminalCleanup, endVisit, startVisit } from './s5-two-device.fixture';
 import { assertIsolatedProfiles, cleanupDirectories, createSmokeRunId, sanitizedReport } from './smoke-state';
+import { footprintForPosition, footprintsOverlap } from '../../apps/desktop/renderer/src/motion/sceneMotion';
 
 const clientRoot = path.resolve(import.meta.dirname, '../..');
 const visitorSize = { width: 220, height: 230 };
 
 function overlaps(left: { x?: number; y?: number }, right: { x?: number; y?: number }): boolean {
   if (typeof left.x !== 'number' || typeof left.y !== 'number' || typeof right.x !== 'number' || typeof right.y !== 'number') return true;
-  return left.x < right.x + visitorSize.width && left.x + visitorSize.width > right.x
-    && left.y < right.y + visitorSize.height && left.y + visitorSize.height > right.y;
+  return footprintsOverlap(
+    footprintForPosition({ x: left.x, y: left.y }, visitorSize),
+    footprintForPosition({ x: right.x, y: right.y }, visitorSize),
+  );
 }
 
 test('S5 logical three-device multi-Visitor smoke', async () => {
@@ -43,7 +46,7 @@ test('S5 logical three-device multi-Visitor smoke', async () => {
   const ownerA = new SmokeElectronDevice({ role: 'visitor_owner', userDataDir: profiles.ownerA, serverUrl, artifactDir: path.join(artifactRoot, 'owner-a'), appPath: path.join(clientRoot, 'apps', 'desktop') });
   const ownerB = new SmokeElectronDevice({ role: 'visitor_owner', userDataDir: profiles.ownerB, serverUrl, artifactDir: path.join(artifactRoot, 'owner-b'), appPath: path.join(clientRoot, 'apps', 'desktop') });
   const host = new SmokeElectronDevice({ role: 'host', userDataDir: profiles.host, serverUrl, artifactDir: path.join(artifactRoot, 'host'), appPath: path.join(clientRoot, 'apps', 'desktop') });
-  const checks = { preflight: false, isolatedProfiles: false, threeAccountsOnline: false, twoSessionsActive: false, twoVisitorsRendered: false, distinctSlots: false, nonOverlapping: false, independentAssets: false, firstDepartureRetainsSecond: false, terminalCleanup: false, cleanupSucceeded: false };
+  const checks = { preflight: false, isolatedProfiles: false, threeAccountsOnline: false, twoSessionsActive: false, twoVisitorsRendered: false, bothVisitorsWalking: false, distinctSlots: false, nonOverlapping: false, independentAssets: false, firstDepartureRetainsSecond: false, terminalCleanup: false, cleanupSucceeded: false };
   let scenarioError: unknown;
   let cleanupError: string | undefined;
 
@@ -85,6 +88,12 @@ test('S5 logical three-device multi-Visitor smoke', async () => {
     checks.distinctSlots = true;
     expect(overlaps(firstVisitor, secondVisitor)).toBe(false);
     checks.nonOverlapping = true;
+
+    await host.waitForState((state) => {
+      const active = state.visual.visitors.filter((visitor) => !visitor.departing);
+      return active.length === 2 && active.every((visitor) => visitor.observedAnimations?.some((name) => name.startsWith('Walk_')));
+    }, 30_000);
+    checks.bothVisitorsWalking = true;
 
     const hostPage = await host.mainWindow();
     await expect.poll(() => hostPage.evaluate(async ({ session, pack }) => (await fetch(`companion-network://${session}/${pack}/assets/animations/Idle_Neutral.png`)).status, { session: firstSessionId, pack: ownerAPublished.assetPackId })).toBe(200);

@@ -128,6 +128,40 @@ export function ResearchObservatory({ snapshot }: { snapshot?: EngineSnapshot })
   );
 }
 
+export function DiscoveryInspector({ snapshot }: { snapshot?: EngineSnapshot }) {
+  const report = snapshot?.discoveryInspection;
+  return (
+    <section className="engine-research-observatory" aria-label="Discovery Inspector">
+      <h3>Discovery Inspector</h3>
+      {!report ? <p className="engine-empty">No adaptive Discovery cycle recorded yet.</p> : (
+        <>
+          <dl className="engine-research-grid">
+            <div><dt>Mode</dt><dd>{report.mode}</dd></div>
+            <div><dt>Intent question</dt><dd>{report.intentQuestion}</dd></div>
+            <div><dt>Expected value</dt><dd>{report.expectedValue}</dd></div>
+            <div><dt>Freshness / trust</dt><dd>{report.freshness} / {report.trustRequirement}</dd></div>
+            <div><dt>Languages / regions</dt><dd>{report.languages.join(', ')} / {report.regions.join(', ') || 'any'}</dd></div>
+            <div><dt>Bounded context</dt><dd>{report.contextCount}/40 summaries</dd></div>
+            <div><dt>Selected bases</dt><dd>{report.selectedBases.map((base) => `${base.connectorId}:${base.state}`).join(', ') || 'none'}</dd></div>
+            <div><dt>Capabilities</dt><dd>{report.connectorCapabilities.map((capability) => `${capability.id}:${capability.available ? capability.mode : 'unavailable'}`).join(', ')}</dd></div>
+            <div><dt>Accepted / rejected</dt><dd>{report.candidatesAccepted.length} / {report.candidatesRejected.length}</dd></div>
+            <div><dt>Dedup hits</dt><dd>{Object.entries(report.dedupHits).map(([layer, count]) => `${layer}:${count}`).join(', ') || 'none'}</dd></div>
+            <div><dt>Outcomes</dt><dd>new {report.newCount} · duplicate {report.duplicateCount} · revival {report.revivalCount} · material update {report.materialUpdateCount}</dd></div>
+            <div><dt>Saturation penalty</dt><dd>{report.saturationPenalty.toFixed(2)}</dd></div>
+          </dl>
+          {report.candidatesRejected.length > 0 && (
+            <ul className="engine-research-pages">
+              {report.candidatesRejected.map((candidate) => (
+                <li key={candidate.candidateId}><strong>{candidate.candidateId}</strong> <span>{candidate.reason}</span></li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 export function AvailableActionsPanel() {
   const capabilities = listEnabledActionCapabilities();
   return (
@@ -155,6 +189,37 @@ export function AvailableActionsPanel() {
         <summary>Exact capability summary supplied to AI</summary>
         <pre className="debug-ai-log-raw">{actionCapabilityPromptSummary()}</pre>
       </details>
+    </section>
+  );
+}
+
+export function TurnInspector({ snapshot }: { snapshot?: EngineSnapshot }) {
+  const records = snapshot?.turnInspections ?? [];
+  return (
+    <section className="engine-research-observatory" aria-label="Turn Inspector">
+      <h3>Turn Inspector</h3>
+      {!records.length ? <p className="engine-empty">No Companion turns recorded yet.</p> : (
+        <div className="engine-trace-list">
+          {records.slice(0, 10).map((record) => (
+            <details key={record.turnId}>
+              <summary>{record.inputSource} · {record.inputSummary} · {record.permissionState ?? 'no permission gate'}</summary>
+              <dl className="engine-research-grid">
+                <div><dt>Memory items selected</dt><dd>{record.memoryItemsSelected.map((item) => `${item.category}:${item.memoryId}`).join(', ') || 'none'}</dd></div>
+                <div><dt>Memory budget</dt><dd>{record.memoryBudget.itemCount}/{record.memoryBudget.maxItems} items · {record.memoryBudget.characterCount}/{record.memoryBudget.maxCharacters} chars</dd></div>
+                <div><dt>Deterministic action match</dt><dd>{record.deterministicActionMatch ?? 'none'}</dd></div>
+                <div><dt>Validated actions</dt><dd>{record.validatedActions.map((action) => action.toolName).join(', ') || 'none'}</dd></div>
+                <div><dt>Rejected actions</dt><dd>{record.rejectedActions.map((action) => `${action.toolName}:${action.reason}`).join(', ') || 'none'}</dd></div>
+                <div><dt>Permission state</dt><dd>{record.permissionState ?? 'not required'}</dd></div>
+                <div><dt>Execution result</dt><dd>{record.executionResult ?? 'not executed'}</dd></div>
+                <div><dt>Memory candidates</dt><dd>{record.memoryCandidates.map((candidate) => `${candidate.type}:${candidate.summary}`).join(' · ') || 'none'}</dd></div>
+                <div><dt>Memory outcomes</dt><dd>{record.memoryOutcomes.map((outcome) => `${outcome.outcome}:${outcome.summary}`).join(' · ') || 'none'}</dd></div>
+                <div><dt>Final reply source</dt><dd>{record.finalReplySource ?? 'pending'}</dd></div>
+              </dl>
+              {record.aiStructuredResult && <pre className="debug-ai-log-raw">{formatJson(record.aiStructuredResult)}</pre>}
+            </details>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -409,9 +474,11 @@ export function EngineObservatory() {
       <EngineTraceTimeline traces={snapshot?.engineTraces ?? []} />
 
       <ResearchObservatory snapshot={snapshot} />
+      <DiscoveryInspector snapshot={snapshot} />
       <ResearchDeveloperTools onComplete={refreshAll} />
       <ExplorationVisualStatus snapshot={snapshot} />
       <AvailableActionsPanel />
+      <TurnInspector snapshot={snapshot} />
 
       <section className="debug-ai-log engine-event-timeline">
         <div className="debug-ai-log-header">

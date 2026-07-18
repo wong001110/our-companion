@@ -51,11 +51,12 @@ import { LangContext, useLang, NotebookPage, PaperCard, StickyNote, NotebookChat
 import { EngineObservatory } from '../features/developer/EngineObservatory';
 import { EngineObservatoryToolbar, loadObservatoryState, type EnginePanelKey } from '../features/developer/EngineObservatoryToolbar';
 import { EngineSnapshotCard } from '../features/developer/EngineSnapshotCard';
+import { SceneInspectorCard } from '../features/developer/SceneInspectorCard';
 import { useAudioCapture } from '../companion/useAudioCapture';
 import {
   type Tab, type DevAnimation, formatJson, formatDuration,
   formatDiscoveryTime, formatRelativeDate, formatShortDate, formatAskResult,
-  readable, capitalize, randomBetween, clamp, easeInOut,
+  readable, capitalize, randomBetween,
   companionStatusMessage, companionMoodLabel, debugPreview,
   createDevAnimationState, parseLocalCommand
 } from '../ui/utils';
@@ -87,6 +88,8 @@ import { RemoteVisitorLayer, useVisualVisitState } from '../visits/RemoteVisitor
 import { sceneDepth } from '../visits/remoteVisitorController';
 import { Presence } from '../components/motion/Presence';
 import { useExplorationVisualLifecycle } from '../companion/expedition/useExplorationVisualLifecycle';
+import { SceneOccupancyController } from '../motion/SceneOccupancyController';
+import { clampScenePosition, computeWalkPlaybackRate, motionProfileForPersonality } from '../motion/sceneMotion';
 
 export function PresenceActivityReporter() {
   useEffect(() => {
@@ -256,6 +259,49 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     return { x: Math.round(w / 2 - COMPANION_SPRITE.width / 2), y: Math.round(h * 0.6) };
   });
   const companionPositionRef = useRef(companionPosition);
+  const sceneController = useMemo(
+    () => new SceneOccupancyController({ width: window.innerWidth, height: window.innerHeight }),
+    [companion.id],
+  );
+  const localMotionProfile = useMemo(() => motionProfileForPersonality(companion.personality.energy), [companion.personality.energy]);
+  const [actualWalkSpeed, setActualWalkSpeed] = useState(0);
+
+  useEffect(() => {
+    if (!localCompanionVisible) {
+      sceneController.unregister(companion.id, 'local-hidden');
+      return;
+    }
+    sceneController.register({
+      id: companion.id,
+      type: 'local_companion',
+      position: companionPositionRef.current,
+      phase: 'stationary',
+      motionProfile: localMotionProfile,
+    });
+    return () => sceneController.unregister(companion.id, 'local-unmounted');
+  }, [companion.id, localCompanionVisible, localMotionProfile, sceneController]);
+
+  useEffect(() => {
+    sceneController.update(companion.id, { position: companionPosition, motionProfile: localMotionProfile });
+  }, [companion.id, companionPosition, localMotionProfile, sceneController]);
+
+  useEffect(() => {
+    const applyDisplayBounds = () => {
+      const nextBounds = { width: window.innerWidth, height: window.innerHeight };
+      sceneController.setBounds(nextBounds);
+      const clamped = clampScenePosition(companionPositionRef.current, nextBounds, COMPANION_SPRITE);
+      if (clamped.x === companionPositionRef.current.x && clamped.y === companionPositionRef.current.y) return;
+      companionPositionRef.current = clamped;
+      sceneController.updatePosition(companion.id, clamped, 'display_recovery');
+      setCompanionPosition(clamped);
+    };
+    window.addEventListener('resize', applyDisplayBounds);
+    const unsubscribeDisplay = window.ourCompanion.companion.onDisplayChanged(applyDisplayBounds);
+    return () => {
+      window.removeEventListener('resize', applyDisplayBounds);
+      unsubscribeDisplay();
+    };
+  }, [companion.id, sceneController]);
 
   const quickActionsAnchor = useMemo(() => ({
     x: companionPosition.x,
@@ -273,7 +319,17 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const [textOpen, setTextOpen] = useState(false);
   const textInputRef = useRef<HTMLInputElement>(null);
 
-  const { phase, toggleListening, runTurn, onTypewriterComplete, isSessionActive } = useCompanionSession({
+  const {
+    phase,
+    toggleListening,
+    runTurn,
+    pendingPermission,
+    remembered,
+    resolvePermission,
+    undoRemembered,
+    onTypewriterComplete,
+    isSessionActive,
+  } = useCompanionSession({
     characterId: companion.id,
     lang,
     stateRef,
@@ -333,7 +389,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
 
   const floatingPositions = useFloatingPlacement({
     hasBubble: speech.hasSpeech,
-    hasCard: !!discovery.popup,
+    hasCard: Boolean(discovery.popup || pendingPermission || remembered.length),
     hasTextInput: textOpen && phase === 'idle',
     companionPosition,
     screenWorkArea: { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight },
@@ -537,6 +593,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     void window.ourCompanion.companion.reportDragging({ dragging: true });
     interactive.enter('companion-drag');
     dragOriginRef.current = { screenX: point.screenX, screenY: point.screenY };
+    sceneController.setPhase(companion.id, 'dragging');
   }
 
   function handleDragMove(point: CompanionDragPoint) {
@@ -549,6 +606,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       y: companionPositionRef.current.y + dy,
     };
     companionPositionRef.current = next;
+    sceneController.updatePosition(companion.id, next, 'user_drag');
     setCompanionPosition(next);
     origin.screenX = point.screenX;
     origin.screenY = point.screenY;
@@ -560,6 +618,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     void window.ourCompanion.companion.reportDragging({ dragging: false });
     interactive.leave('companion-drag');
     const pos = companionPositionRef.current;
+    sceneController.setPhase(companion.id, 'stationary');
     localStorage.setItem(companionKey('position'), JSON.stringify(pos));
     void window.ourCompanion.character.updatePosition({ characterId: companion.id, x: pos.x, y: pos.y })
       .then((nextState) => { stateRef.current = nextState; setState(nextState); })
@@ -616,15 +675,12 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       try {
         if (cancelled || isDraggingRef.current || isAmbientPaused()) return;
 
-        const workArea = await window.ourCompanion.window.getWorkArea();
-        if (cancelled || isDraggingRef.current) return;
-
         const companionWidth = COMPANION_SPRITE.width;
         const companionHeight = COMPANION_SPRITE.height;
-        const minX = workArea.x + 12;
-        const maxX = workArea.x + workArea.width - companionWidth - 12;
-        const minY = workArea.y + 12;
-        const maxY = workArea.y + workArea.height - companionHeight - 12;
+        const minX = 12;
+        const maxX = window.innerWidth - companionWidth - 12;
+        const minY = 12;
+        const maxY = window.innerHeight - companionHeight - 12;
         if (maxX <= minX || maxY <= minY) return;
 
         const currentX = companionPositionRef.current.x;
@@ -636,6 +692,10 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           targetY = currentY < (minY + maxY) / 2 ? maxY : minY;
         }
 
+        const plannedTarget = sceneController.planTarget(companion.id, { x: targetX, y: targetY });
+        if (!plannedTarget) return;
+        targetX = plannedTarget.x;
+        targetY = plannedTarget.y;
         const dx = targetX - currentX;
         const dy = targetY - currentY;
         const walkAnimation = resolveWalkDirection(dx, dy);
@@ -646,30 +706,24 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
 
         speech.showTypewriter(selectSpeechLine('walk_start', Math.random, langRef.current));
         setMovementAnimation(walkAnimation ?? undefined);
+        sceneController.setPhase(companion.id, 'wandering');
         previewState('walking', 'wandering', walkAnimation ?? undefined);
 
-        const startX = currentX;
-        const startY = currentY;
-        const distance = Math.hypot(dx, dy);
-        const durationMs = clamp((distance / 115) * 1000, 900, 5200);
-        const startedAt = performance.now();
-
         await new Promise<void>((resolve) => {
+          let previous = performance.now();
           const step = (now: number) => {
             if (cancelled || isDraggingRef.current) {
               resolve();
               return;
             }
-
-            const progress = Math.min(1, (now - startedAt) / durationMs);
-            const eased = easeInOut(progress);
-            const nextX = startX + (targetX - startX) * eased;
-            const nextY = startY + (targetY - startY) * eased;
-            const nextPos = { x: Math.round(nextX), y: Math.round(nextY) };
+            const elapsed = Math.min(100, Math.max(0, now - previous));
+            previous = now;
+            const result = sceneController.step(companion.id, { x: targetX, y: targetY }, elapsed);
+            const nextPos = { x: result.position.x, y: result.position.y };
+            setActualWalkSpeed(result.speed);
             companionPositionRef.current = nextPos;
             setCompanionPosition(nextPos);
-
-            if (progress < 1) {
+            if (!result.reachedTarget && !result.cancelPath) {
               animationFrame = window.requestAnimationFrame(step);
             } else {
               animationFrame = undefined;
@@ -687,6 +741,8 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       } catch (error) {
         console.warn('[our-companion] Companion walk failed; scheduling next walk.', error);
       } finally {
+        setActualWalkSpeed(0);
+        sceneController.setPhase(companion.id, 'stationary');
         setMovementAnimation(undefined);
         if (!isDraggingRef.current) {
           previewState('idle', 'waiting');
@@ -765,7 +821,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       if (behaviorRefreshTimeout !== undefined) window.clearTimeout(behaviorRefreshTimeout);
       if (animationFrame !== undefined) window.cancelAnimationFrame(animationFrame);
     };
-  }, []);
+  }, [companion.id, sceneController]);
 
   return (
     <LangContext.Provider value={lang}><main
@@ -788,13 +844,15 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           {observatoryState.enabledPanels.length > 0 && (
             <div className="observatory-snapshot-row">
               {observatoryState.enabledPanels.map((panel) => (
-                <EngineSnapshotCard key={panel} engineKey={panel} snapshot={engineSnapshot} />
+                panel === 'motion' || panel === 'social'
+                  ? <SceneInspectorCard key={panel} kind={panel} controller={sceneController} visualVisit={visualVisit} />
+                  : <EngineSnapshotCard key={panel} engineKey={panel} snapshot={engineSnapshot} />
               ))}
             </div>
           )}
         </>
       )}
-      <RemoteVisitorLayer localCompanion={localCompanionVisible ? { ...companionPosition, width: COMPANION_SPRITE.width, height: COMPANION_SPRITE.height } : undefined} />
+      <RemoteVisitorLayer controller={sceneController} />
       {localCompanionVisible && <>
       <div
         data-testid="local-companion-runtime"
@@ -822,6 +880,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           assetRoot={companion.assetRoot}
           companionId={companion.id}
           movementAnimation={movementAnimation}
+          walkPlaybackRate={computeWalkPlaybackRate(actualWalkSpeed)}
           idleAnimation={idleAnimation}
           animationOverride={ownerVisualPhase === 'leaving'
             ? 'Leave'
@@ -851,6 +910,52 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
         onMouseLeave={() => interactive.leave('speech-bubble')}
         style={floatingPositions.bubble ? { position: 'absolute', left: floatingPositions.bubble.rect.x, top: floatingPositions.bubble.rect.y, width: floatingPositions.bubble.rect.width, transform: 'none' } : undefined}
       />
+      <Presence
+        present={Boolean((pendingPermission || remembered.length) && !discovery.popup)}
+        exitDurationMs={150}
+      >{(motionState) => (
+        <div
+          className="companion-soft-hint"
+          data-motion-state={motionState}
+          aria-label={pendingPermission ? 'Companion action permission' : 'Companion memory update'}
+          style={floatingPositions.card ? {
+            position: 'absolute',
+            left: floatingPositions.card.rect.x,
+            top: floatingPositions.card.rect.y,
+            width: floatingPositions.card.rect.width,
+            right: 'auto',
+          } : undefined}
+          onMouseEnter={() => interactive.enter('turn-confirmation')}
+          onMouseLeave={() => interactive.leave('turn-confirmation')}
+        >
+          {pendingPermission && (
+            <>
+              <p>{pendingPermission.message}</p>
+              <div className="soft-hint-actions">
+                <button className="companion-quick-btn" onClick={() => void resolvePermission('allow_once')}>
+                  {t(lang, 'turn_allow_once')}
+                </button>
+                <button className="companion-quick-btn" onClick={() => void resolvePermission('always_allow')}>
+                  {t(lang, 'turn_always_allow')}
+                </button>
+                <button className="companion-quick-btn soft-hint-dismiss" onClick={() => void resolvePermission('cancel')}>
+                  {t(lang, 'turn_cancel')}
+                </button>
+              </div>
+            </>
+          )}
+          {remembered.map((item) => (
+            <div key={item.undoToken}>
+              <p>{t(lang, 'memory_remembered', { summary: item.summary })}</p>
+              <div className="soft-hint-actions">
+                <button className="companion-quick-btn" onClick={() => void undoRemembered(item)}>
+                  {t(lang, 'memory_undo')}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}</Presence>
       {discovery.popup && (
         <DiscoveryPopoutCard
           candidate={discovery.popup}

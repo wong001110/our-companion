@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type {
   ActionPlan,
+  CompanionTurnProposal,
   CompanionDecision,
   CompanionInsight,
   CuriosityAssessment,
@@ -95,6 +96,44 @@ export const actionPlanSchema = z.object({
   confirmationRequired: z.boolean(),
   status: z.enum(['draft', 'pending_confirmation', 'approved', 'running', 'completed', 'failed', 'cancelled']).optional()
 });
+
+export const companionTurnProposalSchema = z.object({
+  reply: z.string().max(4_000),
+  intent: z.enum(['conversation', 'action', 'conversation_and_action', 'cannot_complete']),
+  actions: z.array(z.object({
+    toolName: z.string().min(1).max(80),
+    args: z.record(z.unknown()),
+    reason: z.string().max(500),
+  }).strict()).max(4),
+  memoryCandidates: z.array(z.object({
+    type: z.enum(['user_preference', 'user_fact', 'user_boundary', 'goal']),
+    summary: z.string().min(1).max(500),
+    evidence: z.string().min(1).max(1_000),
+    confidence: z.number().min(0).max(1),
+  }).strict()).max(6),
+}).strict().superRefine((proposal, context) => {
+  const actionIntent = proposal.intent === 'action' || proposal.intent === 'conversation_and_action';
+  if (actionIntent !== (proposal.actions.length > 0)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Turn intent and actions must agree.',
+    });
+  }
+});
+
+/**
+ * Strictly validates a structured turn. The only repair attempted is extracting
+ * one JSON object from provider wrapper text; no action or memory fields are
+ * inferred from invalid output.
+ */
+export function validateCompanionTurnProposal(text: string): CompanionTurnProposal | undefined {
+  try {
+    const parsed = companionTurnProposalSchema.safeParse(parseJsonObject(text));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export type ActionPlanLlmResult = z.infer<typeof actionPlanSchema>;
 

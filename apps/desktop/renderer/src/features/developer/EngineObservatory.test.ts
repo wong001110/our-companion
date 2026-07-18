@@ -2,7 +2,13 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { EngineSnapshot, EngineTrace } from '@our-companion/shared';
-import { AvailableActionsPanel, EngineTraceTimeline, ResearchObservatory } from './EngineObservatory';
+import {
+  AvailableActionsPanel,
+  DiscoveryInspector,
+  EngineTraceTimeline,
+  ResearchObservatory,
+  TurnInspector,
+} from './EngineObservatory';
 
 function trace(overrides: Partial<EngineTrace> = {}): EngineTrace {
   return {
@@ -98,5 +104,77 @@ describe('AvailableActionsPanel', () => {
     expect(markup).toContain('open youtube.com');
     expect(markup).toContain('Allowed arguments: url:string (required)');
     expect(markup).toContain('Unavailable capabilities: none');
+  });
+});
+
+describe('TurnInspector', () => {
+  it('renders bounded Memory selection, action validation, permission, execution, and Memory outcomes', () => {
+    const snapshot = {
+      turnInspections: [{
+        turnId: 'turn-1',
+        companionId: 'ann',
+        inputSource: 'panel_text',
+        inputSummary: 'open YouTube',
+        memoryItemsSelected: [{ memoryId: 'memory-1', category: 'preference', selectedBecause: 'user_preference' }],
+        memoryBudget: { itemCount: 1, characterCount: 18, maxItems: 18, maxCharacters: 4_800 },
+        deterministicActionMatch: 'open_url',
+        validatedActions: [{ toolName: 'open_url', args: { url: 'youtube.com' }, reason: 'rule' }],
+        rejectedActions: [],
+        permissionState: 'granted',
+        executionResult: 'executed',
+        memoryCandidates: [{ type: 'user_preference', summary: 'local-first', evidence: 'I prefer local-first', confidence: 0.9 }],
+        memoryOutcomes: [{ memoryId: 'memory-2', summary: 'local-first', outcome: 'created' }],
+        finalReplySource: 'deterministic_action_result',
+        createdAt: '2026-07-18T00:00:00.000Z',
+      }],
+    } as unknown as EngineSnapshot;
+    const markup = renderToStaticMarkup(createElement(TurnInspector, { snapshot }));
+    expect(markup).toContain('Turn Inspector');
+    expect(markup).toContain('preference:memory-1');
+    expect(markup).toContain('1/18 items');
+    expect(markup).toContain('open_url');
+    expect(markup).toContain('granted');
+    expect(markup).toContain('executed');
+    expect(markup).toContain('created:local-first');
+    expect(markup).toContain('deterministic_action_result');
+  });
+});
+
+describe('DiscoveryInspector', () => {
+  it('renders intent, capabilities, bounded context, dedup layers, material updates, and saturation', () => {
+    const snapshot = {
+      discoveryInspection: {
+        cycleId: 'cycle-1',
+        companionId: 'ann',
+        mode: 'wildcard',
+        intentQuestion: 'What surprising connection could help?',
+        expectedValue: 'A useful new connection',
+        freshness: 'any',
+        trustRequirement: 'open',
+        languages: ['en'],
+        regions: [],
+        contextCount: 32,
+        connectorCapabilities: [{ id: 'brave-search', mode: 'live', available: true }],
+        selectedBases: [{ id: 'base-1', connectorId: 'rss', state: 'trial', locator: 'https://example.test/feed' }],
+        candidatesAccepted: ['candidate-1'],
+        candidatesRejected: [{ candidateId: 'candidate-2', reason: 'content_hash_already_seen' }],
+        dedupHits: { content_hash: 1 },
+        duplicateCount: 1,
+        revivalCount: 0,
+        materialUpdateCount: 1,
+        newCount: 1,
+        saturationPenalty: 0.6,
+        createdAt: '2026-07-18T00:00:00.000Z',
+      },
+    } as unknown as EngineSnapshot;
+    const markup = renderToStaticMarkup(createElement(DiscoveryInspector, { snapshot }));
+    expect(markup).toContain('wildcard');
+    expect(markup).toContain('What surprising connection');
+    expect(markup).toContain('32/40 summaries');
+    expect(markup).toContain('brave-search:live');
+    expect(markup).toContain('rss:trial');
+    expect(markup).toContain('content_hash:1');
+    expect(markup).toContain('material update 1');
+    expect(markup).toContain('0.60');
   });
 });

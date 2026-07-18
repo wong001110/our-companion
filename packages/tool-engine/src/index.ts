@@ -105,7 +105,14 @@ export async function executeActionStep(
   args: Record<string, unknown>,
   adapters: ToolAdapters,
 ): Promise<ToolStepExecutionResult> {
-  const input: ToolExecuteInput = { toolName: toolName as ToolName, args };
+  // ActionStep execution is reached only after the Action orchestrator has
+  // resolved the canonical permission scopes (including allow-once). Keep the
+  // standalone tool.execute preview boundary unchanged.
+  const input: ToolExecuteInput = {
+    toolName: toolName as ToolName,
+    args,
+    requireConfirmation: true,
+  };
   return executeTool(input, adapters);
 }
 

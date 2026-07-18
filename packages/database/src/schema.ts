@@ -73,9 +73,23 @@ CREATE TABLE IF NOT EXISTS memory_nodes (
   user_id TEXT DEFAULT 'local',
   memory_type TEXT,
   metadata_json TEXT,
+  memory_fingerprint TEXT NOT NULL DEFAULT '',
+  confidence REAL NOT NULL DEFAULT 0.5,
+  observation_count INTEGER NOT NULL DEFAULT 1,
+  last_observed_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   compressed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS memory_processing_state (
+  memory_id TEXT PRIMARY KEY,
+  companion_id TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  processed_revision INTEGER NOT NULL DEFAULT 0,
+  processed_at TEXT,
+  deleted_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS memory_edges (

@@ -22,6 +22,7 @@ import {
   routeResearchSources,
   selectResearchPages,
   type DiscoveryConnector,
+  type ExplorationIntent,
   type ResearchCapability,
   validateAiResearchPlan
 } from '@our-companion/discovery-engine';
@@ -236,13 +237,45 @@ export class ResearchOrchestrator {
     companionId: string;
     cycleId: string;
     curiosityTarget: CuriosityTarget;
+    explorationIntent?: ExplorationIntent;
     seenCanonicalUrls?: Set<string>;
     onTrace?: (event: ResearchTraceEvent) => void;
   }): Promise<ResearchExecution> {
     const capabilities = toCapabilities(this.deps);
-    const intent = createResearchIntent({ ...input, now: this.now().toISOString() });
+    const baseIntent = createResearchIntent({ ...input, now: this.now().toISOString() });
+    const intent: ResearchIntent = input.explorationIntent
+      ? {
+        ...baseIntent,
+        topic: input.explorationIntent.topic,
+        objective: input.explorationIntent.mode === 'challenge'
+          ? 'find_contrarian_evidence'
+          : input.explorationIntent.mode === 'core'
+            ? 'find_recent_developments'
+            : 'compare_approaches',
+        domainHints: [...input.explorationIntent.domainHints],
+        freshnessDays: input.explorationIntent.freshness === 'breaking'
+          ? 2
+          : input.explorationIntent.freshness === 'recent'
+            ? 30
+            : undefined,
+        evidenceRequirements: {
+          minimumSources: input.explorationIntent.trustRequirement === 'open' ? 1 : 2,
+          requirePrimarySource: input.explorationIntent.trustRequirement === 'primary',
+          requireIndependentDomains: input.explorationIntent.trustRequirement === 'corroborated' ? 2 : 1,
+          requireContrastingSource: input.explorationIntent.mode === 'challenge',
+        },
+      }
+      : baseIntent;
     input.onTrace?.({ operation: 'research-intent:create', status: 'completed', inputRefs: [input.curiosityTarget.id], outputRefs: [intent.id] });
-    const deterministic = createDeterministicResearchPlan({ intent, capabilities, now: this.now().toISOString() });
+    const deterministicBase = createDeterministicResearchPlan({ intent, capabilities, now: this.now().toISOString() });
+    const deterministic = input.explorationIntent
+      ? {
+        ...deterministicBase,
+        queries: [...new Set(input.explorationIntent.searchTasks)]
+          .filter(Boolean)
+          .slice(0, deterministicBase.limits.maxQueries),
+      }
+      : deterministicBase;
     let plan = deterministic;
     if (this.deps.refinePlan) {
       try { plan = validateAiResearchPlan(await this.deps.refinePlan({ intent, deterministicPlan: deterministic }), deterministic, capabilities); }

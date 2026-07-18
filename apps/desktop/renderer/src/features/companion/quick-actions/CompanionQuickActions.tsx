@@ -32,7 +32,9 @@ const BUBBLE_SIZES = {
   panel: { width: 128, height: 38 },
   more: { width: 94, height: 38 },
 };
-const FLOAT_TRAVEL_PX = 4;
+// Reserve enough space for the 4 px float, focus treatment, and the floating
+// surface's 22 px shadow so the visual control is not clipped at display edges.
+const VISUAL_BLEED_PX = 32;
 
 export function CompanionQuickActions({
   visible,
@@ -59,10 +61,10 @@ export function CompanionQuickActions({
   const layout = useMemo(() => resolveQuickActionLayout({
     companionBounds: anchorRect,
     workArea: {
-      x: screenWorkArea.x + FLOAT_TRAVEL_PX,
-      y: screenWorkArea.y + FLOAT_TRAVEL_PX,
-      width: Math.max(0, screenWorkArea.width - FLOAT_TRAVEL_PX * 2),
-      height: Math.max(0, screenWorkArea.height - FLOAT_TRAVEL_PX * 2),
+      x: screenWorkArea.x + VISUAL_BLEED_PX,
+      y: screenWorkArea.y + VISUAL_BLEED_PX,
+      width: Math.max(0, screenWorkArea.width - VISUAL_BLEED_PX * 2),
+      height: Math.max(0, screenWorkArea.height - VISUAL_BLEED_PX * 2),
     },
     bubbleSizes: BUBBLE_SIZES,
     preferredPlacements: DEFAULT_QUICK_ACTION_PLACEMENTS,

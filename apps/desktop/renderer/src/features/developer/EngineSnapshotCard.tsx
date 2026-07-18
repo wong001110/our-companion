@@ -118,6 +118,8 @@ const PANEL_LABELS: Record<EnginePanelKey, string> = {
   discovery: 'Discovery',
   discoveryScheduling: 'Scheduling',
   insight: 'Insight',
+  motion: 'Motion',
+  social: 'Social',
 };
 
 function CardContent({ engineKey, snapshot }: { engineKey: EnginePanelKey; snapshot: EngineSnapshot }) {
@@ -129,6 +131,9 @@ function CardContent({ engineKey, snapshot }: { engineKey: EnginePanelKey; snaps
     case 'discovery': return <DiscoveryCard snapshot={snapshot} />;
     case 'discoveryScheduling': return <DiscoverySchedulingCard snapshot={snapshot} />;
     case 'insight': return <InsightCard snapshot={snapshot} />;
+    case 'motion':
+    case 'social':
+      return <p className="observatory-card-empty">Renderer-local scene data.</p>;
   }
 }
 

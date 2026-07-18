@@ -35,6 +35,8 @@ export class SpriteAnimator {
   private viewport: SpriteAnimatorViewport | null = null;
   private frameIndex = 0;
   private interval: number | undefined;
+  private playbackRate = 1;
+  private running = false;
   private cancelled = false;
   private completed = false;
 
@@ -112,14 +114,33 @@ export class SpriteAnimator {
     this.frameIndex = 0;
 
     this.drawFrame();
-    if (this.totalFrames > 1) this.interval = window.setInterval(() => this.drawFrame(), this.config.frameMs);
+    this.running = this.totalFrames > 1;
+    if (this.running) this.startFrameInterval();
+  }
+
+  setPlaybackRate(rate: number): void {
+    const next = Math.max(0.1, Math.min(4, Number.isFinite(rate) ? rate : 1));
+    if (next === this.playbackRate) return;
+    this.playbackRate = next;
+    if (this.running) {
+      if (this.interval !== undefined) window.clearInterval(this.interval);
+      this.startFrameInterval();
+    }
   }
 
   stop(): void {
+    this.running = false;
     if (this.interval !== undefined) {
       window.clearInterval(this.interval);
       this.interval = undefined;
     }
+  }
+
+  private startFrameInterval(): void {
+    this.interval = window.setInterval(
+      () => this.drawFrame(),
+      Math.max(16, this.config.frameMs / this.playbackRate),
+    );
   }
 
   destroy(): void {

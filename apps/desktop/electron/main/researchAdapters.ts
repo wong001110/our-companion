@@ -229,7 +229,18 @@ export interface SafeWebPageFetcherOptions {
   timeoutMs?: number;
 }
 
-const SUPPORTED_CONTENT_TYPES = new Set(['text/html', 'application/xhtml+xml', 'text/plain']);
+const FEED_CONTENT_TYPES = new Set([
+  'application/rss+xml',
+  'application/atom+xml',
+  'application/xml',
+  'text/xml',
+]);
+const SUPPORTED_CONTENT_TYPES = new Set([
+  'text/html',
+  'application/xhtml+xml',
+  'text/plain',
+  ...FEED_CONTENT_TYPES,
+]);
 
 function ipv4Number(address: string): number | undefined {
   const parts = address.split('.').map(Number);
@@ -373,6 +384,41 @@ function extractReadablePage(html: string, fallbackUrl: URL, limit: number): {
   return { title, canonicalUrl, extractedText, excerpt: extractedText.slice(0, 700), publishedAt };
 }
 
+export function extractReadableFeed(xml: string, fallbackUrl: URL, limit: number): {
+  title: string; canonicalUrl: string; extractedText: string; excerpt: string; publishedAt?: string;
+} {
+  const $ = load(xml, { xmlMode: true });
+  const feedTitle = normalizeText($('channel > title').first().text() || $('feed > title').first().text())
+    || fallbackUrl.hostname;
+  const entries = $('item, entry').slice(0, 20).map((_index, element) => {
+    const entry = $(element);
+    const title = normalizeText(entry.children('title').first().text());
+    const body = normalizeText(
+      entry.children('description, summary, content, content\\:encoded').first().text(),
+    );
+    return [title, body].filter(Boolean).join(': ');
+  }).get().filter(Boolean);
+  const extractedText = normalizeText(entries.join(' ')).slice(0, limit);
+  const selfHref = $('feed > link[rel="self"]').first().attr('href')
+    ?? $('rss > channel > atom\\:link[rel="self"]').first().attr('href');
+  let canonicalUrl = fallbackUrl.toString();
+  if (selfHref) {
+    try {
+      canonicalUrl = new URL(selfHref, fallbackUrl).toString();
+    } catch {
+      canonicalUrl = fallbackUrl.toString();
+    }
+  }
+  const publishedAt = $('item > pubDate, entry > published, entry > updated').first().text().trim() || undefined;
+  return {
+    title: feedTitle,
+    canonicalUrl,
+    extractedText,
+    excerpt: extractedText.slice(0, 700),
+    publishedAt,
+  };
+}
+
 async function fetchWithPinnedAddress(url: URL, init: RequestInit, address: string): Promise<Response> {
   const request = url.protocol === 'https:' ? httpsRequest : httpRequest;
   const headers = new Headers(init.headers);
@@ -447,7 +493,9 @@ export class SafeWebPageFetcher implements WebPageFetcher {
           redirect: 'manual',
           credentials: 'omit',
           signal: controller.signal,
-          headers: { Accept: 'text/html, application/xhtml+xml, text/plain;q=0.9' }
+          headers: {
+            Accept: 'text/html, application/xhtml+xml, application/rss+xml, application/atom+xml, application/xml, text/xml, text/plain;q=0.9',
+          }
         }, addresses[0]!.address), controller.signal);
         if (response.status >= 300 && response.status < 400) {
           const location = response.headers.get('location');
@@ -462,7 +510,9 @@ export class SafeWebPageFetcher implements WebPageFetcher {
         const body = await abortable(readBoundedBody(response, this.maxResponseBytes), controller.signal);
         const extracted = contentType === 'text/plain'
           ? { title: input.searchResult.title, canonicalUrl: target.toString(), extractedText: normalizeText(body).slice(0, this.maxExtractedCharacters), excerpt: normalizeText(body).slice(0, 700) }
-          : extractReadablePage(body, target, this.maxExtractedCharacters);
+          : FEED_CONTENT_TYPES.has(contentType)
+            ? extractReadableFeed(body, target, this.maxExtractedCharacters)
+            : extractReadablePage(body, target, this.maxExtractedCharacters);
         if (controller.signal.aborted) throw abortError();
         if (!extracted.extractedText) throw new ResearchAdapterError('empty_page_content');
         const canonical = assertSafeResearchUrl(extracted.canonicalUrl);
@@ -475,7 +525,8 @@ export class SafeWebPageFetcher implements WebPageFetcher {
           url: target.toString(), canonicalUrl: canonical.toString(), domain: canonical.hostname.toLowerCase(),
           title: extracted.title, extractedText: extracted.extractedText, excerpt: extracted.excerpt,
           contentHash: createHash('sha256').update(extracted.extractedText).digest('hex'), contentType,
-          fetchedAt: this.now().toISOString(), publishedAt: extracted.publishedAt, sourceType: input.sourceType
+          fetchedAt: this.now().toISOString(), publishedAt: extracted.publishedAt,
+          sourceType: FEED_CONTENT_TYPES.has(contentType) ? 'rss' : input.sourceType
         };
       } catch (error) {
         if (controller.signal.aborted || (error as { name?: string }).name === 'AbortError') throw new ResearchAdapterError('timeout');
