@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
@@ -29,6 +30,8 @@ test('S5 logical three-device multi-Visitor smoke', async () => {
     host: path.join(artifactRoot, 'profiles', 'host'),
   };
   const networkRoot = resolveSmokeNetworkRoot(clientRoot);
+  const clientCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: clientRoot, encoding: 'utf8' }).trim();
+  const networkCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: networkRoot, encoding: 'utf8' }).trim();
   const network = managedServer ? new ManagedSmokeNetwork({
     serverUrl,
     networkRoot,
@@ -117,7 +120,7 @@ test('S5 logical three-device multi-Visitor smoke', async () => {
     }
     await network?.stop();
     await cleanupDirectories([profiles.ownerA, profiles.ownerB, profiles.host]);
-    await fs.writeFile(path.join(artifactRoot, 'report.json'), JSON.stringify(sanitizedReport({ result: !scenarioError && !cleanupError && checks.cleanupSucceeded ? 'passed' : 'failed', runId: 'sanitized', protocol: '0.4', checks, ...(cleanupError ? { cleanupError } : {}), physicalVerificationRequired: true }), null, 2));
+    await fs.writeFile(path.join(artifactRoot, 'report.json'), JSON.stringify(sanitizedReport({ result: !scenarioError && !cleanupError && checks.cleanupSucceeded ? 'passed' : 'failed', runId: 'sanitized', clientCommit, networkCommit, protocol: '0.4', checks, ...(cleanupError ? { cleanupError } : {}), physicalVerificationRequired: true }), null, 2));
   }
   if (scenarioError) throw scenarioError;
   if (!checks.cleanupSucceeded) throw new Error('SMOKE_CLEANUP_FAILED');
