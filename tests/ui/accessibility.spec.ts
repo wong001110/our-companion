@@ -95,19 +95,16 @@ test('Panel navigation remains usable from the keyboard', async () => {
     const panel = await device.panelWindow();
 
     const social = panel.getByRole('button', { name: 'Social' });
-    await social.focus();
-    await panel.keyboard.press('Enter');
+    await social.press('Enter');
     await expect(panel.getByTestId('panel-page-social')).toHaveAttribute('data-motion-state', 'entered');
 
     const settings = panel.getByRole('button', { name: 'Settings' });
-    await settings.focus();
-    await panel.keyboard.press('Space');
+    await settings.press('Space');
     await expect(panel.getByTestId('panel-page-settings')).toHaveAttribute('data-motion-state', 'entered');
     await expect(panel.getByRole('tablist')).toBeVisible();
 
     const voice = panel.getByRole('tab', { name: 'Voice' });
-    await voice.focus();
-    await panel.keyboard.press('Enter');
+    await voice.press('Enter');
     await expect(panel.getByText('Voice', { exact: true }).last()).toBeVisible();
   } finally { await device.close(); }
 });
