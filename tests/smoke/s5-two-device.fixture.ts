@@ -43,7 +43,7 @@ export async function assertTerminalCleanup(owner: SmokeElectronDevice, host: Sm
     owner.waitForState((state) => (state.visits?.some((visit) => visit.sessionId === sessionId && ['ended', 'cancelled', 'failed'].includes(visit.state)) ?? !state.visit) && state.visual.ownerPresenceMode === 'home', 30_000),
     host.waitForState((state) => (state.visits?.some((visit) => visit.sessionId === sessionId && ['ended', 'cancelled', 'failed'].includes(visit.state)) ?? !state.visit) && !visitorForSession(state, sessionId), 30_000),
   ]);
-  await expect((await host.mainWindow()).getByTestId('remote-visual-visitor')).toHaveCount(0);
+  await expect((await host.mainWindow()).locator(`[data-testid="remote-visual-visitor"][data-session-id="${sessionId}"]`)).toHaveCount(0);
 }
 
 export async function removeFriend(owner: SmokeElectronDevice): Promise<void> {
