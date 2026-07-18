@@ -96,7 +96,7 @@ test('Panel navigation remains usable from the keyboard', async () => {
     const social = panel.getByRole('button', { name: 'Social' });
     await social.focus();
     await panel.keyboard.press('Enter');
-    await expect(panel.getByTestId('social-panel')).toBeVisible();
+    await expect(panel.getByTestId('panel-page-social')).toHaveAttribute('data-motion-state', 'entered');
 
     const settings = panel.getByRole('button', { name: 'Settings' });
     await settings.focus();
