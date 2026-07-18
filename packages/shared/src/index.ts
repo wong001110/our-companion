@@ -1657,13 +1657,17 @@ export interface VisualVisitRenderModel {
   x: number;
   y: number;
   facing: VisualVisitFacing;
+  sceneSlotIndex: number;
   assetUrls: Record<string, string>;
   frameTiming: Record<string, { frameDurationMs: number; loop: boolean }>;
 }
+export type VisualVisitRendererError = 'VISUAL_VISIT_ASSET_UNAVAILABLE' | 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE' | 'VISUAL_VISIT_RENDERER_UNAVAILABLE';
 export interface VisualVisitRendererState {
   ownerPresenceMode: 'home' | 'away_visiting';
-  visitor?: VisualVisitRenderModel;
-  error?: 'VISUAL_VISIT_ASSET_UNAVAILABLE' | 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE' | 'VISUAL_VISIT_RENDERER_UNAVAILABLE';
+  capacity: number;
+  visitors: Record<string, VisualVisitRenderModel>;
+  visitorOrder: string[];
+  errors: Record<string, VisualVisitRendererError>;
 }
 /** Sanitized, smoke-runtime-only state. It is unavailable from normal builds. */
 export interface SmokeTestState {
@@ -1673,8 +1677,9 @@ export interface SmokeTestState {
   visit?: { sessionId: string; state: string; role: 'visitor_owner' | 'host'; visitorOwnerReady: boolean; hostReady: boolean };
   visual: {
     ownerPresenceMode: 'home' | 'away_visiting';
-    visitor?: { runtimeId: string; sessionId: string; assetPackId: string; animationName?: string; observedAnimations?: string[]; x?: number; y?: number };
-    error?: string;
+    capacity: number;
+    visitors: Array<{ runtimeId: string; sessionId: string; assetPackId: string; animationName?: string; observedAnimations?: string[]; x?: number; y?: number; sceneSlotIndex: number; error?: VisualVisitRendererError }>;
+    errors?: Record<string, VisualVisitRendererError>;
   };
 }
 export interface SmokeVisualRuntimeUpdate { sessionId: string; animationName: string; x: number; y: number; }

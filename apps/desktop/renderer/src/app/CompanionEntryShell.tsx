@@ -789,7 +789,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           )}
         </>
       )}
-      <RemoteVisitorLayer visitor={visualVisit.visitor} />
+      <RemoteVisitorLayer />
       {localCompanionVisible && <>
       <div
         data-testid="local-companion-runtime"

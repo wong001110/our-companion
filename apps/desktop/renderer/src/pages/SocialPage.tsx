@@ -169,10 +169,12 @@ function visitSessionMessage(session: VisitSessionSummary, userId: string, lang:
 }
 
 function visualVisitMessage(visual: import('@our-companion/shared').VisualVisitRendererState, session: VisitSessionSummary, userId: string, lang: Lang): string {
-  if (visual.error === 'VISUAL_VISIT_ASSET_UNAVAILABLE' || visual.error === 'VISUAL_VISIT_RENDERER_UNAVAILABLE') return t(lang, 'social_visitor_unavailable');
-  if (visual.error === 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE') return t(lang, 'social_owner_mapping_unavailable');
+  const error = visual.errors?.[session.id];
+  if (error === 'VISUAL_VISIT_ASSET_UNAVAILABLE' || error === 'VISUAL_VISIT_RENDERER_UNAVAILABLE') return t(lang, 'social_visitor_unavailable');
+  if (error === 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE') return t(lang, 'social_owner_mapping_unavailable');
   if (session.visitorOwnerUserId === userId && visual.ownerPresenceMode === 'away_visiting') return t(lang, 'social_owner_visiting');
-  if (visual.visitor?.sessionId === session.id) return t(lang, 'social_visitor_visiting', { name: visual.visitor.name });
+  const visitor = visual.visitors[session.id];
+  if (visitor) return t(lang, 'social_visitor_visiting', { name: visitor.name });
   return t(lang, 'social_preparing_visitor_assets');
 }
 

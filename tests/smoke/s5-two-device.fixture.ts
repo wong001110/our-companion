@@ -2,6 +2,10 @@ import { expect } from '@playwright/test';
 import { SmokeElectronDevice } from './electron-device';
 import { waitUntil } from './smoke-state';
 
+function visitorForSession(state: Awaited<ReturnType<SmokeElectronDevice['getSmokeState']>>, sessionId: string) {
+  return state.visual.visitors.find((visitor) => visitor.sessionId === sessionId);
+}
+
 export async function startVisit(owner: SmokeElectronDevice, host: SmokeElectronDevice, hostAccountId: string): Promise<string> {
   const ownerPage = await owner.mainWindow();
   const hostPage = await host.mainWindow();
@@ -25,7 +29,7 @@ export async function startVisit(owner: SmokeElectronDevice, host: SmokeElectron
   await hostPage.evaluate(async (id) => window.ourCompanion.network.visits.sessions.start(id), sessionId);
   await Promise.all([
     owner.waitForState((state) => state.visit?.sessionId === sessionId && state.visit.state === 'active' && state.visual.ownerPresenceMode === 'away_visiting', 30_000),
-    host.waitForState((state) => state.visit?.sessionId === sessionId && state.visit.state === 'active' && state.visual.visitor?.runtimeId === `visit:${sessionId}`, 120_000),
+    host.waitForState((state) => state.visit?.sessionId === sessionId && state.visit.state === 'active' && visitorForSession(state, sessionId)?.runtimeId === `visit:${sessionId}`, 120_000),
   ]);
   return sessionId;
 }
@@ -37,7 +41,7 @@ export async function endVisit(device: SmokeElectronDevice, sessionId: string): 
 export async function assertTerminalCleanup(owner: SmokeElectronDevice, host: SmokeElectronDevice, sessionId: string): Promise<void> {
   await Promise.all([
     owner.waitForState((state) => (!state.visit || (state.visit.sessionId === sessionId && ['ended', 'cancelled', 'failed'].includes(state.visit.state))) && state.visual.ownerPresenceMode === 'home', 30_000),
-    host.waitForState((state) => (!state.visit || (state.visit.sessionId === sessionId && ['ended', 'cancelled', 'failed'].includes(state.visit.state))) && !state.visual.visitor, 30_000),
+    host.waitForState((state) => (!state.visit || (state.visit.sessionId === sessionId && ['ended', 'cancelled', 'failed'].includes(state.visit.state))) && !visitorForSession(state, sessionId), 30_000),
   ]);
   await expect((await host.mainWindow()).getByTestId('remote-visual-visitor')).toHaveCount(0);
 }
@@ -63,8 +67,14 @@ export async function unpublishOwnerCompanion(owner: SmokeElectronDevice, networ
 }
 
 export async function assertRendererLifecycle(host: SmokeElectronDevice, sessionId: string): Promise<void> {
-  await host.waitForState((state) => state.visual.visitor?.sessionId === sessionId && state.visual.visitor.observedAnimations?.includes('Enter') === true, 30_000);
-  await host.waitForState((state) => state.visual.visitor?.sessionId === sessionId && state.visual.visitor.observedAnimations?.some((name) => name === 'Idle_Neutral' || name.startsWith('Walk_')) === true, 30_000);
+  await host.waitForState((state) => {
+    const visitor = visitorForSession(state, sessionId);
+    return visitor?.sessionId === sessionId && visitor.observedAnimations?.includes('Enter') === true;
+  }, 30_000);
+  await host.waitForState((state) => {
+    const visitor = visitorForSession(state, sessionId);
+    return visitor?.sessionId === sessionId && visitor.observedAnimations?.some((name) => name === 'Idle_Neutral' || name.startsWith('Walk_')) === true;
+  }, 30_000);
   await expect((await host.mainWindow()).getByTestId('remote-visual-visitor')).toHaveAttribute('data-session-id', sessionId);
 }
 

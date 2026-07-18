@@ -355,7 +355,7 @@ if (process.env.OUR_COMPANION_SMOKE_TEST === '1') {
     setVisualWorkArea: (input) => invoke('smoke:setVisualWorkArea', input),
     clearVisualWorkArea: () => invoke('smoke:clearVisualWorkArea'),
     reportVisualRuntime: (input) => invoke('smoke:reportVisualRuntime', input),
-    simulateRendererFailure: () => invoke('smoke:simulateRendererFailure'),
+    simulateRendererFailure: (sessionId?: string) => invoke('smoke:simulateRendererFailure', sessionId),
     bootstrapFixtureCompanion: () => invoke('smoke:bootstrapFixtureCompanion'),
     setFriendLookupFixture: (input) => invoke('smoke:setFriendLookupFixture', input),
     setUiBetaFixture: (input) => invoke('smoke:setUiBetaFixture', input),

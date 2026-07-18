@@ -25,8 +25,9 @@ describe('VisualVisitService', () => {
     await service.reconcile();
     await service.reconcile();
     const state = service.getState();
-    expect(state.visitor).toMatchObject({ runtimeId: 'visit:session-1', name: 'Ann', role: 'remote_visitor', assetPackId: 'pack-1' });
-    expect(state.visitor).not.toHaveProperty('cacheRoot');
+    expect(state.visitorOrder).toEqual(['session-1']);
+    expect(state.visitors['session-1']).toMatchObject({ runtimeId: 'visit:session-1', name: 'Ann', role: 'remote_visitor', assetPackId: 'pack-1' });
+    expect(state.visitors['session-1']).not.toHaveProperty('cacheRoot');
     expect(companions.getVerifiedVisitVisualManifest).toHaveBeenCalledTimes(2);
   });
 
@@ -34,7 +35,7 @@ describe('VisualVisitService', () => {
     const { service, companions } = dependencies('owner');
     await service.reconcile();
     expect(companions.getLocalCompanionId).toHaveBeenCalledWith('network-companion-1');
-    expect(service.getState()).toEqual({ ownerPresenceMode: 'away_visiting' });
+    expect(service.getState()).toMatchObject({ ownerPresenceMode: 'away_visiting', visitors: {}, visitorOrder: [], errors: {} });
   });
 
   it('removes a stale visitor and restores the owner when no active session remains', async () => {
@@ -42,7 +43,7 @@ describe('VisualVisitService', () => {
     await service.reconcile();
     visits.listSessions.mockResolvedValue([session('ended')]);
     await service.reconcile();
-    expect(service.getState()).toEqual({ ownerPresenceMode: 'home' });
+    expect(service.getState()).toMatchObject({ ownerPresenceMode: 'home', visitors: {}, visitorOrder: [], errors: {} });
   });
 
   it('allows safe Pack bytes only while that Pack belongs to the active host Visitor', async () => {
@@ -59,9 +60,12 @@ describe('VisualVisitService', () => {
     const { service, visits } = dependencies('host');
     await service.reconcile();
     service.reportRendererFailure('other-session');
-    expect(service.getState().visitor?.sessionId).toBe('session-1');
+    expect(service.getState().visitors['session-1']).toMatchObject({ sessionId: 'session-1' });
     service.reportRendererFailure('session-1');
-    expect(service.getState()).toEqual({ ownerPresenceMode: 'home', error: 'VISUAL_VISIT_RENDERER_UNAVAILABLE' });
+    expect(service.getState().visitorOrder).toEqual([]);
+    expect(service.getState().errors['session-1']).toBe('VISUAL_VISIT_RENDERER_UNAVAILABLE');
+    await service.reconcile();
+    expect(service.getState()).toMatchObject({ ownerPresenceMode: 'home', visitors: { 'session-1': expect.any(Object) }, errors: {} });
     expect(visits.listSessions).toHaveBeenCalled();
   });
 });

@@ -46,8 +46,8 @@ let onboardingCompletion: OnboardingCompletionCoordinator;
 let discoveryScheduler: DiscoveryScheduler | undefined;
 let discoveryShareOrchestrator: DiscoveryShareOrchestrator | undefined;
 let companionClickThrough = true;
-let smokeVisualRuntime: { sessionId: string; animationName: string; x: number; y: number } | undefined;
-let smokeVisualAnimations: { sessionId: string; values: string[] } | undefined;
+let smokeVisualRuntimes: Record<string, { animationName: string; x: number; y: number }> = {};
+let smokeVisualAnimations: Record<string, string[]> = {};
 let smokeWorkArea: SmokeWorkArea | undefined;
 type UiBetaSmokeFixture = {
   status: Record<string, unknown>;
@@ -652,7 +652,23 @@ function registerSmokeIpc(): void {
     const sessions = status.account ? await services.visits.listSessions() : [];
     const session = sessions.find((candidate) => candidate.state === 'active') ?? sessions.find((candidate) => ['preparing', 'ready', 'ending'].includes(candidate.state));
     const role = session && status.account ? (session.visitorOwnerUserId === status.account.id ? 'visitor_owner' : session.hostUserId === status.account.id ? 'host' : undefined) : undefined;
-    const renderer = visual.visitor && smokeVisualRuntime?.sessionId === visual.visitor.sessionId ? smokeVisualRuntime : undefined;
+    const visitors: Array<{ runtimeId: string; sessionId: string; assetPackId: string; animationName?: string; observedAnimations?: string[]; x?: number; y?: number; sceneSlotIndex: number }> = [];
+    for (const sessionId of visual.visitorOrder) {
+      const visitor = visual.visitors[sessionId];
+      if (!visitor) continue;
+      const renderer = smokeVisualRuntimes[sessionId];
+      const observed = smokeVisualAnimations[sessionId];
+      visitors.push({
+        runtimeId: visitor.runtimeId,
+        sessionId: visitor.sessionId,
+        assetPackId: visitor.assetPackId,
+        animationName: renderer?.animationName ?? visitor.animationName,
+        ...(observed ? { observedAnimations: observed } : {}),
+        x: renderer?.x,
+        y: renderer?.y,
+        sceneSlotIndex: visitor.sceneSlotIndex,
+      });
+    }
     return {
       instanceRole: smokeInstanceRole(),
       network: { state: status.state, onlineModeEnabled: status.onlineModeEnabled, accountId: status.account?.id, serverOrigin: status.serverUrl },
@@ -660,8 +676,9 @@ function registerSmokeIpc(): void {
       ...(session && role ? { visit: { sessionId: session.id, state: session.state, role, visitorOwnerReady: session.visitorOwnerReady, hostReady: session.hostReady } } : {}),
       visual: {
         ownerPresenceMode: visual.ownerPresenceMode,
-        ...(visual.visitor ? { visitor: { runtimeId: visual.visitor.runtimeId, sessionId: visual.visitor.sessionId, assetPackId: visual.visitor.assetPackId, animationName: renderer?.animationName ?? visual.visitor.animationName, ...(smokeVisualAnimations?.sessionId === visual.visitor.sessionId ? { observedAnimations: smokeVisualAnimations.values } : {}), x: renderer?.x, y: renderer?.y } } : {}),
-        ...(visual.error ? { error: visual.error } : {}),
+        capacity: visual.capacity,
+        visitors,
+        ...(Object.keys(visual.errors).length ? { errors: visual.errors } : {}),
       },
     };
   });
@@ -681,23 +698,27 @@ function registerSmokeIpc(): void {
   });
   ipcMain.handle('smoke:reportVisualRuntime', (_event, input: unknown) => {
     const candidate = input as { sessionId?: string; animationName?: string; x?: number; y?: number };
-    const visual = services.visualVisits.getState().visitor;
-    if (!visual || typeof candidate.sessionId !== 'string' || candidate.sessionId !== visual.sessionId || typeof candidate.animationName !== 'string' || typeof candidate.x !== 'number' || !Number.isFinite(candidate.x) || typeof candidate.y !== 'number' || !Number.isFinite(candidate.y)) {
+    if (typeof candidate.sessionId !== 'string' || typeof candidate.animationName !== 'string' || typeof candidate.x !== 'number' || !Number.isFinite(candidate.x) || typeof candidate.y !== 'number' || !Number.isFinite(candidate.y)) {
       throw new Error('SMOKE_VISUAL_RUNTIME_INVALID');
     }
     const sessionId = candidate.sessionId;
+    const visual = services.visualVisits.getState();
+    if (!(sessionId in visual.visitors)) throw new Error('SMOKE_VISUAL_RUNTIME_UNAVAILABLE');
     const animationName = candidate.animationName;
     const x = candidate.x;
     const y = candidate.y;
-    smokeVisualRuntime = { sessionId, animationName: animationName.slice(0, 80), x: Math.round(x), y: Math.round(y) };
-    if (smokeVisualAnimations?.sessionId !== sessionId) smokeVisualAnimations = { sessionId, values: [] };
-    if (!smokeVisualAnimations.values.includes(smokeVisualRuntime.animationName)) smokeVisualAnimations.values.push(smokeVisualRuntime.animationName);
+    smokeVisualRuntimes[sessionId] = { animationName: animationName.slice(0, 80), x: Math.round(x), y: Math.round(y) };
+    if (!smokeVisualAnimations[sessionId]) smokeVisualAnimations[sessionId] = [];
+    if (!smokeVisualAnimations[sessionId].includes(smokeVisualRuntimes[sessionId].animationName)) smokeVisualAnimations[sessionId].push(smokeVisualRuntimes[sessionId].animationName);
   });
-  ipcMain.handle('smoke:simulateRendererFailure', () => {
-    const visitor = services.visualVisits.getState().visitor;
-    if (!visitor) throw new Error('SMOKE_VISUAL_RUNTIME_UNAVAILABLE');
-    services.visualVisits.reportRendererFailure(visitor.sessionId);
-    smokeVisualRuntime = undefined;
+  ipcMain.handle('smoke:simulateRendererFailure', (_event, input: unknown) => {
+    const requested = typeof input === 'string' ? input : undefined;
+    const visual = services.visualVisits.getState();
+    const sessionId = requested ?? visual.visitorOrder[0];
+    if (!sessionId) throw new Error('SMOKE_VISUAL_RUNTIME_UNAVAILABLE');
+    services.visualVisits.reportRendererFailure(sessionId);
+    delete smokeVisualRuntimes[sessionId];
+    delete smokeVisualAnimations[sessionId];
   });
   ipcMain.handle('smoke:bootstrapFixtureCompanion', () => {
     const companion = services.createSmokeFixtureCompanion();
@@ -788,7 +809,7 @@ function resolveUiBetaSmokeRoute(channel: string, input: unknown): { handled: fa
       return { handled: true, result: outgoing ? fixture.outgoingInvitations ?? [] : fixture.incomingInvitations ?? [] };
     }
     case 'network:visits:sessions:list': failure('sessions'); return { handled: true, result: fixture.sessions ?? [] };
-    case 'network:visits:visual:getState': return { handled: true, result: { state: 'idle', ownerPresenceMode: 'present' } };
+    case 'network:visits:visual:getState': return { handled: true, result: { ownerPresenceMode: 'home', capacity: 2, visitors: [], errors: {} } };
     case 'network:companions:getMine': failure('publication'); return { handled: true, result: fixture.publication ?? { companions: [] } };
     case 'companionNew:list': return { handled: true, result: fixture.localCompanions ?? [] };
     case 'network:assets:inspect': return { handled: true, result: { totalFiles: 12, totalBytes: 3145728, manifestHash: 'fixture-hash' } };

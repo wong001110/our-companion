@@ -117,37 +117,40 @@ test('S5 logical two-device smoke', async () => {
     // Scenarios 3–6 and 10–11 share one active Session.
     sessionId = await startVisit(owner, host, seeded.hostAccountId);
     await host.restart();
-    await host.waitForState((state) => state.network.state === 'online' && state.visit?.sessionId === sessionId && state.visual.visitor?.runtimeId === `visit:${sessionId}`, 60_000);
+    await host.waitForState((state) => state.network.state === 'online' && state.visit?.sessionId === sessionId && state.visual.visitors.some((visitor) => visitor.sessionId === sessionId && visitor.runtimeId === `visit:${sessionId}`), 60_000);
     await host.screenshot('visitor-recovered'); checks.hostRestartRecovered = true;
     await owner.restart();
     await owner.waitForState((state) => state.network.state === 'online' && state.visit?.sessionId === sessionId && state.visual.ownerPresenceMode === 'away_visiting', 60_000);
     checks.ownerRestartRecovered = true;
     const hostMain = await host.mainWindow();
     await hostMain.evaluate(async () => window.ourCompanion.smoke?.disconnectSocket());
-    await host.waitForState((state) => state.network.state === 'online' && state.visit?.sessionId === sessionId && Boolean(state.visual.visitor), 60_000);
+    await host.waitForState((state) => state.network.state === 'online' && state.visit?.sessionId === sessionId && Boolean(state.visual.visitors.find((visitor) => visitor.sessionId === sessionId)), 60_000);
     checks.socketReconnectRecovered = true;
 
     const firstWorkArea = { x: 0, y: 0, width: 800, height: 600 };
     await hostMain.evaluate(async (area) => window.ourCompanion.smoke?.setVisualWorkArea(area), firstWorkArea);
-    const firstClamped = await host.waitForState((state) => typeof state.visual.visitor?.x === 'number' && typeof state.visual.visitor?.y === 'number', 15_000);
-    assertVisitorWithinWorkArea(firstClamped.visual.visitor!, firstWorkArea);
+    const firstClamped = await host.waitForState((state) => {
+      const visitor = state.visual.visitors.find((candidate) => candidate.sessionId === sessionId);
+      return typeof visitor?.x === 'number' && typeof visitor?.y === 'number';
+    }, 15_000);
+    assertVisitorWithinWorkArea(firstClamped.visual.visitors.find((visitor) => visitor.sessionId === sessionId)!, firstWorkArea);
     const constrainedWorkArea = { x: 50, y: 40, width: 480, height: 360 };
     await hostMain.evaluate(async (area) => window.ourCompanion.smoke?.setVisualWorkArea(area), constrainedWorkArea);
     const observedPositions = new Set<string>();
     const constrained = await waitUntil(async () => {
       const state = await host.getSmokeState();
-      const visitor = state.visual.visitor;
+      const visitor = state.visual.visitors.find((candidate) => candidate.sessionId === sessionId);
       if (visitor && typeof visitor.x === 'number' && typeof visitor.y === 'number') observedPositions.add(`${visitor.x}:${visitor.y}`);
       return state;
-    }, (state) => Boolean(state.visual.visitor) && observedPositions.size >= 2, { timeoutMs: 20_000, label: 'bounded-visitor-movement' });
-    assertVisitorWithinWorkArea(constrained.visual.visitor!, constrainedWorkArea);
+    }, (state) => Boolean(state.visual.visitors.find((visitor) => visitor.sessionId === sessionId)) && observedPositions.size >= 2, { timeoutMs: 20_000, label: 'bounded-visitor-movement' });
+    assertVisitorWithinWorkArea(constrained.visual.visitors.find((visitor) => visitor.sessionId === sessionId)!, constrainedWorkArea);
     checks.displayClampPassed = checks.boundedMovement = true;
 
     await hostMain.evaluate(async () => window.ourCompanion.smoke?.simulateRendererFailure());
-    await host.waitForState((state) => state.visual.error === 'VISUAL_VISIT_RENDERER_UNAVAILABLE' && !state.visual.visitor, 15_000);
+    await host.waitForState((state) => state.visual.errors?.[sessionId] === 'VISUAL_VISIT_RENDERER_UNAVAILABLE' && !state.visual.visitors.find((visitor) => visitor.sessionId === sessionId), 15_000);
     await owner.waitForState((state) => state.visit?.state === 'active' && state.visual.ownerPresenceMode === 'away_visiting');
     await hostMain.evaluate(async () => window.ourCompanion.smoke?.reconcileVisits());
-    await host.waitForState((state) => state.visual.visitor?.sessionId === sessionId, 60_000);
+    await host.waitForState((state) => Boolean(state.visual.visitors.find((visitor) => visitor.sessionId === sessionId)), 60_000);
     checks.rendererFailureRecovered = true;
     const activeAssetStatus = await hostMain.evaluate(async (pack) => (await fetch(`companion-network://${pack}/assets/animations/Idle_Neutral.png`)).status, seeded.ownerPackId);
     expect(activeAssetStatus).toBe(200);
