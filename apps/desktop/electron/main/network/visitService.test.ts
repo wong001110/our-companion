@@ -54,12 +54,12 @@ describe('VisitService main-process coordinator', () => {
     expect(network.heartbeatVisitSession).toHaveBeenCalledTimes(2);
   });
 
-  it('reconciles a restored session once after reconnect and resumes its heartbeat', async () => {
+  it('reruns a coalesced reconciliation so an invalidation is not lost and resumes heartbeat', async () => {
     vi.useFakeTimers();
     const { service, network } = dependencies(owner);
     network.listVisitSessions.mockResolvedValue([session('ready')]);
     await Promise.all([service.reconcile(), service.reconcile()]);
-    expect(network.listVisitSessions).toHaveBeenCalledTimes(1);
+    expect(network.listVisitSessions).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(15_000);
     expect(network.heartbeatVisitSession).toHaveBeenCalledWith('session-1');
   });
@@ -117,6 +117,31 @@ describe('VisitService main-process coordinator', () => {
     expect(network.heartbeatVisitSession).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(network.heartbeatVisitSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('permits a second host slot but rejects a third invitation at the main-process boundary', async () => {
+    const { service, network } = dependencies(host);
+    const first = { ...session('active'), id: 'session-1', hostUserId: host };
+    network.listVisitSessions.mockResolvedValue([first]);
+    network.listVisitInvitations.mockResolvedValue([{ id: 'invitation-2', hostUserId: host }]);
+    network.acceptVisitInvitation.mockResolvedValue({ invitation: { id: 'invitation-2' }, session: { ...first, id: 'session-2' } });
+    await service.acceptInvitation('invitation-2');
+    expect(network.acceptVisitInvitation).toHaveBeenCalledWith('invitation-2');
+
+    network.listVisitSessions.mockResolvedValue([first, { ...first, id: 'session-2' }]);
+    await expect(service.acceptInvitation('invitation-2')).rejects.toThrow('VISIT_HOST_CAPACITY_REACHED');
+    expect(network.acceptVisitInvitation).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks incoming hosting while away and outgoing/switching while hosting guests', async () => {
+    const { service, network } = dependencies(host);
+    network.listVisitInvitations.mockResolvedValue([{ id: 'invitation-2', hostUserId: host }]);
+    network.listVisitSessions.mockResolvedValue([{ ...session('active'), visitorOwnerUserId: host, hostUserId: owner }]);
+    await expect(service.acceptInvitation('invitation-2')).rejects.toThrow('VISIT_HOST_COMPANION_AWAY');
+
+    network.listVisitSessions.mockResolvedValue([{ ...session('active'), hostUserId: host }]);
+    await expect(service.sendInvitation(owner)).rejects.toThrow('VISIT_HOST_HAS_ACTIVE_GUESTS');
+    await expect(service.assertCanSwitchLocalCompanion()).rejects.toThrow('VISIT_HOST_COMPANION_SWITCH_BLOCKED');
   });
 
   it('recreates heartbeat timers with the current server cadence after reconciliation', async () => {

@@ -25,7 +25,7 @@ export async function startVisit(owner: SmokeElectronDevice, host: SmokeElectron
     ownerPage.evaluate(async (id) => window.ourCompanion.network.visits.sessions.prepare(id), sessionId),
     hostPage.evaluate(async (id) => window.ourCompanion.network.visits.sessions.prepare(id), sessionId),
   ]);
-  await host.waitForState((state) => state.visit?.sessionId === sessionId && state.visit.state === 'ready', 60_000);
+  await host.waitForState((state) => state.visits?.some((visit) => visit.sessionId === sessionId && visit.state === 'ready') === true, 60_000);
   await hostPage.evaluate(async (id) => window.ourCompanion.network.visits.sessions.start(id), sessionId);
   await Promise.all([
     owner.waitForState((state) => state.visit?.sessionId === sessionId && state.visit.state === 'active' && state.visual.ownerPresenceMode === 'away_visiting', 30_000),
@@ -40,8 +40,8 @@ export async function endVisit(device: SmokeElectronDevice, sessionId: string): 
 
 export async function assertTerminalCleanup(owner: SmokeElectronDevice, host: SmokeElectronDevice, sessionId: string): Promise<void> {
   await Promise.all([
-    owner.waitForState((state) => (!state.visit || (state.visit.sessionId === sessionId && ['ended', 'cancelled', 'failed'].includes(state.visit.state))) && state.visual.ownerPresenceMode === 'home', 30_000),
-    host.waitForState((state) => (!state.visit || (state.visit.sessionId === sessionId && ['ended', 'cancelled', 'failed'].includes(state.visit.state))) && !visitorForSession(state, sessionId), 30_000),
+    owner.waitForState((state) => (state.visits?.some((visit) => visit.sessionId === sessionId && ['ended', 'cancelled', 'failed'].includes(visit.state)) ?? !state.visit) && state.visual.ownerPresenceMode === 'home', 30_000),
+    host.waitForState((state) => (state.visits?.some((visit) => visit.sessionId === sessionId && ['ended', 'cancelled', 'failed'].includes(visit.state)) ?? !state.visit) && !visitorForSession(state, sessionId), 30_000),
   ]);
   await expect((await host.mainWindow()).getByTestId('remote-visual-visitor')).toHaveCount(0);
 }
@@ -78,8 +78,8 @@ export async function assertRendererLifecycle(host: SmokeElectronDevice, session
   await expect((await host.mainWindow()).getByTestId('remote-visual-visitor')).toHaveAttribute('data-session-id', sessionId);
 }
 
-export async function assertAssetDeniedAfterEnd(host: SmokeElectronDevice, assetPackId: string): Promise<void> {
+export async function assertAssetDeniedAfterEnd(host: SmokeElectronDevice, sessionId: string, assetPackId: string): Promise<void> {
   const page = await host.mainWindow();
-  const status = await page.evaluate(async (pack) => (await fetch(`companion-network://${pack}/assets/animations/Idle_Neutral.png`)).status, assetPackId);
+  const status = await page.evaluate(async ({ session, pack }) => (await fetch(`companion-network://${session}/${pack}/assets/animations/Idle_Neutral.png`)).status, { session: sessionId, pack: assetPackId });
   expect(status).toBeGreaterThanOrEqual(400);
 }

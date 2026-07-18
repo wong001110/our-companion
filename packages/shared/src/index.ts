@@ -1661,11 +1661,13 @@ export interface VisualVisitRenderModel {
   assetUrls: Record<string, string>;
   frameTiming: Record<string, { frameDurationMs: number; loop: boolean }>;
 }
-export type VisualVisitRendererError = 'VISUAL_VISIT_ASSET_UNAVAILABLE' | 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE' | 'VISUAL_VISIT_RENDERER_UNAVAILABLE';
+export type VisualVisitRendererError = 'VISUAL_VISIT_ASSET_UNAVAILABLE' | 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE' | 'VISUAL_VISIT_RENDERER_UNAVAILABLE' | 'VISUAL_VISIT_CAPACITY_REACHED' | 'VISUAL_VISIT_HOST_AWAY_CONFLICT';
 export interface VisualVisitRendererState {
   ownerPresenceMode: 'home' | 'away_visiting';
   capacity: number;
   visitors: Record<string, VisualVisitRenderModel>;
+  /** Terminal visitors kept briefly so the local renderer can play Leave. */
+  departingVisitors: Record<string, VisualVisitRenderModel>;
   visitorOrder: string[];
   errors: Record<string, VisualVisitRendererError>;
 }
@@ -1675,10 +1677,11 @@ export interface SmokeTestState {
   network: { state: string; onlineModeEnabled: boolean; accountId?: string; serverOrigin?: string };
   device: { deviceIdHash: string };
   visit?: { sessionId: string; state: string; role: 'visitor_owner' | 'host'; visitorOwnerReady: boolean; hostReady: boolean };
+  visits?: Array<{ sessionId: string; state: string; role: 'visitor_owner' | 'host'; visitorOwnerReady: boolean; hostReady: boolean }>;
   visual: {
     ownerPresenceMode: 'home' | 'away_visiting';
     capacity: number;
-    visitors: Array<{ runtimeId: string; sessionId: string; assetPackId: string; animationName?: string; observedAnimations?: string[]; x?: number; y?: number; sceneSlotIndex: number; error?: VisualVisitRendererError }>;
+    visitors: Array<{ runtimeId: string; sessionId: string; assetPackId: string; animationName?: string; observedAnimations?: string[]; x?: number; y?: number; sceneSlotIndex: number; departing?: boolean; error?: VisualVisitRendererError }>;
     errors?: Record<string, VisualVisitRendererError>;
   };
 }
@@ -1902,6 +1905,7 @@ export interface OurCompanionApi {
       visual: {
         getState(): Promise<VisualVisitRendererState>;
         reportRendererFailure(sessionId: string): Promise<void>;
+        completeRendererDeparture(sessionId: string): Promise<void>;
         onChanged(listener: (state: VisualVisitRendererState) => void): () => void;
       };
     };
@@ -1945,7 +1949,7 @@ export interface OurCompanionApi {
     setVisualWorkArea(input: { x: number; y: number; width: number; height: number }): Promise<void>;
     clearVisualWorkArea(): Promise<void>;
     reportVisualRuntime(input: SmokeVisualRuntimeUpdate): Promise<void>;
-    simulateRendererFailure(): Promise<void>;
+    simulateRendererFailure(sessionId?: string): Promise<void>;
     bootstrapFixtureCompanion(): Promise<void>;
     setFriendLookupFixture(input: FriendLookupResult): Promise<void>;
     setUiBetaFixture(input: unknown): Promise<void>;

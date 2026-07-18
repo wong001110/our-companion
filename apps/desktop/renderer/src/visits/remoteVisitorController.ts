@@ -5,10 +5,16 @@ export const REMOTE_VISITOR_SIZE = { width: 220, height: 230 };
 
 export interface VisitorBounds { x?: number; y?: number; width: number; height: number; }
 export interface VisitorPosition { x: number; y: number; }
+export interface VisitorOccupant extends VisitorPosition { width?: number; height?: number; }
 
-export function initialVisitorPosition(bounds: VisitorBounds): VisitorPosition {
+export function initialVisitorPosition(bounds: VisitorBounds, sceneSlotIndex = 0, occupants: VisitorOccupant[] = []): VisitorPosition {
   const x = bounds.x ?? 0; const y = bounds.y ?? 0;
-  return clampVisitorPosition({ x: x + bounds.width - REMOTE_VISITOR_SIZE.width - 32, y: y + Math.round(bounds.height * 0.6) }, bounds);
+  const slot = Math.abs(sceneSlotIndex) % 2;
+  const preferred = {
+    x: slot === 0 ? x + bounds.width - REMOTE_VISITOR_SIZE.width - 32 : x + 32,
+    y: y + Math.round(bounds.height * 0.6),
+  };
+  return resolveVisitorPosition(preferred, bounds, occupants);
 }
 
 export function clampVisitorPosition(position: VisitorPosition, bounds: VisitorBounds): VisitorPosition {
@@ -50,6 +56,38 @@ export function nextWalkTarget(sessionId: string, moveIndex: number, current: Vi
   const distance = 60 + seededUnit(sessionId, moveIndex) * 140;
   const angle = seededUnit(sessionId, moveIndex + 1000) * Math.PI * 2;
   return clampVisitorPosition({ x: current.x + Math.cos(angle) * distance, y: current.y + Math.sin(angle) * distance }, bounds);
+}
+
+/**
+ * Keeps independently animated visitors out of one another's sprite bounds.
+ * The caller supplies the currently-known positions; no visitor owns global
+ * movement state or can move the local Companion.
+ */
+export function resolveVisitorPosition(candidate: VisitorPosition, bounds: VisitorBounds, occupants: VisitorOccupant[] = []): VisitorPosition {
+  const desired = clampVisitorPosition(candidate, bounds);
+  if (isClear(desired, occupants)) return desired;
+
+  const separation = 28;
+  const candidates = [
+    { x: desired.x, y: desired.y - REMOTE_VISITOR_SIZE.height - separation },
+    { x: desired.x, y: desired.y + REMOTE_VISITOR_SIZE.height + separation },
+    { x: desired.x - REMOTE_VISITOR_SIZE.width - separation, y: desired.y },
+    { x: desired.x + REMOTE_VISITOR_SIZE.width + separation, y: desired.y },
+    { x: bounds.x ?? 0, y: bounds.y ?? 0 },
+  ].map((position) => clampVisitorPosition(position, bounds));
+  return candidates.find((position) => isClear(position, occupants)) ?? desired;
+}
+
+function isClear(position: VisitorPosition, occupants: VisitorOccupant[]): boolean {
+  const padding = 12;
+  return occupants.every((occupant) => {
+    const width = occupant.width ?? REMOTE_VISITOR_SIZE.width;
+    const height = occupant.height ?? REMOTE_VISITOR_SIZE.height;
+    return position.x + REMOTE_VISITOR_SIZE.width + padding <= occupant.x
+      || occupant.x + width + padding <= position.x
+      || position.y + REMOTE_VISITOR_SIZE.height + padding <= occupant.y
+      || occupant.y + height + padding <= position.y;
+  });
 }
 
 export function isVisualVisitModel(value: unknown): value is VisualVisitRenderModel {

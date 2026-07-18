@@ -73,10 +73,12 @@ export function SocialPage() {
       if (isScopeCurrent(operationScope)) setMutationPhase(undefined);
     }
   };
-  const liveVisit = visitSessions.find((session) => ['preparing', 'ready', 'active', 'ending'].includes(session.state));
+  const liveVisits = visitSessions.filter((session) => ['preparing', 'ready', 'active', 'ending'].includes(session.state));
+  const hostOccupancy = liveVisits.filter((session) => session.hostUserId === account.id).length;
+  const localCompanionAway = liveVisits.some((session) => session.visitorOwnerUserId === account.id);
+  const hostAtCapacity = hostOccupancy >= visualVisit.capacity;
   const latestTerminalVisit = visitSessions.find((session) => ['ended', 'cancelled', 'failed'].includes(session.state));
   const userId = account.id;
-  const currentUserReadyForVisit = liveVisit ? (liveVisit.visitorOwnerUserId === userId ? liveVisit.visitorOwnerReady : liveVisit.hostReady) : false;
   const friendsById = new Map(friends.map((friend) => [friend.userId, friend]));
   const visibleIncomingVisits = visibleInvitations(visitIncoming);
   const visibleOutgoingVisits = visibleInvitations(visitOutgoing);
@@ -89,7 +91,7 @@ export function SocialPage() {
       <p><strong>{account.username} (@{account.username})</strong> <span className="soft-pill">{account.friendCode}</span></p>
       <div className="action-row"><button type="button" onClick={() => void copyOwnFriendCode()}>{copiedFriendCode ? t(lang, 'social_friend_code_copied') : t(lang, 'social_copy_friend_code')}</button><span>{t(lang, 'social_friend_count', { count: friends.length, plural: friends.length === 1 ? '' : 's' })} · {t(lang, 'social_pending_request_count', { count: incoming.length, plural: incoming.length === 1 ? '' : 's' })}</span></div>
     </section>
-    {loadedDomains.visitSessions && <CurrentVisitSection lang={lang} stale={stale} liveVisit={liveVisit} latestTerminalVisit={latestTerminalVisit} userId={userId} currentUserReadyForVisit={currentUserReadyForVisit} visualVisit={visualVisit} busyAction={busyAction} action={action} />}
+    {loadedDomains.visitSessions && <CurrentVisitSection lang={lang} stale={stale} liveVisits={liveVisits} latestTerminalVisit={latestTerminalVisit} userId={userId} visualVisit={visualVisit} busyAction={busyAction} action={action} />}
     <section aria-labelledby="published-companion-heading"><h3 id="published-companion-heading">{t(lang, 'social_published_companion')}</h3><PublishedCompanionSection onVisitAvailabilityChange={handlePublicationAvailability} /></section>
     <div className="online-auth-form"><label><span>{t(lang, 'social_add_friend_by_code')}</span><input value={friendCode} onChange={(event) => setFriendCode(event.target.value.toUpperCase())} placeholder="ABC12345" /></label><button className="btn-secondary btn-sm" onClick={() => { setLookup(undefined); setActionError(undefined); void action(() => window.ourCompanion.network.friends.lookup(friendCode.trim()), { clearLookup: false, phase: 'sending', onSuccess: setLookup }); }} disabled={!friendCode.trim() || busyAction}>{t(lang, 'social_find')}</button></div>
     {lookup && <div data-testid="friend-lookup-result" className="online-user-info"><p><strong>{lookup.username}</strong> · {lookup.friendCode}</p>{canSendFriendRequest(lookup.relationship) && <button data-testid="send-friend-request" className="btn-primary btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.sendRequest(lookup.id), { phase: 'sending' })}>{t(lang, 'social_send_request')}</button>}<p data-testid="friend-lookup-relationship" aria-live="polite">{friendLookupRelationshipMessage(lookup.relationship, lang)}</p></div>}
@@ -98,7 +100,7 @@ export function SocialPage() {
     {!hasLoaded && loading && <SectionLoading label={t(lang, 'social_loading')} />}
     <h3>{t(lang, 'social_friends')}</h3>{domainErrors.friends && <SectionPartialError message={t(lang, domainErrors.friends)} onRetry={() => void refresh()} />}{domainErrors.presence && <SectionPartialError message={t(lang, domainErrors.presence)} onRetry={() => void refresh()} />}{loadedDomains.friends && (friends.length ? friends.map((friend) => {
       const pendingVisit = visitOutgoing.some((invite) => invite.status === 'pending' && invite.hostUserId === friend.userId);
-      const visitDisabledReason = mutationReason ?? (!available ? t(lang, 'online_state_detail_reconnecting') : !visitsAvailable ? t(lang, 'social_visit_unavailable') : !publicationAvailability.loaded ? t(lang, 'social_partial_publishing') : !publicationAvailability.canSendVisit ? t(lang, 'social_publish_before_visit_hint') : liveVisit ? t(lang, 'social_finish_visit_hint') : pendingVisit ? t(lang, 'social_pending') : undefined);
+      const visitDisabledReason = mutationReason ?? (!available ? t(lang, 'online_state_detail_reconnecting') : !visitsAvailable ? t(lang, 'social_visit_unavailable') : !publicationAvailability.loaded ? t(lang, 'social_partial_publishing') : !publicationAvailability.canSendVisit ? t(lang, 'social_publish_before_visit_hint') : hostOccupancy > 0 ? 'VISIT_HOST_HAS_ACTIVE_GUESTS' : localCompanionAway ? 'VISIT_HOST_COMPANION_AWAY' : pendingVisit ? t(lang, 'social_pending') : undefined);
       return <FriendRow key={friend.userId} lang={lang} friend={friend} disabled={busyAction} visitDisabledReason={visitDisabledReason}
         onView={() => void action(() => window.ourCompanion.network.companions.getFriendCompanion(friend.userId), { phase: 'sending', onSuccess: (companion) => { setFriendCompanion(companion); setFriendAssetStatus(''); } })}
         onVisit={() => void action(() => window.ourCompanion.network.visits.invitations.send(friend.userId), { phase: 'sending' })}
@@ -109,9 +111,9 @@ export function SocialPage() {
     {friendCompanion && <div className="online-user-info"><h3>{friendCompanion.name}</h3>{friendCompanion.publicDescription && <p>{friendCompanion.publicDescription}</p>}<p>{friendCompanion.publicTags.join(' · ')}</p>{friendCompanion.activeAssetPackId ? <button className="btn-secondary btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.assets.downloadPack({ assetPackId: friendCompanion.activeAssetPackId!, networkCompanionId: friendCompanion.id }), { phase: 'preparing', onSuccess: () => setFriendAssetStatus(t(lang, 'social_pack_downloaded')) })}>{t(lang, 'social_download_pack')}</button> : <p>{t(lang, 'social_no_active_pack')}</p>}{friendAssetStatus && <p aria-live="polite">{friendAssetStatus}</p>}</div>}
     <h3>{t(lang, 'social_visit_invitations')}</h3>{domainErrors.incomingVisitInvitations && <SectionPartialError message={t(lang, domainErrors.incomingVisitInvitations)} onRetry={() => void refresh()} />}{domainErrors.outgoingVisitInvitations && <SectionPartialError message={t(lang, domainErrors.outgoingVisitInvitations)} onRetry={() => void refresh()} />}{domainErrors.visitSessions && <SectionPartialError message={t(lang, domainErrors.visitSessions)} onRetry={() => void refresh()} />}
     {!visitsAvailable ? <p>{t(lang, 'social_visit_unavailable')}</p> : <>
-      {loadedDomains.incomingVisitInvitations && (visibleIncomingVisits.length ? visibleIncomingVisits.map((invite) => <VisitInvitationRow key={invite.id} lang={lang} invitation={invite} direction="incoming" username={friendsById.get(invite.visitorOwnerUserId)?.username ?? t(lang, 'social_friend_fallback')} disabled={busyAction} disabledReason={mutationReason} liveVisit={Boolean(liveVisit)} onAccept={() => void action(() => window.ourCompanion.network.visits.invitations.accept(invite.id), { phase: 'accepting' })} onDecline={() => void action(() => window.ourCompanion.network.visits.invitations.decline(invite.id), { phase: 'rejecting' })} />) : <p>{t(lang, 'social_no_incoming_visit')}</p>)}
+      {loadedDomains.incomingVisitInvitations && (visibleIncomingVisits.length ? visibleIncomingVisits.map((invite) => <VisitInvitationRow key={invite.id} lang={lang} invitation={invite} direction="incoming" username={friendsById.get(invite.visitorOwnerUserId)?.username ?? t(lang, 'social_friend_fallback')} disabled={busyAction || hostAtCapacity || localCompanionAway} disabledReason={mutationReason ?? (hostAtCapacity ? 'VISIT_HOST_CAPACITY_REACHED' : localCompanionAway ? 'VISIT_HOST_COMPANION_AWAY' : undefined)} onAccept={() => void action(() => window.ourCompanion.network.visits.invitations.accept(invite.id), { phase: 'accepting' })} onDecline={() => void action(() => window.ourCompanion.network.visits.invitations.decline(invite.id), { phase: 'rejecting' })} />) : <p>{t(lang, 'social_no_incoming_visit')}</p>)}
       <h3>{t(lang, 'social_outgoing_visit_invitations')}</h3>
-      {loadedDomains.outgoingVisitInvitations && (visibleOutgoingVisits.length ? visibleOutgoingVisits.map((invite) => <VisitInvitationRow key={invite.id} lang={lang} invitation={invite} direction="outgoing" username={friendsById.get(invite.hostUserId)?.username ?? t(lang, 'social_friend_fallback')} disabled={busyAction} disabledReason={mutationReason} liveVisit={Boolean(liveVisit)} onCancel={() => void action(() => window.ourCompanion.network.visits.invitations.cancel(invite.id), { phase: 'cancelling' })} />) : <p>{t(lang, 'social_no_outgoing_visit')}</p>)}
+      {loadedDomains.outgoingVisitInvitations && (visibleOutgoingVisits.length ? visibleOutgoingVisits.map((invite) => <VisitInvitationRow key={invite.id} lang={lang} invitation={invite} direction="outgoing" username={friendsById.get(invite.hostUserId)?.username ?? t(lang, 'social_friend_fallback')} disabled={busyAction} disabledReason={mutationReason} onCancel={() => void action(() => window.ourCompanion.network.visits.invitations.cancel(invite.id), { phase: 'cancelling' })} />) : <p>{t(lang, 'social_no_outgoing_visit')}</p>)}
     </>}
     <h3>{t(lang, 'social_incoming_requests')}</h3>{domainErrors.incomingRequests && <SectionPartialError message={t(lang, domainErrors.incomingRequests)} onRetry={() => void refresh()} />}{loadedDomains.incomingRequests && (incoming.length ? incoming.map((request) => <FriendRequestRow key={request.id} lang={lang} request={request} disabled={busyAction} disabledReason={mutationReason} onAccept={() => void action(() => window.ourCompanion.network.friends.acceptRequest(request.id), { phase: 'accepting' })} onReject={() => void action(() => window.ourCompanion.network.friends.rejectRequest(request.id), { phase: 'rejecting' })} />) : <p>{t(lang, 'social_no_incoming_requests')}</p>)}
     <h3>{t(lang, 'social_outgoing_requests')}</h3>{domainErrors.outgoingRequests && <SectionPartialError message={t(lang, domainErrors.outgoingRequests)} onRetry={() => void refresh()} />}{loadedDomains.outgoingRequests && (outgoing.length ? outgoing.map((request) => <FriendRequestRow key={request.id} lang={lang} request={request} disabled={busyAction} disabledReason={mutationReason} onCancel={() => void action(() => window.ourCompanion.network.friends.cancelRequest(request.id), { phase: 'cancelling' })} />) : <p>{t(lang, 'social_no_outgoing_requests')}</p>)}
@@ -121,34 +123,39 @@ export function SocialPage() {
 }
 
 function CurrentVisitSection({
-  lang, stale, liveVisit, latestTerminalVisit, userId, currentUserReadyForVisit, visualVisit, busyAction, action,
+  lang, stale, liveVisits, latestTerminalVisit, userId, visualVisit, busyAction, action,
 }: {
   lang: Lang;
   stale: boolean;
-  liveVisit?: VisitSessionSummary;
+  liveVisits: VisitSessionSummary[];
   latestTerminalVisit?: VisitSessionSummary;
   userId: string;
-  currentUserReadyForVisit: boolean;
   visualVisit: ReturnType<typeof useVisualVisitState>;
   busyAction: boolean;
   action: (operation: () => Promise<unknown>, options?: { phase?: SocialMutationPhase }) => Promise<void>;
 }) {
-  const session = liveVisit ?? latestTerminalVisit;
-  const presentation = session ? VISIT_SESSION_PRESENTATION[session.state] : undefined;
+  const sessions = liveVisits.length ? liveVisits : latestTerminalVisit ? [latestTerminalVisit] : [];
+  const hostOccupancy = liveVisits.filter((session) => session.hostUserId === userId).length;
   return <section aria-labelledby="current-visit-heading">
     <h3 id="current-visit-heading">{t(lang, 'social_visit_session')}</h3>
-    {session ? <div data-testid="visit-session-state" data-state={session.state} className="operational-row">
-      <div className="operational-row-main"><strong>{stale && liveVisit ? t(lang, 'social_visit_reconnecting') : visitSessionMessage(session, userId, lang)}</strong>{presentation && <span className={`status-badge status-badge-${presentation.tone}`}><span className="status-badge-marker" aria-hidden="true" />{t(lang, presentation.labelKey)}</span>}</div>
-      {session.state === 'preparing' && <p>{t(lang, 'social_visit_readiness', { owner: session.visitorOwnerReady ? t(lang, 'social_ready') : t(lang, 'social_not_ready'), host: session.hostReady ? t(lang, 'social_ready') : t(lang, 'social_not_ready') })}</p>}
-      {!stale && session.state === 'active' && <p>{visualVisitMessage(visualVisit, session, userId, lang)}</p>}
-      {stale && liveVisit && <p className="state-reason">{t(lang, 'operational_content_stale')}</p>}
-      {!liveVisit && <p>{t(lang, session.endReason ? visitEndReasonPresentation(session.endReason) : visitFailurePresentation(session.failureCode))}</p>}
-      {liveVisit && session.state !== 'ending' && <div className="operational-row-actions">
-        {session.state === 'preparing' && !currentUserReadyForVisit && <button data-testid="prepare-visit" disabled={busyAction || stale} onClick={() => void action(() => window.ourCompanion.network.visits.sessions.prepare(session.id), { phase: 'preparing' })}>{busyAction ? t(lang, 'social_preparing') : t(lang, 'social_prepare')}</button>}
-        {session.state === 'ready' && session.hostUserId === userId && <button data-testid="start-visit" disabled={busyAction || stale} onClick={() => void action(() => window.ourCompanion.network.visits.sessions.start(session.id), { phase: 'starting' })}>{t(lang, 'social_start_visit')}</button>}
-        <button data-testid="end-visit" disabled={busyAction || stale} onClick={() => void action(() => window.ourCompanion.network.visits.sessions.end(session.id), { phase: 'ending' })}>{session.state === 'preparing' || session.state === 'ready' ? t(lang, 'social_cancel_visit') : t(lang, 'social_end_visit')}</button>
-      </div>}
-    </div> : <p data-testid="visit-session-state">{t(lang, 'social_no_current_visit')}</p>}
+    <p data-testid="visit-capacity">Visitors: {hostOccupancy} / {visualVisit.capacity}</p>
+    {sessions.length ? sessions.map((session) => {
+      const live = liveVisits.some((candidate) => candidate.id === session.id);
+      const presentation = VISIT_SESSION_PRESENTATION[session.state];
+      const currentUserReady = session.visitorOwnerUserId === userId ? session.visitorOwnerReady : session.hostReady;
+      return <div key={session.id} data-testid="visit-session-state" data-session-id={session.id} data-state={session.state} className="operational-row">
+        <div className="operational-row-main"><strong>{stale && live ? t(lang, 'social_visit_reconnecting') : visitSessionMessage(session, userId, lang)}</strong>{presentation && <span className={`status-badge status-badge-${presentation.tone}`}><span className="status-badge-marker" aria-hidden="true" />{t(lang, presentation.labelKey)}</span>}</div>
+        {session.state === 'preparing' && <p>{t(lang, 'social_visit_readiness', { owner: session.visitorOwnerReady ? t(lang, 'social_ready') : t(lang, 'social_not_ready'), host: session.hostReady ? t(lang, 'social_ready') : t(lang, 'social_not_ready') })}</p>}
+        {!stale && session.state === 'active' && <p>{visualVisitMessage(visualVisit, session, userId, lang)}</p>}
+        {stale && live && <p className="state-reason">{t(lang, 'operational_content_stale')}</p>}
+        {!live && <p>{t(lang, session.endReason ? visitEndReasonPresentation(session.endReason) : visitFailurePresentation(session.failureCode))}</p>}
+        {live && session.state !== 'ending' && <div className="operational-row-actions">
+          {session.state === 'preparing' && !currentUserReady && <button data-testid="prepare-visit" disabled={busyAction || stale} onClick={() => void action(() => window.ourCompanion.network.visits.sessions.prepare(session.id), { phase: 'preparing' })}>{busyAction ? t(lang, 'social_preparing') : t(lang, 'social_prepare')}</button>}
+          {session.state === 'ready' && session.hostUserId === userId && <button data-testid="start-visit" disabled={busyAction || stale} onClick={() => void action(() => window.ourCompanion.network.visits.sessions.start(session.id), { phase: 'starting' })}>{t(lang, 'social_start_visit')}</button>}
+          <button data-testid="end-visit" disabled={busyAction || stale} onClick={() => void action(() => window.ourCompanion.network.visits.sessions.end(session.id), { phase: 'ending' })}>{session.state === 'preparing' || session.state === 'ready' ? t(lang, 'social_cancel_visit') : t(lang, 'social_end_visit')}</button>
+        </div>}
+      </div>;
+    }) : <p data-testid="visit-session-state">{t(lang, 'social_no_current_visit')}</p>}
   </section>;
 }
 

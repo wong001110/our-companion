@@ -72,14 +72,13 @@ export function BlockedUserRow({ lang, user, disabled, disabledReason, onUnblock
   />;
 }
 
-export function VisitInvitationRow({ lang, invitation, direction, username, disabled, disabledReason, liveVisit, onAccept, onDecline, onCancel }: {
+export function VisitInvitationRow({ lang, invitation, direction, username, disabled, disabledReason, onAccept, onDecline, onCancel }: {
   lang: Lang;
   invitation: VisitInvitationSummary;
   direction: 'incoming' | 'outgoing';
   username: string;
   disabled: boolean;
   disabledReason?: string;
-  liveVisit: boolean;
   onAccept?: () => void;
   onDecline?: () => void;
   onCancel?: () => void;
@@ -91,7 +90,7 @@ export function VisitInvitationRow({ lang, invitation, direction, username, disa
     identity={<><strong>{invitation.companionName}</strong><span>{direction === 'incoming' ? t(lang, 'social_visit_from', { username }) : t(lang, 'social_visit_to', { username })}</span></>}
     status={{ label: t(lang, presentation.labelKey), tone: presentation.tone }}
     supporting={<>{invitation.companionDescription && <p>{invitation.companionDescription}</p>}<p>{invitation.companionTags.join(' · ') || t(lang, 'social_no_public_tags')}</p><p>{t(lang, direction === 'incoming' ? 'social_visit_role_host' : 'social_visit_role_visitor')} · {t(lang, 'social_visit_visual_only')}</p><p>{t(lang, 'social_expires', { time: '' })} <time dateTime={invitation.expiresAt}>{formatDateTime(invitation.expiresAt, lang)}</time></p></>}
-    actions={invitation.status === 'pending' ? direction === 'incoming' ? <><button data-testid="accept-visit-invitation" disabled={disabled || liveVisit} onClick={onAccept}>{t(lang, 'social_accept')}</button><button disabled={disabled} onClick={onDecline}>{t(lang, 'social_decline')}</button></> : <button disabled={disabled} onClick={onCancel}>{t(lang, 'social_cancel')}</button> : undefined}
+    actions={invitation.status === 'pending' ? direction === 'incoming' ? <><button data-testid="accept-visit-invitation" disabled={disabled} onClick={onAccept}>{t(lang, 'social_accept')}</button><button disabled={disabled} onClick={onDecline}>{t(lang, 'social_decline')}</button></> : <button disabled={disabled} onClick={onCancel}>{t(lang, 'social_cancel')}</button> : undefined}
     reason={disabledReason}
   />;
 }

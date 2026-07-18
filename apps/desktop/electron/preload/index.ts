@@ -307,6 +307,7 @@ const api: OurCompanionApi = {
       visual: {
         getState: () => invoke('network:visits:visual:getState'),
         reportRendererFailure: (sessionId) => invoke('network:visits:visual:reportRendererFailure', sessionId),
+        completeRendererDeparture: (sessionId) => invoke('network:visits:visual:completeRendererDeparture', sessionId),
         onChanged: (listener) => {
           const channel = 'network:visits:visualChanged';
           const handler = (_event: Electron.IpcRendererEvent, state: import('@our-companion/shared').VisualVisitRendererState) => listener(state);

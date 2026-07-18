@@ -152,16 +152,16 @@ test('S5 logical two-device smoke', async () => {
     await hostMain.evaluate(async () => window.ourCompanion.smoke?.reconcileVisits());
     await host.waitForState((state) => Boolean(state.visual.visitors.find((visitor) => visitor.sessionId === sessionId)), 60_000);
     checks.rendererFailureRecovered = true;
-    const activeAssetStatus = await hostMain.evaluate(async (pack) => (await fetch(`companion-network://${pack}/assets/animations/Idle_Neutral.png`)).status, seeded.ownerPackId);
+    const activeAssetStatus = await hostMain.evaluate(async ({ session, pack }) => (await fetch(`companion-network://${session}/${pack}/assets/animations/Idle_Neutral.png`)).status, { session: sessionId, pack: seeded.ownerPackId });
     expect(activeAssetStatus).toBe(200);
     checks.activeAssetAuthorized = true;
-    expect(await hostMain.evaluate(async () => (await fetch('companion-network://other-pack/assets/animations/Idle_Neutral.png')).status)).toBeGreaterThanOrEqual(400);
-    expect(await hostMain.evaluate(async (pack) => (await fetch(`companion-network://${pack}/assets/%2e%2e/secret.png`)).status, seeded.ownerPackId)).toBeGreaterThanOrEqual(400);
-    expect(await hostMain.evaluate(async (pack) => (await fetch(`companion-network://${pack}/assets/animations/Undeclared.png`)).status, seeded.ownerPackId)).toBeGreaterThanOrEqual(400);
-    expect(await hostMain.evaluate(async (pack) => (await fetch(`companion-network://${pack}/assets/readme.txt`)).status, seeded.ownerPackId)).toBeGreaterThanOrEqual(400);
+    expect(await hostMain.evaluate(async ({ session }) => (await fetch(`companion-network://${session}/other-pack/assets/animations/Idle_Neutral.png`)).status, { session: sessionId })).toBeGreaterThanOrEqual(400);
+    expect(await hostMain.evaluate(async ({ session, pack }) => (await fetch(`companion-network://${session}/${pack}/assets/%2e%2e/secret.png`)).status, { session: sessionId, pack: seeded.ownerPackId })).toBeGreaterThanOrEqual(400);
+    expect(await hostMain.evaluate(async ({ session, pack }) => (await fetch(`companion-network://${session}/${pack}/assets/animations/Undeclared.png`)).status, { session: sessionId, pack: seeded.ownerPackId })).toBeGreaterThanOrEqual(400);
+    expect(await hostMain.evaluate(async ({ session, pack }) => (await fetch(`companion-network://${session}/${pack}/assets/readme.txt`)).status, { session: sessionId, pack: seeded.ownerPackId })).toBeGreaterThanOrEqual(400);
     await endVisit(owner, sessionId);
     await assertTerminalCleanup(owner, host, sessionId);
-    await assertAssetDeniedAfterEnd(host, seeded.ownerPackId);
+    await assertAssetDeniedAfterEnd(host, sessionId, seeded.ownerPackId);
     checks.terminalAssetDenied = true;
 
     // Scenarios 7–9: each destructive action is exercised against a fresh real Session.

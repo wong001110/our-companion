@@ -16,4 +16,16 @@ describe('PublicCompanionService transfer ownership', () => {
     release({});
     await expect(first).rejects.toThrow('ONLINE_MODE_DISABLED');
   });
+
+  it('coalesces repeat download requests for one Visit session without blocking another session', async () => {
+    let release!: (status: unknown) => void;
+    let calls = 0;
+    const service = new PublicCompanionService({} as never, { getStatus: () => { calls++; return new Promise(resolve => { release = resolve; }); } } as never, '/cache');
+    const first = service.downloadVisitPack({ sessionId: 'session-1', assetPackId: 'pack-1', networkCompanionId: 'companion-1' });
+    const repeated = service.downloadVisitPack({ sessionId: 'session-1', assetPackId: 'pack-1', networkCompanionId: 'companion-1' });
+    expect(calls).toBe(1);
+    release({});
+    await expect(first).rejects.toThrow('ONLINE_MODE_DISABLED');
+    await expect(repeated).rejects.toThrow('ONLINE_MODE_DISABLED');
+  });
 });

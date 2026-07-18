@@ -32,8 +32,8 @@ function registerCompanionProtocol(): void {
     });
   });
   protocol.handle('companion-network', (request) => {
-    return handleNetworkAssetProtocolRequest(request.url, (assetPackId, relativePath) =>
-      services.visualVisits.readVerifiedCachedAsset(assetPackId, relativePath),
+    return handleNetworkAssetProtocolRequest(request.url, (sessionId, assetPackId, relativePath) =>
+      services.visualVisits.readVerifiedCachedAsset(sessionId, assetPackId, relativePath),
     );
   });
 }
@@ -438,6 +438,7 @@ function registerIpc(): void {
     'network:visits:sessions:end': (sessionId: string) => services.visits.end(sessionId),
     'network:visits:visual:getState': () => services.visualVisits.getState(),
     'network:visits:visual:reportRendererFailure': (sessionId: string) => services.visualVisits.reportRendererFailure(sessionId),
+    'network:visits:visual:completeRendererDeparture': (sessionId: string) => services.visualVisits.completeRendererDeparture(sessionId),
     'companionNew:create': services.companionNew.create,
     'companionNew:analyzePersonality': isSmokeTestRuntime()
       ? async (description: string) => ({
@@ -454,7 +455,10 @@ function registerIpc(): void {
     'companionNew:get': services.companionNew.get,
     'companionNew:update': services.companionNew.update,
     'companionNew:delete': services.companionNew.delete,
-    'companionNew:setPrimary': services.companionNew.setPrimary,
+    'companionNew:setPrimary': async (id: string) => {
+      await services.visits.assertCanSwitchLocalCompanion();
+      return services.companionNew.setPrimary(id);
+    },
     'companionNew:getPrimary': services.companionNew.getPrimary,
     'companionNew:getAssetRoot': services.companionNew.getAssetRoot,
     'companionNew:uploadAsset': services.companionNew.uploadAsset,
@@ -553,6 +557,7 @@ function registerIpc(): void {
       createCreationWindow();
       return false;
     }
+    return services.visits.assertCanSwitchLocalCompanion().then(() => {
     if (companionWindow && !companionWindow.isDestroyed()) {
       companionWindow.hide();
     }
@@ -561,6 +566,7 @@ function registerIpc(): void {
     }
     createCreationWindow();
     return true;
+    });
   });
 
   ipcMain.handle('creation:completed', (_event, companion) => {
@@ -652,7 +658,11 @@ function registerSmokeIpc(): void {
     const sessions = status.account ? await services.visits.listSessions() : [];
     const session = sessions.find((candidate) => candidate.state === 'active') ?? sessions.find((candidate) => ['preparing', 'ready', 'ending'].includes(candidate.state));
     const role = session && status.account ? (session.visitorOwnerUserId === status.account.id ? 'visitor_owner' : session.hostUserId === status.account.id ? 'host' : undefined) : undefined;
-    const visitors: Array<{ runtimeId: string; sessionId: string; assetPackId: string; animationName?: string; observedAnimations?: string[]; x?: number; y?: number; sceneSlotIndex: number }> = [];
+    const visits = status.account ? sessions.flatMap((candidate) => {
+      const candidateRole = candidate.visitorOwnerUserId === status.account!.id ? 'visitor_owner' : candidate.hostUserId === status.account!.id ? 'host' : undefined;
+      return candidateRole ? [{ sessionId: candidate.id, state: candidate.state, role: candidateRole, visitorOwnerReady: candidate.visitorOwnerReady, hostReady: candidate.hostReady }] : [];
+    }) : [];
+    const visitors: Array<{ runtimeId: string; sessionId: string; assetPackId: string; animationName?: string; observedAnimations?: string[]; x?: number; y?: number; sceneSlotIndex: number; departing?: boolean }> = [];
     for (const sessionId of visual.visitorOrder) {
       const visitor = visual.visitors[sessionId];
       if (!visitor) continue;
@@ -669,11 +679,27 @@ function registerSmokeIpc(): void {
         sceneSlotIndex: visitor.sceneSlotIndex,
       });
     }
+    for (const [sessionId, visitor] of Object.entries(visual.departingVisitors)) {
+      const renderer = smokeVisualRuntimes[sessionId];
+      const observed = smokeVisualAnimations[sessionId];
+      visitors.push({
+        runtimeId: visitor.runtimeId,
+        sessionId: visitor.sessionId,
+        assetPackId: visitor.assetPackId,
+        animationName: renderer?.animationName ?? 'Leave',
+        ...(observed ? { observedAnimations: observed } : {}),
+        x: renderer?.x,
+        y: renderer?.y,
+        sceneSlotIndex: visitor.sceneSlotIndex,
+        departing: true,
+      });
+    }
     return {
       instanceRole: smokeInstanceRole(),
       network: { state: status.state, onlineModeEnabled: status.onlineModeEnabled, accountId: status.account?.id, serverOrigin: status.serverUrl },
       device: { deviceIdHash: services.network.getSmokeDeviceIdHash() },
       ...(session && role ? { visit: { sessionId: session.id, state: session.state, role, visitorOwnerReady: session.visitorOwnerReady, hostReady: session.hostReady } } : {}),
+      ...(visits.length ? { visits } : {}),
       visual: {
         ownerPresenceMode: visual.ownerPresenceMode,
         capacity: visual.capacity,
@@ -703,7 +729,7 @@ function registerSmokeIpc(): void {
     }
     const sessionId = candidate.sessionId;
     const visual = services.visualVisits.getState();
-    if (!(sessionId in visual.visitors)) throw new Error('SMOKE_VISUAL_RUNTIME_UNAVAILABLE');
+    if (!(sessionId in visual.visitors) && !(sessionId in visual.departingVisitors)) throw new Error('SMOKE_VISUAL_RUNTIME_UNAVAILABLE');
     const animationName = candidate.animationName;
     const x = candidate.x;
     const y = candidate.y;
@@ -809,7 +835,7 @@ function resolveUiBetaSmokeRoute(channel: string, input: unknown): { handled: fa
       return { handled: true, result: outgoing ? fixture.outgoingInvitations ?? [] : fixture.incomingInvitations ?? [] };
     }
     case 'network:visits:sessions:list': failure('sessions'); return { handled: true, result: fixture.sessions ?? [] };
-    case 'network:visits:visual:getState': return { handled: true, result: { ownerPresenceMode: 'home', capacity: 2, visitors: [], errors: {} } };
+    case 'network:visits:visual:getState': return { handled: true, result: { ownerPresenceMode: 'home', capacity: 2, visitors: {}, departingVisitors: {}, visitorOrder: [], errors: {} } };
     case 'network:companions:getMine': failure('publication'); return { handled: true, result: fixture.publication ?? { companions: [] } };
     case 'companionNew:list': return { handled: true, result: fixture.localCompanions ?? [] };
     case 'network:assets:inspect': return { handled: true, result: { totalFiles: 12, totalBytes: 3145728, manifestHash: 'fixture-hash' } };

@@ -13,7 +13,8 @@ export class PublicCompanionService {
   private publishProgress?: AssetUploadProgress;
   private publishAbort?: AbortController;
   private downloadAbort?: AbortController;
-  private activeVisitDownload?: { sessionId: string; abort: AbortController };
+  private readonly activeVisitDownloads = new Map<string, AbortController>();
+  private readonly visitDownloadPromises = new Map<string, Promise<CachedAssetPack>>();
 
   constructor(private readonly db: DatabaseService, private readonly network: NetworkConnectionService, private readonly userDataDir: string) {}
 
@@ -83,8 +84,8 @@ export class PublicCompanionService {
 
   cancelPublish = async () => { this.publishAbort?.abort(); };
   cancelDownload = async () => { this.downloadAbort?.abort(); };
-  cancelVisitDownload = async (sessionId: string) => { if (this.activeVisitDownload?.sessionId === sessionId) this.activeVisitDownload.abort.abort(); };
-  cancelTransfers = () => { this.publishAbort?.abort(); this.downloadAbort?.abort(); };
+  cancelVisitDownload = async (sessionId: string) => { this.activeVisitDownloads.get(sessionId)?.abort(); };
+  cancelTransfers = () => { this.publishAbort?.abort(); this.downloadAbort?.abort(); this.activeVisitDownloads.forEach((abort) => abort.abort()); };
   getPublishStatus = async () => this.publishProgress ? { ...this.publishProgress } : undefined;
 
   async downloadPack(input: { assetPackId: string; networkCompanionId: string }): Promise<CachedAssetPack> {
@@ -92,7 +93,12 @@ export class PublicCompanionService {
   }
 
   async downloadVisitPack(input: { sessionId: string; assetPackId: string; networkCompanionId: string }): Promise<CachedAssetPack> {
-    return this.downloadPackFromSource(input, () => this.network.getVisitSessionManifest(input.sessionId), (fileIds) => this.network.getVisitSessionDownloadUrls(input.sessionId, fileIds), { authorizationFirst: true, sessionId: input.sessionId });
+    const existing = this.visitDownloadPromises.get(input.sessionId);
+    if (existing) return existing;
+    const download = this.downloadPackFromSource(input, () => this.network.getVisitSessionManifest(input.sessionId), (fileIds) => this.network.getVisitSessionDownloadUrls(input.sessionId, fileIds), { authorizationFirst: true, sessionId: input.sessionId })
+      .finally(() => this.visitDownloadPromises.delete(input.sessionId));
+    this.visitDownloadPromises.set(input.sessionId, download);
+    return download;
   }
 
   /** Returns only the verified immutable manifest used to construct a remote visual runtime. */
@@ -114,7 +120,7 @@ export class PublicCompanionService {
   /** Used exclusively by the safe `companion-network:` protocol handler. Never returns a path. */
   readVerifiedCachedAsset(assetPackId: string, relativePath: string): { bytes: Buffer; mimeType: string } {
     const status = this.network.getStatusSnapshot();
-    if (!status.account || !status.onlineModeEnabled) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    if (!status.account || !status.onlineModeEnabled || status.state !== 'online') throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
     const cache = this.db.getCachedNetworkAssetPackWithRoot(status.serverUrl, assetPackId);
     if (!cache?.verified || !this.verifyCache(cache.cacheRoot, cache.manifestHash)) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
     const manifest = this.readManifest(cache.cacheRoot);
@@ -132,9 +138,11 @@ export class PublicCompanionService {
     getDownloadUrls: (fileIds: string[]) => Promise<{ downloads: Array<{ fileId: string; relativePath: string; downloadUrl: string; expiresAt: string; sizeBytes: number; sha256: string; mimeType: string }> }>,
     options?: { authorizationFirst?: boolean; sessionId?: string },
   ): Promise<CachedAssetPack> {
-    if (this.downloadAbort) throw new Error('ASSET_DOWNLOAD_IN_PROGRESS');
-    const abort = new AbortController(); this.downloadAbort = abort;
-    if (options?.sessionId) this.activeVisitDownload = { sessionId: options.sessionId, abort };
+    const isVisitDownload = Boolean(options?.sessionId);
+    if (!isVisitDownload && this.downloadAbort) throw new Error('ASSET_DOWNLOAD_IN_PROGRESS');
+    const abort = new AbortController();
+    if (isVisitDownload && options?.sessionId) this.activeVisitDownloads.set(options.sessionId, abort);
+    else this.downloadAbort = abort;
     let partial: string | undefined;
     try {
       const scope = await this.scope();
@@ -178,7 +186,7 @@ export class PublicCompanionService {
     } finally {
       if (partial && fs.existsSync(partial)) fs.rmSync(partial, { recursive: true, force: true });
       if (this.downloadAbort === abort) this.downloadAbort = undefined;
-      if (this.activeVisitDownload?.abort === abort) this.activeVisitDownload = undefined;
+      if (options?.sessionId && this.activeVisitDownloads.get(options.sessionId) === abort) this.activeVisitDownloads.delete(options.sessionId);
     }
   }
   async getCachedPack(assetPackId: string): Promise<CachedAssetPack | undefined> { const scope = await this.scope(); const cache = this.db.getCachedNetworkAssetPackWithRoot(scope.serverOrigin, assetPackId); return cache?.verified && this.verifyCache(cache.cacheRoot, cache.manifestHash) ? withoutRoot(cache) : undefined; }

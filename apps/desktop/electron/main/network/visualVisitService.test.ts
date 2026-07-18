@@ -44,16 +44,50 @@ describe('VisualVisitService', () => {
     visits.listSessions.mockResolvedValue([session('ended')]);
     await service.reconcile();
     expect(service.getState()).toMatchObject({ ownerPresenceMode: 'home', visitors: {}, visitorOrder: [], errors: {} });
+    expect(service.getState().departingVisitors['session-1']).toMatchObject({ sessionId: 'session-1' });
+    expect(service.readVerifiedCachedAsset('session-1', 'pack-1', 'assets/animations/Leave.png')).toEqual({ bytes: Buffer.from('sprite'), mimeType: 'image/png' });
+    service.completeRendererDeparture('session-1');
+    expect(() => service.readVerifiedCachedAsset('session-1', 'pack-1', 'assets/animations/Leave.png')).toThrow('VISUAL_VISIT_ASSET_UNAVAILABLE');
+  });
+
+  it('keeps each departure authorized until its own renderer acknowledgement', async () => {
+    const { service, visits } = dependencies('host');
+    const second = { ...session(), id: 'session-2', invitationId: 'invitation-2', assetPackId: 'pack-2', createdAt: '2026-07-14T00:01:00.000Z' };
+    visits.listSessions.mockResolvedValue([session(), second]);
+    visits.listInvitations.mockResolvedValue([{ id: 'invitation-1', companionName: 'Ann' }, { id: 'invitation-2', companionName: 'Bea' }]);
+    await service.reconcile();
+
+    visits.listSessions.mockResolvedValue([second]);
+    await service.reconcile();
+    await service.reconcile();
+    expect(service.getState().visitors['session-2']).toMatchObject({ sessionId: 'session-2' });
+    expect(service.getState().departingVisitors['session-1']).toMatchObject({ sessionId: 'session-1' });
+    expect(service.readVerifiedCachedAsset('session-1', 'pack-1', 'assets/animations/Leave.png')).toEqual({ bytes: Buffer.from('sprite'), mimeType: 'image/png' });
+
+    service.completeRendererDeparture('session-1');
+    expect(service.getState().visitors['session-2']).toMatchObject({ sessionId: 'session-2' });
+    expect(() => service.readVerifiedCachedAsset('session-1', 'pack-1', 'assets/animations/Leave.png')).toThrow('VISUAL_VISIT_ASSET_UNAVAILABLE');
+  });
+
+  it('revokes live and departing Pack authorization while reconnecting', async () => {
+    const { service, visits } = dependencies('host');
+    await service.reconcile();
+    visits.listSessions.mockResolvedValue([session('ended')]);
+    await service.reconcile();
+    service.pauseForReconnect();
+    expect(service.getState()).toMatchObject({ visitors: {}, departingVisitors: {}, visitorOrder: [], errors: {} });
+    expect(() => service.readVerifiedCachedAsset('session-1', 'pack-1', 'assets/animations/Leave.png')).toThrow('VISUAL_VISIT_ASSET_UNAVAILABLE');
   });
 
   it('allows safe Pack bytes only while that Pack belongs to the active host Visitor', async () => {
     const { service, companions } = dependencies('host');
     await service.reconcile();
-    expect(service.readVerifiedCachedAsset('pack-1', 'assets/animations/Idle_Neutral.png')).toEqual({ bytes: Buffer.from('sprite'), mimeType: 'image/png' });
+    expect(service.readVerifiedCachedAsset('session-1', 'pack-1', 'assets/animations/Idle_Neutral.png')).toEqual({ bytes: Buffer.from('sprite'), mimeType: 'image/png' });
     expect(companions.readVerifiedCachedAsset).toHaveBeenCalledWith('pack-1', 'assets/animations/Idle_Neutral.png');
-    expect(() => service.readVerifiedCachedAsset('other-pack', 'assets/animations/Idle_Neutral.png')).toThrow('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    expect(() => service.readVerifiedCachedAsset('session-1', 'other-pack', 'assets/animations/Idle_Neutral.png')).toThrow('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    expect(() => service.readVerifiedCachedAsset('other-session', 'pack-1', 'assets/animations/Idle_Neutral.png')).toThrow('VISUAL_VISIT_ASSET_UNAVAILABLE');
     service.stopSession('session-1');
-    expect(() => service.readVerifiedCachedAsset('pack-1', 'assets/animations/Idle_Neutral.png')).toThrow('VISUAL_VISIT_ASSET_UNAVAILABLE');
+    expect(() => service.readVerifiedCachedAsset('session-1', 'pack-1', 'assets/animations/Idle_Neutral.png')).toThrow('VISUAL_VISIT_ASSET_UNAVAILABLE');
   });
 
   it('removes only the failed host renderer while preserving the authoritative session for later reconciliation', async () => {
@@ -67,5 +101,44 @@ describe('VisualVisitService', () => {
     await service.reconcile();
     expect(service.getState()).toMatchObject({ ownerPresenceMode: 'home', visitors: { 'session-1': expect.any(Object) }, errors: {} });
     expect(visits.listSessions).toHaveBeenCalled();
+  });
+
+  it('reconciles two independent visitors in a stable order and isolates a renderer failure', async () => {
+    const { service, visits, companions } = dependencies('host');
+    const second = { ...session(), id: 'session-2', invitationId: 'invitation-2', assetPackId: 'pack-2', createdAt: '2026-07-14T00:01:00.000Z' };
+    visits.listSessions.mockResolvedValue([second, session()]);
+    visits.listInvitations.mockResolvedValue([{ id: 'invitation-1', companionName: 'Ann' }, { id: 'invitation-2', companionName: 'Bea' }]);
+    await service.reconcile();
+    expect(service.getState().visitorOrder).toEqual(['session-1', 'session-2']);
+    expect(service.getState().visitors['session-1']).toMatchObject({ sceneSlotIndex: 0, assetPackId: 'pack-1' });
+    expect(service.getState().visitors['session-2']).toMatchObject({ sceneSlotIndex: 1, assetPackId: 'pack-2' });
+    expect(companions.getVerifiedVisitVisualManifest).toHaveBeenCalledTimes(2);
+    service.reportRendererFailure('session-1');
+    expect(service.getState().visitors['session-2']).toMatchObject({ sessionId: 'session-2' });
+    expect(service.getState().errors['session-1']).toBe('VISUAL_VISIT_RENDERER_UNAVAILABLE');
+  });
+
+  it('keeps the first two deterministic visitors and surfaces authoritative overflow', async () => {
+    const { service, visits } = dependencies('host');
+    visits.listSessions.mockResolvedValue([
+      session(),
+      { ...session(), id: 'session-2', invitationId: 'invitation-2', assetPackId: 'pack-2', createdAt: '2026-07-14T00:01:00.000Z' },
+      { ...session(), id: 'session-3', invitationId: 'invitation-3', assetPackId: 'pack-3', createdAt: '2026-07-14T00:02:00.000Z' },
+    ]);
+    visits.listInvitations.mockResolvedValue([{ id: 'invitation-1', companionName: 'Ann' }, { id: 'invitation-2', companionName: 'Bea' }, { id: 'invitation-3', companionName: 'Cyd' }]);
+    await service.reconcile();
+    expect(service.getState().visitorOrder).toEqual(['session-1', 'session-2']);
+    expect(service.getState().errors['session-3']).toBe('VISUAL_VISIT_CAPACITY_REACHED');
+  });
+
+  it('defensively suppresses host visitors when the local owner is away in an invalid concurrent state', async () => {
+    const { service, visits } = dependencies('host');
+    visits.listSessions.mockResolvedValue([
+      session(),
+      { ...session(), id: 'owner-session', visitorOwnerUserId: 'host', hostUserId: 'owner', networkCompanionId: 'network-companion-1' },
+    ]);
+    await service.reconcile();
+    expect(service.getState()).toMatchObject({ ownerPresenceMode: 'away_visiting', visitors: {}, visitorOrder: [] });
+    expect(service.getState().errors['session-1']).toBe('VISUAL_VISIT_HOST_AWAY_CONFLICT');
   });
 });

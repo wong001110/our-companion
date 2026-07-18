@@ -2,7 +2,8 @@ import type { VisitInvitationStatus, VisitInvitationSummary, VisitSessionSummary
 import type { NetworkConnectionService } from '../networkConnection';
 import type { PublicCompanionService } from './publicCompanionService';
 
-const LIVE_STATES = new Set<VisitSessionSummary['state']>(['preparing', 'ready', 'active']);
+const LIVE_STATES = new Set<VisitSessionSummary['state']>(['preparing', 'ready', 'active', 'ending']);
+const HOST_CAPACITY = 2;
 
 /** Main-process-only S4 coordinator. It deliberately returns only sanitized REST summaries. */
 export class VisitService {
@@ -10,12 +11,17 @@ export class VisitService {
   private readonly heartbeatFailures = new Map<string, number>();
   private readonly preparePromises = new Map<string, Promise<VisitSessionSummary>>();
   private reconcilePromise?: Promise<void>;
+  private reconcileRequested = false;
 
   constructor(private readonly network: NetworkConnectionService, private readonly companions: PublicCompanionService) {}
 
   listInvitations = (input?: { direction?: 'incoming' | 'outgoing'; status?: VisitInvitationStatus }): Promise<VisitInvitationSummary[]> => this.network.listVisitInvitations(input);
-  sendInvitation = (hostUserId: string): Promise<VisitInvitationSummary> => this.network.createVisitInvitation(hostUserId);
+  sendInvitation = async (hostUserId: string): Promise<VisitInvitationSummary> => {
+    await this.assertCanStartOutgoingVisit();
+    return this.network.createVisitInvitation(hostUserId);
+  };
   acceptInvitation = async (invitationId: string) => {
+    await this.assertCanAcceptIncomingInvitation(invitationId);
     const result = await this.network.acceptVisitInvitation(invitationId);
     this.track(result.session);
     return result;
@@ -31,9 +37,19 @@ export class VisitService {
 
   /** Restores heartbeat ownership after an app reconnect without involving a renderer window. */
   reconcile = async (): Promise<void> => {
-    if (this.reconcilePromise) return this.reconcilePromise;
-    this.reconcilePromise = this.listSessions().then(() => undefined).finally(() => { this.reconcilePromise = undefined; });
+    if (this.reconcilePromise) {
+      this.reconcileRequested = true;
+      return this.reconcilePromise;
+    }
+    this.reconcilePromise = this.reconcileLoop().finally(() => { this.reconcilePromise = undefined; });
     return this.reconcilePromise;
+  };
+
+  private reconcileLoop = async (): Promise<void> => {
+    do {
+      this.reconcileRequested = false;
+      await this.listSessions();
+    } while (this.reconcileRequested);
   };
   getSession = async (sessionId: string): Promise<VisitSessionSummary> => {
     const session = await this.network.getVisitSession(sessionId);
@@ -58,6 +74,7 @@ export class VisitService {
     if (status.account.id === session.visitorOwnerUserId) {
       if (!(await this.companions.hasNetworkCompanionMapping(session.networkCompanionId))) throw new Error('VISIT_PARTICIPANT_UNAVAILABLE');
     } else if (status.account.id === session.hostUserId) {
+      await this.assertHostSessionAllowed(session);
       await this.companions.downloadVisitPack({ sessionId, assetPackId: session.assetPackId, networkCompanionId: session.networkCompanionId });
     } else {
       throw new Error('VISIT_SESSION_NOT_PARTICIPANT');
@@ -68,6 +85,7 @@ export class VisitService {
   };
 
   start = async (sessionId: string): Promise<VisitSessionSummary> => {
+    await this.assertHostSessionAllowed(await this.network.getVisitSession(sessionId));
     const updated = await this.network.startVisitSession(sessionId);
     this.track(updated);
     return updated;
@@ -82,6 +100,56 @@ export class VisitService {
     for (const timer of this.heartbeatTimers.values()) clearInterval(timer);
     this.heartbeatTimers.clear();
     this.heartbeatFailures.clear();
+  };
+
+  /** Desktop-side authority; the server remains responsible for atomic cross-device capacity enforcement. */
+  assertCanSwitchLocalCompanion = async (): Promise<void> => {
+    const status = await this.network.getStatus();
+    // Offline mode has no authoritative host session to preserve, so it must
+    // not prevent normal local Companion selection/onboarding flows.
+    if (!status.onlineModeEnabled || status.state !== 'online' || !status.account) return;
+    const sessions = await this.network.listVisitSessions();
+    sessions.forEach((session) => this.track(session));
+    if (this.hostOccupancy(sessions, status.account.id) > 0) throw new Error('VISIT_HOST_COMPANION_SWITCH_BLOCKED');
+  };
+
+  private assertCanStartOutgoingVisit = async (): Promise<void> => {
+    const context = await this.currentContext();
+    if (this.hostOccupancy(context.sessions, context.accountId) > 0) throw new Error('VISIT_HOST_HAS_ACTIVE_GUESTS');
+  };
+
+  private assertCanAcceptIncomingInvitation = async (invitationId: string): Promise<void> => {
+    const context = await this.currentContext();
+    const invitations = await this.network.listVisitInvitations({ direction: 'incoming', status: 'pending' });
+    const invitation = invitations.find((candidate) => candidate.id === invitationId);
+    if (!invitation || invitation.hostUserId !== context.accountId) throw new Error('VISIT_INVITATION_NOT_FOUND');
+    this.assertHostAdmission(context.sessions, context.accountId);
+  };
+
+  private assertHostSessionAllowed = async (session: VisitSessionSummary): Promise<void> => {
+    const context = await this.currentContext();
+    if (session.hostUserId !== context.accountId) return;
+    this.assertHostAdmission(context.sessions, context.accountId, session.id);
+  };
+
+  private assertHostAdmission(sessions: VisitSessionSummary[], accountId: string, existingSessionId?: string): void {
+    if (sessions.some((session) => LIVE_STATES.has(session.state) && session.visitorOwnerUserId === accountId)) {
+      throw new Error('VISIT_HOST_COMPANION_AWAY');
+    }
+    const occupancy = this.hostOccupancy(sessions, accountId);
+    if (occupancy > HOST_CAPACITY || (!existingSessionId && occupancy >= HOST_CAPACITY)) throw new Error('VISIT_HOST_CAPACITY_REACHED');
+  }
+
+  private hostOccupancy(sessions: VisitSessionSummary[], accountId: string): number {
+    return sessions.filter((session) => LIVE_STATES.has(session.state) && session.hostUserId === accountId).length;
+  }
+
+  private currentContext = async (): Promise<{ accountId: string; sessions: VisitSessionSummary[] }> => {
+    const status = await this.network.getStatus();
+    if (!status.onlineModeEnabled || status.state !== 'online' || !status.account) throw new Error('ONLINE_MODE_DISABLED');
+    const sessions = await this.network.listVisitSessions();
+    sessions.forEach((session) => this.track(session));
+    return { accountId: status.account.id, sessions };
   };
 
   private track(session: VisitSessionSummary): void {

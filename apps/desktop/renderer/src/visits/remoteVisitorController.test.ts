@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { clampVisitorPosition, initialVisitorPosition, nextWalkTarget, walkSelection } from './remoteVisitorController';
+import { clampVisitorPosition, initialVisitorPosition, nextWalkTarget, resolveVisitorPosition, walkSelection } from './remoteVisitorController';
 
 describe('remote visitor movement controller', () => {
   it('spawns and clamps inside the current display work area', () => {
     expect(initialVisitorPosition({ width: 800, height: 600 })).toEqual({ x: 548, y: 360 });
     expect(clampVisitorPosition({ x: 9999, y: -4 }, { width: 800, height: 600 })).toEqual({ x: 580, y: 0 });
     expect(clampVisitorPosition({ x: 0, y: 9999 }, { x: 50, y: 40, width: 480, height: 360 })).toEqual({ x: 50, y: 170 });
+  });
+
+  it('uses deterministic, separate scene slots and avoids the local Companion bounds', () => {
+    const bounds = { width: 1_000, height: 700 };
+    const local = { x: 390, y: 320, width: 220, height: 230 };
+    const first = initialVisitorPosition(bounds, 0, [local]);
+    const second = initialVisitorPosition(bounds, 1, [local, first]);
+    expect(first).not.toEqual(second);
+    expect(resolveVisitorPosition({ x: first.x, y: first.y }, bounds, [first])).not.toEqual(first);
   });
 
   it('uses cardinal movement when no diagonal asset exists and remains deterministic', () => {

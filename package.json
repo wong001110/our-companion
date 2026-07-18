@@ -23,6 +23,7 @@
     "qa:ui": "node scripts/run-ui-qa.mjs",
     "smoke:s5:two-device": "npm run build && playwright test tests/smoke/s5-two-device.spec.ts",
     "smoke:s5:two-device:headed": "npm run build && playwright test tests/smoke/s5-two-device.spec.ts --headed",
+    "smoke:s5:multi-visitor": "npm run build && playwright test tests/smoke/s5-multi-visitor.spec.ts",
     "whisper:setup": "node scripts/setup-whisper.mjs"
   },
   "dependencies": {

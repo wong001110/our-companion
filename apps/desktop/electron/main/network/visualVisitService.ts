@@ -20,6 +20,7 @@ export class VisualVisitService {
   private readonly capacity: number;
   private state: VisualVisitRendererState;
   private reconcilePromise?: Promise<void>;
+  private reconcileRequested = false;
 
   constructor(
     private readonly network: Pick<NetworkConnectionService, 'getStatusSnapshot'>,
@@ -38,9 +39,9 @@ export class VisualVisitService {
    * The protocol handler delegates here so a stale renderer URL cannot read a
    * previously cached Pack after its authoritative Visit becomes terminal.
    */
-  readVerifiedCachedAsset = (assetPackId: string, relativePath: string): { bytes: Buffer; mimeType: string } => {
-    const visitor = Object.values(this.state.visitors).find((candidate) => candidate.assetPackId === assetPackId);
-    if (!visitor) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
+  readVerifiedCachedAsset = (sessionId: string, assetPackId: string, relativePath: string): { bytes: Buffer; mimeType: string } => {
+    const visitor = this.state.visitors[sessionId] ?? this.state.departingVisitors[sessionId];
+    if (!visitor || visitor.assetPackId !== assetPackId) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
     return this.companions.readVerifiedCachedAsset(assetPackId, relativePath);
   };
 
@@ -54,10 +55,27 @@ export class VisualVisitService {
     this.setState(next);
   };
 
+  completeRendererDeparture = (sessionId: string): void => {
+    if (!(sessionId in this.state.departingVisitors)) return;
+    const next = cloneState(this.state);
+    delete next.departingVisitors[sessionId];
+    this.setState(next);
+  };
+
   reconcile = async (): Promise<void> => {
-    if (this.reconcilePromise) return this.reconcilePromise;
-    this.reconcilePromise = this.reconcileOnce().finally(() => { this.reconcilePromise = undefined; });
+    if (this.reconcilePromise) {
+      this.reconcileRequested = true;
+      return this.reconcilePromise;
+    }
+    this.reconcilePromise = this.reconcileLoop().finally(() => { this.reconcilePromise = undefined; });
     return this.reconcilePromise;
+  };
+
+  private reconcileLoop = async (): Promise<void> => {
+    do {
+      this.reconcileRequested = false;
+      await this.reconcileOnce();
+    } while (this.reconcileRequested);
   };
 
   stopSession = (sessionId: string, _reason?: string): void => {
@@ -71,8 +89,15 @@ export class VisualVisitService {
 
   /** A socket gap removes potentially stale host rendering without returning an active owner home. */
   pauseForReconnect = (): void => {
-    if (this.state.visitorOrder.length === 0 && Object.keys(this.state.errors).length === 0) return;
-    this.setState(cloneState(this.state));
+    if (
+      this.state.visitorOrder.length === 0
+      && Object.keys(this.state.departingVisitors).length === 0
+      && Object.keys(this.state.errors).length === 0
+    ) return;
+    // A reconnect has no authority to continue serving a prior Visitor's
+    // Pack, including its Leave animation. Reconciliation will restore only
+    // the sessions that remain authoritatively active.
+    this.setState({ ...this.state, visitors: {}, departingVisitors: {}, visitorOrder: [], errors: {} });
   };
 
   stopAll = (_reason?: string): void => this.setState(this.emptyState());
@@ -91,7 +116,7 @@ export class VisualVisitService {
     const account = status.account;
 
     const sessions = await this.visits.listSessions();
-    const hostSessions = sessions
+    const allHostSessions = sessions
       .filter((session) => session.state === 'active' && session.hostUserId === account.id)
       .sort((left, right) => {
         const leftTime = Date.parse(left.startedAt ?? left.createdAt);
@@ -101,18 +126,28 @@ export class VisualVisitService {
         if (Number.isNaN(rightTime)) return -1;
         if (leftTime !== rightTime) return leftTime - rightTime;
         return left.id.localeCompare(right.id);
-      })
-      .slice(0, this.capacity);
+      });
+    const hostSessions = allHostSessions.slice(0, this.capacity);
 
     const ownerSessions = sessions.filter((session) => session.state === 'active' && session.visitorOwnerUserId === account.id);
 
     if (!hostSessions.length && !ownerSessions.length) {
-      this.stopAll('no_active_session');
+      const next = this.emptyState();
+      // Preserve departures already being animated while adding each newly
+      // terminal Visitor. A second server event must not revoke the first
+      // Visitor's Leave asset before its renderer acknowledgement.
+      next.departingVisitors = { ...this.state.departingVisitors, ...this.state.visitors };
+      this.setState(next);
       return;
     }
 
     const invitations = await this.visits.listInvitations();
     const next = this.emptyState();
+    next.departingVisitors = cloneState(this.state).departingVisitors;
+
+    for (const overflow of allHostSessions.slice(this.capacity)) {
+      next.errors[overflow.id] = 'VISUAL_VISIT_CAPACITY_REACHED';
+    }
 
     for (const ownerSession of ownerSessions) {
       try {
@@ -125,6 +160,14 @@ export class VisualVisitService {
       } catch {
         next.errors[ownerSession.id] = 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE';
       }
+    }
+
+    // A local Companion cannot be away and host guests at the same time. The
+    // network must prevent this race, but the renderer must never show it.
+    if (next.ownerPresenceMode === 'away_visiting' && hostSessions.length) {
+      for (const hostSession of hostSessions) next.errors[hostSession.id] = 'VISUAL_VISIT_HOST_AWAY_CONFLICT';
+      this.setState(next);
+      return;
     }
 
     const hostResults = await Promise.all(hostSessions.map((session, slotIndex) =>
@@ -141,6 +184,12 @@ export class VisualVisitService {
     }
 
     next.visitorOrder = activeHostSessionIds;
+    for (const [sessionId, visitor] of Object.entries(this.state.visitors)) {
+      if (!next.visitors[sessionId]) next.departingVisitors[sessionId] = visitor;
+    }
+    // A session that became active again owns a live runtime, not a stale
+    // departure runtime with the same identity.
+    for (const sessionId of activeHostSessionIds) delete next.departingVisitors[sessionId];
     this.setState(next);
   }
 
@@ -185,6 +234,7 @@ export class VisualVisitService {
       ownerPresenceMode: 'home',
       capacity: this.capacity,
       visitors: {},
+      departingVisitors: {},
       visitorOrder: [],
       errors: {},
     };
@@ -208,7 +258,7 @@ function createRenderModel(
   for (const [animationName, animation] of animations) {
     const source = animation.files[0];
     if (!source) continue;
-    assetUrls[animationName] = `companion-network://${session.assetPackId}/${source}`;
+    assetUrls[animationName] = `companion-network://${session.id}/${session.assetPackId}/${source}`;
     if (typeof animation.frameDurationMs === 'number' && animation.frameDurationMs > 0) {
       frameTiming[animationName] = { frameDurationMs: animation.frameDurationMs, loop: animation.loop };
     }
