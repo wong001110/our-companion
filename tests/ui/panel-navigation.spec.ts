@@ -16,8 +16,7 @@ test('Panel page exits before removal, then enters with focus and reset scroll',
     await social.click();
     await expect(social).toHaveAttribute('aria-current', 'page');
     const homePage = panel.getByTestId('panel-page-home');
-    await expect(homePage).toHaveAttribute('data-motion-state', 'exiting');
-    await expect(homePage).toBeVisible();
+    await expect(panel.locator('[data-testid="panel-page-home"][data-motion-state="exiting"]:visible')).toHaveCount(1);
     const socialPage = panel.getByTestId('panel-page-social');
     await expect(homePage).toHaveCount(0, { timeout: 1_000 });
     await expect(socialPage).toHaveAttribute('data-motion-state', 'entered');
