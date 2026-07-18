@@ -32,10 +32,10 @@ export async function establishFriendship(owner: SmokeElectronDevice, host: Smok
   const hostPage = await mainPage(host);
   const hostIdentity = await hostPage.evaluate(async () => window.ourCompanion.network.getStatus());
   const ownerPage = await mainPage(owner);
-  await ownerPage.evaluate(async (friendCode) => {
-    const friend = await window.ourCompanion.network.friends.lookup(friendCode);
+  await ownerPage.evaluate(async (uid) => {
+    const friend = await window.ourCompanion.network.friends.lookup(uid);
     await window.ourCompanion.network.friends.sendRequest(friend.id);
-  }, hostIdentity.account?.friendCode ?? '');
+  }, hostIdentity.account?.uid ?? '');
   const requestId = await hostPage.evaluate(async () => (await window.ourCompanion.network.friends.getIncomingRequests())[0]?.id);
   if (!requestId) throw new Error('SMOKE_FRIEND_REQUEST_UNAVAILABLE');
   await hostPage.evaluate(async (id) => window.ourCompanion.network.friends.acceptRequest(id), requestId);

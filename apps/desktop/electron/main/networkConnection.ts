@@ -8,7 +8,7 @@ import type { BlockedUserSummary, CompanionAssetManifest, CompleteAssetPackResul
 export const NETWORK_PROTOCOL_VERSION = '0.4';
 export const NETWORK_CLIENT_VERSION = '0.4.0';
 export type NetworkConnectionState = 'offline' | 'checking_server' | 'authentication_required' | 'connecting' | 'online' | 'reconnecting' | 'incompatible_client' | 'server_unavailable' | 'authentication_failed' | 'disabled';
-export interface NetworkAccount { id: string; email: string; username: string; friendCode: string; }
+export interface NetworkAccount { id: string; email: string; username: string; uid: string; friendCode: string; }
 export type SocialInvalidation =
   | { type: 'friends' }
   | { type: 'presence'; userId: string; status: FriendPresence; updatedAt: string | null }
@@ -98,7 +98,7 @@ export class NetworkConnectionService {
     this.setStatus({
       state: 'online',
       onlineModeEnabled: true,
-      account: { id: 'smoke-account', email: 'smoke@example.invalid', username: 'Smoke User', friendCode: 'SMOKE001' },
+      account: { id: 'smoke-account', email: 'smoke@example.invalid', username: 'Smoke User', uid: 'OC-SMOKE8XY', friendCode: 'SMOKE001' },
       features: { visitInvitations: false, visitSessions: false },
       message: undefined,
     });
@@ -200,10 +200,10 @@ export class NetworkConnectionService {
     return this.enableOnlineMode();
   };
 
-  lookupFriend = async (friendCode: string): Promise<FriendLookupResult> => this.smokeFriendLookupFixture ?? parseFriendLookupResult(await this.socialRequest<unknown>(`/api/friends/lookup/${encodeURIComponent(friendCode)}`));
-  getFriends = async (): Promise<FriendSummary[]> => this.smokeFriendLookupFixture ? [] : (await this.socialRequest<Array<{ id: string; username: string; friendCode: string; hasPublishedCompanion: boolean }>>('/api/friends')).map((friend) => ({ userId: friend.id, username: friend.username, friendCode: friend.friendCode, presence: 'offline', hasPublishedCompanion: friend.hasPublishedCompanion }));
-  getIncomingRequests = async (): Promise<FriendRequestSummary[]> => this.smokeFriendLookupFixture ? [] : (await this.socialRequest<Array<any>>('/api/friends/requests/incoming')).map((request) => ({ id: request.id, direction: 'incoming', userId: request.sender.id, username: request.sender.username, friendCode: request.sender.friendCode, status: 'pending', createdAt: request.createdAt }));
-  getOutgoingRequests = async (): Promise<FriendRequestSummary[]> => this.smokeFriendLookupFixture ? [] : (await this.socialRequest<Array<any>>('/api/friends/requests/outgoing')).map((request) => ({ id: request.id, direction: 'outgoing', userId: request.receiver.id, username: request.receiver.username, friendCode: request.receiver.friendCode, status: 'pending', createdAt: request.createdAt }));
+  lookupFriend = async (uid: string): Promise<FriendLookupResult> => this.smokeFriendLookupFixture ?? parseFriendLookupResult(await this.socialRequest<unknown>(`/api/friends/lookup/uid/${encodeURIComponent(uid)}`));
+  getFriends = async (): Promise<FriendSummary[]> => this.smokeFriendLookupFixture ? [] : (await this.socialRequest<Array<{ id: string; username: string; uid: string; friendCode?: string; hasPublishedCompanion: boolean }>>('/api/friends')).map((friend) => ({ userId: friend.id, username: friend.username, uid: friend.uid, friendCode: friend.friendCode, presence: 'offline', hasPublishedCompanion: friend.hasPublishedCompanion }));
+  getIncomingRequests = async (): Promise<FriendRequestSummary[]> => this.smokeFriendLookupFixture ? [] : (await this.socialRequest<Array<any>>('/api/friends/requests/incoming')).map((request) => ({ id: request.id, direction: 'incoming', userId: request.sender.id, username: request.sender.username, uid: request.sender.uid, friendCode: request.sender.friendCode, status: 'pending', createdAt: request.createdAt }));
+  getOutgoingRequests = async (): Promise<FriendRequestSummary[]> => this.smokeFriendLookupFixture ? [] : (await this.socialRequest<Array<any>>('/api/friends/requests/outgoing')).map((request) => ({ id: request.id, direction: 'outgoing', userId: request.receiver.id, username: request.receiver.username, uid: request.receiver.uid, friendCode: request.receiver.friendCode, status: 'pending', createdAt: request.createdAt }));
   sendFriendRequest = (userId: string) => this.socialRequest('/api/friends/requests', { receiverId: userId });
   acceptFriendRequest = (requestId: string) => this.socialRequest(`/api/friends/requests/${requestId}/accept`, {});
   rejectFriendRequest = (requestId: string) => this.socialRequest(`/api/friends/requests/${requestId}/reject`, {});
@@ -455,14 +455,16 @@ export function parseFriendLookupResult(input: unknown): FriendLookupResult {
   if (
     typeof value.id !== 'string'
     || typeof value.username !== 'string'
-    || typeof value.friendCode !== 'string'
+    || typeof value.uid !== 'string'
+    || (value.friendCode !== undefined && typeof value.friendCode !== 'string')
     || typeof value.relationship !== 'string'
     || !FRIEND_LOOKUP_RELATIONSHIPS.has(value.relationship as FriendLookupRelationship)
   ) throw new Error('SOCIAL_DATA_OUT_OF_SYNC');
   return {
     id: value.id,
     username: value.username,
-    friendCode: value.friendCode,
+    uid: value.uid,
+    friendCode: value.friendCode as string | undefined,
     relationship: value.relationship as FriendLookupRelationship,
   };
 }

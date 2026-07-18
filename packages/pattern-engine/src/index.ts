@@ -1,8 +1,16 @@
 import type { Discovery, DiscoveryFeedback, JourneyMilestone, MemoryNode, Pattern, PatternEvidence, PatternType } from '@our-companion/shared';
-import { clamp01, createId, nowIso } from '@our-companion/shared';
+import {
+  clamp01,
+  createId,
+  createSemanticFingerprint,
+  normalizeSemanticText,
+  nowIso,
+} from '@our-companion/shared';
 
 export interface DetectPatternsInput {
   userId: string;
+  companionId?: string;
+  evaluatedAt?: string;
   memoryNodes: MemoryNode[];
   journeyMilestones: JourneyMilestone[];
   discoveryHistory: Discovery[];
@@ -36,16 +44,22 @@ function tokenize(value: string): string[] {
 
 function createPattern(input: {
   userId: string;
+  companionId: string;
   type: PatternType;
   title: string;
   summary: string;
   score: PatternScore;
   evidence: PatternEvidence[];
+  normalizedTopics: string[];
+  evaluatedAt?: string;
 }): Pattern {
-  const timestamp = nowIso();
+  const timestamp = input.evaluatedAt ?? nowIso();
   return {
     id: createId('pattern'),
     userId: input.userId,
+    companionId: input.companionId,
+    semanticFingerprint: createPatternFingerprint(input.type, input.normalizedTopics),
+    normalizedTopics: input.normalizedTopics.map(normalizeSemanticText).filter(Boolean).sort(),
     type: input.type,
     title: input.title,
     summary: input.summary,
@@ -53,9 +67,19 @@ function createPattern(input: {
     strength: input.score.finalScore,
     freshness: input.score.recency,
     evidence: input.evidence,
+    observationCount: 1,
+    frequency: input.score.frequency,
+    lastObservedAt: timestamp,
     createdAt: timestamp,
     updatedAt: timestamp
   };
+}
+
+export function createPatternFingerprint(type: PatternType, topics: readonly string[]): string {
+  return createSemanticFingerprint('pattern', [
+    type,
+    ...topics.map(normalizeSemanticText).filter(Boolean).sort(),
+  ]);
 }
 
 export function detectPatterns(input: DetectPatternsInput): Pattern[] {
@@ -118,11 +142,14 @@ export function detectPatterns(input: DetectPatternsInput): Pattern[] {
     patterns.push(
       createPattern({
         userId: input.userId,
+        companionId: input.companionId ?? 'default',
         type: 'repeated_theme',
         title: `${token[0].toUpperCase()}${token.slice(1)} keeps appearing`,
         summary: `Companion noticed "${token}" appearing across memory, journey, or discovery history.`,
         score,
-        evidence: value.evidence.slice(0, 5)
+        evidence: value.evidence.slice(0, 5),
+        normalizedTopics: [token],
+        evaluatedAt: input.evaluatedAt,
       })
     );
   }
@@ -133,6 +160,7 @@ export function detectPatterns(input: DetectPatternsInput): Pattern[] {
     patterns.push(
       createPattern({
         userId: input.userId,
+        companionId: input.companionId ?? 'default',
         type: 'returning_topic',
         title: 'Saved discoveries are forming a direction',
         summary: 'The user has saved multiple discoveries, so Companion should bias curiosity toward this cluster.',
@@ -142,7 +170,9 @@ export function detectPatterns(input: DetectPatternsInput): Pattern[] {
           sourceId: item.id,
           summary: item.title,
           weight: 0.85
-        }))
+        })),
+        normalizedTopics: saved.flatMap((item) => tokenize(`${item.title} ${item.tags.join(' ')}`)).slice(0, 8),
+        evaluatedAt: input.evaluatedAt,
       })
     );
   }
@@ -151,6 +181,7 @@ export function detectPatterns(input: DetectPatternsInput): Pattern[] {
     patterns.push(
       createPattern({
         userId: input.userId,
+        companionId: input.companionId ?? 'default',
         type: 'abandoned_direction',
         title: 'Some discovery directions are losing fit',
         summary: 'The user dismissed multiple discoveries, so related future topics should decay.',
@@ -160,7 +191,9 @@ export function detectPatterns(input: DetectPatternsInput): Pattern[] {
           sourceId: item.id,
           summary: item.title,
           weight: 0.8
-        }))
+        })),
+        normalizedTopics: rejected.flatMap((item) => tokenize(`${item.title} ${item.tags.join(' ')}`)).slice(0, 8),
+        evaluatedAt: input.evaluatedAt,
       })
     );
   }

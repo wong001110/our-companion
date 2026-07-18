@@ -4,6 +4,7 @@ import type {
   Discovery,
   NormalizedDiscovery
 } from '@our-companion/shared';
+import { DebugRuntimeClock } from '@our-companion/shared';
 import type { DiscoveryConnector, RawDiscoveryItem } from '@our-companion/discovery-engine';
 import type { WebPageFetcher, WebSearchProvider } from './researchAdapters';
 import { AppServices } from './services';
@@ -72,6 +73,72 @@ afterEach(() => {
 });
 
 describe('production memory companion isolation', () => {
+  it('inspects scoped cognition lineage and keeps repeated Memory recompute idempotent', async () => {
+    const clock = new DebugRuntimeClock(() => Date.parse('2026-07-18T00:00:00.000Z'));
+    const services = new AppServices(':memory:', undefined, { clock });
+    openServices.push(services);
+    const first = createCompanion(services, 'First');
+    services.db.setPrimaryCompanion(first.id);
+    const selected = await services.memory.createNode({
+      companionId: first.id,
+      type: 'topic',
+      title: 'Local-first runtime architecture',
+      summary: 'A local-first architecture for deterministic Companion runtime state.',
+      content: 'Local-first architecture keeps runtime state private and deterministic.'
+    });
+    await services.memory.createNode({
+      companionId: first.id,
+      type: 'topic',
+      title: 'Local-first memory architecture',
+      summary: 'A local-first architecture for private Companion memory.',
+      content: 'Local-first architecture keeps memory ownership explicit.'
+    });
+
+    const firstReport = await services.memory.recomputeImpact({ id: selected.id });
+    expect(firstReport.researchCyclesStarted).toBe(0);
+    expect(firstReport.patternsCreated).toBeGreaterThan(0);
+    const before = {
+      patterns: services.db.listPatterns('default', 100, first.id).map((pattern) => pattern.id),
+      curiosity: services.db.listCuriosityTargets('default', 100, first.id).map((target) => target.id),
+      cycles: services.db.listExplorationCycles(100).length,
+    };
+    const impact = await services.memory.inspectImpact(selected.id);
+    expect(impact.interestNodeIds.length).toBeGreaterThan(0);
+    expect(impact.patternIds.length).toBeGreaterThan(0);
+    expect(impact.curiosityTargetIds.length).toBeGreaterThan(0);
+    expect(impact.lastCognitiveEvaluation).toBe('2026-07-18T00:00:00.000Z');
+
+    const secondReport = await services.memory.recomputeImpact({ id: selected.id });
+    expect(secondReport.patternsCreated).toBe(0);
+    expect(services.db.listPatterns('default', 100, first.id).map((pattern) => pattern.id)).toEqual(before.patterns);
+    expect(services.db.listCuriosityTargets('default', 100, first.id).map((target) => target.id)).toEqual(before.curiosity);
+    expect(services.db.listExplorationCycles(100)).toHaveLength(before.cycles);
+
+    const second = createCompanion(services, 'Second');
+    services.db.setPrimaryCompanion(second.id);
+    await expect(services.memory.inspectImpact(selected.id)).rejects.toThrow('MEMORY_IMPACT_NOT_FOUND');
+    services.db.setPrimaryCompanion(first.id);
+    await services.memory.deleteNode(selected.id);
+    await expect(services.memory.inspectImpact(selected.id)).rejects.toThrow('MEMORY_IMPACT_NOT_FOUND');
+  });
+
+  it('advances application time deterministically without changing real timer time', async () => {
+    const realMs = Date.parse('2026-07-18T04:00:00.000Z');
+    const clock = new DebugRuntimeClock(() => realMs);
+    const services = new AppServices(':memory:', undefined, { clock });
+    openServices.push(services);
+    const companion = createCompanion(services, 'Clock');
+    services.db.setPrimaryCompanion(companion.id);
+    const before = await services.debug.getRuntimeTime();
+    const advanced = await services.debug.advanceRuntimeTime({ milliseconds: 24 * 60 * 60 * 1000 });
+    expect(Date.parse(advanced.newRuntimeTime) - Date.parse(before.runtimeTime)).toBe(24 * 60 * 60 * 1000);
+    const diary = await services.diary.generateDaily();
+    expect(diary.createdAt.startsWith('2026-07-19')).toBe(true);
+    const reset = await services.debug.resetRuntimeTime();
+    expect(reset.offsetMs).toBe(0);
+    expect(reset.runtimeTime).toBe('2026-07-18T04:00:00.000Z');
+  });
+
   it('owns createNode and addToJourney memories and hides them after switching Companions', async () => {
     const services = new AppServices(':memory:');
     openServices.push(services);

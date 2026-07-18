@@ -86,6 +86,7 @@ import { startPerformancePlayback, type ActivePerformancePlayback } from '../cha
 import { RemoteVisitorLayer, useVisualVisitState } from '../visits/RemoteVisitorLayer';
 import { sceneDepth } from '../visits/remoteVisitorController';
 import { Presence } from '../components/motion/Presence';
+import { useExplorationVisualLifecycle } from '../companion/expedition/useExplorationVisualLifecycle';
 
 export function PresenceActivityReporter() {
   useEffect(() => {
@@ -180,10 +181,11 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const [engineSnapshot, setEngineSnapshot] = useState<EngineSnapshot>();
 
   const speech = useSpeech();
+  const explorationVisual = useExplorationVisualLifecycle(companion.id, speech.showInstant);
   const visualVisit = useVisualVisitState();
   const localCompanionAway = visualVisit.ownerPresenceMode === 'away_visiting';
   const [ownerVisualPhase, setOwnerVisualPhase] = useState<'home' | 'leaving' | 'hidden' | 'entering'>('home');
-  const localCompanionVisible = !localCompanionAway || ownerVisualPhase !== 'hidden';
+  const localCompanionVisible = (!localCompanionAway || ownerVisualPhase !== 'hidden') && explorationVisual.visible;
 
   useEffect(() => {
     if (localCompanionAway) {
@@ -768,6 +770,8 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   return (
     <LangContext.Provider value={lang}><main
       className="companion-shell"
+      data-exploration-visual-phase={explorationVisual.phase}
+      data-exploration-cycle-id={explorationVisual.cycleId}
       onClick={(e) => {
         if (textOpen && !(e.target as HTMLElement).closest('.companion-canvas') && !(e.target as HTMLElement).closest('.companion-text-input')) {
           closeTextInput();
@@ -819,7 +823,11 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           companionId={companion.id}
           movementAnimation={movementAnimation}
           idleAnimation={idleAnimation}
-          animationOverride={ownerVisualPhase === 'leaving' ? 'Leave' : ownerVisualPhase === 'entering' ? 'Enter' : performanceAnimation}
+          animationOverride={ownerVisualPhase === 'leaving'
+            ? 'Leave'
+            : ownerVisualPhase === 'entering'
+              ? 'Enter'
+              : explorationVisual.animation ?? performanceAnimation}
           onPointerHitChange={handlePointerHitChange}
           onActivate={() => {
             if (localCompanionAway || isDraggingRef.current) return;
@@ -903,7 +911,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
         </div>
       )}</Presence>
       <CompanionQuickActions
-        visible={quickActions.visible && !isDraggingRef.current && !localCompanionAway}
+        visible={quickActions.visible && !isDraggingRef.current && !localCompanionAway && !explorationVisual.busy}
         anchorRect={quickActionsAnchor}
         screenWorkArea={{ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }}
         listening={phase === 'listening'}

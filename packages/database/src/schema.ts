@@ -146,6 +146,9 @@ CREATE TABLE IF NOT EXISTS engine_traces (
 CREATE TABLE IF NOT EXISTS patterns (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
+  companion_id TEXT NOT NULL DEFAULT 'default',
+  semantic_fingerprint TEXT NOT NULL DEFAULT '',
+  normalized_topics_json TEXT NOT NULL DEFAULT '[]',
   type TEXT NOT NULL,
   title TEXT NOT NULL,
   summary TEXT NOT NULL,
@@ -153,6 +156,9 @@ CREATE TABLE IF NOT EXISTS patterns (
   strength REAL NOT NULL,
   freshness REAL NOT NULL,
   evidence_json TEXT NOT NULL DEFAULT '[]',
+  observation_count INTEGER NOT NULL DEFAULT 1,
+  frequency REAL NOT NULL DEFAULT 0,
+  last_observed_at TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -187,6 +193,9 @@ CREATE TABLE IF NOT EXISTS curiosity_targets (
   user_id TEXT NOT NULL,
   companion_id TEXT NOT NULL,
   topic TEXT NOT NULL,
+  topic_fingerprint TEXT NOT NULL DEFAULT '',
+  source_fingerprint TEXT NOT NULL DEFAULT '',
+  generated_from_ids_json TEXT NOT NULL DEFAULT '[]',
   description TEXT NOT NULL,
   source TEXT NOT NULL,
   exploration_type TEXT NOT NULL,
@@ -197,7 +206,14 @@ CREATE TABLE IF NOT EXISTS curiosity_targets (
   related_memory_ids_json TEXT NOT NULL DEFAULT '[]',
   related_pattern_ids_json TEXT NOT NULL DEFAULT '[]',
   related_interest_node_ids_json TEXT NOT NULL DEFAULT '[]',
-  created_at TEXT NOT NULL
+  status TEXT NOT NULL DEFAULT 'open',
+  last_generated_at TEXT,
+  last_explored_at TEXT,
+  cooldown_until TEXT,
+  generation_count INTEGER NOT NULL DEFAULT 1,
+  ignore_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS research_intents (

@@ -1,5 +1,12 @@
 @media (max-width: 900px) {
   .panel-shell { grid-template-columns: 76px minmax(0, 1fr); }
+  .sidebar .brand-mark span {
+    font-size: 0;
+  }
+  .sidebar .brand-mark span::before {
+    content: 'OC';
+    font-size: 17px;
+  }
   .sidebar .brand-mark small { display: none; }
   .sidebar nav button { min-height: 44px; font-size: 0; }
   .sidebar nav button::before { content: attr(data-short-label); font-size: 18px; }

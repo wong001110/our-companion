@@ -17,6 +17,8 @@ test('Panel switches to valid Simplified Chinese through Settings', async () => 
     await panel.locator('.workspace').evaluate((workspace) => workspace.scrollTo({ top: 0 }));
     await device.screenshot(panel, 'zh-CN/settings-1180.png');
     await panel.getByRole('button', { name: '主页' }).click();
+    await expect(panel.getByTestId('panel-page-home')).toHaveAttribute('data-motion-state', 'entered');
+    await expect(panel.getByText('伙伴的状态')).toBeVisible();
     await device.screenshot(panel, 'zh-CN/home-1180.png');
   } finally { await device.close(); }
 });

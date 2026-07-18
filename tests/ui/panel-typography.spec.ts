@@ -64,10 +64,10 @@ test('Panel typography roles separate operational and expressive content', async
     await panel.getByRole('tab', { name: 'AI' }).click();
     await panel.locator('.settings-panel select').nth(1).selectOption('en');
     await panel.getByRole('button', { name: '保存' }).click();
-    await main.evaluate(async () => window.ourCompanion.smoke?.setFriendLookupFixture({ id: 'friend-1', username: 'Mira', friendCode: 'MIRA0001', relationship: 'friend' }));
+    await main.evaluate(async () => window.ourCompanion.smoke?.setFriendLookupFixture({ id: 'friend-1', username: 'Mira', uid: 'OC-MIRA8XYZ', friendCode: 'MIRA0001', relationship: 'friend' }));
     await panel.getByRole('button', { name: 'Social' }).click();
     await expect(panel.getByTestId('panel-page-social')).toHaveAttribute('data-motion-state', 'entered');
-    await panel.getByLabel('Add friend by code').fill('MIRA0001');
+    await panel.getByLabel('Find by UID').fill('OC-MIRA8XYZ');
     await panel.getByRole('button', { name: 'Find' }).click();
     await expect(panel.getByTestId('friend-lookup-result')).toBeVisible();
     const socialCard = panel.locator('[data-testid="social-panel"] > .paper-card');

@@ -107,7 +107,7 @@ describe('ResearchOrchestrator', () => {
 
     expect(outcome.evidence).toEqual([]);
     expect(outcome.candidates).toEqual([]);
-    expect(outcome.stopReason).toBe('no_compatible_capability');
+    expect(outcome.stopReason).toBe('RESEARCH_NO_DISCOVERY_PROVIDER');
   });
 
   it('keeps successful structured research distinct from web evidence coverage', async () => {

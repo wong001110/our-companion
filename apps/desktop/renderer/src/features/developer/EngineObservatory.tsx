@@ -6,7 +6,12 @@ import type {
   EngineTrace,
   ExplorationLoopEvent,
   ExplorationState,
+  ResearchDeveloperReport,
   SpeechStatus
+} from '@our-companion/shared';
+import {
+  actionCapabilityPromptSummary,
+  listEnabledActionCapabilities,
 } from '@our-companion/shared';
 import { WorkspaceStatusPanel } from './WorkspaceStatusPanel';
 import { BehaviorDebugPanel } from '../../companion/behavior/BehaviorDebugPanel';
@@ -71,11 +76,33 @@ export function ResearchObservatory({ snapshot }: { snapshot?: EngineSnapshot })
   const plan = snapshot?.researchPlan;
   const evidence = snapshot?.researchEvidence ?? [];
   const coverage = snapshot?.researchCoverage;
+  const capabilities = snapshot?.researchCapabilities ?? [];
+  const hasDiscoveryProvider = capabilities.some((capability) =>
+    capability.available && (capability.kind === 'open_web_search' || capability.kind === 'structured_connector')
+  );
   if (!intent || !plan) {
     return (
       <section className="engine-research-observatory" aria-label="Research observatory">
         <h3>Constrained research</h3>
-        <p className="engine-empty">No valid external evidence found.</p>
+        {!hasDiscoveryProvider && (
+          <>
+            <p className="engine-empty">No discovery provider is currently available.</p>
+            <p>Available: safe-web-page-fetcher</p>
+            <p>Unavailable: Brave Search, GitHub, Hacker News, Reddit, YouTube</p>
+            <p>A page fetcher requires a known URL and cannot discover pages independently.</p>
+          </>
+        )}
+        <table>
+          <thead><tr><th>ID</th><th>kind</th><th>mode</th><th>available</th><th>reason unavailable</th></tr></thead>
+          <tbody>
+            {capabilities.map((capability) => (
+              <tr key={capability.id}>
+                <td>{capability.id}</td><td>{capability.kind ?? 'unknown'}</td><td>{capability.mode}</td>
+                <td>{capability.available ? 'yes' : 'no'}</td><td>{capability.reasonUnavailable ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </section>
     );
   }
@@ -86,7 +113,7 @@ export function ResearchObservatory({ snapshot }: { snapshot?: EngineSnapshot })
         <div><dt>Objective</dt><dd>{intent.objective}</dd></div>
         <div><dt>Cycle</dt><dd>{intent.cycleId}</dd></div>
         <div><dt>Source types</dt><dd>{intent.preferredSourceTypes.join(', ')}</dd></div>
-        <div><dt>Capabilities</dt><dd>{snapshot?.researchCapabilities.map((capability) => `${capability.id}: ${capability.available ? capability.mode : 'unavailable'}`).join(', ') || 'none'}</dd></div>
+        <div><dt>Capabilities</dt><dd>{capabilities.map((capability) => `${capability.id}: ${capability.available ? capability.mode : 'unavailable'}`).join(', ') || 'none'}</dd></div>
         <div><dt>Queries</dt><dd>{plan.queries.join(' · ')}</dd></div>
         <div><dt>Coverage</dt><dd>{coverage ? `${coverage.sourceCount} pages / ${coverage.independentDomainCount} domains` : 'not evaluated'}</dd></div>
         <div><dt>Stop reason</dt><dd>{snapshot?.researchStopReason ?? 'pending'}</dd></div>
@@ -97,6 +124,112 @@ export function ResearchObservatory({ snapshot }: { snapshot?: EngineSnapshot })
           {evidence.slice(0, 8).map((page) => <li key={page.id}><strong>{page.domain}</strong> <span>{page.title}</span></li>)}
         </ul>
       ) : <p className="engine-empty">No valid external evidence found.</p>}
+    </section>
+  );
+}
+
+export function AvailableActionsPanel() {
+  const capabilities = listEnabledActionCapabilities();
+  return (
+    <section className="engine-research-observatory" aria-label="Available Actions">
+      <h3>Available Actions</h3>
+      <div className="engine-table-wrap">
+        <table>
+          <thead>
+            <tr><th>Tool</th><th>Enabled</th><th>Required permission</th><th>Risk</th><th>Examples</th></tr>
+          </thead>
+          <tbody>
+            {capabilities.map((capability) => (
+              <tr key={capability.toolName}>
+                <td><code>{capability.toolName}</code></td>
+                <td>{capability.enabled ? 'yes' : 'no'}</td>
+                <td>{capability.requiredScopes.join(', ') || 'none'}</td>
+                <td>{capability.riskLevel}</td>
+                <td>{[...capability.examples.en, ...capability.examples.zhCN].join(' · ')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <details>
+        <summary>Exact capability summary supplied to AI</summary>
+        <pre className="debug-ai-log-raw">{actionCapabilityPromptSummary()}</pre>
+      </details>
+    </section>
+  );
+}
+
+function ResearchDeveloperTools({ onComplete }: { onComplete: () => Promise<void> }) {
+  const [fixtureTopic, setFixtureTopic] = useState('desktop AI companion');
+  const [url, setUrl] = useState('https://www.electronjs.org/docs/latest/');
+  const [report, setReport] = useState<ResearchDeveloperReport>();
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+
+  async function run(operation: () => Promise<ResearchDeveloperReport>) {
+    setBusy(true);
+    setError(undefined);
+    try {
+      setReport(await operation());
+      await onComplete();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Research validation failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="engine-research-observatory" aria-label="Research Developer Tools">
+      <h3>Research Developer Tools</h3>
+      <label><span>Fixture Research</span><input value={fixtureTopic} onChange={(event) => setFixtureTopic(event.target.value)} /></label>
+      <button disabled={busy} onClick={() => void run(() => window.ourCompanion.debug.runFixtureResearch({ topic: fixtureTopic }))}>Run fixture research</button>
+      <label><span>Research from URL</span><input value={url} onChange={(event) => setUrl(event.target.value)} /></label>
+      <button disabled={busy} onClick={() => void run(() => window.ourCompanion.debug.researchFromUrl({ url }))}>Research from URL</button>
+      {error && <p className="engine-empty">{error}</p>}
+      {report && (
+        <>
+          <h4>Developer result report</h4>
+          <pre className="debug-ai-log-raw">{formatJson(report)}</pre>
+        </>
+      )}
+    </section>
+  );
+}
+
+function ExplorationVisualStatus({ snapshot }: { snapshot?: EngineSnapshot }) {
+  const [visual, setVisual] = useState<{
+    cycleId?: string;
+    visualPhase?: string;
+    startedAt?: string;
+    minimumVisualCompletionTime?: string;
+    resultState?: string;
+  }>();
+  useEffect(() => {
+    const load = () => {
+      try {
+        const raw = localStorage.getItem('companion:exploration-visual');
+        setVisual(raw ? JSON.parse(raw) : undefined);
+      } catch {
+        setVisual(undefined);
+      }
+    };
+    load();
+    const interval = window.setInterval(load, 500);
+    return () => window.clearInterval(interval);
+  }, []);
+  return (
+    <section className="engine-research-observatory" aria-label="Exploration Visual State">
+      <h3>Exploration Visual State</h3>
+      <dl className="engine-research-grid">
+        <div><dt>Cycle ID</dt><dd>{visual?.cycleId ?? snapshot?.currentCycle?.id ?? 'none'}</dd></div>
+        <div><dt>Cognitive phase</dt><dd>{snapshot?.currentCycle?.state ?? 'idle'}</dd></div>
+        <div><dt>Visual phase</dt><dd>{visual?.visualPhase ?? 'idle'}</dd></div>
+        <div><dt>Started at</dt><dd>{visual?.startedAt ?? '—'}</dd></div>
+        <div><dt>Minimum visual completion time</dt><dd>{visual?.minimumVisualCompletionTime ?? '—'}</dd></div>
+        <div><dt>Research status</dt><dd>{snapshot?.researchStopReason ?? 'not started'}</dd></div>
+        <div><dt>Current result state</dt><dd>{visual?.resultState ?? 'pending'}</dd></div>
+      </dl>
     </section>
   );
 }
@@ -276,6 +409,9 @@ export function EngineObservatory() {
       <EngineTraceTimeline traces={snapshot?.engineTraces ?? []} />
 
       <ResearchObservatory snapshot={snapshot} />
+      <ResearchDeveloperTools onComplete={refreshAll} />
+      <ExplorationVisualStatus snapshot={snapshot} />
+      <AvailableActionsPanel />
 
       <section className="debug-ai-log engine-event-timeline">
         <div className="debug-ai-log-header">

@@ -216,7 +216,7 @@ describe('production Validation Kit gateway', () => {
       params: { operation: 'autonomous-cycle' }
     });
     expect(cycle.status).toBe('completed');
-    expect(gateway.services.db.getInterestGraph('default').nodes.length).toBeGreaterThan(0);
+    expect(gateway.services.db.getInterestGraph(`default:${companionId}`).nodes.length).toBeGreaterThan(0);
     expect(gateway.getTraces().find((trace) => trace.operation === 'load-context')?.outputRefs)
       .toContain(memories[0]!.id);
   });

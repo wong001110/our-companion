@@ -27,7 +27,7 @@ export function FriendRow({ lang, friend, disabled, visitDisabledReason, onView,
   return <OperationalRow
     label={friend.username}
     testId="friend-row"
-    identity={<><strong>{friend.username}</strong><span className="selectable-code">{friend.friendCode}</span></>}
+    identity={<><strong>{friend.username}</strong><span className="selectable-code">UID: {friend.uid}</span></>}
     status={{ label: t(lang, presence.labelKey), tone: presence.tone }}
     supporting={!friend.hasPublishedCompanion ? t(lang, 'social_friend_unpublished_hint') : undefined}
     actions={<>
@@ -53,7 +53,7 @@ export function FriendRequestRow({ lang, request, disabled, disabledReason, onAc
 }) {
   return <OperationalRow
     label={request.username}
-    identity={<><strong>{request.username}</strong><span className="selectable-code">{request.friendCode}</span></>}
+    identity={<><strong>{request.username}</strong><span className="selectable-code">UID: {request.uid}</span></>}
     status={{ label: t(lang, 'social_pending'), tone: 'warning' }}
     supporting={<><span>{t(lang, request.direction === 'incoming' ? 'social_request_received' : 'social_request_sent')}</span> <time dateTime={request.createdAt}>{formatDateTime(request.createdAt, lang)}</time></>}
     actions={request.direction === 'incoming' ? <><button disabled={disabled} onClick={onAccept}>{t(lang, 'social_accept')}</button><button disabled={disabled} onClick={onReject}>{t(lang, 'social_reject')}</button></> : <button disabled={disabled} onClick={onCancel}>{t(lang, 'social_cancel')}</button>}

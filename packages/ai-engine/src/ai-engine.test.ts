@@ -9,6 +9,7 @@ import {
   validateDiscoveryUnderstanding,
   validateDiscoveryReason,
   validateMemorySummary,
+  validateActionPlan,
   validateToolIntent
 } from './index';
 
@@ -59,6 +60,30 @@ describe('ai engine', () => {
       '{"tool_name":"search_web","args":{"query":"PixiJS"},"requires_confirmation":false,"user_facing_summary":"Search"}'
     );
     expect(parsed.tool_name).toBe('search_web');
+  });
+
+  it('validates and normalizes registry-backed action plans from the live snake-case prompt contract', () => {
+    const plan = validateActionPlan(
+      '{"summary":"Open docs","steps":[{"tool_name":"open_url","args":{"url":"docs.example.com"},"required_scopes":[]}],"requires_confirmation":false}'
+    );
+    expect(plan?.steps[0]).toMatchObject({
+      toolName: 'open_url',
+      args: { url: 'https://docs.example.com' },
+      requiredScopes: ['browser'],
+    });
+    expect(plan?.requiredPermissions).toEqual(['browser']);
+  });
+
+  it('blocks unknown tools, invalid arguments, and unsafe navigation URLs', () => {
+    expect(validateActionPlan(
+      '{"steps":[{"toolName":"run_shell","args":{}}],"confirmationRequired":false}'
+    )).toBeUndefined();
+    expect(() => validateToolIntent(
+      '{"tool_name":"search_web","args":{},"requires_confirmation":false,"user_facing_summary":"Search"}'
+    )).toThrow();
+    expect(validateActionPlan(
+      '{"steps":[{"toolName":"browser_navigation","args":{"action":"open_tab","url":"file:///tmp/a"}}],"confirmationRequired":true}'
+    )).toBeUndefined();
   });
 
   it('validates cognitive JSON contracts', () => {

@@ -1,11 +1,11 @@
-import type { ToolExecuteInput, ToolExecutionResult, ToolName, ToolPreview } from '@our-companion/shared';
-
-const SUPPORTED_TOOLS = new Set<ToolName>([
-  'open_url',
-  'open_app',
-  'search_web',
-  'browser_navigation',
-]);
+import {
+  getActionCapability,
+  validateActionCapabilityArgs,
+  type ToolExecuteInput,
+  type ToolExecutionResult,
+  type ToolName,
+  type ToolPreview,
+} from '@our-companion/shared';
 
 const blockedPatterns = [
   /payment/i,
@@ -27,7 +27,7 @@ function getStringArg(input: ToolExecuteInput, key: string): string | undefined 
 }
 
 function isSupportedToolName(toolName: unknown): toolName is ToolName {
-  return typeof toolName === 'string' && SUPPORTED_TOOLS.has(toolName as ToolName);
+  return getActionCapability(toolName)?.enabled === true;
 }
 
 function isBlockedToolIntent(input: ToolExecuteInput): string | undefined {
@@ -40,30 +40,15 @@ function isBlockedToolIntent(input: ToolExecuteInput): string | undefined {
     return 'This action is blocked because it may involve payment, login, credentials, form submission, sending messages, or deleting data.';
   }
 
-  if (input.toolName === 'open_url') {
-    const url = getStringArg(input, 'url');
-    if (!url || !/^https?:\/\//i.test(url)) return 'open_url requires an http or https URL.';
-  }
-
-  if (input.toolName === 'open_app' && !getStringArg(input, 'appName')) {
-    return 'open_app requires an appName.';
-  }
-
-  if (input.toolName === 'search_web' && !getStringArg(input, 'query')) {
-    return 'search_web requires a query.';
-  }
-
-  if (input.toolName === 'browser_navigation') {
-    const action = getStringArg(input, 'action');
-    const allowed = ['open_tab', 'go_back', 'go_forward', 'reload'];
-    if (!action || !allowed.includes(action)) return 'browser_navigation requires a supported action.';
-  }
+  const validated = validateActionCapabilityArgs(input.toolName, input.args);
+  if (!validated.ok) return validated.reason;
 
   return undefined;
 }
 
 function requiresConfirmation(input: ToolExecuteInput): boolean {
   if (input.requireConfirmation) return true;
+  if (getActionCapability(input.toolName)?.requiresConfirmationByDefault) return true;
   if (input.toolName !== 'browser_navigation') return false;
   return getStringArg(input, 'action') === 'open_tab';
 }
@@ -130,19 +115,24 @@ export async function executeTool(input: ToolExecuteInput, adapters: ToolAdapter
   if (preview.requiresConfirmation && !input.requireConfirmation) return { ...preview, status: 'preview_required' };
 
   try {
+    const validated = validateActionCapabilityArgs(input.toolName, input.args);
+    if (!validated.ok) {
+      return { ...preview, allowed: false, status: 'blocked', blockedReason: validated.reason };
+    }
+    const normalizedInput = { ...input, args: validated.args };
     let result: unknown;
     switch (input.toolName) {
       case 'open_url':
-        result = await adapters.openUrl(getStringArg(input, 'url') ?? '');
+        result = await adapters.openUrl(getStringArg(normalizedInput, 'url') ?? '');
         break;
       case 'open_app':
-        result = await adapters.openApp(getStringArg(input, 'appName') ?? '');
+        result = await adapters.openApp(getStringArg(normalizedInput, 'appName') ?? '');
         break;
       case 'search_web':
-        result = await adapters.searchWeb(getStringArg(input, 'query') ?? '', getStringArg(input, 'target'));
+        result = await adapters.searchWeb(getStringArg(normalizedInput, 'query') ?? '', getStringArg(normalizedInput, 'target'));
         break;
       case 'browser_navigation':
-        result = await adapters.browserNavigation(getStringArg(input, 'action') ?? '', getStringArg(input, 'url'));
+        result = await adapters.browserNavigation(getStringArg(normalizedInput, 'action') ?? '', getStringArg(normalizedInput, 'url'));
         break;
       default:
         return {

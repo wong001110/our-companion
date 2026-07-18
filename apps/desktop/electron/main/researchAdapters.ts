@@ -62,6 +62,69 @@ export class FixtureWebSearchProvider implements WebSearchProvider {
   }
 }
 
+const FIXTURE_PAGES: Record<string, { title: string; content: string; domain: string }> = {
+  'https://fixture.our-companion.dev/desktop-ai-companion': {
+    title: 'Desktop AI companion patterns',
+    domain: 'fixture.our-companion.dev',
+    content: 'A desktop AI companion can combine local-first memory, explicit permissions, observable cognition, and lightweight sprite animation.',
+  },
+  'https://fixture.our-companion.dev/local-first-memory': {
+    title: 'Local-first memory architecture',
+    domain: 'fixture.our-companion.dev',
+    content: 'Local-first memory keeps private records on device, uses deterministic identities, and makes derived cognition inspectable.',
+  },
+  'https://fixture.our-companion.dev/sprite-animation': {
+    title: 'Sprite animation lifecycle',
+    domain: 'fixture.our-companion.dev',
+    content: 'A visible expedition lifecycle prepares, departs, stays away, returns, reports a result, and always recovers to idle.',
+  },
+};
+
+export function createDeterministicFixtureSearchProvider(): FixtureWebSearchProvider {
+  return new FixtureWebSearchProvider(Object.entries(FIXTURE_PAGES).map(([url, page], index) => ({
+    id: `fixture-search-result-${index + 1}`,
+    query: '*',
+    title: page.title,
+    url,
+    domain: page.domain,
+    snippet: page.content,
+    rank: index + 1,
+    provider: 'fixture-search',
+  })));
+}
+
+export class FixtureWebPageFetcher implements WebPageFetcher {
+  readonly id = 'fixture-page-fetcher';
+  readonly mode = 'fixture' as const;
+  constructor(private readonly now: () => Date = () => new Date()) {}
+
+  async fetchPage(input: Parameters<WebPageFetcher['fetchPage']>[0]): Promise<WebPageEvidence> {
+    const page = FIXTURE_PAGES[input.searchResult.url];
+    if (!page) throw new ResearchAdapterError('fixture_page_not_found');
+    return {
+      id: `fixture-evidence-${input.searchResult.id}`,
+      userId: input.userId,
+      companionId: input.companionId,
+      cycleId: input.cycleId,
+      researchIntentId: input.researchIntentId,
+      researchPlanId: input.researchPlanId,
+      searchResultId: input.searchResult.id,
+      query: input.searchResult.query,
+      provider: 'fixture-page-fetcher',
+      url: input.searchResult.url,
+      canonicalUrl: input.searchResult.url,
+      domain: page.domain,
+      title: page.title,
+      extractedText: page.content,
+      excerpt: page.content,
+      contentHash: createHash('sha256').update(page.content).digest('hex'),
+      contentType: 'text/plain',
+      fetchedAt: this.now().toISOString(),
+      sourceType: input.sourceType,
+    };
+  }
+}
+
 function braveFreshness(days?: number): string | undefined {
   if (!days) return undefined;
   if (days <= 1) return 'pd';

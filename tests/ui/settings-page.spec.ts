@@ -128,7 +128,7 @@ test('PaperCard tape is intentional across operational and narrative surfaces', 
     expect(await severeAxeViolations(panel, '[data-testid="panel-page-settings"]')).toEqual([]);
     await device.screenshot(panel, 'en-settings-ai-1180.png', ui002ArtifactDir);
 
-    await main.evaluate(async () => window.ourCompanion.smoke?.setFriendLookupFixture({ id: 'friend-1', username: 'Mira', friendCode: 'MIRA0001', relationship: 'friend' }));
+    await main.evaluate(async () => window.ourCompanion.smoke?.setFriendLookupFixture({ id: 'friend-1', username: 'Mira', uid: 'OC-MIRA8XYZ', friendCode: 'MIRA0001', relationship: 'friend' }));
     await panel.getByRole('button', { name: 'Social' }).click();
     const socialCard = panel.locator('[data-testid="social-panel"] > .paper-card');
     const publishedCompanionCard = panel.getByRole('heading', { name: 'Online Companion', exact: true }).locator('..');

@@ -19,8 +19,8 @@ export function SocialPage() {
   const lang = useLang();
   const visualVisit = useVisualVisitState();
   const { status, available, canShowContent, stale, visitsAvailable, friends, incoming, outgoing, blocked, actionError, setActionError, domainErrors, loadedDomains, loading, hasLoaded, busyAction: actionBusy, setBusyAction, friendCompanion, setFriendCompanion, friendAssetStatus, setFriendAssetStatus, visitIncoming, visitOutgoing, visitSessions, scopeKey, isScopeCurrent, refresh } = useSocialViewModel();
-  const [friendCode, setFriendCode] = useState('');
-  const [copiedFriendCode, setCopiedFriendCode] = useState(false);
+  const [uid, setUid] = useState('');
+  const [copiedUid, setCopiedUid] = useState(false);
   const [lookup, setLookup] = useState<FriendLookupResult>();
   const [pendingDestructiveAction, setPendingDestructiveAction] = useState<{ title: string; description: string; confirmLabel: string; phase: SocialMutationPhase; operation: () => Promise<unknown> }>();
   const [mutationPhase, setMutationPhase] = useState<SocialMutationPhase>();
@@ -30,8 +30,8 @@ export function SocialPage() {
   }, []);
 
   useEffect(() => {
-    setFriendCode('');
-    setCopiedFriendCode(false);
+    setUid('');
+    setCopiedUid(false);
     setLookup(undefined);
     setPendingDestructiveAction(undefined);
     setMutationPhase(undefined);
@@ -43,11 +43,11 @@ export function SocialPage() {
   const account = status.account;
   const mutationsDisabled = actionBusy || !available;
   const busyAction = mutationsDisabled;
-  const copyOwnFriendCode = async () => {
+  const copyOwnUid = async () => {
     try {
-      await navigator.clipboard.writeText(account.friendCode);
-      setCopiedFriendCode(true);
-      window.setTimeout(() => setCopiedFriendCode(false), 1800);
+      await navigator.clipboard.writeText(account.uid);
+      setCopiedUid(true);
+      window.setTimeout(() => setCopiedUid(false), 1800);
     } catch {
       setActionError('social_copy_failed');
     }
@@ -88,13 +88,13 @@ export function SocialPage() {
     <ConnectionBanner status={status} stale={stale} onRetry={() => void window.ourCompanion.network.retryConnection()} />
     <section className="social-overview" aria-label={t(lang, 'social_overview_label')}>
       <h3>{t(lang, 'social_overview')}</h3>
-      <p><strong>{account.username} (@{account.username})</strong> <span className="soft-pill">{account.friendCode}</span></p>
-      <div className="action-row"><button type="button" onClick={() => void copyOwnFriendCode()}>{copiedFriendCode ? t(lang, 'social_friend_code_copied') : t(lang, 'social_copy_friend_code')}</button><span>{t(lang, 'social_friend_count', { count: friends.length, plural: friends.length === 1 ? '' : 's' })} · {t(lang, 'social_pending_request_count', { count: incoming.length, plural: incoming.length === 1 ? '' : 's' })}</span></div>
+      <p><strong>{account.username}</strong> <span className="soft-pill">UID: {account.uid}</span></p>
+      <div className="action-row"><button type="button" onClick={() => void copyOwnUid()}>{copiedUid ? t(lang, 'social_friend_code_copied') : t(lang, 'social_copy_friend_code')}</button><span>{t(lang, 'social_friend_count', { count: friends.length, plural: friends.length === 1 ? '' : 's' })} · {t(lang, 'social_pending_request_count', { count: incoming.length, plural: incoming.length === 1 ? '' : 's' })}</span></div>
     </section>
     {loadedDomains.visitSessions && <CurrentVisitSection lang={lang} stale={stale} liveVisits={liveVisits} latestTerminalVisit={latestTerminalVisit} userId={userId} visualVisit={visualVisit} busyAction={busyAction} action={action} />}
     <section aria-labelledby="published-companion-heading"><h3 id="published-companion-heading">{t(lang, 'social_published_companion')}</h3><PublishedCompanionSection onVisitAvailabilityChange={handlePublicationAvailability} /></section>
-    <div className="online-auth-form"><label><span>{t(lang, 'social_add_friend_by_code')}</span><input value={friendCode} onChange={(event) => setFriendCode(event.target.value.toUpperCase())} placeholder="ABC12345" /></label><button className="btn-secondary btn-sm" onClick={() => { setLookup(undefined); setActionError(undefined); void action(() => window.ourCompanion.network.friends.lookup(friendCode.trim()), { clearLookup: false, phase: 'sending', onSuccess: setLookup }); }} disabled={!friendCode.trim() || busyAction}>{t(lang, 'social_find')}</button></div>
-    {lookup && <div data-testid="friend-lookup-result" className="online-user-info"><p><strong>{lookup.username}</strong> · {lookup.friendCode}</p>{canSendFriendRequest(lookup.relationship) && <button data-testid="send-friend-request" className="btn-primary btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.sendRequest(lookup.id), { phase: 'sending' })}>{t(lang, 'social_send_request')}</button>}<p data-testid="friend-lookup-relationship" aria-live="polite">{friendLookupRelationshipMessage(lookup.relationship, lang)}</p></div>}
+    <div className="online-auth-form"><label><span>{t(lang, 'social_add_friend_by_code')}</span><input value={uid} onChange={(event) => setUid(event.target.value.toUpperCase())} placeholder="OC-7K4M92QX" /></label><button className="btn-secondary btn-sm" onClick={() => { setLookup(undefined); setActionError(undefined); void action(() => window.ourCompanion.network.friends.lookup(uid.trim()), { clearLookup: false, phase: 'sending', onSuccess: setLookup }); }} disabled={!uid.trim() || busyAction}>{t(lang, 'social_find')}</button></div>
+    {lookup && <div data-testid="friend-lookup-result" className="online-user-info"><p><strong>{lookup.username}</strong> · UID: {lookup.uid}</p>{canSendFriendRequest(lookup.relationship) && <button data-testid="send-friend-request" className="btn-primary btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.sendRequest(lookup.id), { phase: 'sending' })}>{t(lang, 'social_send_request')}</button>}<p data-testid="friend-lookup-relationship" aria-live="polite">{friendLookupRelationshipMessage(lookup.relationship, lang)}</p></div>}
     {actionError && <InlineNotice tone="error">{t(lang, actionError)}</InlineNotice>}
     {mutationReason && <LoadingState label={mutationReason} />}
     {!hasLoaded && loading && <SectionLoading label={t(lang, 'social_loading')} />}

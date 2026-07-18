@@ -13,7 +13,13 @@ import type {
   MemoryNode,
   Pattern
 } from '@our-companion/shared';
-import { clamp01, createId, nowIso } from '@our-companion/shared';
+import {
+  clamp01,
+  createId,
+  createSemanticFingerprint,
+  normalizeSemanticText,
+  nowIso,
+} from '@our-companion/shared';
 
 export interface GenerateCuriosityTargetsInput {
   userId: string;
@@ -25,6 +31,7 @@ export interface GenerateCuriosityTargetsInput {
   patterns: Pattern[];
   interestGraph: InterestGraph;
   recentFeedback?: DiscoveryFeedback[];
+  generatedAt?: string;
 }
 
 export interface CuriosityScoreParts {
@@ -167,12 +174,22 @@ function createTarget(input: {
   relatedMemoryIds?: string[];
   relatedPatternIds?: string[];
   relatedInterestNodeIds?: string[];
+  generatedAt?: string;
 }): CuriosityTarget {
+  const generatedAt = input.generatedAt ?? nowIso();
+  const generatedFromIds = [
+    ...(input.relatedMemoryIds ?? []),
+    ...(input.relatedPatternIds ?? []),
+    ...(input.relatedInterestNodeIds ?? []),
+  ].sort();
   return {
     id: createId('curiosity'),
     userId: input.userId,
     companionId: input.companionId,
     topic: input.topic,
+    topicFingerprint: createCuriosityTopicFingerprint(input.topic),
+    sourceFingerprint: createSemanticFingerprint('curiosity_source', [input.source, ...generatedFromIds]),
+    generatedFromIds,
     description: input.description,
     source: input.source,
     explorationType: input.explorationType,
@@ -183,8 +200,46 @@ function createTarget(input: {
     relatedMemoryIds: input.relatedMemoryIds,
     relatedPatternIds: input.relatedPatternIds,
     relatedInterestNodeIds: input.relatedInterestNodeIds,
-    createdAt: nowIso()
+    status: 'open',
+    lastGeneratedAt: generatedAt,
+    generationCount: 1,
+    ignoreCount: 0,
+    createdAt: generatedAt,
+    updatedAt: generatedAt,
   };
+}
+
+export function createCuriosityTopicFingerprint(topic: string): string {
+  return createSemanticFingerprint('curiosity_topic', [normalizeSemanticText(topic)]);
+}
+
+function mergeGeneratedTargets(targets: CuriosityTarget[]): CuriosityTarget[] {
+  const merged = new Map<string, CuriosityTarget>();
+  for (const target of targets) {
+    const topicFingerprint = target.topicFingerprint ?? createCuriosityTopicFingerprint(target.topic);
+    const existing = merged.get(topicFingerprint);
+    if (!existing) {
+      merged.set(topicFingerprint, { ...target, topicFingerprint });
+      continue;
+    }
+    const preferred = target.priority > existing.priority ? target : existing;
+    const generatedFromIds = [...new Set([...(existing.generatedFromIds ?? []), ...(target.generatedFromIds ?? [])])].sort();
+    merged.set(topicFingerprint, {
+      ...preferred,
+      id: existing.id,
+      topicFingerprint,
+      generatedFromIds,
+      sourceFingerprint: createSemanticFingerprint('curiosity_source', [
+        existing.source,
+        target.source,
+        ...generatedFromIds,
+      ].sort()),
+      relatedMemoryIds: [...new Set([...(existing.relatedMemoryIds ?? []), ...(target.relatedMemoryIds ?? [])])],
+      relatedPatternIds: [...new Set([...(existing.relatedPatternIds ?? []), ...(target.relatedPatternIds ?? [])])],
+      relatedInterestNodeIds: [...new Set([...(existing.relatedInterestNodeIds ?? []), ...(target.relatedInterestNodeIds ?? [])])],
+    });
+  }
+  return [...merged.values()];
 }
 
 export function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): CuriosityTarget[] {
@@ -220,6 +275,7 @@ export function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): 
         reason: `This came from an active memory Companion has been keeping: ${memory.summary ?? memory.title}.`,
         expectedValue: 'May reveal a nearby idea or reference that feels specifically useful now.',
         relatedMemoryIds: [memory.id]
+        ,generatedAt: input.generatedAt
       })
     );
   }
@@ -249,6 +305,7 @@ export function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): 
             ? 'May help Companion challenge a hidden assumption before it becomes design debt.'
             : 'May help Companion understand the user beyond one isolated note.',
         relatedPatternIds: [pattern.id]
+        ,generatedAt: input.generatedAt
       })
     );
   }
@@ -275,6 +332,7 @@ export function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): 
         reason: `The interest graph shows ${node.label} as a meaningful ${node.type}.`,
         expectedValue: explorationType === 'practical' ? 'May produce directly buildable references.' : 'May uncover a nearby direction worth discussing.',
         relatedInterestNodeIds: [node.id]
+        ,generatedAt: input.generatedAt
       })
     );
   }
@@ -292,11 +350,12 @@ export function generateCuriosityTargets(input: GenerateCuriosityTargetsInput): 
         confidence: 0.62,
         reason: 'Companion is naturally curious, and the current product direction centers on companion presence.',
         expectedValue: 'May help Our Companion feel alive rather than like a regular assistant.'
+        ,generatedAt: input.generatedAt
       })
     );
   }
 
-  return targets
+  return mergeGeneratedTargets(targets)
     .sort((left, right) => right.priority - left.priority)
     .slice(0, 7);
 }

@@ -217,7 +217,18 @@ export class ResearchOrchestrator {
   }
 
   getCapabilities(): ResearchCapabilityStatus[] {
-    return toCapabilities(this.deps).map(({ id, sourceTypes, mode, available }) => ({ id, sourceTypes, mode, available }));
+    return toCapabilities(this.deps).map(({ id, kind, sourceTypes, mode, available }) => ({
+      id,
+      kind,
+      sourceTypes,
+      mode,
+      available,
+      reasonUnavailable: available
+        ? undefined
+        : kind === 'open_web_search'
+          ? 'Search provider is not configured.'
+          : 'Connector is not configured.',
+    }));
   }
 
   async run(input: {
@@ -374,7 +385,16 @@ export class ResearchOrchestrator {
       ? decideResearchContinuation({ intent, coverage, completedAdditionalPasses: additionalPasses })
       : structuredCandidates.length > 0
         ? { action: 'stop' as const, reason: 'structured_research_completed' }
-      : { action: 'stop' as const, reason: 'no_compatible_capability' };
+      : { action: 'stop' as const, reason: 'RESEARCH_NO_DISCOVERY_PROVIDER' };
+    if (stop.reason === 'RESEARCH_NO_DISCOVERY_PROVIDER') {
+      input.onTrace?.({
+        operation: 'research:no-provider',
+        status: 'empty',
+        inputRefs: [plan.id],
+        outputRefs: [],
+        skipReason: 'RESEARCH_NO_DISCOVERY_PROVIDER',
+      });
+    }
     input.onTrace?.({ operation: 'research-pass:stop', status: 'completed', inputRefs: evidence.map((page) => page.id), outputRefs: [], skipReason: stop.reason });
     const candidates = dedupeResearchCandidates([
       ...createDiscoveryCandidatesFromEvidence({ userId: input.userId, companionId: input.companionId, curiosityTargetId: input.curiosityTarget.id, researchPlanId: plan.id, evidence }),

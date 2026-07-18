@@ -12,7 +12,7 @@ export {
 } from './utils';
 export type { UnitScore, Score100 } from './utils';
 
-import type { ActionPermissionState, ActionStep, BaseEvent, KnowledgeGraph, SignalSourceType } from './models';
+import type { ActionPermissionState, ActionStep, BaseEvent, KnowledgeGraph, PermissionScope, SignalSourceType } from './models';
 import type { UnitScore } from './utils';
 
 export type DiscoverySource = SignalSourceType;
@@ -624,6 +624,9 @@ export interface PatternEvidence {
 export interface Pattern {
   id: string;
   userId: string;
+  companionId?: string;
+  semanticFingerprint?: string;
+  normalizedTopics?: string[];
   type: PatternType;
   title: string;
   summary: string;
@@ -634,6 +637,9 @@ export interface Pattern {
   strength: UnitScore;
   freshness: UnitScore;
   evidence: PatternEvidence[];
+  observationCount?: number;
+  frequency?: UnitScore;
+  lastObservedAt?: string;
   detectedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -708,6 +714,9 @@ export interface CuriosityTarget {
   userId: string;
   companionId: string;
   topic: string;
+  topicFingerprint?: string;
+  sourceFingerprint?: string;
+  generatedFromIds?: string[];
   description: string;
   source: CuriositySource;
   explorationType: ExplorationType;
@@ -718,7 +727,78 @@ export interface CuriosityTarget {
   relatedMemoryIds?: string[];
   relatedPatternIds?: string[];
   relatedInterestNodeIds?: string[];
+  status?: 'open' | 'exploring' | 'completed' | 'ignored' | 'cooldown';
+  lastGeneratedAt?: string;
+  lastExploredAt?: string;
+  cooldownUntil?: string;
+  generationCount?: number;
+  ignoreCount?: number;
   createdAt: string;
+  updatedAt?: string;
+}
+
+export const CURIOSITY_COOLDOWN_MS = {
+  completed: 24 * 60 * 60 * 1000,
+  ignoredOnce: 24 * 60 * 60 * 1000,
+  ignoredTwice: 3 * 24 * 60 * 60 * 1000,
+  ignoredRepeatedly: 7 * 24 * 60 * 60 * 1000,
+} as const;
+
+export function normalizeSemanticText(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase('en-US')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+export function createSemanticFingerprint(namespace: string, parts: readonly string[]): string {
+  const value = `${namespace}:${parts.map(normalizeSemanticText).join('|')}`;
+  let left = 0xdeadbeef ^ value.length;
+  let right = 0x41c6ce57 ^ value.length;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    left = Math.imul(left ^ code, 2654435761);
+    right = Math.imul(right ^ code, 1597334677);
+  }
+  left = Math.imul(left ^ (left >>> 16), 2246822507) ^ Math.imul(right ^ (right >>> 13), 3266489909);
+  right = Math.imul(right ^ (right >>> 16), 2246822507) ^ Math.imul(left ^ (left >>> 13), 3266489909);
+  return `${namespace}_${(right >>> 0).toString(16).padStart(8, '0')}${(left >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+export interface RuntimeClock {
+  now(): Date;
+  nowMs(): number;
+}
+
+export class SystemRuntimeClock implements RuntimeClock {
+  now(): Date { return new Date(); }
+  nowMs(): number { return Date.now(); }
+}
+
+export class DebugRuntimeClock implements RuntimeClock {
+  private offsetMs = 0;
+
+  constructor(
+    private readonly systemNow: () => number = Date.now,
+    readonly enabled = true,
+  ) {}
+
+  now(): Date { return new Date(this.nowMs()); }
+  nowMs(): number { return this.systemNow() + this.offsetMs; }
+  getOffsetMs(): number { return this.offsetMs; }
+  advance(milliseconds: number): Date {
+    if (!this.enabled) throw new Error('DEBUG_CLOCK_UNAVAILABLE');
+    if (!Number.isFinite(milliseconds)) throw new Error('DEBUG_CLOCK_UNAVAILABLE');
+    this.offsetMs += milliseconds;
+    return this.now();
+  }
+  reset(): Date {
+    if (!this.enabled) throw new Error('DEBUG_CLOCK_UNAVAILABLE');
+    this.offsetMs = 0;
+    return this.now();
+  }
 }
 
 // ============================================================================
@@ -904,9 +984,11 @@ export interface ResearchEvidenceCoverage {
 
 export interface ResearchCapabilityStatus {
   id: string;
+  kind?: 'structured_connector' | 'open_web_search' | 'web_page_fetcher';
   sourceTypes: ResearchSourceType[];
   mode: EngineProviderMode;
   available: boolean;
+  reasonUnavailable?: string;
 }
 
 export interface DiscoveryCandidate {
@@ -1161,6 +1243,186 @@ export interface DiaryEntry {
 
 export type ToolName = 'open_url' | 'open_app' | 'search_web' | 'browser_navigation';
 
+export interface ActionCapabilityDefinition {
+  toolName: ToolName;
+  description: string;
+  argumentSchema: readonly ActionCapabilityArgument[];
+  examples: { en: readonly string[]; zhCN: readonly string[] };
+  requiredScopes: readonly PermissionScope[];
+  riskLevel: 'low' | 'medium' | 'high';
+  requiresConfirmationByDefault: boolean;
+  enabled: boolean;
+}
+
+export interface ActionCapabilityArgument {
+  name: string;
+  type: 'string';
+  required: boolean;
+  description: string;
+  allowedValues?: readonly string[];
+}
+
+export const ACTION_CAPABILITY_REGISTRY = {
+  open_url: {
+    toolName: 'open_url',
+    description: 'Open a safe HTTP or HTTPS URL in the browser.',
+    argumentSchema: [
+      { name: 'url', type: 'string', required: true, description: 'Safe public HTTP or HTTPS URL.' },
+    ],
+    examples: {
+      en: ['open youtube.com', 'go to https://example.com'],
+      zhCN: ['打开 youtube.com', '打开 https://example.com'],
+    },
+    requiredScopes: ['browser'],
+    riskLevel: 'low',
+    requiresConfirmationByDefault: false,
+    enabled: true,
+  },
+  search_web: {
+    toolName: 'search_web',
+    description: 'Search the public web for a user-provided query.',
+    argumentSchema: [
+      { name: 'query', type: 'string', required: true, description: 'Non-empty search query.' },
+      { name: 'target', type: 'string', required: false, description: 'Optional search provider label.' },
+    ],
+    examples: { en: ['search web for PixiJS'], zhCN: ['搜索 PixiJS'] },
+    requiredScopes: ['browser'],
+    riskLevel: 'low',
+    requiresConfirmationByDefault: false,
+    enabled: true,
+  },
+  open_app: {
+    toolName: 'open_app',
+    description: 'Open an installed desktop application by name.',
+    argumentSchema: [
+      { name: 'appName', type: 'string', required: true, description: 'Non-empty installed application name.' },
+    ],
+    examples: { en: ['open app Chrome'], zhCN: ['打开应用 Chrome'] },
+    requiredScopes: ['automation'],
+    riskLevel: 'medium',
+    requiresConfirmationByDefault: false,
+    enabled: true,
+  },
+  browser_navigation: {
+    toolName: 'browser_navigation',
+    description: 'Navigate an existing browser session using a supported navigation action.',
+    argumentSchema: [
+      {
+        name: 'action',
+        type: 'string',
+        required: true,
+        description: 'Supported browser navigation operation.',
+        allowedValues: ['go_back', 'go_forward', 'reload', 'open_tab'],
+      },
+      { name: 'url', type: 'string', required: false, description: 'Safe public URL required for open_tab.' },
+    ],
+    examples: { en: ['go back', 'reload the page'], zhCN: ['返回上一页', '刷新页面'] },
+    requiredScopes: ['browser'],
+    riskLevel: 'low',
+    requiresConfirmationByDefault: false,
+    enabled: true,
+  },
+} as const satisfies Record<ToolName, ActionCapabilityDefinition>;
+
+export function getActionCapability(toolName: unknown): ActionCapabilityDefinition | undefined {
+  if (typeof toolName !== 'string' || !Object.hasOwn(ACTION_CAPABILITY_REGISTRY, toolName)) return undefined;
+  return ACTION_CAPABILITY_REGISTRY[toolName as ToolName];
+}
+
+export function listEnabledActionCapabilities(): ActionCapabilityDefinition[] {
+  return Object.values(ACTION_CAPABILITY_REGISTRY).filter((capability) => capability.enabled);
+}
+
+export function actionCapabilityPromptSummary(): string {
+  const enabled = listEnabledActionCapabilities().map((capability) => [
+    `Tool: ${capability.toolName}`,
+    `Description: ${capability.description}`,
+    `Allowed arguments: ${capability.argumentSchema.map((argument) => `${argument.name}:${argument.type}${argument.required ? ' (required)' : ' (optional)'}${argument.allowedValues ? ` [${argument.allowedValues.join('|')}]` : ''}`).join(', ')}`,
+    `Required scopes: ${capability.requiredScopes.join(', ')}`,
+    `Risk: ${capability.riskLevel}`,
+    `Examples: ${[...capability.examples.en, ...capability.examples.zhCN].join(' | ')}`,
+  ].join('\n')).join('\n\n');
+  const unavailable = Object.values(ACTION_CAPABILITY_REGISTRY)
+    .filter((capability) => !capability.enabled)
+    .map((capability) => capability.toolName)
+    .join(', ');
+  return `${enabled}\n\nUnavailable capabilities: ${unavailable || 'none'}`;
+}
+
+export type ActionCapabilityArgsResult =
+  | { ok: true; args: Record<string, unknown> }
+  | { ok: false; reason: string };
+
+export function validateActionCapabilityArgs(toolName: unknown, args: unknown): ActionCapabilityArgsResult {
+  const capability = getActionCapability(toolName);
+  if (!capability?.enabled) return { ok: false, reason: 'ACTION_CAPABILITY_NOT_AVAILABLE' };
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return { ok: false, reason: 'ACTION_ARGUMENTS_INVALID' };
+  const source = args as Record<string, unknown>;
+  const allowedNames = new Set(capability.argumentSchema.map((argument) => argument.name));
+  if (Object.keys(source).some((name) => !allowedNames.has(name))) {
+    return { ok: false, reason: 'ACTION_ARGUMENTS_INVALID' };
+  }
+  const normalized: Record<string, unknown> = {};
+  for (const argument of capability.argumentSchema) {
+    const value = source[argument.name];
+    if (value === undefined || value === null || value === '') {
+      if (argument.required) return { ok: false, reason: 'ACTION_ARGUMENTS_INVALID' };
+      continue;
+    }
+    if (typeof value !== argument.type || (typeof value === 'string' && !value.trim())) {
+      return { ok: false, reason: 'ACTION_ARGUMENTS_INVALID' };
+    }
+    if (argument.allowedValues && !argument.allowedValues.includes(value as string)) {
+      return { ok: false, reason: 'ACTION_ARGUMENTS_INVALID' };
+    }
+    normalized[argument.name] = typeof value === 'string' ? value.trim() : value;
+  }
+  if (toolName === 'open_url') {
+    const url = normalizeActionUrl(String(normalized.url ?? ''));
+    if (!url) return { ok: false, reason: 'ACTION_URL_INVALID' };
+    normalized.url = url;
+  }
+  if (toolName === 'browser_navigation') {
+    const action = normalized.action;
+    if (action === 'open_tab') {
+      const url = normalizeActionUrl(String(normalized.url ?? ''));
+      if (!url) return { ok: false, reason: 'ACTION_URL_INVALID' };
+      normalized.url = url;
+    } else if (normalized.url !== undefined) {
+      return { ok: false, reason: 'ACTION_ARGUMENTS_INVALID' };
+    }
+  }
+  return { ok: true, args: normalized };
+}
+
+const UNSAFE_ACTION_URL_SCHEMES = /^(?:javascript|file|data|blob|chrome|electron|companion|companion-network):/i;
+const ACTION_HOSTNAME = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
+
+export function normalizeActionUrl(input: string): string | undefined {
+  const value = input.trim();
+  if (!value || /\s/.test(value) || UNSAFE_ACTION_URL_SCHEMES.test(value)) return undefined;
+  const candidate = /^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`;
+  let url: URL;
+  try { url = new URL(candidate); } catch { return undefined; }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
+  if (url.username || url.password || url.hash) return undefined;
+  const hostname = url.hostname.toLowerCase();
+  if (!ACTION_HOSTNAME.test(hostname) || isUnsafeActionHostname(hostname)) return undefined;
+  url.hostname = hostname;
+  return url.toString().replace(/\/$/, '');
+}
+
+function isUnsafeActionHostname(hostname: string): boolean {
+  if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) return true;
+  const octets = hostname.split('.').map(Number);
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return false;
+  return octets[0] === 10
+    || octets[0] === 127
+    || (octets[0] === 169 && octets[1] === 254)
+    || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+    || (octets[0] === 192 && octets[1] === 168);
+}
+
 export interface ToolExecuteInput {
   toolName: ToolName;
   args: Record<string, unknown>;
@@ -1384,6 +1646,68 @@ export interface DebugDataResetResult {
   completedAt: string;
 }
 
+export interface RuntimeTimeStatus {
+  realTime: string;
+  runtimeTime: string;
+  offsetMs: number;
+  debugAvailable: boolean;
+  lastSchedulerTick?: string;
+}
+
+export interface RuntimeSchedulerReport {
+  previousRuntimeTime: string;
+  newRuntimeTime: string;
+  schedulersExecuted: string[];
+  recordsCreated: number;
+  recordsUpdated: number;
+  recordsSkipped: number;
+  cooldownsExpired: number;
+  errors: string[];
+}
+
+export interface ResearchDeveloperReport {
+  mode: 'fixture' | 'manual_url';
+  researchIntentId: string;
+  researchPlanId: string;
+  queries: string[];
+  capabilitiesSelected: string[];
+  pagesFetched: number;
+  evidenceAccepted: number;
+  evidenceRejected: number;
+  candidatesCreated: number;
+  duplicatesSkipped: number;
+  insightsGenerated: number;
+  stopReason: string;
+  correlationId: string;
+}
+
+export interface MemoryImpactReport {
+  memory: MemoryNode;
+  normalizedTopics: string[];
+  interestNodeIds: string[];
+  patternIds: string[];
+  curiosityTargetIds: string[];
+  researchIntentIds: string[];
+  explorationCycleIds: string[];
+  discoveryCandidateIds: string[];
+  insightIds: string[];
+  lastCognitiveEvaluation?: string;
+}
+
+export interface MemoryImpactRecomputeReport {
+  memoryId: string;
+  interestNodesAdded: number;
+  interestNodesUpdated: number;
+  patternsCreated: number;
+  patternsUpdated: number;
+  curiosityTargetsCreated: number;
+  curiosityTargetsUpdated: number;
+  duplicatesSkipped: number;
+  researchCyclesStarted: number;
+  errors: string[];
+  evaluatedAt: string;
+}
+
 export interface FoundationEventLogInput {
   limit?: number;
   source?: string;
@@ -1558,7 +1882,7 @@ export interface NetworkStatus {
   state: NetworkConnectionState;
   onlineModeEnabled: boolean;
   serverUrl: string;
-  account?: { id: string; email: string; username: string; friendCode: string };
+  account?: { id: string; email: string; username: string; uid: string; friendCode: string };
   message?: string;
   remoteRevocationConfirmed?: boolean;
   socialRevision?: number;
@@ -1577,10 +1901,10 @@ export type SocialInvalidation =
 
 export type FriendPresence = 'online' | 'idle' | 'offline';
 export type FriendLookupRelationship = 'none' | 'friend' | 'incoming_request' | 'outgoing_request';
-export interface FriendLookupResult { id: string; username: string; friendCode: string; relationship: FriendLookupRelationship; }
-export interface FriendSummary { userId: string; username: string; friendCode: string; presence: FriendPresence; hasPublishedCompanion: boolean; }
-export interface FriendRequestSummary { id: string; direction: 'incoming' | 'outgoing'; userId: string; username: string; friendCode: string; status: 'pending'; createdAt: string; }
-export interface BlockedUserSummary { userId: string; username: string; blockedAt: string; }
+export interface FriendLookupResult { id: string; username: string; uid: string; friendCode?: string; relationship: FriendLookupRelationship; }
+export interface FriendSummary { userId: string; username: string; uid: string; friendCode?: string; presence: FriendPresence; hasPublishedCompanion: boolean; }
+export interface FriendRequestSummary { id: string; direction: 'incoming' | 'outgoing'; userId: string; username: string; uid: string; friendCode?: string; status: 'pending'; createdAt: string; }
+export interface BlockedUserSummary { userId: string; username: string; uid?: string; blockedAt: string; }
 export interface PublicCompanionProfile {
   id: string;
   ownerUserId: string;
@@ -1769,6 +2093,8 @@ export interface OurCompanionApi {
     createEdge(input: CreateMemoryEdgeInput): Promise<MemoryEdge>;
     getGraph(input?: { query?: string; companionId?: string }): Promise<KnowledgeGraph>;
     search(input: { query: string; companionId?: string }): Promise<MemoryRecord[]>;
+    inspectImpact(id: string): Promise<MemoryImpactReport>;
+    recomputeImpact(input: { id: string; explore?: boolean }): Promise<MemoryImpactRecomputeReport>;
   };
   journey: {
     create(input: CreateJourneyInput): Promise<CompanionJourney>;
@@ -1834,6 +2160,12 @@ export interface OurCompanionApi {
     resetData(input: DebugDataResetInput): Promise<DebugDataResetResult>;
     getFoundationLog(input?: FoundationEventLogInput): Promise<BaseEvent[]>;
     getEngineSnapshot(input?: EngineSnapshotInput): Promise<EngineSnapshot>;
+    getRuntimeTime(): Promise<RuntimeTimeStatus>;
+    advanceRuntimeTime(input: { milliseconds: number; runScheduledTick?: boolean }): Promise<RuntimeSchedulerReport>;
+    resetRuntimeTime(): Promise<RuntimeTimeStatus>;
+    runScheduledTick(): Promise<RuntimeSchedulerReport>;
+    runFixtureResearch(input: { topic: string }): Promise<ResearchDeveloperReport>;
+    researchFromUrl(input: { url: string }): Promise<ResearchDeveloperReport>;
     onFoundationEvent(listener: (event: BaseEvent) => void): () => void;
   };
   user: {
@@ -1856,7 +2188,7 @@ export interface OurCompanionApi {
     retryConnection(): Promise<NetworkStatus>;
     onStatusChanged(listener: (status: NetworkStatus) => void): () => void;
     friends: {
-      lookup(friendCode: string): Promise<FriendLookupResult>;
+      lookup(uid: string): Promise<FriendLookupResult>;
       getAll(): Promise<FriendSummary[]>;
       getIncomingRequests(): Promise<FriendRequestSummary[]>;
       getOutgoingRequests(): Promise<FriendRequestSummary[]>;

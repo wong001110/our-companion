@@ -76,15 +76,21 @@ export function buildEngineSnapshot(
     characterState: db.getCharacterState(characterId),
     currentCycle: focusCycle,
     recentCycles: companionCycles.slice(0, 10),
-    patterns: db.listPatterns(userId, 20),
-    interestGraph: db.getInterestGraph(userId),
-    curiosityTargets: db.listCuriosityTargets(userId, 20),
+    patterns: db.listPatterns(userId, 20, characterId),
+    interestGraph: db.getInterestGraph(`${userId}:${characterId}`),
+    curiosityTargets: db.listCuriosityTargets(userId, 20, characterId),
     researchIntent,
     researchPlan,
     researchEvidence,
     researchCapabilities,
     researchCoverage: researchIntent ? evaluateEvidenceCoverage(researchIntent, researchEvidence) : undefined,
-    researchStopReason: researchPlan?.outcome?.stopReason ?? (researchEvidence.length ? 'evidence_collected' : 'no_valid_external_evidence'),
+    researchStopReason: researchPlan?.outcome?.stopReason
+      ?? (researchEvidence.length
+        ? 'evidence_collected'
+        : researchCapabilities.some((capability) =>
+            capability.available && (capability.kind === 'open_web_search' || capability.kind === 'structured_connector'))
+          ? 'no_valid_external_evidence'
+          : 'RESEARCH_NO_DISCOVERY_PROVIDER'),
     discoveryCandidates: db.listDiscoveryCandidates(userId, 20, characterId),
     insights: db.listCompanionInsights(userId, 20, characterId).map(mapGeneratedInsight),
     explorationEvents: focusCycle ? db.listExplorationEventsForCycle(focusCycle.id) : [],

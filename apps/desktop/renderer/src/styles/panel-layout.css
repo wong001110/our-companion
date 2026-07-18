@@ -747,6 +747,10 @@
   min-height: 180px;
 }
 
+.memory-impact-inspector {
+  grid-column: 1 / -1;
+}
+
 .chat-paper {
   display: grid;
   gap: 14px;

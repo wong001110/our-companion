@@ -17,11 +17,11 @@ function response(data: unknown, ok = true, code = 'NETWORK_ERROR') {
 
 describe('NetworkConnectionService', () => {
   it.each(['none', 'friend', 'incoming_request', 'outgoing_request'] as const)('accepts the authoritative friend lookup relationship %s', (relationship) => {
-    expect(parseFriendLookupResult({ id: 'friend-1', username: 'ann', friendCode: 'ANN12345', relationship })).toEqual({ id: 'friend-1', username: 'ann', friendCode: 'ANN12345', relationship });
+    expect(parseFriendLookupResult({ id: 'friend-1', username: 'ann', uid: 'OC-ANN78XYZ', friendCode: 'ANN12345', relationship })).toEqual({ id: 'friend-1', username: 'ann', uid: 'OC-ANN78XYZ', friendCode: 'ANN12345', relationship });
   });
 
   it.each(['friends', 'blocked', 'unexpected'])('rejects renderer-unsafe friend lookup relationship %s', (relationship) => {
-    expect(() => parseFriendLookupResult({ id: 'friend-1', username: 'ann', friendCode: 'ANN12345', relationship })).toThrow('SOCIAL_DATA_OUT_OF_SYNC');
+    expect(() => parseFriendLookupResult({ id: 'friend-1', username: 'ann', uid: 'OC-ANN78XYZ', friendCode: 'ANN12345', relationship })).toThrow('SOCIAL_DATA_OUT_OF_SYNC');
   });
 
   it('does not perform network activity while Online Mode is disabled', async () => {
@@ -43,7 +43,7 @@ describe('NetworkConnectionService', () => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(response({ compatible: true }))
       .mockResolvedValueOnce(response({ accessToken: 'new', refreshToken: 'rotated' }))
-      .mockResolvedValueOnce(response({ id: 'u1', email: 'a@example.com', username: 'ann', friendCode: 'ABC' }));
+      .mockResolvedValueOnce(response({ id: 'u1', email: 'a@example.com', username: 'ann', uid: 'OC-ANN78XYZ', friendCode: 'ABC' }));
     const service = new NetworkConnectionService(db as never, undefined, { fetch, createSocket: vi.fn(() => socket), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
     await service.enableOnlineMode();
     expect(fetch.mock.calls.map(([url]) => url)).toEqual([
@@ -103,7 +103,7 @@ describe('NetworkConnectionService', () => {
       const fetch = vi.fn()
         .mockResolvedValueOnce(response({ compatible: true, visit: { heartbeatIntervalSeconds: 15, heartbeatTimeoutSeconds: 30 } }))
         .mockResolvedValueOnce(response({ accessToken: 'new', refreshToken: 'rotated' }))
-        .mockResolvedValueOnce(response({ id: 'owner', email: 'owner@example.com', username: 'owner', friendCode: 'OWNER123' }))
+        .mockResolvedValueOnce(response({ id: 'owner', email: 'owner@example.com', username: 'owner', uid: 'OC-OWNER8X', friendCode: 'OWNER123' }))
         .mockResolvedValueOnce(response([session]))
         .mockResolvedValueOnce(response(session))
         .mockResolvedValueOnce(response({ compatible: true, visit: { heartbeatIntervalSeconds: 5, heartbeatTimeoutSeconds: 30 } }))
@@ -191,12 +191,29 @@ describe('NetworkConnectionService', () => {
 
   it('includes Companion availability in each friend summary', async () => {
     const db = new TestDb(); db.setAppSetting('network.online-mode-enabled', true);
-    const fetch = vi.fn().mockResolvedValue(response([{ id: 'friend-1', username: 'ann', friendCode: 'ANN12345', hasPublishedCompanion: false }]));
+    const fetch = vi.fn().mockResolvedValue(response([{ id: 'friend-1', username: 'ann', uid: 'OC-ANN78XYZ', friendCode: 'ANN12345', hasPublishedCompanion: false }]));
     const service = new NetworkConnectionService(db as never, undefined, { fetch, createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
     (service as any).session = { serverOrigin: 'http://localhost:3001', accessToken: 'access', refreshToken: 'refresh' };
     (service as any).status = { state: 'online', onlineModeEnabled: true, serverUrl: 'http://localhost:3001' };
 
-    await expect(service.getFriends()).resolves.toEqual([{ userId: 'friend-1', username: 'ann', friendCode: 'ANN12345', presence: 'offline', hasPublishedCompanion: false }]);
+    await expect(service.getFriends()).resolves.toEqual([{ userId: 'friend-1', username: 'ann', uid: 'OC-ANN78XYZ', friendCode: 'ANN12345', presence: 'offline', hasPublishedCompanion: false }]);
+  });
+
+  it('uses the authoritative case-insensitive UID lookup route', async () => {
+    const db = new TestDb(); db.setAppSetting('network.online-mode-enabled', true);
+    const fetch = vi.fn().mockResolvedValue(response({
+      id: 'friend-1',
+      username: 'ann',
+      uid: 'OC-ANN78XYZ',
+      friendCode: 'ANN12345',
+      relationship: 'none',
+    }));
+    const service = new NetworkConnectionService(db as never, undefined, { fetch, createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
+    (service as any).session = { serverOrigin: 'http://localhost:3001', accessToken: 'access', refreshToken: 'refresh' };
+    (service as any).status = { state: 'online', onlineModeEnabled: true, serverUrl: 'http://localhost:3001' };
+
+    await expect(service.lookupFriend('oc-ann78xyz')).resolves.toMatchObject({ uid: 'OC-ANN78XYZ' });
+    expect(fetch.mock.calls[0][0]).toBe('http://localhost:3001/api/friends/lookup/uid/oc-ann78xyz');
   });
 
   it('refreshes and retries a Remove Friend DELETE with the rotated access token', async () => {

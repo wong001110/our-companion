@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { EngineSnapshot, EngineTrace } from '@our-companion/shared';
-import { EngineTraceTimeline, ResearchObservatory } from './EngineObservatory';
+import { AvailableActionsPanel, EngineTraceTimeline, ResearchObservatory } from './EngineObservatory';
 
 function trace(overrides: Partial<EngineTrace> = {}): EngineTrace {
   return {
@@ -86,5 +86,17 @@ describe('ResearchObservatory', () => {
     expect(markup).toContain('brave-search: unavailable');
     expect(markup).toContain('No valid external evidence found.');
     expect(markup).toContain('no_valid_external_evidence');
+  });
+});
+
+describe('AvailableActionsPanel', () => {
+  it('renders the registry-backed tools, permissions, examples, and exact AI summary', () => {
+    const markup = renderToStaticMarkup(createElement(AvailableActionsPanel));
+    expect(markup).toContain('Available Actions');
+    expect(markup).toContain('open_url');
+    expect(markup).toContain('browser');
+    expect(markup).toContain('open youtube.com');
+    expect(markup).toContain('Allowed arguments: url:string (required)');
+    expect(markup).toContain('Unavailable capabilities: none');
   });
 });

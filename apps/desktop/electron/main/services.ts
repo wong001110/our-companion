@@ -58,6 +58,7 @@ import type {
   CreateJourneyInput,
   CreateMemoryEdgeInput,
   CreateMemoryNodeInput,
+  CuriosityTarget,
   DebugDataResetInput,
   Discovery,
   DiscoveryAnnouncePayload,
@@ -73,8 +74,15 @@ import type {
   ExplorationLoopEvent,
   ExplorationState,
   FoundationEventLogInput,
+  MemoryImpactRecomputeReport,
+  MemoryImpactReport,
   NormalizedDiscovery,
   PerformanceScript,
+  ResearchDeveloperReport,
+  ResearchIntent,
+  ResearchPlan,
+  RuntimeSchedulerReport,
+  RuntimeTimeStatus,
   SpeechSettings,
   StartExplorationInput,
   SubmitDiscoveryFeedbackInput,
@@ -85,10 +93,25 @@ import type {
   UpdateCharacterBehaviorSettingsInput,
   UpdateCompanionInput,
   UpdateSpeechSettingsInput,
-  UpdateMemoryNodeInput
+  UpdateMemoryNodeInput,
+  WebSearchResult,
 } from '@our-companion/shared';
 import type { UserProfile, OnlineMode, RegisterUserInput, LoginUserInput } from '@our-companion/shared';
-import { COMPANION_ANIMATION_MANIFEST, COMPANION_CHAT_CONTEXT_LIMIT, createId, nowIso, clampScore, type BaseEvent, type CompanionAnimationManifestEntry } from '@our-companion/shared';
+import {
+  COMPANION_ANIMATION_MANIFEST,
+  COMPANION_CHAT_CONTEXT_LIMIT,
+  DebugRuntimeClock,
+  SystemRuntimeClock,
+  createId,
+  nowIso,
+  normalizeSemanticText,
+  normalizeActionUrl,
+  createSemanticFingerprint,
+  clampScore,
+  type BaseEvent,
+  type CompanionAnimationManifestEntry,
+  type RuntimeClock,
+} from '@our-companion/shared';
 import { detectPatterns } from '@our-companion/pattern-engine';
 import { executeActionStep, executeTool, previewTool, type ToolAdapters } from '@our-companion/tool-engine';
 import { createElectronToolAdapters } from './platform/electronCommandAdapter';
@@ -114,7 +137,10 @@ import { createSmokeFixturePng } from './platform/smokeFixture';
 import { assertSmokeTestRuntime } from './platform/smokeRuntime';
 import {
   BraveWebSearchProvider,
+  FixtureWebPageFetcher,
+  ResearchAdapterError,
   SafeWebPageFetcher,
+  createDeterministicFixtureSearchProvider,
   type WebPageFetcher,
   type WebSearchProvider
 } from './researchAdapters';
@@ -130,6 +156,7 @@ export const MAX_COMPANION_TOTAL_ASSET_BYTES = 200 * 1024 * 1024;
 
 export interface AppRuntimeDependencies {
   now?: () => Date;
+  clock?: RuntimeClock;
   random?: () => number;
   setTimer?: (callback: () => void, delayMs: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -206,6 +233,7 @@ export class AppServices {
   private readonly presentationDecisionReevaluationAt = new Map<string, number>();
   private readonly presentationDecisionAttempts = new Map<string, number>();
   private readonly startedDiscoveryPayloads = new Set<string>();
+  private readonly activeExplorations = new Map<string, Promise<ExplorationCycleResult>>();
   private readonly companionRuntime: CompanionRuntime;
   private explorationBroadcaster?: (event: ExplorationLoopEvent) => void;
   private commandBroadcaster?: (command: CompanionCommand) => void;
@@ -213,6 +241,7 @@ export class AppServices {
   private foundationEventBroadcaster?: (event: BaseEvent) => void;
   private debugLog: AiDebugEntry[] = [];
   private foundationEventLog: BaseEvent[] = [];
+  private lastSchedulerTick?: string;
   private runtimeStarted = false;
   private readonly personalityAnalyses = new Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>();
   readonly network: NetworkConnectionService;
@@ -222,9 +251,12 @@ export class AppServices {
   private networkStatusBroadcaster?: (status: NetworkStatus) => void;
   private visualVisitBroadcaster?: (state: VisualVisitRendererState) => void;
   private localCompanionAway = false;
+  readonly runtimeClock: RuntimeClock;
   private readonly now: () => Date;
   private readonly discoveryConnectors: DiscoveryConnector[];
   private readonly researchOrchestrator: ResearchOrchestrator;
+  private readonly manualResearchPageFetcher: SafeWebPageFetcher;
+  private readonly researchFixtureEnabled: boolean;
   private readonly aiProvider: AppRuntimeDependencies['aiProvider'];
   private readonly speechProvider: NonNullable<AppRuntimeDependencies['speechProvider']>;
   private readonly toolAdapters: ToolAdapters;
@@ -238,7 +270,13 @@ export class AppServices {
     readonly eventBus: EventBus = new InProcessEventBus(),
     runtimeDependencies: AppRuntimeDependencies = {}
   ) {
-    this.now = runtimeDependencies.now ?? (() => new Date());
+    this.runtimeClock = runtimeDependencies.clock
+      ?? (runtimeDependencies.now
+        ? { now: runtimeDependencies.now, nowMs: () => runtimeDependencies.now!().getTime() }
+        : !app.isPackaged || process.env.OUR_COMPANION_SMOKE_TEST === '1'
+          ? new DebugRuntimeClock()
+          : new SystemRuntimeClock());
+    this.now = () => this.runtimeClock.now();
     this.aiProvider = runtimeDependencies.aiProvider;
     this.speechProvider = runtimeDependencies.speechProvider ?? {
       getStatus: getWhisperStatus,
@@ -247,9 +285,14 @@ export class AppServices {
     this.toolAdapters = runtimeDependencies.toolAdapters ?? createElectronToolAdapters();
     this.discoveryConnectors = runtimeDependencies.discoveryConnectors ??
       (['github', 'hackernews', 'reddit', 'youtube'] as DiscoverySource[]).map(createUnavailableConnector);
+    this.researchFixtureEnabled = (!app.isPackaged || process.env.OUR_COMPANION_SMOKE_TEST === '1')
+      && process.env.OUR_COMPANION_RESEARCH_FIXTURE === '1';
+    this.manualResearchPageFetcher = new SafeWebPageFetcher({ now: this.now });
     this.researchOrchestrator = new ResearchOrchestrator({
-      searchProvider: runtimeDependencies.webSearchProvider ?? new BraveWebSearchProvider(),
-      pageFetcher: runtimeDependencies.webPageFetcher ?? new SafeWebPageFetcher({ now: this.now }),
+      searchProvider: runtimeDependencies.webSearchProvider
+        ?? (this.researchFixtureEnabled ? createDeterministicFixtureSearchProvider() : new BraveWebSearchProvider()),
+      pageFetcher: runtimeDependencies.webPageFetcher
+        ?? (this.researchFixtureEnabled ? new FixtureWebPageFetcher(this.now) : new SafeWebPageFetcher({ now: this.now })),
       structuredConnectors: this.discoveryConnectors,
       now: this.now,
       refinePlan: this.aiProvider
@@ -814,8 +857,11 @@ export class AppServices {
 
   autonomy = {
     startExploration: async (input: StartExplorationInput = {}) => this.runAutonomousExploration(input),
-    getCurrentCycle: async () => this.db.getCurrentExplorationCycle(),
-    getCycleHistory: async (input: { limit?: number } = {}) => this.db.listExplorationCycles(input.limit ?? 20),
+    getCurrentCycle: async () => this.db.getCurrentExplorationCycleForCompanion(this.db.resolveActiveCompanionId()),
+    getCycleHistory: async (input: { limit?: number } = {}) => {
+      const companionId = this.db.resolveActiveCompanionId();
+      return this.db.listExplorationCycles(100).filter((cycle) => cycle.companionId === companionId).slice(0, input.limit ?? 20);
+    },
     submitFeedback: async (input: SubmitDiscoveryFeedbackInput) => this.submitDiscoveryFeedback(input)
   };
 
@@ -861,7 +907,9 @@ export class AppServices {
     search: async (input: { query: string; companionId?: string }) => {
       const companionId = this.db.resolveActiveCompanionId(input.companionId);
       return searchMemory(this.db.listMemoryNodes(companionId), input.query);
-    }
+    },
+    inspectImpact: async (id: string) => this.inspectMemoryImpact(id),
+    recomputeImpact: async (input: { id: string; explore?: boolean }) => this.recomputeMemoryImpact(input),
   };
 
   journey = {
@@ -899,7 +947,8 @@ export class AppServices {
           .filter((discovery) => discovery.companionId === characterId)
           .slice(0, 10) as Discovery[],
         completedTasks: [],
-        memoryChanges: this.db.listMemoryNodes(characterId).slice(0, 10)
+        memoryChanges: this.db.listMemoryNodes(characterId).slice(0, 10),
+        generatedAt: this.runtimeClock.now().toISOString(),
       });
       const saved = this.db.insertDiary(entry);
       this.emitFoundationEvent('ReflectionCreated', 'reflection', {
@@ -1293,7 +1342,13 @@ export class AppServices {
   debug = {
     resetData: async (input: DebugDataResetInput) => this.db.resetDebugData(input),
     getFoundationLog: async (input: FoundationEventLogInput = {}) => this.getFoundationLog(input),
-    getEngineSnapshot: async (input: EngineSnapshotInput = {}) => buildEngineSnapshot(this.db, input, undefined, this.shareOrchestrator, this.researchOrchestrator.getCapabilities())
+    getEngineSnapshot: async (input: EngineSnapshotInput = {}) => buildEngineSnapshot(this.db, input, undefined, this.shareOrchestrator, this.researchOrchestrator.getCapabilities()),
+    getRuntimeTime: async () => this.getRuntimeTimeStatus(),
+    advanceRuntimeTime: async (input: { milliseconds: number; runScheduledTick?: boolean }) => this.advanceRuntimeTime(input),
+    resetRuntimeTime: async () => this.resetRuntimeTime(),
+    runScheduledTick: async () => this.runRuntimeScheduledTick(),
+    runFixtureResearch: async (input: { topic: string }) => this.runFixtureResearch(input.topic),
+    researchFromUrl: async (input: { url: string }) => this.researchFromUrl(input.url),
   };
 
   workspace = {
@@ -1484,7 +1539,7 @@ export class AppServices {
       state,
       message,
       metadata,
-      createdAt: nowIso()
+      createdAt: this.runtimeClock.now().toISOString()
     });
     this.explorationBroadcaster?.(event);
     this.emitFoundationEvent('DiscoveryCreated', 'discovery', {
@@ -1495,13 +1550,23 @@ export class AppServices {
     return event;
   }
 
-  private saveCycleState(cycle: ExplorationCycle, state: ExplorationState, patch: Partial<ExplorationCycle> = {}): ExplorationCycle {
+  private saveCycleState(
+    cycle: ExplorationCycle,
+    state: ExplorationState,
+    patch: Partial<ExplorationCycle> = {},
+    event?: { message: string; metadata?: Record<string, unknown> },
+  ): ExplorationCycle {
     const next = this.db.insertExplorationCycle({
       ...cycle,
       ...patch,
       state
     });
-    this.recordExplorationEvent(next, state, this.messageForExplorationState(state, next.companionId));
+    this.recordExplorationEvent(
+      next,
+      state,
+      event?.message ?? this.messageForExplorationState(state, next.companionId),
+      event?.metadata,
+    );
     return next;
   }
 
@@ -1568,6 +1633,31 @@ export class AppServices {
   }
 
   private async runAutonomousExploration(input: StartExplorationInput = {}): Promise<ExplorationCycleResult> {
+    const companionId = this.db.resolveActiveCompanionId(input.companionId);
+    if (this.localCompanionAway) throw new Error('EXPLORATION_ALREADY_RUNNING');
+    const active = this.activeExplorations.get(companionId);
+    if (active) return active;
+    const operation = this.runAutonomousExplorationCycle({ ...input, companionId })
+      .catch((error) => {
+        const current = this.db.getCurrentExplorationCycleForCompanion(companionId);
+        if (current) {
+          const recovered = this.saveCycleState(current, 'returning');
+          this.saveCycleState(recovered, 'reflecting', { completedAt: this.runtimeClock.now().toISOString() }, {
+            message: 'Exploration failed, but Companion returned safely.',
+            metadata: { outcome: 'failure' },
+          });
+        }
+        this.companionRuntime.settleDiscoveryPresentation(companionId);
+        throw error;
+      })
+      .finally(() => {
+        this.activeExplorations.delete(companionId);
+      });
+    this.activeExplorations.set(companionId, operation);
+    return operation;
+  }
+
+  private async runAutonomousExplorationCycle(input: StartExplorationInput = {}): Promise<ExplorationCycleResult> {
     const userId = input.userId ?? 'default';
     const companionId = this.db.resolveActiveCompanionId(input.companionId);
     const trigger = input.trigger ?? 'manual';
@@ -1611,28 +1701,42 @@ export class AppServices {
       memoryNodes.map((memory) => memory.id)
     );
 
+    const evaluatedAt = this.runtimeClock.now().toISOString();
     const detectedPatterns = detectPatterns({
       userId,
+      companionId,
+      evaluatedAt,
       memoryNodes,
       journeyMilestones,
       discoveryHistory,
       feedbackHistory
     });
+    const persistedPatterns = [];
     for (const pattern of detectedPatterns) {
-      this.db.insertPattern(pattern);
+      const result = this.db.upsertPattern(pattern);
+      persistedPatterns.push(result.record);
+      if (result.outcome !== 'created') {
+        trace(
+          'pattern',
+          result.outcome === 'updated' ? 'pattern:updated' : 'pattern:deduplicated',
+          'completed',
+          pattern.evidence.map((item) => item.sourceId).filter((id): id is string => Boolean(id)),
+          [result.record.id],
+        );
+      }
     }
     trace(
       'pattern',
       'detect',
       detectedPatterns.length === 0 ? 'empty' : 'completed',
       memoryNodes.map((memory) => memory.id),
-      detectedPatterns.map((pattern) => pattern.id)
+      persistedPatterns.map((pattern) => pattern.id)
     );
 
     const interestGraph = buildInterestGraph({
-      userId,
+      userId: `${userId}:${companionId}`,
       memoryNodes,
-      patterns: detectedPatterns,
+      patterns: persistedPatterns,
       discoveries: discoveryHistory,
       feedback: feedbackHistory
     });
@@ -1641,7 +1745,7 @@ export class AppServices {
       'memory',
       'build-interest-graph',
       interestGraph.nodes.length === 0 ? 'empty' : 'completed',
-      [...memoryNodes.map((memory) => memory.id), ...detectedPatterns.map((pattern) => pattern.id)],
+      [...memoryNodes.map((memory) => memory.id), ...persistedPatterns.map((pattern) => pattern.id)],
       [...interestGraph.nodes.map((node) => node.id), ...interestGraph.edges.map((edge) => edge.id)]
     );
 
@@ -1652,22 +1756,44 @@ export class AppServices {
       characterProfile,
       memoryNodes,
       journeySummaries: journeyMilestones.map((milestone) => milestone.summary ?? milestone.title),
-      patterns: detectedPatterns,
+      patterns: persistedPatterns,
       interestGraph,
-      recentFeedback: feedbackHistory
+      recentFeedback: feedbackHistory,
+      generatedAt: evaluatedAt,
     });
+    const persistedCuriosityTargets = [];
     for (const target of curiosityTargets) {
-      this.db.insertCuriosityTarget(target);
+      const result = this.db.upsertCuriosityTarget(target, evaluatedAt);
+      if (result.outcome !== 'cooldown') persistedCuriosityTargets.push(result.record);
+      if (result.outcome !== 'created') {
+        trace(
+          'curiosity',
+          result.outcome === 'reopened'
+            ? 'curiosity:reopened'
+            : result.outcome === 'cooldown'
+              ? 'curiosity:cooldown'
+              : 'curiosity:deduplicated',
+          result.outcome === 'cooldown' ? 'skipped' : 'completed',
+          target.generatedFromIds ?? [],
+          [result.record.id],
+          result.outcome === 'cooldown' ? { skipReason: 'cooldown_active' } : {},
+        );
+      }
     }
     trace(
       'curiosity',
       'generate-targets',
       curiosityTargets.length === 0 ? 'empty' : 'completed',
-      [...memoryNodes.map((memory) => memory.id), ...detectedPatterns.map((pattern) => pattern.id)],
-      curiosityTargets.map((target) => target.id)
+      [...memoryNodes.map((memory) => memory.id), ...persistedPatterns.map((pattern) => pattern.id)],
+      persistedCuriosityTargets.map((target) => target.id)
     );
 
-    const selectedCuriosityTarget = curiosityTargets[0];
+    const selectedCuriosityTarget = persistedCuriosityTargets
+      .filter((target) => target.status === 'open' || target.status === 'exploring')
+      .sort((left, right) => right.priority - left.priority)[0];
+    if (selectedCuriosityTarget) {
+      this.db.setCuriosityTargetStatus(selectedCuriosityTarget.id, 'exploring', evaluatedAt);
+    }
     const companionName = this.requireCompanionName(companionId);
     let cycle = this.db.insertExplorationCycle({
       id: cycleId,
@@ -1675,7 +1801,7 @@ export class AppServices {
       companionId,
       trigger,
       state: 'curious',
-      curiosityTargetIds: curiosityTargets.map((target) => target.id),
+      curiosityTargetIds: persistedCuriosityTargets.map((target) => target.id),
       selectedCuriosityTargetId: selectedCuriosityTarget?.id,
       discoveryCandidateIds: [],
       insightIds: [],
@@ -1694,9 +1820,14 @@ export class AppServices {
       ] as const) {
         trace(engine, operation, 'skipped', [], [], { skipReason: 'no_curiosity_target' });
       }
-      cycle = this.saveCycleState(cycle, 'reflecting', { completedAt: this.now().toISOString() });
+      cycle = this.saveCycleState(cycle, 'returning');
+      this.setAutonomyCharacterState(companionId, 'returning', 'sharing_discovery');
+      cycle = this.saveCycleState(cycle, 'reflecting', { completedAt: this.now().toISOString() }, {
+        message: 'I could not find enough reliable information this time.',
+        metadata: { outcome: 'empty' },
+      });
       this.companionRuntime.settleDiscoveryPresentation(companionId);
-      return { cycle, curiosityTargets, discoveryCandidates: [], insights: [] };
+      return { cycle, curiosityTargets: persistedCuriosityTargets, discoveryCandidates: [], insights: [] };
     }
 
     cycle = this.saveCycleState(cycle, 'planning');
@@ -1764,11 +1895,21 @@ export class AppServices {
       trace('insight', 'generate', 'skipped', [], [], { skipReason: 'no_valid_discoveries' });
       trace('decision', 'evaluate', 'skipped', [], [], { skipReason: 'no_insight' });
       trace('presentation', 'enqueue', 'skipped', [], [], { skipReason: 'no_decision' });
-      cycle = this.saveCycleState(cycle, 'reflecting', { completedAt: this.now().toISOString() });
+      this.db.setCuriosityTargetStatus(selectedCuriosityTarget.id, 'completed', this.runtimeClock.now().toISOString());
+      cycle = this.saveCycleState(cycle, 'returning');
+      this.setAutonomyCharacterState(companionId, 'returning', 'sharing_discovery');
+      const noProvider = research.plan.outcome?.stopReason === 'no_compatible_capability'
+        || research.plan.outcome?.stopReason === 'RESEARCH_NO_DISCOVERY_PROVIDER';
+      cycle = this.saveCycleState(cycle, 'reflecting', { completedAt: this.now().toISOString() }, {
+        message: noProvider
+          ? 'No discovery provider is currently available.'
+          : 'I could not find enough reliable information this time.',
+        metadata: { outcome: noProvider ? 'no_provider' : 'empty' },
+      });
       this.companionRuntime.settleDiscoveryPresentation(companionId);
       return {
         cycle,
-        curiosityTargets,
+        curiosityTargets: persistedCuriosityTargets,
         selectedCuriosityTarget,
         researchIntent: research.intent,
         researchPlan: research.plan,
@@ -1808,7 +1949,7 @@ export class AppServices {
     });
     this.setAutonomyCharacterState(companionId, 'returning', 'sharing_discovery');
 
-    cycle = this.saveCycleState(cycle, 'sharing');
+    cycle = this.saveCycleState(cycle, 'sharing', { completedAt: this.runtimeClock.now().toISOString() });
     if (selectedInsight) {
       const createdAt = this.now().toISOString();
       const discoveryPayload: Discovery = {
@@ -1866,10 +2007,11 @@ export class AppServices {
       trace('decision', 'evaluate', 'skipped', [], [], { skipReason: 'no_selected_insight' });
       trace('presentation', 'enqueue', 'skipped', [], [], { skipReason: 'no_decision' });
     }
+    this.db.setCuriosityTargetStatus(selectedCuriosityTarget.id, 'completed', this.runtimeClock.now().toISOString());
 
     return {
       cycle,
-      curiosityTargets,
+      curiosityTargets: persistedCuriosityTargets,
       selectedCuriosityTarget,
       researchIntent: research.intent,
       researchPlan: research.plan,
@@ -1939,7 +2081,7 @@ export class AppServices {
       value: input.value,
       note: input.note,
       feedbackDomain: this.companionRuntime.feedbackDomainForValue(input.value),
-      createdAt: nowIso()
+      createdAt: this.runtimeClock.now().toISOString()
     });
     trace('feedback', 'record', 'completed', [cycle.id, ...(insightId ? [insightId] : [])], [feedback.id]);
 
@@ -1947,11 +2089,18 @@ export class AppServices {
     const reflected = this.db.insertExplorationCycle({
       ...cycle,
       state: 'reflecting',
-      completedAt: nowIso()
+      completedAt: this.runtimeClock.now().toISOString()
     });
     this.recordExplorationEvent(reflected, 'reflecting', `${companionName} recorded what happened after sharing the insight.`, {
       feedback: feedback.value
     });
+    if (cycle.selectedCuriosityTargetId && input.value === 'not_interested') {
+      this.db.setCuriosityTargetStatus(
+        cycle.selectedCuriosityTargetId,
+        'ignored',
+        this.runtimeClock.now().toISOString(),
+      );
+    }
 
     if (input.value === 'saved' && insight) {
       const memory = this.db.insertMemoryNode({
@@ -2081,6 +2230,512 @@ export class AppServices {
     return this.db
       .listExplorationCycles(100)
       .filter((cycle) => cycle.trigger !== 'manual' && cycle.startedAt.startsWith(today)).length;
+  }
+
+  private createDeveloperCuriosityTarget(topic: string, companionId: string, at: string): CuriosityTarget {
+    const normalizedTopic = normalizeSemanticText(topic);
+    return {
+      id: createId('curiosity'),
+      userId: 'default',
+      companionId,
+      topic,
+      topicFingerprint: createSemanticFingerprint('curiosity_topic', [normalizedTopic]),
+      sourceFingerprint: createSemanticFingerprint('curiosity_source', ['character_trigger', normalizedTopic]),
+      generatedFromIds: [],
+      description: `Developer-requested research for ${topic}.`,
+      source: 'character_trigger',
+      explorationType: 'practical',
+      priority: 0.9,
+      confidence: 1,
+      reason: 'Explicit Developer Tool request.',
+      expectedValue: 'Deterministic validation of the research pipeline.',
+      status: 'open',
+      lastGeneratedAt: at,
+      generationCount: 1,
+      ignoreCount: 0,
+      createdAt: at,
+      updatedAt: at,
+    };
+  }
+
+  private async runFixtureResearch(topic: string): Promise<ResearchDeveloperReport> {
+    if (!this.researchFixtureEnabled) throw new Error('RESEARCH_FIXTURE_DISABLED');
+    const trimmed = topic.trim();
+    if (!trimmed) throw new Error('RESEARCH_FIXTURE_DISABLED');
+    const companionId = this.db.resolveActiveCompanionId();
+    const at = this.runtimeClock.now().toISOString();
+    const target = this.db.upsertCuriosityTarget(this.createDeveloperCuriosityTarget(trimmed, companionId, at), at).record;
+    const cycleId = createId('cycle');
+    const correlationId = createId('corr');
+    let cycle = this.db.insertExplorationCycle({
+      id: cycleId,
+      userId: 'default',
+      companionId,
+      trigger: 'manual',
+      state: 'curious',
+      curiosityTargetIds: [target.id],
+      selectedCuriosityTargetId: target.id,
+      discoveryCandidateIds: [],
+      insightIds: [],
+      startedAt: at,
+    });
+    this.recordExplorationEvent(cycle, 'curious', `Fixture research: ${trimmed}`, { mode: 'fixture' });
+    cycle = this.saveCycleState(cycle, 'planning');
+    cycle = this.saveCycleState(cycle, 'exploring');
+    const research = await this.researchOrchestrator.run({
+      userId: 'default',
+      companionId,
+      cycleId,
+      curiosityTarget: target,
+      onTrace: (event) => this.recordEngineTrace({
+        correlationId,
+        cycleId,
+        companionId,
+        engine: 'research',
+        operation: event.operation,
+        status: event.status,
+        providerMode: event.providerMode,
+        inputRefs: event.inputRefs,
+        outputRefs: event.outputRefs,
+        skipReason: event.skipReason,
+        error: event.error,
+      }),
+    });
+    this.db.insertResearchIntent(research.intent);
+    this.db.insertResearchPlan(research.plan);
+    for (const evidence of research.evidence) this.db.insertWebPageEvidence(evidence);
+    for (const candidate of research.candidates) this.db.insertDiscoveryCandidate(candidate);
+    const characterState = this.db.getCharacterState(companionId);
+    const characterProfile = this.db.getActiveCharacters().find((character) => character.id === companionId);
+    const patterns = this.db.listPatterns('default', 100, companionId);
+    const insights = generateInsights({
+      userId: 'default',
+      companionId,
+      characterState,
+      characterProfile,
+      memoryNodes: this.db.listMemoryNodes(companionId),
+      patterns,
+      interestGraph: this.db.getInterestGraph(`default:${companionId}`),
+      curiosityTarget: target,
+      discoveryCandidates: research.candidates,
+    });
+    for (const insight of insights) {
+      this.db.insertCompanionInsight(toPersistedCompanionInsight(
+        insight,
+        companionId,
+        target.reason,
+        research.candidates.map((candidate) => candidate.id),
+      ));
+    }
+    cycle = this.saveCycleState(cycle, 'returning', {
+      researchIntentId: research.intent.id,
+      researchPlanId: research.plan.id,
+      discoveryCandidateIds: research.candidates.map((candidate) => candidate.id),
+      insightIds: insights.map((insight) => insight.id),
+    });
+    cycle = this.saveCycleState(
+      cycle,
+      research.candidates.length ? 'sharing' : 'reflecting',
+      { completedAt: this.runtimeClock.now().toISOString() },
+      {
+        message: research.candidates.length
+          ? 'Fixture research completed with deterministic evidence.'
+          : 'I could not find enough reliable information this time.',
+        metadata: { mode: 'fixture', outcome: research.candidates.length ? 'success' : 'empty' },
+      },
+    );
+    this.db.setCuriosityTargetStatus(target.id, 'completed', this.runtimeClock.now().toISOString());
+    return {
+      mode: 'fixture',
+      researchIntentId: research.intent.id,
+      researchPlanId: research.plan.id,
+      queries: research.plan.queries,
+      capabilitiesSelected: research.plan.selectedCapabilities,
+      pagesFetched: research.evidence.length,
+      evidenceAccepted: research.evidence.length,
+      evidenceRejected: 0,
+      candidatesCreated: research.candidates.length,
+      duplicatesSkipped: 0,
+      insightsGenerated: insights.length,
+      stopReason: research.stopReason,
+      correlationId,
+    };
+  }
+
+  private async researchFromUrl(rawUrl: string): Promise<ResearchDeveloperReport> {
+    const normalizedUrl = normalizeActionUrl(rawUrl);
+    if (!normalizedUrl) throw new Error('RESEARCH_MANUAL_URL_INVALID');
+    const companionId = this.db.resolveActiveCompanionId();
+    const userId = 'default';
+    const at = this.runtimeClock.now().toISOString();
+    const correlationId = createId('corr');
+    const cycleId = createId('cycle');
+    const target = this.db.upsertCuriosityTarget(
+      this.createDeveloperCuriosityTarget(new URL(normalizedUrl).hostname, companionId, at),
+      at,
+    ).record;
+    const intent: ResearchIntent = {
+      id: createId('research_intent'),
+      userId,
+      companionId,
+      cycleId,
+      curiosityTargetId: target.id,
+      topic: target.topic,
+      objective: 'find_official_information',
+      preferredSourceTypes: ['official', 'technical_article'],
+      evidenceRequirements: { minimumSources: 1 },
+      createdAt: at,
+    };
+    const plan: ResearchPlan = {
+      id: createId('research_plan'),
+      userId,
+      companionId,
+      cycleId,
+      researchIntentId: intent.id,
+      queries: [normalizedUrl],
+      selectedCapabilities: ['safe-web-page-fetcher'],
+      limits: {
+        maxQueries: 0,
+        maxSearchResultsPerQuery: 1,
+        maxPagesToRead: 1,
+        maxLinkDepth: 0,
+        maxTotalCharacters: 50_000,
+        timeoutMs: 10_000,
+      },
+      createdAt: at,
+    };
+    const searchResult: WebSearchResult = {
+      id: createId('manual_url'),
+      query: normalizedUrl,
+      title: new URL(normalizedUrl).hostname,
+      url: normalizedUrl,
+      domain: new URL(normalizedUrl).hostname.toLowerCase(),
+      rank: 1,
+      provider: 'manual-url',
+    };
+    this.emitFoundationEvent('research:manual-url-started', 'research', { cycleId, companionId }, correlationId);
+    let evidence;
+    try {
+      evidence = await this.manualResearchPageFetcher.fetchPage({
+        searchResult,
+        userId,
+        companionId,
+        cycleId,
+        researchIntentId: intent.id,
+        researchPlanId: plan.id,
+        sourceType: 'official',
+      });
+    } catch (error) {
+      if (error instanceof ResearchAdapterError
+        && ['blocked_private_address', 'blocked_hostname', 'credentials_not_allowed'].includes(error.code)) {
+        throw new Error('RESEARCH_MANUAL_URL_BLOCKED');
+      }
+      throw error;
+    }
+    const completedPlan: ResearchPlan = {
+      ...plan,
+      outcome: { stopReason: 'manual_url_completed', additionalPasses: 0, completedAt: this.runtimeClock.now().toISOString() },
+    };
+    this.db.insertResearchIntent(intent);
+    this.db.insertResearchPlan(completedPlan);
+    this.db.insertWebPageEvidence(evidence);
+    const candidate = {
+      id: createId('candidate'),
+      userId,
+      companionId,
+      title: evidence.title,
+      summary: evidence.excerpt,
+      sourceType: 'article' as const,
+      sourceUrl: evidence.canonicalUrl,
+      sourceName: evidence.domain,
+      agentType: 'research' as const,
+      relatedCuriosityTargetId: target.id,
+      relevanceScore: 0.8,
+      noveltyScore: 0.7,
+      evidenceScore: 0.9,
+      usefulnessScore: 0.8,
+      researchPlanId: plan.id,
+      evidenceIds: [evidence.id],
+      collectedAt: at,
+    };
+    this.db.insertDiscoveryCandidate(candidate);
+    const characterState = this.db.getCharacterState(companionId);
+    const characterProfile = this.db.getActiveCharacters().find((character) => character.id === companionId);
+    const insights = generateInsights({
+      userId,
+      companionId,
+      characterState,
+      characterProfile,
+      memoryNodes: this.db.listMemoryNodes(companionId),
+      patterns: this.db.listPatterns(userId, 100, companionId),
+      interestGraph: this.db.getInterestGraph(`${userId}:${companionId}`),
+      curiosityTarget: target,
+      discoveryCandidates: [candidate],
+    });
+    for (const insight of insights) {
+      this.db.insertCompanionInsight(toPersistedCompanionInsight(insight, companionId, target.reason, [candidate.id]));
+    }
+    return {
+      mode: 'manual_url',
+      researchIntentId: intent.id,
+      researchPlanId: plan.id,
+      queries: [normalizedUrl],
+      capabilitiesSelected: ['safe-web-page-fetcher'],
+      pagesFetched: 1,
+      evidenceAccepted: 1,
+      evidenceRejected: 0,
+      candidatesCreated: 1,
+      duplicatesSkipped: 0,
+      insightsGenerated: insights.length,
+      stopReason: 'manual_url_completed',
+      correlationId,
+    };
+  }
+
+  private getRuntimeTimeStatus(): RuntimeTimeStatus {
+    return {
+      realTime: new Date().toISOString(),
+      runtimeTime: this.runtimeClock.now().toISOString(),
+      offsetMs: this.runtimeClock instanceof DebugRuntimeClock ? this.runtimeClock.getOffsetMs() : 0,
+      debugAvailable: this.runtimeClock instanceof DebugRuntimeClock && this.runtimeClock.enabled,
+      lastSchedulerTick: this.lastSchedulerTick,
+    };
+  }
+
+  private async advanceRuntimeTime(
+    input: { milliseconds: number; runScheduledTick?: boolean },
+  ): Promise<RuntimeSchedulerReport> {
+    if (!(this.runtimeClock instanceof DebugRuntimeClock)) throw new Error('DEBUG_CLOCK_UNAVAILABLE');
+    const previousRuntimeTime = this.runtimeClock.now().toISOString();
+    this.runtimeClock.advance(input.milliseconds);
+    const newRuntimeTime = this.runtimeClock.now().toISOString();
+    this.emitFoundationEvent('runtime-clock:advanced', 'runtime-clock', {
+      previousRuntimeTime,
+      newRuntimeTime,
+      offsetMs: this.runtimeClock.getOffsetMs(),
+    });
+    if (input.runScheduledTick) {
+      const report = await this.runRuntimeScheduledTick();
+      return { ...report, previousRuntimeTime, newRuntimeTime };
+    }
+    return {
+      previousRuntimeTime,
+      newRuntimeTime,
+      schedulersExecuted: [],
+      recordsCreated: 0,
+      recordsUpdated: 0,
+      recordsSkipped: 0,
+      cooldownsExpired: 0,
+      errors: [],
+    };
+  }
+
+  private resetRuntimeTime(): RuntimeTimeStatus {
+    if (!(this.runtimeClock instanceof DebugRuntimeClock)) throw new Error('DEBUG_CLOCK_UNAVAILABLE');
+    const previousRuntimeTime = this.runtimeClock.now().toISOString();
+    this.runtimeClock.reset();
+    const status = this.getRuntimeTimeStatus();
+    this.emitFoundationEvent('runtime-clock:reset', 'runtime-clock', {
+      previousRuntimeTime,
+      runtimeTime: status.runtimeTime,
+    });
+    return status;
+  }
+
+  private async runRuntimeScheduledTick(): Promise<RuntimeSchedulerReport> {
+    const previousRuntimeTime = this.runtimeClock.now().toISOString();
+    const companionId = this.db.resolveActiveCompanionId();
+    const userId = 'default';
+    const nowMs = this.runtimeClock.nowMs();
+    const cooldownsExpired = this.db.listCuriosityTargets(userId, 10_000, companionId)
+      .filter((target) => target.cooldownUntil && Date.parse(target.cooldownUntil) <= nowMs).length;
+    const memory = this.db.listMemoryNodes(companionId)[0];
+    const report = memory
+      ? await this.recomputeMemoryImpact({ id: memory.id })
+      : undefined;
+    const errors = [...(report?.errors ?? [])];
+    let discoveryRecords = 0;
+    let diaryRecords = 0;
+    try {
+      discoveryRecords = (await this.runDiscoveryRefresh()).discoveries.length;
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+    try {
+      await this.diary.generateDaily({ characterId: companionId });
+      diaryRecords = 1;
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+    this.lastSchedulerTick = this.runtimeClock.now().toISOString();
+    return {
+      previousRuntimeTime,
+      newRuntimeTime: this.lastSchedulerTick,
+      schedulersExecuted: [
+        'pattern-reevaluation',
+        'curiosity-reevaluation',
+        'discovery-scheduler',
+        'diary-scheduler',
+        'memory-lifecycle',
+      ],
+      recordsCreated: (report?.patternsCreated ?? 0) + (report?.curiosityTargetsCreated ?? 0)
+        + (report?.interestNodesAdded ?? 0) + discoveryRecords + diaryRecords,
+      recordsUpdated: (report?.patternsUpdated ?? 0) + (report?.curiosityTargetsUpdated ?? 0) + (report?.interestNodesUpdated ?? 0),
+      recordsSkipped: report?.duplicatesSkipped ?? 0,
+      cooldownsExpired,
+      errors,
+    };
+  }
+
+  private inspectMemoryImpact(id: string): MemoryImpactReport {
+    const companionId = this.db.resolveActiveCompanionId();
+    const memory = this.db.getMemoryNode(id, companionId);
+    if (!memory) throw new Error('MEMORY_IMPACT_NOT_FOUND');
+    const userId = memory.userId ?? 'default';
+    const normalizedTopics = normalizeSemanticText(`${memory.title} ${memory.summary ?? ''}`)
+      .split(' ')
+      .filter((topic) => topic.length > 2);
+    const patterns = this.db.listPatterns(userId, 10_000, companionId)
+      .filter((pattern) => pattern.evidence.some((evidence) => evidence.sourceType === 'memory' && evidence.sourceId === memory.id));
+    const patternIds = new Set(patterns.map((pattern) => pattern.id));
+    const curiosityTargets = this.db.listCuriosityTargets(userId, 10_000, companionId)
+      .filter((target) => target.relatedMemoryIds?.includes(memory.id)
+        || target.relatedPatternIds?.some((patternId) => patternIds.has(patternId)));
+    const curiosityIds = new Set(curiosityTargets.map((target) => target.id));
+    const researchIntents = this.db.listResearchIntents({ companionId, limit: 10_000 })
+      .filter((intent) => curiosityIds.has(intent.curiosityTargetId));
+    const researchIntentIds = new Set(researchIntents.map((intent) => intent.id));
+    const cycles = this.db.listExplorationCycles(10_000)
+      .filter((cycle) => cycle.companionId === companionId
+        && (cycle.curiosityTargetIds.some((targetId) => curiosityIds.has(targetId))
+          || (cycle.researchIntentId ? researchIntentIds.has(cycle.researchIntentId) : false)));
+    const cycleIds = new Set(cycles.map((cycle) => cycle.id));
+    const cycleCandidateIds = new Set(cycles.flatMap((cycle) => cycle.discoveryCandidateIds));
+    const candidates = this.db.listDiscoveryCandidates(userId, 10_000, companionId)
+      .filter((candidate) => cycleCandidateIds.has(candidate.id));
+    const insights = this.db.listCompanionInsights(userId, 10_000, companionId)
+      .filter((insight) => insight.relatedMemoryIds?.includes(memory.id)
+        || insight.relatedPatternIds?.some((patternId) => patternIds.has(patternId)));
+    const interestGraph = this.db.getInterestGraph(`${userId}:${companionId}`);
+    const normalizedMemoryTitle = normalizeSemanticText(memory.title);
+    const interestNodeIds = interestGraph.nodes
+      .filter((node) => {
+        const normalizedLabel = normalizeSemanticText(node.label);
+        return normalizedLabel === normalizedMemoryTitle
+          || normalizedTopics.some((topic) => normalizedLabel.split(' ').includes(topic));
+      })
+      .map((node) => node.id);
+    const evaluations = [
+      ...patterns.map((pattern) => pattern.lastObservedAt ?? pattern.updatedAt),
+      ...curiosityTargets.map((target) => target.updatedAt ?? target.createdAt),
+    ].filter(Boolean).sort();
+    return {
+      memory,
+      normalizedTopics,
+      interestNodeIds,
+      patternIds: [...patternIds],
+      curiosityTargetIds: [...curiosityIds],
+      researchIntentIds: [...researchIntentIds],
+      explorationCycleIds: [...cycleIds],
+      discoveryCandidateIds: candidates.map((candidate) => candidate.id),
+      insightIds: insights.map((insight) => insight.id),
+      lastCognitiveEvaluation: evaluations.at(-1),
+    };
+  }
+
+  private async recomputeMemoryImpact(
+    input: { id: string; explore?: boolean },
+  ): Promise<MemoryImpactRecomputeReport> {
+    const companionId = this.db.resolveActiveCompanionId();
+    const memory = this.db.getMemoryNode(input.id, companionId);
+    if (!memory) throw new Error('MEMORY_IMPACT_NOT_FOUND');
+    const userId = memory.userId ?? 'default';
+    const evaluatedAt = this.runtimeClock.now().toISOString();
+    const correlationId = createId('corr');
+    this.emitFoundationEvent('memory-impact:evaluate', 'memory', { memoryId: memory.id, companionId }, correlationId);
+    const report: MemoryImpactRecomputeReport = {
+      memoryId: memory.id,
+      interestNodesAdded: 0,
+      interestNodesUpdated: 0,
+      patternsCreated: 0,
+      patternsUpdated: 0,
+      curiosityTargetsCreated: 0,
+      curiosityTargetsUpdated: 0,
+      duplicatesSkipped: 0,
+      researchCyclesStarted: 0,
+      errors: [],
+      evaluatedAt,
+    };
+    try {
+      const memoryNodes = this.db.listMemoryNodes(companionId);
+      const journeyMilestones = this.db.listMilestones();
+      const discoveryHistory = this.db.listDiscoveries({ limit: 100, companionId });
+      const feedbackHistory = this.db.listDiscoveryFeedback(100, undefined, companionId);
+      const patterns = detectPatterns({
+        userId,
+        companionId,
+        evaluatedAt,
+        memoryNodes,
+        journeyMilestones,
+        discoveryHistory,
+        feedbackHistory,
+      });
+      const persistedPatterns = patterns.map((pattern) => {
+        const result = this.db.upsertPattern(pattern);
+        if (result.outcome === 'created') report.patternsCreated += 1;
+        else if (result.outcome === 'updated') report.patternsUpdated += 1;
+        else report.duplicatesSkipped += 1;
+        return result.record;
+      });
+      const scopeId = `${userId}:${companionId}`;
+      const beforeGraph = this.db.getInterestGraph(scopeId);
+      const graph = buildInterestGraph({
+        userId: scopeId,
+        memoryNodes,
+        patterns: persistedPatterns,
+        discoveries: discoveryHistory,
+        feedback: feedbackHistory,
+      });
+      this.db.upsertInterestGraph(graph);
+      const beforeIds = new Set(beforeGraph.nodes.map((node) => node.id));
+      report.interestNodesAdded = graph.nodes.filter((node) => !beforeIds.has(node.id)).length;
+      report.interestNodesUpdated = graph.nodes.length - report.interestNodesAdded;
+      const characterState = this.db.getCharacterState(companionId);
+      const characterProfile = this.db.getActiveCharacters().find((character) => character.id === companionId);
+      for (const target of generateCuriosityTargets({
+        userId,
+        companionId,
+        characterState,
+        characterProfile,
+        memoryNodes,
+        journeySummaries: journeyMilestones.map((milestone) => milestone.summary ?? milestone.title),
+        patterns: persistedPatterns,
+        interestGraph: graph,
+        recentFeedback: feedbackHistory,
+        generatedAt: evaluatedAt,
+      })) {
+        const result = this.db.upsertCuriosityTarget(target, evaluatedAt);
+        if (result.outcome === 'created') report.curiosityTargetsCreated += 1;
+        else if (result.outcome === 'cooldown' || result.outcome === 'deduplicated') report.duplicatesSkipped += 1;
+        else report.curiosityTargetsUpdated += 1;
+      }
+      if (input.explore) {
+        await this.runAutonomousExploration({ companionId, userId, trigger: 'memory_updated' });
+        report.researchCyclesStarted = 1;
+      }
+    } catch (error) {
+      report.errors.push(error instanceof Error ? error.message : String(error));
+    }
+    this.emitFoundationEvent('memory-impact:completed', 'memory', {
+      memoryId: memory.id,
+      companionId,
+      patternsCreated: report.patternsCreated,
+      patternsUpdated: report.patternsUpdated,
+      curiosityTargetsCreated: report.curiosityTargetsCreated,
+      curiosityTargetsUpdated: report.curiosityTargetsUpdated,
+      duplicatesSkipped: report.duplicatesSkipped,
+    }, correlationId);
+    return report;
   }
 
   emitFoundationEvent(

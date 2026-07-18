@@ -45,7 +45,10 @@ import type {
 import type { ActionPermissionState } from '@our-companion/shared';
 import {
   COMPANION_CHAT_RETENTION_DAYS,
+  CURIOSITY_COOLDOWN_MS,
   createId,
+  createSemanticFingerprint,
+  normalizeSemanticText,
   nowIso,
   score100ToUnit,
   unitToScore100
@@ -87,6 +90,11 @@ export interface ResearchArtifactQuery {
   companionId: string;
   cycleId?: string;
   limit?: number;
+}
+
+export interface CognitiveUpsertResult<T> {
+  record: T;
+  outcome: 'created' | 'updated' | 'deduplicated' | 'cooldown' | 'reopened';
 }
 
 type SqliteDatabase = DatabaseSync;
@@ -136,6 +144,22 @@ export class DatabaseService {
       { column: 'research_intent_id', sql: 'ALTER TABLE exploration_cycles ADD COLUMN research_intent_id TEXT' },
       { column: 'research_plan_id', sql: 'ALTER TABLE exploration_cycles ADD COLUMN research_plan_id TEXT' }
       ,{ column: 'outcome_json', sql: "ALTER TABLE research_plans ADD COLUMN outcome_json TEXT NOT NULL DEFAULT '{}'" }
+      ,{ column: 'companion_id', sql: "ALTER TABLE patterns ADD COLUMN companion_id TEXT NOT NULL DEFAULT 'default'" }
+      ,{ column: 'semantic_fingerprint', sql: "ALTER TABLE patterns ADD COLUMN semantic_fingerprint TEXT NOT NULL DEFAULT ''" }
+      ,{ column: 'normalized_topics_json', sql: "ALTER TABLE patterns ADD COLUMN normalized_topics_json TEXT NOT NULL DEFAULT '[]'" }
+      ,{ column: 'observation_count', sql: 'ALTER TABLE patterns ADD COLUMN observation_count INTEGER NOT NULL DEFAULT 1' }
+      ,{ column: 'frequency', sql: 'ALTER TABLE patterns ADD COLUMN frequency REAL NOT NULL DEFAULT 0' }
+      ,{ column: 'last_observed_at', sql: "ALTER TABLE patterns ADD COLUMN last_observed_at TEXT NOT NULL DEFAULT ''" }
+      ,{ column: 'topic_fingerprint', sql: "ALTER TABLE curiosity_targets ADD COLUMN topic_fingerprint TEXT NOT NULL DEFAULT ''" }
+      ,{ column: 'source_fingerprint', sql: "ALTER TABLE curiosity_targets ADD COLUMN source_fingerprint TEXT NOT NULL DEFAULT ''" }
+      ,{ column: 'generated_from_ids_json', sql: "ALTER TABLE curiosity_targets ADD COLUMN generated_from_ids_json TEXT NOT NULL DEFAULT '[]'" }
+      ,{ column: 'status', sql: "ALTER TABLE curiosity_targets ADD COLUMN status TEXT NOT NULL DEFAULT 'open'" }
+      ,{ column: 'last_generated_at', sql: 'ALTER TABLE curiosity_targets ADD COLUMN last_generated_at TEXT' }
+      ,{ column: 'last_explored_at', sql: 'ALTER TABLE curiosity_targets ADD COLUMN last_explored_at TEXT' }
+      ,{ column: 'cooldown_until', sql: 'ALTER TABLE curiosity_targets ADD COLUMN cooldown_until TEXT' }
+      ,{ column: 'generation_count', sql: 'ALTER TABLE curiosity_targets ADD COLUMN generation_count INTEGER NOT NULL DEFAULT 1' }
+      ,{ column: 'ignore_count', sql: 'ALTER TABLE curiosity_targets ADD COLUMN ignore_count INTEGER NOT NULL DEFAULT 0' }
+      ,{ column: 'updated_at', sql: "ALTER TABLE curiosity_targets ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''" }
     ];
     for (const migration of migrations) {
       try {
@@ -156,6 +180,86 @@ export class DatabaseService {
     this.migratePriorDiscoveryLifecycle();
     this.migratePriorConversationImportance();
     this.migratePriorBuiltinAnn();
+    this.backfillCognitiveFingerprints();
+  }
+
+  private backfillCognitiveFingerprints(): void {
+    const patternRows = this.db.prepare(
+      "SELECT * FROM patterns WHERE semantic_fingerprint = '' OR last_observed_at = ''"
+    ).all() as Array<Record<string, unknown>>;
+    const patternGroups = new Map<string, Array<Record<string, unknown>>>();
+    for (const row of patternRows) {
+      const topics = JSON.parse(String(row.normalized_topics_json ?? '[]')) as string[];
+      const normalizedTopics = (topics.length ? topics : [String(row.title)]).map(normalizeSemanticText).filter(Boolean).sort();
+      const fingerprint = createSemanticFingerprint('pattern', [String(row.type), ...normalizedTopics]);
+      const key = `${row.user_id}:${row.companion_id}:${fingerprint}`;
+      const group = patternGroups.get(key) ?? [];
+      group.push({ ...row, fingerprint, normalizedTopics });
+      patternGroups.set(key, group);
+    }
+    for (const group of patternGroups.values()) {
+      const [keeper, ...duplicates] = group;
+      if (!keeper) continue;
+      const evidence = new Map<string, unknown>();
+      for (const row of group) {
+        for (const item of JSON.parse(String(row.evidence_json ?? '[]')) as Array<Record<string, unknown>>) {
+          evidence.set(`${item.sourceType}:${item.sourceId ?? ''}:${normalizeSemanticText(String(item.summary ?? ''))}`, item);
+        }
+      }
+      for (const duplicate of duplicates) {
+        this.db.prepare('DELETE FROM patterns WHERE id = ?').run(String(duplicate.id));
+      }
+      this.db.prepare(
+        `UPDATE patterns SET semantic_fingerprint = ?, normalized_topics_json = ?, evidence_json = ?,
+         observation_count = ?, frequency = ?, strength = ?, last_observed_at = ?, updated_at = ? WHERE id = ?`
+      ).run(
+        String(keeper.fingerprint),
+        JSON.stringify(keeper.normalizedTopics),
+        JSON.stringify([...evidence.values()]),
+        group.reduce((sum, row) => sum + Number(row.observation_count ?? 1), 0),
+        Math.max(...group.map((row) => Number(row.frequency ?? 0))),
+        Math.max(...group.map((row) => Number(row.strength ?? 0))),
+        String(keeper.last_observed_at || keeper.updated_at || keeper.created_at),
+        String(keeper.updated_at || keeper.created_at),
+        String(keeper.id),
+      );
+    }
+
+    const curiosityRows = this.db.prepare(
+      "SELECT * FROM curiosity_targets WHERE topic_fingerprint = '' OR updated_at = ''"
+    ).all() as Array<Record<string, unknown>>;
+    const curiosityGroups = new Map<string, Array<Record<string, unknown>>>();
+    for (const row of curiosityRows) {
+      const fingerprint = createSemanticFingerprint('curiosity_topic', [String(row.topic)]);
+      const key = `${row.user_id}:${row.companion_id}:${fingerprint}`;
+      const group = curiosityGroups.get(key) ?? [];
+      group.push({ ...row, fingerprint });
+      curiosityGroups.set(key, group);
+    }
+    for (const group of curiosityGroups.values()) {
+      const [keeper, ...duplicates] = group;
+      if (!keeper) continue;
+      const generatedFromIds = [...new Set(group.flatMap((row) => [
+        ...(JSON.parse(String(row.related_memory_ids_json ?? '[]')) as string[]),
+        ...(JSON.parse(String(row.related_pattern_ids_json ?? '[]')) as string[]),
+        ...(JSON.parse(String(row.related_interest_node_ids_json ?? '[]')) as string[]),
+      ]))].sort();
+      for (const duplicate of duplicates) {
+        this.db.prepare('DELETE FROM curiosity_targets WHERE id = ?').run(String(duplicate.id));
+      }
+      this.db.prepare(
+        `UPDATE curiosity_targets SET topic_fingerprint = ?, source_fingerprint = ?, generated_from_ids_json = ?,
+         generation_count = ?, last_generated_at = ?, updated_at = ? WHERE id = ?`
+      ).run(
+        String(keeper.fingerprint),
+        createSemanticFingerprint('curiosity_source', [String(keeper.source), ...generatedFromIds]),
+        JSON.stringify(generatedFromIds),
+        group.reduce((sum, row) => sum + Number(row.generation_count ?? 1), 0),
+        String(keeper.last_generated_at || keeper.created_at),
+        String(keeper.updated_at || keeper.created_at),
+        String(keeper.id),
+      );
+    }
   }
 
   /**
@@ -178,6 +282,8 @@ export class DatabaseService {
   private ensureCompatibilityIndexes(): void {
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_companion_messages_session ON companion_messages(session_id)');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_memory_nodes_companion ON memory_nodes(companion_id)');
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_patterns_identity ON patterns(user_id, companion_id, semantic_fingerprint) WHERE semantic_fingerprint <> ''");
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_curiosity_identity ON curiosity_targets(user_id, companion_id, topic_fingerprint) WHERE topic_fingerprint <> ''");
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_discoveries_status_announced ON discoveries(status, announced_at)');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_discoveries_companion_status ON discoveries(companion_id, status)');
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_engine_traces_correlation ON engine_traces(correlation_id, started_at)');
@@ -977,16 +1083,74 @@ export class DatabaseService {
     return rows.map(mapEngineTrace);
   }
 
+  upsertPattern(pattern: Pattern): CognitiveUpsertResult<Pattern> {
+    const companionId = pattern.companionId ?? 'default';
+    const normalizedTopics = (pattern.normalizedTopics?.length ? pattern.normalizedTopics : [pattern.title])
+      .map(normalizeSemanticText)
+      .filter(Boolean)
+      .sort();
+    const semanticFingerprint = pattern.semanticFingerprint
+      ?? createSemanticFingerprint('pattern', [pattern.type, ...normalizedTopics]);
+    const existingRow = this.db.prepare(
+      'SELECT * FROM patterns WHERE user_id = ? AND companion_id = ? AND semantic_fingerprint = ?'
+    ).get(pattern.userId, companionId, semanticFingerprint) as Record<string, unknown> | undefined;
+    if (existingRow) {
+      const existing = mapPattern(existingRow);
+      const evidence = new Map<string, Pattern['evidence'][number]>();
+      for (const item of [...existing.evidence, ...pattern.evidence]) {
+        evidence.set(`${item.sourceType}:${item.sourceId ?? ''}:${normalizeSemanticText(item.summary)}`, item);
+      }
+      const updated: Pattern = {
+        ...existing,
+        title: pattern.title,
+        summary: pattern.summary,
+        normalizedTopics: [...new Set([...(existing.normalizedTopics ?? []), ...normalizedTopics])].sort(),
+        confidence: Math.max(existing.confidence, pattern.confidence),
+        strength: Math.max(existing.strength, pattern.strength),
+        freshness: Math.max(existing.freshness, pattern.freshness),
+        frequency: Math.max(existing.frequency ?? 0, pattern.frequency ?? 0),
+        evidence: [...evidence.values()],
+        observationCount: (existing.observationCount ?? 1) + 1,
+        lastObservedAt: pattern.lastObservedAt ?? pattern.updatedAt,
+        updatedAt: pattern.updatedAt,
+      };
+      this.writePattern(updated);
+      return {
+        record: updated,
+        outcome: updated.evidence.length > existing.evidence.length ? 'updated' : 'deduplicated',
+      };
+    }
+    const created: Pattern = {
+      ...pattern,
+      companionId,
+      semanticFingerprint,
+      normalizedTopics,
+      observationCount: pattern.observationCount ?? 1,
+      frequency: pattern.frequency ?? 0,
+      lastObservedAt: pattern.lastObservedAt ?? pattern.updatedAt,
+    };
+    this.writePattern(created);
+    return { record: created, outcome: 'created' };
+  }
+
   insertPattern(pattern: Pattern): Pattern {
+    return this.upsertPattern(pattern).record;
+  }
+
+  private writePattern(pattern: Pattern): void {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO patterns
-         (id, user_id, type, title, summary, confidence, strength, freshness, evidence_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, user_id, companion_id, semantic_fingerprint, normalized_topics_json, type, title, summary, confidence,
+          strength, freshness, evidence_json, observation_count, frequency, last_observed_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         pattern.id,
         pattern.userId,
+        pattern.companionId ?? 'default',
+        pattern.semanticFingerprint ?? '',
+        JSON.stringify(pattern.normalizedTopics ?? []),
         pattern.type,
         pattern.title,
         pattern.summary,
@@ -994,16 +1158,19 @@ export class DatabaseService {
         pattern.strength,
         pattern.freshness,
         JSON.stringify(pattern.evidence),
+        pattern.observationCount ?? 1,
+        pattern.frequency ?? 0,
+        pattern.lastObservedAt ?? pattern.updatedAt,
         pattern.createdAt,
         pattern.updatedAt
       );
-    return pattern;
   }
 
-  listPatterns(userId = 'default', limit = 20): Pattern[] {
-    return (this.db.prepare('SELECT * FROM patterns WHERE user_id = ? ORDER BY strength DESC LIMIT ?').all(userId, limit) as Array<
-      Record<string, unknown>
-    >).map(mapPattern);
+  listPatterns(userId = 'default', limit = 20, companionId?: string): Pattern[] {
+    const rows = companionId
+      ? this.db.prepare('SELECT * FROM patterns WHERE user_id = ? AND companion_id = ? ORDER BY strength DESC LIMIT ?').all(userId, companionId, limit)
+      : this.db.prepare('SELECT * FROM patterns WHERE user_id = ? ORDER BY strength DESC LIMIT ?').all(userId, limit);
+    return (rows as Array<Record<string, unknown>>).map(mapPattern);
   }
 
   upsertInterestGraph(graph: InterestGraph): InterestGraph {
@@ -1067,19 +1234,93 @@ export class DatabaseService {
     };
   }
 
+  upsertCuriosityTarget(target: CuriosityTarget, at = target.lastGeneratedAt ?? target.updatedAt ?? target.createdAt): CognitiveUpsertResult<CuriosityTarget> {
+    const topicFingerprint = target.topicFingerprint ?? createSemanticFingerprint('curiosity_topic', [target.topic]);
+    const generatedFromIds = target.generatedFromIds ?? [
+      ...(target.relatedMemoryIds ?? []),
+      ...(target.relatedPatternIds ?? []),
+      ...(target.relatedInterestNodeIds ?? []),
+    ].sort();
+    const existingRow = this.db.prepare(
+      'SELECT * FROM curiosity_targets WHERE user_id = ? AND companion_id = ? AND topic_fingerprint = ?'
+    ).get(target.userId, target.companionId, topicFingerprint) as Record<string, unknown> | undefined;
+    if (existingRow) {
+      const existing = mapCuriosityTarget(existingRow);
+      const newEvidence = generatedFromIds.some((id) => !(existing.generatedFromIds ?? []).includes(id));
+      const materiallyStronger = newEvidence && target.priority >= existing.priority + 0.15;
+      const cooldownActive = Boolean(existing.cooldownUntil && Date.parse(existing.cooldownUntil) > Date.parse(at));
+      if (cooldownActive && !materiallyStronger) {
+        return { record: existing, outcome: 'cooldown' };
+      }
+      const shouldReopen = ['completed', 'ignored', 'cooldown'].includes(existing.status ?? '')
+        && (!cooldownActive || materiallyStronger);
+      const mergedGeneratedIds = [...new Set([...(existing.generatedFromIds ?? []), ...generatedFromIds])].sort();
+      const updated: CuriosityTarget = {
+        ...existing,
+        topic: target.topic,
+        description: target.description,
+        source: target.source,
+        sourceFingerprint: createSemanticFingerprint('curiosity_source', [
+          existing.sourceFingerprint ?? existing.source,
+          target.sourceFingerprint ?? target.source,
+          ...mergedGeneratedIds,
+        ].sort()),
+        generatedFromIds: mergedGeneratedIds,
+        explorationType: target.explorationType,
+        priority: Math.max(existing.priority, target.priority),
+        confidence: Math.max(existing.confidence, target.confidence),
+        reason: target.reason,
+        expectedValue: target.expectedValue,
+        relatedMemoryIds: [...new Set([...(existing.relatedMemoryIds ?? []), ...(target.relatedMemoryIds ?? [])])],
+        relatedPatternIds: [...new Set([...(existing.relatedPatternIds ?? []), ...(target.relatedPatternIds ?? [])])],
+        relatedInterestNodeIds: [...new Set([...(existing.relatedInterestNodeIds ?? []), ...(target.relatedInterestNodeIds ?? [])])],
+        status: shouldReopen ? 'open' : existing.status ?? 'open',
+        cooldownUntil: shouldReopen ? undefined : existing.cooldownUntil,
+        lastGeneratedAt: at,
+        generationCount: (existing.generationCount ?? 1) + 1,
+        updatedAt: at,
+      };
+      this.writeCuriosityTarget(updated);
+      return { record: updated, outcome: shouldReopen ? 'reopened' : 'deduplicated' };
+    }
+    const created: CuriosityTarget = {
+      ...target,
+      topicFingerprint,
+      sourceFingerprint: target.sourceFingerprint
+        ?? createSemanticFingerprint('curiosity_source', [target.source, ...generatedFromIds]),
+      generatedFromIds,
+      status: target.status ?? 'open',
+      lastGeneratedAt: target.lastGeneratedAt ?? at,
+      generationCount: target.generationCount ?? 1,
+      ignoreCount: target.ignoreCount ?? 0,
+      updatedAt: target.updatedAt ?? at,
+    };
+    this.writeCuriosityTarget(created);
+    return { record: created, outcome: 'created' };
+  }
+
   insertCuriosityTarget(target: CuriosityTarget): CuriosityTarget {
+    return this.upsertCuriosityTarget(target).record;
+  }
+
+  private writeCuriosityTarget(target: CuriosityTarget): void {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO curiosity_targets
-         (id, user_id, companion_id, topic, description, source, exploration_type, priority, confidence, reason, expected_value,
-          related_memory_ids_json, related_pattern_ids_json, related_interest_node_ids_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, user_id, companion_id, topic, topic_fingerprint, source_fingerprint, generated_from_ids_json,
+          description, source, exploration_type, priority, confidence, reason, expected_value,
+          related_memory_ids_json, related_pattern_ids_json, related_interest_node_ids_json, status,
+          last_generated_at, last_explored_at, cooldown_until, generation_count, ignore_count, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         target.id,
         target.userId,
         target.companionId,
         target.topic,
+        target.topicFingerprint ?? '',
+        target.sourceFingerprint ?? '',
+        JSON.stringify(target.generatedFromIds ?? []),
         target.description,
         target.source,
         target.explorationType,
@@ -1090,9 +1331,44 @@ export class DatabaseService {
         JSON.stringify(target.relatedMemoryIds ?? []),
         JSON.stringify(target.relatedPatternIds ?? []),
         JSON.stringify(target.relatedInterestNodeIds ?? []),
-        target.createdAt
+        target.status ?? 'open',
+        target.lastGeneratedAt ?? null,
+        target.lastExploredAt ?? null,
+        target.cooldownUntil ?? null,
+        target.generationCount ?? 1,
+        target.ignoreCount ?? 0,
+        target.createdAt,
+        target.updatedAt ?? target.createdAt,
       );
-    return target;
+  }
+
+  setCuriosityTargetStatus(
+    id: string,
+    status: 'open' | 'exploring' | 'completed' | 'ignored' | 'cooldown',
+    at: string,
+  ): CuriosityTarget | undefined {
+    const existing = this.getCuriosityTarget(id);
+    if (!existing) return undefined;
+    const ignoreCount = (existing.ignoreCount ?? 0) + (status === 'ignored' ? 1 : 0);
+    const cooldownMs = status === 'completed'
+      ? CURIOSITY_COOLDOWN_MS.completed
+      : status === 'ignored'
+        ? ignoreCount >= 3
+          ? CURIOSITY_COOLDOWN_MS.ignoredRepeatedly
+          : ignoreCount === 2
+            ? CURIOSITY_COOLDOWN_MS.ignoredTwice
+            : CURIOSITY_COOLDOWN_MS.ignoredOnce
+        : 0;
+    const updated: CuriosityTarget = {
+      ...existing,
+      status,
+      ignoreCount,
+      lastExploredAt: ['exploring', 'completed'].includes(status) ? at : existing.lastExploredAt,
+      cooldownUntil: cooldownMs ? new Date(Date.parse(at) + cooldownMs).toISOString() : undefined,
+      updatedAt: at,
+    };
+    this.writeCuriosityTarget(updated);
+    return updated;
   }
 
   getCuriosityTarget(id: string): CuriosityTarget | undefined {
@@ -1405,6 +1681,13 @@ export class DatabaseService {
     return row ? mapExplorationCycle(row) : undefined;
   }
 
+  getCurrentExplorationCycleForCompanion(companionId: string): ExplorationCycle | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM exploration_cycles WHERE companion_id = ? AND completed_at IS NULL ORDER BY started_at DESC LIMIT 1")
+      .get(companionId) as Record<string, unknown> | undefined;
+    return row ? mapExplorationCycle(row) : undefined;
+  }
+
   listExplorationCycles(limit = 20): ExplorationCycle[] {
     return (this.db.prepare('SELECT * FROM exploration_cycles ORDER BY started_at DESC LIMIT ?').all(limit) as Array<
       Record<string, unknown>
@@ -1431,10 +1714,11 @@ export class DatabaseService {
     return event;
   }
 
-  listCuriosityTargets(userId = 'default', limit = 20): CuriosityTarget[] {
-    return (this.db
-      .prepare('SELECT * FROM curiosity_targets WHERE user_id = ? ORDER BY priority DESC LIMIT ?')
-      .all(userId, limit) as Array<Record<string, unknown>>).map(mapCuriosityTarget);
+  listCuriosityTargets(userId = 'default', limit = 20, companionId?: string): CuriosityTarget[] {
+    const rows = companionId
+      ? this.db.prepare('SELECT * FROM curiosity_targets WHERE user_id = ? AND companion_id = ? ORDER BY priority DESC LIMIT ?').all(userId, companionId, limit)
+      : this.db.prepare('SELECT * FROM curiosity_targets WHERE user_id = ? ORDER BY priority DESC LIMIT ?').all(userId, limit);
+    return (rows as Array<Record<string, unknown>>).map(mapCuriosityTarget);
   }
 
   listDiscoveryCandidates(userId = 'default', limit = 20, companionId?: string): DiscoveryCandidate[] {
@@ -2128,6 +2412,9 @@ function mapPattern(row: Record<string, unknown>): Pattern {
   return {
     id: String(row.id),
     userId: String(row.user_id),
+    companionId: String(row.companion_id ?? 'default'),
+    semanticFingerprint: String(row.semantic_fingerprint ?? ''),
+    normalizedTopics: JSON.parse(String(row.normalized_topics_json ?? '[]')),
     type: row.type as Pattern['type'],
     title: String(row.title),
     summary: String(row.summary),
@@ -2135,6 +2422,9 @@ function mapPattern(row: Record<string, unknown>): Pattern {
     strength: Number(row.strength),
     freshness: Number(row.freshness),
     evidence: JSON.parse(String(row.evidence_json ?? '[]')),
+    observationCount: Number(row.observation_count ?? 1),
+    frequency: Number(row.frequency ?? 0),
+    lastObservedAt: String(row.last_observed_at || row.updated_at),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
@@ -2175,6 +2465,9 @@ function mapCuriosityTarget(row: Record<string, unknown>): CuriosityTarget {
     userId: String(row.user_id),
     companionId: String(row.companion_id),
     topic: String(row.topic),
+    topicFingerprint: String(row.topic_fingerprint ?? ''),
+    sourceFingerprint: String(row.source_fingerprint ?? ''),
+    generatedFromIds: JSON.parse(String(row.generated_from_ids_json ?? '[]')),
     description: String(row.description),
     source: row.source as CuriosityTarget['source'],
     explorationType: row.exploration_type as CuriosityTarget['explorationType'],
@@ -2185,7 +2478,14 @@ function mapCuriosityTarget(row: Record<string, unknown>): CuriosityTarget {
     relatedMemoryIds: JSON.parse(String(row.related_memory_ids_json ?? '[]')),
     relatedPatternIds: JSON.parse(String(row.related_pattern_ids_json ?? '[]')),
     relatedInterestNodeIds: JSON.parse(String(row.related_interest_node_ids_json ?? '[]')),
-    createdAt: String(row.created_at)
+    status: (row.status ?? 'open') as CuriosityTarget['status'],
+    lastGeneratedAt: row.last_generated_at ? String(row.last_generated_at) : undefined,
+    lastExploredAt: row.last_explored_at ? String(row.last_explored_at) : undefined,
+    cooldownUntil: row.cooldown_until ? String(row.cooldown_until) : undefined,
+    generationCount: Number(row.generation_count ?? 1),
+    ignoreCount: Number(row.ignore_count ?? 0),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at || row.created_at),
   };
 }
 

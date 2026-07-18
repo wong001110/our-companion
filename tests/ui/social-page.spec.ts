@@ -24,19 +24,19 @@ test('Social friend lookup presents every authoritative relationship safely', as
   try {
     await device.launch();
     const main = await device.mainWindow();
-    await main.evaluate(async () => window.ourCompanion.smoke?.setFriendLookupFixture({ id: 'friend-1', username: 'Mira', friendCode: 'MIRA0001', relationship: 'friend' }));
+    await main.evaluate(async () => window.ourCompanion.smoke?.setFriendLookupFixture({ id: 'friend-1', username: 'Mira', uid: 'OC-MIRA8XYZ', friendCode: 'MIRA0001', relationship: 'friend' }));
     const panel = await device.panelWindow();
     await panel.getByRole('button', { name: 'Social' }).click();
 
-    const friendCode = panel.getByRole('textbox', { name: 'Add Friend by Code' });
-    await friendCode.fill('MIRA0001');
+    const uid = panel.getByRole('textbox', { name: 'Find by UID' });
+    await uid.fill('OC-MIRA8XYZ');
     await panel.getByRole('button', { name: 'Find' }).click();
     await expect(panel.getByTestId('friend-lookup-relationship')).toHaveText('Already friends');
     await expect(panel.getByTestId('send-friend-request')).toHaveCount(0);
     await device.screenshot(panel, 'en-existing-friend-1180.png', ui001ArtifactDir);
 
-    await main.evaluate(async () => window.ourCompanion.smoke?.setFriendLookupFixture({ id: 'friend-2', username: 'Sol', friendCode: 'SOL00001', relationship: 'none' }));
-    await friendCode.fill('SOL00001');
+    await main.evaluate(async () => window.ourCompanion.smoke?.setFriendLookupFixture({ id: 'friend-2', username: 'Sol', uid: 'OC-SOL78XYZ', friendCode: 'SOL00001', relationship: 'none' }));
+    await uid.fill('OC-SOL78XYZ');
     await panel.getByRole('button', { name: 'Find' }).click();
     await expect(panel.getByTestId('friend-lookup-relationship')).toHaveText('No existing connection');
     await expect(panel.getByTestId('send-friend-request')).toBeVisible();
@@ -46,11 +46,11 @@ test('Social friend lookup presents every authoritative relationship safely', as
     await panel.getByRole('tab', { name: 'AI' }).click();
     await panel.locator('.settings-panel select').nth(1).selectOption('zh-CN');
     await panel.getByRole('button', { name: 'Save' }).click();
-    await main.evaluate(async () => window.ourCompanion.smoke?.setFriendLookupFixture({ id: 'friend-3', username: '小安', friendCode: 'AN000001', relationship: 'incoming_request' }));
+    await main.evaluate(async () => window.ourCompanion.smoke?.setFriendLookupFixture({ id: 'friend-3', username: '小安', uid: 'OC-AN78WXYZ', friendCode: 'AN000001', relationship: 'incoming_request' }));
     await panel.getByRole('button', { name: '社交' }).click();
-    const chineseFriendCode = panel.getByRole('textbox', { name: '通过好友码添加好友' });
-    await chineseFriendCode.fill('AN000001');
-    await chineseFriendCode.focus();
+    const chineseUid = panel.getByRole('textbox', { name: '通过 UID 查找' });
+    await chineseUid.fill('OC-AN78WXYZ');
+    await chineseUid.focus();
     await panel.keyboard.press('Tab');
     const chineseFind = panel.getByRole('button', { name: '查找' });
     await expect(chineseFind).toBeFocused();

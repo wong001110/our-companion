@@ -12,6 +12,10 @@ import type {
   MemorySummary,
   ToolIntent
 } from '@our-companion/shared';
+import {
+  getActionCapability,
+  validateActionCapabilityArgs,
+} from '@our-companion/shared';
 
 export const deepSeekDefaultModel = 'deepseek-v4-flash';
 export const deepSeekDefaultEndpoint = 'https://api.deepseek.com';
@@ -56,18 +60,30 @@ export const memorySummarySchema = z.object({
 });
 
 export const toolIntentSchema = z.object({
-  tool_name: z.enum(['open_url', 'open_app', 'search_web', 'browser_navigation', 'none']),
+  tool_name: z.string(),
   args: z.record(z.unknown()),
   requires_confirmation: z.boolean(),
   user_facing_summary: z.string()
+}).superRefine((intent, context) => {
+  if (intent.tool_name === 'none') {
+    if (Object.keys(intent.args).length > 0) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'none cannot include arguments' });
+    }
+    return;
+  }
+  const validated = validateActionCapabilityArgs(intent.tool_name, intent.args);
+  if (!validated.ok) context.addIssue({ code: z.ZodIssueCode.custom, message: validated.reason });
 });
 
 export const actionStepSchema = z.object({
   id: z.string().optional(),
-  toolName: z.enum(['open_url', 'open_app', 'search_web', 'browser_navigation', 'none']),
+  toolName: z.string(),
   args: z.record(z.unknown()),
   waitMs: z.number().optional(),
   requiredScopes: z.array(z.string()).optional()
+}).superRefine((step, context) => {
+  const validated = validateActionCapabilityArgs(step.toolName, step.args);
+  if (!validated.ok) context.addIssue({ code: z.ZodIssueCode.custom, message: validated.reason });
 });
 
 export const actionPlanSchema = z.object({
@@ -85,22 +101,55 @@ export type ActionPlanLlmResult = z.infer<typeof actionPlanSchema>;
 export function validateActionPlan(raw: string): ActionPlan | undefined {
   try {
     const parsed: unknown = JSON.parse(raw);
-    const result = actionPlanSchema.safeParse(parsed);
+    const source = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+    const sourceSteps = Array.isArray(source.steps) ? source.steps : [];
+    const usesSnakeCase = 'requires_confirmation' in source
+      || sourceSteps.some((step) => step && typeof step === 'object' && 'tool_name' in step);
+    const canonicalInput = usesSnakeCase
+      ? {
+          steps: sourceSteps.map((step) => {
+            const value = step as Record<string, unknown>;
+            return {
+              toolName: value.tool_name,
+              args: value.args,
+              requiredScopes: value.required_scopes,
+            };
+          }),
+          confirmationRequired: source.requires_confirmation ?? false,
+        }
+      : parsed;
+    const result = actionPlanSchema.safeParse(canonicalInput);
     if (!result.success) return undefined;
     const data = result.data;
+    const steps = data.steps.map((step) => {
+      const capability = getActionCapability(step.toolName);
+      const validated = validateActionCapabilityArgs(step.toolName, step.args);
+      if (!capability?.enabled || !validated.ok) return undefined;
+      return {
+        id: step.id ?? '',
+        toolName: capability.toolName,
+        args: validated.args,
+        waitMs: step.waitMs,
+        requiredScopes: [...capability.requiredScopes],
+      };
+    });
+    if (steps.some((step) => !step)) return undefined;
+    const capabilities = steps.map((step) => getActionCapability(step?.toolName));
+    const riskRank = { low: 0, medium: 1, high: 2 } as const;
+    const canonicalRisk = capabilities.reduce<'low' | 'medium' | 'high'>(
+      (highest, capability) => capability && riskRank[capability.riskLevel] > riskRank[highest]
+        ? capability.riskLevel
+        : highest,
+      'low',
+    );
     return {
       id: data.id ?? '',
       intentId: data.intentId ?? '',
-      steps: data.steps.map(s => ({
-        id: s.id ?? '',
-        toolName: s.toolName,
-        args: s.args,
-        waitMs: s.waitMs,
-        requiredScopes: (s.requiredScopes ?? []) as any[]
-      })),
-      requiredPermissions: data.requiredPermissions ?? [],
-      riskLevel: data.riskLevel ?? 'low',
-      confirmationRequired: data.confirmationRequired,
+      steps: steps as ActionPlan['steps'],
+      requiredPermissions: [...new Set(steps.flatMap((step) => step?.requiredScopes ?? []))],
+      riskLevel: canonicalRisk,
+      confirmationRequired: data.confirmationRequired
+        || capabilities.some((capability) => capability?.requiresConfirmationByDefault),
       status: data.status ?? 'draft'
     };
   } catch {
@@ -243,7 +292,17 @@ export function validateMemorySummary(text: string): MemorySummary {
 }
 
 export function validateToolIntent(text: string): ToolIntent {
-  return toolIntentSchema.parse(parseJsonObject(text));
+  const parsed = toolIntentSchema.parse(parseJsonObject(text));
+  if (parsed.tool_name === 'none') return parsed as ToolIntent;
+  const capability = getActionCapability(parsed.tool_name);
+  const validated = validateActionCapabilityArgs(parsed.tool_name, parsed.args);
+  if (!capability?.enabled || !validated.ok) throw new Error('ACTION_CAPABILITY_NOT_AVAILABLE');
+  return {
+    ...parsed,
+    tool_name: capability.toolName,
+    args: validated.args,
+    requires_confirmation: parsed.requires_confirmation || capability.requiresConfirmationByDefault,
+  };
 }
 
 export function validateCuriosityTargets(text: string): Array<Partial<CuriosityTarget> & Pick<CuriosityTarget, 'topic' | 'description' | 'source' | 'explorationType' | 'priority' | 'confidence' | 'reason' | 'expectedValue'>> {

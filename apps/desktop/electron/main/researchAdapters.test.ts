@@ -3,6 +3,8 @@ import {
   assertSafeResearchUrl,
   BraveWebSearchProvider,
   FixtureWebSearchProvider,
+  FixtureWebPageFetcher,
+  createDeterministicFixtureSearchProvider,
   isBlockedAddress,
   ResearchAdapterError,
   SafeWebPageFetcher
@@ -209,5 +211,26 @@ describe('fixture web search', () => {
     const results = await provider.search({ query: 'local AI', limit: 10, excludedDomains: ['other.example'] });
     expect(results).toHaveLength(1);
     expect(results[0]?.domain).toBe('independent.example');
+  });
+
+  it('returns stable search IDs and deterministic fixture evidence', async () => {
+    const provider = createDeterministicFixtureSearchProvider();
+    const first = await provider.search({ query: 'desktop AI companion', limit: 3 });
+    const second = await provider.search({ query: 'desktop AI companion', limit: 3 });
+    expect(first.map((result) => result.id)).toEqual(second.map((result) => result.id));
+    const fetcher = new FixtureWebPageFetcher(() => new Date('2026-07-18T00:00:00.000Z'));
+    const page = await fetcher.fetchPage({
+      searchResult: first[0]!,
+      userId: 'user',
+      companionId: 'companion',
+      cycleId: 'cycle',
+      researchIntentId: 'intent',
+      researchPlanId: 'plan',
+      sourceType: 'technical_article',
+    });
+    expect(page.id).toBe(`fixture-evidence-${first[0]!.id}`);
+    expect(page.provider).toBe('fixture-page-fetcher');
+    expect(page.extractedText).toContain('desktop AI companion');
+    expect(page.fetchedAt).toBe('2026-07-18T00:00:00.000Z');
   });
 });

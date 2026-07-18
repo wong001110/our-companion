@@ -104,6 +104,8 @@ const api: OurCompanionApi = {
     createEdge: (input: CreateMemoryEdgeInput) => invoke('memory:createEdge', input),
     getGraph: (input?: { query?: string; companionId?: string }) => invoke('memory:getGraph', input),
     search: (input: { query: string; companionId?: string }) => invoke('memory:search', input)
+    ,inspectImpact: (id: string) => invoke('memory:inspectImpact', id)
+    ,recomputeImpact: (input: { id: string; explore?: boolean }) => invoke('memory:recomputeImpact', input)
   },
   journey: {
     create: (input: CreateJourneyInput) => invoke('journey:create', input),
@@ -190,6 +192,12 @@ const api: OurCompanionApi = {
     resetData: (input: DebugDataResetInput) => invoke('debug:resetData', input),
     getFoundationLog: (input?: FoundationEventLogInput) => invoke('debug:getFoundationLog', input),
     getEngineSnapshot: (input?: EngineSnapshotInput) => invoke('debug:getEngineSnapshot', input),
+    getRuntimeTime: () => invoke('debug:getRuntimeTime'),
+    advanceRuntimeTime: (input: { milliseconds: number; runScheduledTick?: boolean }) => invoke('debug:advanceRuntimeTime', input),
+    resetRuntimeTime: () => invoke('debug:resetRuntimeTime'),
+    runScheduledTick: () => invoke('debug:runScheduledTick'),
+    runFixtureResearch: (input: { topic: string }) => invoke('debug:runFixtureResearch', input),
+    researchFromUrl: (input: { url: string }) => invoke('debug:researchFromUrl', input),
     onFoundationEvent: (listener: (event: BaseEvent) => void) => {
       const channel = 'debug:foundationEvent';
       const handler = (_event: Electron.IpcRendererEvent, payload: BaseEvent) => listener(payload);
@@ -275,7 +283,7 @@ const api: OurCompanionApi = {
       return () => ipcRenderer.removeListener(channel, handler);
     },
     friends: {
-      lookup: (friendCode) => invoke<FriendLookupResult>('network:friends:lookup', friendCode),
+      lookup: (uid) => invoke<FriendLookupResult>('network:friends:lookup', uid),
       getAll: () => invoke('network:friends:getAll'),
       getIncomingRequests: () => invoke('network:friends:getIncomingRequests'),
       getOutgoingRequests: () => invoke('network:friends:getOutgoingRequests'),

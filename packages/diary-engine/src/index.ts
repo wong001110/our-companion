@@ -7,9 +7,11 @@ export interface DiaryContext {
   savedDiscoveries: Discovery[];
   completedTasks: string[];
   memoryChanges: MemoryNode[];
+  generatedAt?: string;
 }
 
 export function generateDailyDiary(context: DiaryContext): DiaryEntry {
+  const generatedAt = context.generatedAt ?? nowIso();
   const lines = [
     'Today we kept exploring together.',
     context.savedDiscoveries.length > 0
@@ -35,8 +37,8 @@ export function generateDailyDiary(context: DiaryContext): DiaryEntry {
     content: lines.join('\n'),
     referencedMemoryIds: context.memoryChanges.map((m) => m.id),
     confidence: 0.7,
-    createdAt: nowIso(),
-    generatedAt: nowIso(),
+    createdAt: generatedAt,
+    generatedAt,
   };
 }
 

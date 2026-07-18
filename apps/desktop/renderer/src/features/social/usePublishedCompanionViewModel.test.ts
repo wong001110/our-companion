@@ -10,7 +10,7 @@ function status(serverUrl: string, accountId: string): NetworkStatus {
     state: 'online',
     onlineModeEnabled: true,
     serverUrl,
-    account: { id: accountId, email: 'private@example.test', username: 'Mira', friendCode: 'MIRA0001' },
+    account: { id: accountId, email: 'private@example.test', username: 'Mira', uid: 'OC-MIRA8XYZ', friendCode: 'MIRA0001' },
   };
 }
 

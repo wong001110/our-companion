@@ -25,6 +25,8 @@ import type {
   VisitSessionSummary,
   PermissionScope,
   PerformanceScript,
+  RuntimeSchedulerReport,
+  RuntimeTimeStatus,
   SpeechSettings,
   SpeechStatus,
   ToolExecutionResult,
@@ -263,7 +265,7 @@ function OnlineModeCard() {
   const [serverUrl, setServerUrl] = useState('');
   const [serverError, setServerError] = useState('');
   const [editingServer, setEditingServer] = useState(false);
-  const [friendCodeCopied, setFriendCodeCopied] = useState(false);
+  const [uidCopied, setUidCopied] = useState(false);
   const [confirmServerChange, setConfirmServerChange] = useState(false);
 
   useEffect(() => {
@@ -344,13 +346,13 @@ function OnlineModeCard() {
     finally { setSaving(false); }
   }
 
-  async function copyFriendCode() {
-    const friendCode = networkStatus?.account?.friendCode;
-    if (!friendCode) return;
+  async function copyUid() {
+    const uid = networkStatus?.account?.uid;
+    if (!uid) return;
     try {
-      await navigator.clipboard.writeText(friendCode);
-      setFriendCodeCopied(true);
-      window.setTimeout(() => setFriendCodeCopied(false), 2_000);
+      await navigator.clipboard.writeText(uid);
+      setUidCopied(true);
+      window.setTimeout(() => setUidCopied(false), 2_000);
     } catch {
       setAuthError(t(lang, 'online_copy_failed'));
     }
@@ -387,9 +389,9 @@ function OnlineModeCard() {
 
       {networkStatus?.account ? (
         <div className="online-user-info online-account-card">
-          <p className="online-account-identity"><strong>{networkStatus.account.username}</strong> (@{networkStatus.account.username}) <span className="online-friend-code-inline">{t(lang, 'online_code')} <code>{networkStatus.account.friendCode}</code></span></p>
+          <p className="online-account-identity"><strong>{networkStatus.account.username}</strong> <span className="online-friend-code-inline">{t(lang, 'online_code')} <code>{networkStatus.account.uid}</code></span></p>
           <p>{networkStatus.account.email}</p>
-          <button className="btn-secondary btn-sm" onClick={() => void copyFriendCode()}>{friendCodeCopied ? t(lang, 'online_copied') : t(lang, 'online_copy_code')}</button>
+          <button className="btn-secondary btn-sm" onClick={() => void copyUid()}>{uidCopied ? t(lang, 'online_copied') : t(lang, 'online_copy_code')}</button>
           <button className="btn-ghost btn-sm online-logout-button" onClick={() => void handleLogout()}>{t(lang, 'online_logout')}</button>
         </div>
       ) : canShowAuthentication && showRegister ? (
@@ -553,10 +555,86 @@ function DeveloperPreview({ state, devAnimation, animationOverride, onAnimationC
         <p>Previewing: {devAnimation === 'live' ? 'engine state' : readable(devAnimation)}</p>
       </div>
       <BehaviorPanel settings={settings} onRefresh={onRefresh} />
+      <RuntimeTimeController />
       <EngineObservatory />
       <DebugAudioTestPanel />
       <DebugAiLog />
       <DebugDataResetPanel onRefresh={onRefresh} />
+    </div>
+  );
+}
+
+function RuntimeTimeController() {
+  const [status, setStatus] = useState<RuntimeTimeStatus>();
+  const [report, setReport] = useState<RuntimeSchedulerReport>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+
+  const load = useCallback(async () => {
+    try { setStatus(await window.ourCompanion.debug.getRuntimeTime()); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to read Runtime time.'); }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function advance(milliseconds: number) {
+    setBusy(true);
+    setError(undefined);
+    try {
+      setReport(await window.ourCompanion.debug.advanceRuntimeTime({ milliseconds }));
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to advance Runtime time.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runTick() {
+    setBusy(true);
+    setError(undefined);
+    try { setReport(await window.ourCompanion.debug.runScheduledTick()); await load(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to run scheduler tick.'); }
+    finally { setBusy(false); }
+  }
+
+  async function reset() {
+    setBusy(true);
+    setError(undefined);
+    try { setStatus(await window.ourCompanion.debug.resetRuntimeTime()); setReport(undefined); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to reset Runtime time.'); }
+    finally { setBusy(false); }
+  }
+
+  const controls = [
+    ['+1 hour', 60 * 60 * 1000],
+    ['+6 hours', 6 * 60 * 60 * 1000],
+    ['+1 day', 24 * 60 * 60 * 1000],
+    ['+3 days', 3 * 24 * 60 * 60 * 1000],
+    ['+7 days', 7 * 24 * 60 * 60 * 1000],
+  ] as const;
+
+  return (
+    <div className="debug-reset-panel" aria-label="Runtime Time Controller">
+      <div className="debug-reset-header">
+        <span className="debug-ai-log-title">Runtime Time Controller</span>
+        <span className="debug-reset-status">{status?.debugAvailable ? 'development clock' : 'production clock'}</span>
+      </div>
+      <dl className="engine-research-grid">
+        <div><dt>Real time</dt><dd>{status?.realTime ?? 'loading'}</dd></div>
+        <div><dt>Runtime time</dt><dd>{status?.runtimeTime ?? 'loading'}</dd></div>
+        <div><dt>Current offset</dt><dd>{status ? formatDuration(Math.abs(status.offsetMs)) : 'loading'}</dd></div>
+        <div><dt>Last scheduler tick</dt><dd>{status?.lastSchedulerTick ?? 'not run'}</dd></div>
+      </dl>
+      <div className="action-row">
+        {controls.map(([label, milliseconds]) => (
+          <button key={label} disabled={busy || !status?.debugAvailable} onClick={() => void advance(milliseconds)}>{label}</button>
+        ))}
+        <button disabled={busy} onClick={() => void runTick()}>Run scheduled tick now</button>
+        <button disabled={busy || !status?.debugAvailable} onClick={() => void reset()}>Reset to real time</button>
+      </div>
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      {report && <pre className="debug-ai-log-raw">{JSON.stringify(report, null, 2)}</pre>}
     </div>
   );
 }
@@ -630,6 +708,10 @@ function DebugDataResetPanel({ onRefresh }: { onRefresh: () => Promise<void> }) 
     setStatus('Clearing data...');
     try {
       const result = await window.ourCompanion.debug.resetData({ targets: [target] });
+      if (target === 'autonomy' || target === 'all_debug_data') {
+        localStorage.removeItem('companion:exploration-visual');
+        await window.ourCompanion.debug.resetRuntimeTime().catch(() => undefined);
+      }
       await onRefresh();
       setStatus(`Cleared ${result.clearedTables.length} table groups at ${new Date(result.completedAt).toLocaleTimeString()}.`);
       setPendingTarget(null);

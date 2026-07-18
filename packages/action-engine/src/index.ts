@@ -8,7 +8,14 @@ import type {
   PermissionDecision,
   PermissionScope,
 } from '@our-companion/shared';
-import { createId, nowIso } from '@our-companion/shared';
+import {
+  actionCapabilityPromptSummary,
+  createId,
+  getActionCapability,
+  normalizeActionUrl,
+  nowIso,
+  validateActionCapabilityArgs,
+} from '@our-companion/shared';
 
 export type { ActionOrchestratorDeps } from '@our-companion/shared';
 
@@ -17,12 +24,6 @@ type ProductionPerformanceScript = Parameters<Parameters<OurCompanionApi['action
 
 // â”€â”€â”€ Permission scope helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-const TOOL_SCOPES = {
-  open_url: ['browser'],
-  search_web: ['browser'],
-  browser_navigation: ['browser'],
-  open_app: ['automation'],
-} as const satisfies Record<string, readonly PermissionScope[]>;
 const PERMISSION_SCOPES = new Set<PermissionScope>([
   'browser',
   'automation',
@@ -31,14 +32,13 @@ const PERMISSION_SCOPES = new Set<PermissionScope>([
   'calendar',
 ]);
 
-type SupportedToolName = keyof typeof TOOL_SCOPES;
-
-function isSupportedTool(toolName: string): toolName is SupportedToolName {
-  return Object.hasOwn(TOOL_SCOPES, toolName);
+function isSupportedTool(toolName: string): boolean {
+  return getActionCapability(toolName)?.enabled === true;
 }
 
 function scopesForTool(toolName: string): PermissionScope[] | undefined {
-  return isSupportedTool(toolName) ? [...TOOL_SCOPES[toolName]] : undefined;
+  const capability = getActionCapability(toolName);
+  return capability?.enabled ? [...capability.requiredScopes] : undefined;
 }
 
 function canonicalScopesForStep(step: ActionStep): PermissionScope[] | undefined {
@@ -69,22 +69,33 @@ export function defaultPermissions(): ActionPermissionState {
 function makeStep(toolName: string, args: Record<string, unknown>): ActionStep {
   const requiredScopes = scopesForTool(toolName);
   if (!requiredScopes) throw new Error(`Unsupported tool: ${toolName}`);
+  const validated = validateActionCapabilityArgs(toolName, args);
+  if (!validated.ok) throw new Error(validated.reason);
   return {
     id: createId('step'),
     toolName,
-    args,
+    args: validated.args,
     requiredScopes,
   };
 }
 
 function makePlan(steps: ActionStep[], opts?: { riskLevel?: 'low' | 'medium' | 'high'; confirmationRequired?: boolean }): ActionPlan {
+  const capabilities = steps.map((step) => getActionCapability(step.toolName)).filter(Boolean);
+  const riskRank = { low: 0, medium: 1, high: 2 } as const;
+  const registryRisk = capabilities.reduce<'low' | 'medium' | 'high'>(
+    (highest, capability) => capability && riskRank[capability.riskLevel] > riskRank[highest] ? capability.riskLevel : highest,
+    'low',
+  );
+  const requestedRisk = opts?.riskLevel ?? 'low';
+  const effectiveRisk = riskRank[requestedRisk] > riskRank[registryRisk] ? requestedRisk : registryRisk;
   return {
     id: createId('plan'),
     intentId: createId('intent'),
     steps,
     requiredPermissions: [...new Set(steps.flatMap((s) => s.requiredScopes))],
-    riskLevel: opts?.riskLevel ?? 'low',
-    confirmationRequired: opts?.confirmationRequired ?? false,
+    riskLevel: effectiveRisk,
+    confirmationRequired: Boolean(opts?.confirmationRequired)
+      || capabilities.some((capability) => capability?.requiresConfirmationByDefault),
     status: 'draft',
   };
 }
@@ -119,15 +130,15 @@ export function planActionFromRules(text: string): ActionPlan | undefined {
 
   // "open url <url>"
   if (lower.startsWith('open url ')) {
-    const url = trimmed.slice('open url '.length).trim();
-    return makePlan([makeStep('open_url', { url })]);
+    const url = normalizeActionUrl(trimmed.slice('open url '.length));
+    return url ? makePlan([makeStep('open_url', { url })]) : undefined;
   }
 
-  // "open <http(s)://...>" â€” bare URL shorthand
-  const bareUrl = trimmed.match(/^open\s+(https?:\/\/\S+)$/i);
-  if (bareUrl) {
-    const url = bareUrl[1];
-    return makePlan([makeStep('open_url', { url })]);
+  // English and Chinese URL commands, including a safe bare domain.
+  const openTarget = trimmed.match(/^(?:open|go\s+to|打开)\s+(.+)$/i);
+  if (openTarget) {
+    const url = normalizeActionUrl(openTarget[1]);
+    if (url) return makePlan([makeStep('open_url', { url })]);
   }
 
   // "open app <name>"
@@ -175,8 +186,9 @@ export async function planActionFromLlm(
         role: 'system',
         content:
           'You are Companion, a desktop companion. Convert the user request into a JSON action plan. ' +
+          `Available capabilities:\n${actionCapabilityPromptSummary()}\n` +
           'Respond ONLY with JSON matching: ' +
-          '{"summary":"...","steps":[{"tool_name":"open_url|open_app|search_web|browser_navigation","args":{...},"required_scopes":["browser"|"automation"]}],"requires_confirmation":false}. ' +
+          '{"summary":"...","steps":[{"tool_name":"enabled registry tool or none","args":{...},"required_scopes":[]}],"requires_confirmation":false}. ' +
           'Use tool_name "none" with empty steps array if the request cannot be performed as a desktop action.',
       },
       { role: 'user', content: text },
@@ -189,20 +201,23 @@ export async function planActionFromLlm(
     if ('intentId' in parsed) {
       if (parsed.steps.length === 0) return undefined;
       if (parsed.steps.some((step) => !isSupportedTool(step.toolName))) return undefined;
-      return {
-        ...parsed,
-        steps: parsed.steps.map((step) => ({
+      const validatedSteps = parsed.steps.map((step) => validateActionCapabilityArgs(step.toolName, step.args));
+      if (validatedSteps.some((result) => !result.ok)) return undefined;
+      const steps = parsed.steps.map((step, index) => ({
           ...step,
+          args: validatedSteps[index].ok ? validatedSteps[index].args : step.args,
           requiredScopes: canonicalScopesForStep(step) ?? [],
-        })),
-      } as ActionPlan;
+        }));
+      return makePlan(steps, { confirmationRequired: parsed.confirmationRequired });
     }
 
     // Handle LlmActionPlanResult (snake_case format)
     const result = parsed as LlmActionPlanResult;
     if (result.steps.length === 0 || result.steps[0].tool_name === 'none') return undefined;
     if (result.steps.some((step) => !isSupportedTool(step.tool_name))) return undefined;
-    const steps = result.steps.map((s) => {
+    const validatedSteps = result.steps.map((step) => validateActionCapabilityArgs(step.tool_name, step.args));
+    if (validatedSteps.some((step) => !step.ok)) return undefined;
+    const steps = result.steps.map((s, index) => {
       const requiredScopes = [
         ...(scopesForTool(s.tool_name) ?? []),
         ...((s.required_scopes ?? []) as PermissionScope[]),
@@ -210,7 +225,7 @@ export async function planActionFromLlm(
       return {
         id: createId('step'),
         toolName: s.tool_name,
-        args: s.args,
+        args: validatedSteps[index].ok ? validatedSteps[index].args : s.args,
         requiredScopes: [...new Set(requiredScopes)],
       };
     });

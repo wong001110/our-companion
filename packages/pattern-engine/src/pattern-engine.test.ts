@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { detectPatterns, scorePattern } from './index';
+import { createPatternFingerprint, detectPatterns, scorePattern } from './index';
 
 describe('pattern engine', () => {
+  it('creates a stable semantic fingerprint across topic order, case, and whitespace', () => {
+    expect(createPatternFingerprint('repeated_theme', [' Desktop  AI ', 'Memory'])).toBe(
+      createPatternFingerprint('repeated_theme', ['memory', 'desktop ai'])
+    );
+    expect(createPatternFingerprint('repeated_theme', ['memory'])).not.toBe(
+      createPatternFingerprint('repeated_theme', ['sprite'])
+    );
+  });
   it('scores repeated patterns with feedback weight', () => {
     expect(scorePattern({ frequency: 0.8, recency: 0.8, emotionalWeight: 0.7, feedbackWeight: 0.9 }).finalScore).toBeGreaterThan(0.75);
   });

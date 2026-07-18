@@ -9,6 +9,7 @@ import {
 } from './index';
 import type { ActionOrchestratorDeps } from './index';
 import type { ActionPermissionState } from '@our-companion/shared';
+import { listEnabledActionCapabilities } from '@our-companion/shared';
 
 // ─── Rule-based planner ───────────────────────────────────────────────────
 
@@ -24,6 +25,29 @@ describe('planActionFromRules', () => {
   it('parses bare https url shorthand', () => {
     const plan = planActionFromRules('open https://example.com');
     expect(plan?.steps[0].toolName).toBe('open_url');
+  });
+
+  it.each([
+    ['open youtube.com', 'https://youtube.com'],
+    ['open www.youtube.com', 'https://www.youtube.com'],
+    ['go to docs.example.co.uk/path', 'https://docs.example.co.uk/path'],
+    ['打开 youtube.com', 'https://youtube.com'],
+    ['打开 https://youtube.com', 'https://youtube.com'],
+  ])('normalizes safe URL command %s', (command, expected) => {
+    const plan = planActionFromRules(command);
+    expect(plan?.steps[0]).toMatchObject({ toolName: 'open_url', args: { url: expected } });
+    expect(plan?.steps[0].requiredScopes).toEqual(['browser']);
+  });
+
+  it.each([
+    'open javascript:alert(1)',
+    'open file:///tmp/private',
+    'open data:text/plain,hello',
+    'open localhost:3000',
+    'open 192.168.1.2',
+    'open hello world',
+  ])('rejects unsafe or non-domain URL command %s', (command) => {
+    expect(planActionFromRules(command)).toBeUndefined();
   });
 
   it('parses open app command', () => {
@@ -86,6 +110,11 @@ describe('planAction', () => {
     const plan = await planAction('please navigate to example.com', llm);
     expect(llm.completeJson).toHaveBeenCalledOnce();
     expect(plan?.status).toBe('draft');
+    const systemPrompt = llm.completeJson.mock.calls[0][0][0].content;
+    for (const capability of listEnabledActionCapabilities()) {
+      expect(systemPrompt).toContain(`Tool: ${capability.toolName}`);
+      expect(systemPrompt).toContain(`Required scopes: ${capability.requiredScopes.join(', ')}`);
+    }
   });
 
   it('restores the canonical permission scope when the llm returns an empty list', async () => {

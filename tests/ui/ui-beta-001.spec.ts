@@ -34,14 +34,14 @@ type LifecycleFixture = {
   chatSendFails?: boolean;
 };
 
-const account = { id: 'owner-1', email: 'owner@example.test', username: 'Ari', friendCode: 'ARI00001' };
+const account = { id: 'owner-1', email: 'owner@example.test', username: 'Ari', uid: 'OC-ARI78XYZ', friendCode: 'ARI00001' };
 const onlineStatus = { state: 'online', onlineModeEnabled: true, serverUrl: 'https://fixture.example', account, features: { visitInvitations: true, visitSessions: true } };
 const localCompanion = { id: 'local-1', name: 'Mochi', description: 'A curious notebook companion', isPrimary: true, createdAt: '2026-07-01T10:00:00.000Z', updatedAt: '2026-07-01T10:00:00.000Z' };
 const activePack = { id: 'pack-1', companionId: 'network-companion-1', manifestHash: 'fixture-hash', schemaVersion: 1, status: 'active', totalFiles: 12, totalBytes: 3145728, createdAt: '2026-07-15T10:00:00.000Z', updatedAt: '2026-07-15T10:03:00.000Z', activatedAt: '2026-07-15T10:03:00.000Z' };
 const publishedProfile = { id: 'network-companion-1', ownerUserId: account.id, name: 'Mochi', publicDescription: 'Curious, calm, and ready to visit.', publicTags: ['curious', 'gentle'], visibility: 'friends_only', published: true, activeAssetPackId: activePack.id, createdAt: '2026-07-15T10:00:00.000Z', updatedAt: '2026-07-15T10:03:00.000Z', publishedAt: '2026-07-15T10:03:00.000Z', assetPacks: [activePack] };
-const friend = { userId: 'friend-1', username: 'Mira', friendCode: 'MIRA0001', presence: 'online', hasPublishedCompanion: true };
-const incomingRequest = { id: 'request-in-1', direction: 'incoming', userId: 'request-user-1', username: 'Sol', friendCode: 'SOL00001', status: 'pending', createdAt: '2026-07-16T08:30:00.000Z' };
-const outgoingRequest = { id: 'request-out-1', direction: 'outgoing', userId: 'request-user-2', username: 'Jun', friendCode: 'JUN00001', status: 'pending', createdAt: '2026-07-16T09:30:00.000Z' };
+const friend = { userId: 'friend-1', username: 'Mira', uid: 'OC-MIRA8XYZ', friendCode: 'MIRA0001', presence: 'online', hasPublishedCompanion: true };
+const incomingRequest = { id: 'request-in-1', direction: 'incoming', userId: 'request-user-1', username: 'Sol', uid: 'OC-SOL78XYZ', friendCode: 'SOL00001', status: 'pending', createdAt: '2026-07-16T08:30:00.000Z' };
+const outgoingRequest = { id: 'request-out-1', direction: 'outgoing', userId: 'request-user-2', username: 'Jun', uid: 'OC-JUN78XYZ', friendCode: 'JUN00001', status: 'pending', createdAt: '2026-07-16T09:30:00.000Z' };
 const invitation = { id: 'invite-1', visitorOwnerUserId: friend.userId, hostUserId: account.id, networkCompanionId: 'friend-companion-1', assetPackId: 'friend-pack-1', companionName: 'Lumi', companionDescription: 'A quiet visitor', companionTags: ['gentle'], status: 'pending', expiresAt: '2026-07-18T10:00:00.000Z', createdAt: '2026-07-17T10:00:00.000Z', updatedAt: '2026-07-17T10:00:00.000Z' };
 
 function fixture(overrides: Partial<LifecycleFixture> = {}): LifecycleFixture {
@@ -166,7 +166,12 @@ test('UI-BETA-001 operational lifecycle state evidence', async () => {
         'entered'
       );
       await emitLifecycleStatus(panel, next);
-      await panel.waitForTimeout(220);
+      // Let both React and Electron's software compositor settle before taking
+      // repeated state screenshots from the same window.
+      await panel.waitForTimeout(400);
+      await panel.evaluate(() => new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }));
     };
 
     for (const [name, status] of [
