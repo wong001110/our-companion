@@ -2298,6 +2298,11 @@ export interface OurCompanionApi {
     updateBaseState(input: UpdateDiscoveryBaseStateInput): Promise<DiscoveryBase>;
     deleteBase(baseId: string): Promise<{ deleted: true }>;
     runBaseNow(baseId: string): Promise<ExplorationCycleResult>;
+    listSuppressedPlatforms(): Promise<ManagedDiscoveryPlatformPreference[]>;
+    restoreManagedPlatform(platformId: ManagedDiscoveryPlatformId): Promise<DiscoveryBase>;
+    getAutoManageDefaultPlatforms(): Promise<boolean>;
+    setAutoManageDefaultPlatforms(enabled: boolean): Promise<boolean>;
+    getBootstrapStatus(): Promise<DiscoveryBootstrapResult | null>;
     onAnnounce(listener: (payload: DiscoveryAnnouncePayload) => void): () => void;
     generateNow(): Promise<Discovery[]>;
     presentNext(): Promise<boolean>;
@@ -2869,11 +2874,51 @@ export interface CompanionProfile {
   updatedAt: string;
 }
 
+export type ManagedDiscoveryPlatformId = 'reddit' | 'youtube' | 'github' | 'bilibili';
+
+export interface CompanionDiscoveryPlatformQuery {
+  platformId: ManagedDiscoveryPlatformId;
+  query: string;
+}
+
+export interface CompanionDiscoverySeedPlan {
+  interests: string[];
+  genericQuery: string;
+  platformQueries: CompanionDiscoveryPlatformQuery[];
+  curatedFeedIds: string[];
+}
+
 export interface CompanionPersonalityAnalysis {
   analysisId: string;
   personality: CompanionPersonality;
   description: string;
   expiresAt: string;
+  discoverySeedPlan?: CompanionDiscoverySeedPlan;
+}
+
+export type DiscoveryBootstrapStatus =
+  | 'completed'
+  | 'provider_unavailable'
+  | 'no_candidates'
+  | 'deferred';
+
+export interface DiscoveryBootstrapResult {
+  attempted: boolean;
+  executedSourceIds: string[];
+  status: DiscoveryBootstrapStatus;
+  reason?: string;
+}
+
+export interface ManagedDiscoveryPlatformPreference {
+  companionId: string;
+  platformId: ManagedDiscoveryPlatformId;
+  state: 'enabled' | 'suppressed';
+  updatedAt: string;
+}
+
+export interface CreateCompanionResult {
+  companion: CompanionProfile;
+  discoveryBootstrap: DiscoveryBootstrapResult;
 }
 
 const COMPANION_ANIMATION_MANIFEST_SOURCE = [

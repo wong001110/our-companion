@@ -36,8 +36,23 @@ import {
   selectDiscoveryMode,
   startDiscoveryTrial,
   transitionDiscoveryBase,
+  buildCompanionDiscoverySeedPlan,
+  buildManagedPlatformSourceData,
+  getCuratedDiscoveryFeed,
+  getDiscoveryPlatformPreset,
+  isManagedPlatformSeed,
+  listCuratedDiscoveryFeedIds,
+  MANAGED_DISCOVERY_PLATFORM_PRESETS,
+  parseDiscoverySeedPlanFromAnalysis,
+  PERSONALITY_PLATFORM_SEED_MANAGED_BY,
+  PERSONALITY_SEED_MANAGED_BY,
+  platformIdFromManagedSource,
+  DISCOVERY_PLATFORM_BOOTSTRAP_VERSION,
+  type CompanionDiscoverySeedPlan,
   type DiscoveryBase,
-  type DiscoveryConnector
+  type DiscoveryConnector,
+  type ManagedDiscoveryPlatformId,
+  type ManagedDiscoveryPlatformPreference,
 } from '@our-companion/discovery-engine';
 import { generateInsights, selectPrimaryInsight } from '@our-companion/insight-engine';
 import { createJourney, createJourneyMilestone } from '@our-companion/journey-engine';
@@ -87,6 +102,7 @@ import type {
   DiscoveryInspectionRecord,
   DiscoveryBaseState,
   DiscoverySource,
+  DiscoveryBootstrapResult,
   EngineProviderMode,
   EngineTrace,
   EngineTraceStatus,
@@ -177,8 +193,26 @@ const FOUNDATION_EVENT_LOG_MAX = 200;
 const PERSONALITY_ANALYSIS_MAX_ENTRIES = 50;
 const DISCOVERY_REEVALUATION_BASE_MS = 2 * 60 * 1000;
 const DISCOVERY_REEVALUATION_MAX_MS = 30 * 60 * 1000;
+const AUTO_MANAGE_DEFAULT_PLATFORMS_KEY = 'discovery.autoManageDefaultPlatforms';
+const EXISTING_MANAGED_SOURCE_STATES = new Set(['trial', 'active', 'muted', 'blocked', 'expired', 'rejected']);
 export const MAX_COMPANION_ASSET_BYTES = 20 * 1024 * 1024;
 export const MAX_COMPANION_TOTAL_ASSET_BYTES = 200 * 1024 * 1024;
+
+type PersonalityAnalysisRecord = {
+  personality: CompanionPersonality;
+  description: string;
+  expiresAt: number;
+  used: boolean;
+  discoverySeedPlan?: CompanionDiscoverySeedPlan;
+};
+
+function companionDiscoveryPreferencesKey(companionId: string): string {
+  return `companion.discovery.${companionId}.platformPreferences`;
+}
+
+function companionDiscoveryBootstrapKey(companionId: string): string {
+  return `companion.discovery.${companionId}.bootstrap`;
+}
 
 export interface AppRuntimeDependencies {
   now?: () => Date;
@@ -270,7 +304,8 @@ export class AppServices {
   private foundationEventLog: BaseEvent[] = [];
   private lastSchedulerTick?: string;
   private runtimeStarted = false;
-  private readonly personalityAnalyses = new Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>();
+  private readonly personalityAnalyses = new Map<string, PersonalityAnalysisRecord>();
+  private readonly discoveryBootstrapByCompanion = new Map<string, DiscoveryBootstrapResult>();
   readonly network: NetworkConnectionService;
   readonly publicCompanions: PublicCompanionService;
   readonly visits: VisitService;
@@ -282,6 +317,7 @@ export class AppServices {
   private readonly now: () => Date;
   private readonly random: () => number;
   private readonly discoveryConnectors: DiscoveryConnector[];
+  private readonly webSearchProvider: WebSearchProvider;
   private readonly researchOrchestrator: ResearchOrchestrator;
   private readonly manualResearchPageFetcher: SafeWebPageFetcher;
   private readonly researchFixtureEnabled: boolean;
@@ -319,9 +355,10 @@ export class AppServices {
     this.researchFixtureEnabled = (!app.isPackaged || process.env.OUR_COMPANION_SMOKE_TEST === '1')
       && process.env.OUR_COMPANION_RESEARCH_FIXTURE === '1';
     this.manualResearchPageFetcher = new SafeWebPageFetcher({ now: this.now });
+    this.webSearchProvider = runtimeDependencies.webSearchProvider
+      ?? (this.researchFixtureEnabled ? createDeterministicFixtureSearchProvider() : new BraveWebSearchProvider());
     this.researchOrchestrator = new ResearchOrchestrator({
-      searchProvider: runtimeDependencies.webSearchProvider
-        ?? (this.researchFixtureEnabled ? createDeterministicFixtureSearchProvider() : new BraveWebSearchProvider()),
+      searchProvider: this.webSearchProvider,
       pageFetcher: runtimeDependencies.webPageFetcher
         ?? (this.researchFixtureEnabled ? new FixtureWebPageFetcher(this.now) : new SafeWebPageFetcher({ now: this.now })),
       structuredConnectors: this.discoveryConnectors,
@@ -533,81 +570,443 @@ export class AppServices {
     }
   }
 
-  private syncPersonalityDiscoverySeed(companion: CompanionProfile): void {
+  private getAutoManageDefaultPlatforms(): boolean {
+    return this.db.getAppSetting<boolean>(AUTO_MANAGE_DEFAULT_PLATFORMS_KEY) ?? true;
+  }
+
+  private setAutoManageDefaultPlatforms(enabled: boolean): boolean {
+    this.db.setAppSetting(AUTO_MANAGE_DEFAULT_PLATFORMS_KEY, enabled);
+    return enabled;
+  }
+
+  private listPlatformPreferences(companionId: string): ManagedDiscoveryPlatformPreference[] {
+    return this.db.getAppSetting<ManagedDiscoveryPlatformPreference[]>(
+      companionDiscoveryPreferencesKey(companionId),
+    ) ?? [];
+  }
+
+  private savePlatformPreferences(
+    companionId: string,
+    preferences: ManagedDiscoveryPlatformPreference[],
+  ): void {
+    this.db.setAppSetting(companionDiscoveryPreferencesKey(companionId), preferences);
+  }
+
+  private isPlatformSuppressed(companionId: string, platformId: ManagedDiscoveryPlatformId): boolean {
+    return this.listPlatformPreferences(companionId)
+      .some((entry) => entry.platformId === platformId && entry.state === 'suppressed');
+  }
+
+  private suppressManagedPlatform(companionId: string, platformId: ManagedDiscoveryPlatformId): void {
     const now = this.now().toISOString();
+    const preferences = this.listPlatformPreferences(companionId)
+      .filter((entry) => entry.platformId !== platformId);
+    preferences.push({ companionId, platformId, state: 'suppressed', updatedAt: now });
+    this.savePlatformPreferences(companionId, preferences);
+  }
+
+  private clearPlatformSuppression(companionId: string, platformId: ManagedDiscoveryPlatformId): void {
+    const now = this.now().toISOString();
+    const preferences = this.listPlatformPreferences(companionId)
+      .filter((entry) => entry.platformId !== platformId);
+    preferences.push({ companionId, platformId, state: 'enabled', updatedAt: now });
+    this.savePlatformPreferences(companionId, preferences);
+  }
+
+  private clearCompanionDiscoveryPreferences(companionId: string): void {
+    this.db.setAppSetting(companionDiscoveryPreferencesKey(companionId), []);
+    this.db.setAppSetting(companionDiscoveryBootstrapKey(companionId), null);
+    this.discoveryBootstrapByCompanion.delete(companionId);
+  }
+
+  private persistBootstrapStatus(companionId: string, result: DiscoveryBootstrapResult): void {
+    this.discoveryBootstrapByCompanion.set(companionId, result);
+    this.db.setAppSetting(companionDiscoveryBootstrapKey(companionId), result);
+  }
+
+  private getBootstrapStatus(companionId?: string): DiscoveryBootstrapResult | null {
+    const id = companionId ?? this.db.getPrimaryCompanion()?.id;
+    if (!id) return null;
+    return this.discoveryBootstrapByCompanion.get(id)
+      ?? this.db.getAppSetting<DiscoveryBootstrapResult>(companionDiscoveryBootstrapKey(id))
+      ?? null;
+  }
+
+  private resolveDiscoverySeedPlan(
+    companion: CompanionProfile,
+    analysis?: PersonalityAnalysisRecord,
+  ): CompanionDiscoverySeedPlan {
+    if (analysis?.discoverySeedPlan) return analysis.discoverySeedPlan;
+    return buildCompanionDiscoverySeedPlan({ description: companion.personalityDescription });
+  }
+
+  private syncPersonalityDiscoverySeed(
+    companion: CompanionProfile,
+    analysis?: PersonalityAnalysisRecord,
+  ): string[] {
+    return this.syncManagedDiscoverySources(companion, this.resolveDiscoverySeedPlan(companion, analysis));
+  }
+
+  private syncManagedDiscoverySources(
+    companion: CompanionProfile,
+    seedPlan: CompanionDiscoverySeedPlan,
+  ): string[] {
+    const now = this.now().toISOString();
+    const changedSourceIds: string[] = [];
     const normalizedDescription = companion.personalityDescription.trim().replace(/\s+/g, ' ');
-    if (!normalizedDescription) return;
-    const topic = normalizedDescription.slice(0, 240);
+    if (!normalizedDescription) return changedSourceIds;
+    const revision = createSemanticFingerprint('personality_revision', [normalizedDescription]);
+    const existingBases = this.db.listDiscoveryBases(companion.id, undefined, 1_000);
+
+    const genericChanged = this.syncGenericPersonalitySeed({
+      companion,
+      seedPlan,
+      revision,
+      now,
+      existingBases,
+    });
+    if (genericChanged) changedSourceIds.push(genericChanged);
+
+    if (this.getAutoManageDefaultPlatforms()) {
+      for (const platformQuery of seedPlan.platformQueries) {
+        const changed = this.syncManagedPlatformSeed({
+          companion,
+          platformId: platformQuery.platformId,
+          query: platformQuery.query,
+          topicKeys: seedPlan.interests,
+          revision,
+          now,
+          existingBases,
+        });
+        if (changed) changedSourceIds.push(changed);
+      }
+    }
+
+    return changedSourceIds;
+  }
+
+  private syncGenericPersonalitySeed(input: {
+    companion: CompanionProfile;
+    seedPlan: CompanionDiscoverySeedPlan;
+    revision: string;
+    now: string;
+    existingBases: ReadonlyArray<ReturnType<DatabaseService['listDiscoveryBases']>[number]>;
+  }): string | undefined {
+    const locator = input.seedPlan.genericQuery.trim().replace(/\s+/g, ' ').slice(0, 500);
+    if (locator.length < 3) return undefined;
     const intent = createAdaptiveExplorationIntent({
-      mode: companion.personality.curiosity >= 65 ? 'wildcard' : 'adjacent',
-      topic,
-      expectedValue: `Find evidence-backed ideas that fit ${companion.name}'s personality and can broaden future exploration.`,
+      mode: input.companion.personality.curiosity >= 65 ? 'wildcard' : 'adjacent',
+      topic: locator.slice(0, 240),
+      expectedValue: `Find evidence-backed ideas that fit ${input.companion.name}'s personality and can broaden future exploration.`,
       freshness: 'any',
       trustRequirement: 'corroborated',
       languages: [this.getAiSettings().replyLanguage === 'zh-CN' ? 'zh-CN' : 'en'],
-      searchTasks: [`${topic} useful ideas developments`],
-      createdAt: now,
+      searchTasks: [locator],
+      createdAt: input.now,
     });
-    const locator = intent.searchTasks[0]?.trim();
-    if (!locator) return;
-    const existingBases = this.db.listDiscoveryBases(companion.id, undefined, 1_000);
-    const existing = existingBases.find((base) => base.data.managedBy === 'personality_seed')
-      ?? existingBases.find((base) => base.origin === 'personality');
-    const revision = createSemanticFingerprint('personality_revision', [normalizedDescription]);
+    const existing = input.existingBases.find((base) => base.data.managedBy === PERSONALITY_SEED_MANAGED_BY)
+      ?? input.existingBases.find((base) => base.origin === 'personality' && !isManagedPlatformSeed(base.data));
     const data = {
       ...(existing?.data ?? {}),
-      managedBy: 'personality_seed',
-      personalityRevision: revision,
+      managedBy: PERSONALITY_SEED_MANAGED_BY,
+      label: getDiscoveryPlatformPreset('generic-web').label,
+      platformId: 'generic-web',
+      platformLabel: getDiscoveryPlatformPreset('generic-web').label,
+      bootstrapVersion: DISCOVERY_PLATFORM_BOOTSTRAP_VERSION,
+      personalityRevision: input.revision,
+      topicKeys: input.seedPlan.interests,
       intentQuestion: intent.question,
       mode: intent.mode,
       expectedValue: intent.expectedValue,
     };
     if (existing) {
-      if (existing.data.managedBy && existing.data.managedBy !== 'personality_seed') return;
-      if (existing.data.userModifiedAt) return;
-      if (existing.data.personalityRevision === revision && existing.locator === locator) return;
+      if (existing.data.managedBy && existing.data.managedBy !== PERSONALITY_SEED_MANAGED_BY) return undefined;
+      if (existing.data.userModifiedAt) return undefined;
+      if (existing.data.personalityRevision === input.revision && existing.locator === locator) return undefined;
       const conflicting = this.db.getDiscoveryBaseByLocator(
-        companion.id,
+        input.companion.id,
         'generic-web',
         'query',
         locator,
       );
-      if (conflicting && conflicting.id !== existing.id) return;
+      if (conflicting && conflicting.id !== existing.id) return undefined;
       this.db.updateDiscoveryBase({
         ...existing,
         connectorId: 'generic-web',
         scope: 'query',
         locator,
         data,
-        updatedAt: now,
+        updatedAt: input.now,
       });
-      return;
+      return existing.id;
     }
     const conflictingUserBase = this.db.getDiscoveryBaseByLocator(
-      companion.id,
+      input.companion.id,
       'generic-web',
       'query',
       locator,
     );
-    if (conflictingUserBase) return;
+    if (conflictingUserBase) return undefined;
     const id = createSemanticFingerprint('discovery_base', [
-      companion.id,
+      input.companion.id,
       'generic-web',
-      'personality_seed',
+      PERSONALITY_SEED_MANAGED_BY,
     ]);
     this.db.upsertDiscoveryBase(startDiscoveryTrial({
       base: {
         id,
-        companionId: companion.id,
+        companionId: input.companion.id,
         connectorId: 'generic-web',
         scope: 'query',
         locator,
         data,
         origin: 'personality',
-        discoveredAt: now,
+        discoveredAt: input.now,
       },
-      now,
+      now: input.now,
     }));
+    return id;
+  }
+
+  private syncManagedPlatformSeed(input: {
+    companion: CompanionProfile;
+    platformId: ManagedDiscoveryPlatformId;
+    query: string;
+    topicKeys: readonly string[];
+    revision: string;
+    now: string;
+    existingBases: ReadonlyArray<ReturnType<DatabaseService['listDiscoveryBases']>[number]>;
+  }): string | undefined {
+    if (this.isPlatformSuppressed(input.companion.id, input.platformId)) return undefined;
+    const locator = input.query.trim().replace(/\s+/g, ' ').slice(0, 500);
+    if (locator.length < 3) return undefined;
+    const existing = input.existingBases.find((base) =>
+      isManagedPlatformSeed(base.data) && platformIdFromManagedSource(base.data) === input.platformId
+    );
+    if (existing) {
+      if (!EXISTING_MANAGED_SOURCE_STATES.has(existing.state)) return undefined;
+      const data = buildManagedPlatformSourceData({
+        platformId: input.platformId,
+        personalityRevision: input.revision,
+        topicKeys: input.topicKeys,
+        existing: existing.data,
+      });
+      if (existing.data.personalityRevision === input.revision && existing.locator === locator) {
+        return undefined;
+      }
+      const conflicting = this.db.getDiscoveryBaseByLocator(
+        input.companion.id,
+        'generic-web',
+        'query',
+        locator,
+      );
+      if (conflicting && conflicting.id !== existing.id) return undefined;
+      this.db.updateDiscoveryBase({
+        ...existing,
+        connectorId: 'generic-web',
+        scope: 'query',
+        locator,
+        data,
+        updatedAt: input.now,
+      });
+      return existing.id;
+    }
+    const conflicting = this.db.getDiscoveryBaseByLocator(
+      input.companion.id,
+      'generic-web',
+      'query',
+      locator,
+    );
+    if (conflicting) return undefined;
+    const id = createSemanticFingerprint('discovery_base', [
+      input.companion.id,
+      'generic-web',
+      PERSONALITY_PLATFORM_SEED_MANAGED_BY,
+      input.platformId,
+    ]);
+    this.db.upsertDiscoveryBase(startDiscoveryTrial({
+      base: {
+        id,
+        companionId: input.companion.id,
+        connectorId: 'generic-web',
+        scope: 'query',
+        locator,
+        data: buildManagedPlatformSourceData({
+          platformId: input.platformId,
+          personalityRevision: input.revision,
+          topicKeys: input.topicKeys,
+        }),
+        origin: 'personality',
+        discoveredAt: input.now,
+      },
+      now: input.now,
+    }));
+    return id;
+  }
+
+  private async ensureCuratedFeedSources(
+    companion: CompanionProfile,
+    seedPlan: CompanionDiscoverySeedPlan,
+  ): Promise<string[]> {
+    const changed: string[] = [];
+    const now = this.now().toISOString();
+    const revision = createSemanticFingerprint('personality_revision', [
+      companion.personalityDescription.trim().replace(/\s+/g, ' '),
+    ]);
+    for (const feedId of seedPlan.curatedFeedIds) {
+      const feed = getCuratedDiscoveryFeed(feedId);
+      if (!feed) continue;
+      const existingBases = this.db.listDiscoveryBases(companion.id, undefined, 1_000);
+      const existing = existingBases.find((base) =>
+        base.connectorId === 'rss'
+        && base.data.managedBy === PERSONALITY_PLATFORM_SEED_MANAGED_BY
+        && base.data.curatedFeedId === feedId
+      );
+      if (existing) continue;
+      const conflicting = this.db.getDiscoveryBaseByLocator(companion.id, 'rss', 'feed', feed.url);
+      if (conflicting) continue;
+      try {
+        await this.probeDiscoveryFeed(feed.url, companion.id);
+      } catch (error) {
+        this.persistBootstrapStatus(companion.id, {
+          attempted: true,
+          executedSourceIds: [],
+          status: 'deferred',
+          reason: `curated_feed_probe_failed:${feedId}:${error instanceof Error ? error.message : 'unknown'}`,
+        });
+        continue;
+      }
+      const id = createSemanticFingerprint('discovery_base', [
+        companion.id,
+        'rss',
+        PERSONALITY_PLATFORM_SEED_MANAGED_BY,
+        feedId,
+      ]);
+      this.db.upsertDiscoveryBase(startDiscoveryTrial({
+        base: {
+          id,
+          companionId: companion.id,
+          connectorId: 'rss',
+          scope: 'feed',
+          locator: feed.url,
+          data: {
+            managedBy: PERSONALITY_PLATFORM_SEED_MANAGED_BY,
+            curatedFeedId: feedId,
+            label: feed.label,
+            platformLabel: 'RSS',
+            bootstrapVersion: DISCOVERY_PLATFORM_BOOTSTRAP_VERSION,
+            personalityRevision: revision,
+            topicKeys: seedPlan.interests,
+          },
+          origin: 'personality',
+          discoveredAt: now,
+        },
+        now,
+      }));
+      changed.push(id);
+    }
+    return changed;
+  }
+
+  private async runInitialDiscoveryBootstrap(
+    companion: CompanionProfile,
+    sourceIds: string[],
+  ): Promise<DiscoveryBootstrapResult> {
+    const runnable = sourceIds
+      .map((id) => this.db.getDiscoveryBase(id, companion.id))
+      .filter((base): base is NonNullable<typeof base> => {
+        if (!base) return false;
+        return base.state === 'trial' || base.state === 'active';
+      });
+    if (runnable.length === 0) {
+      const result: DiscoveryBootstrapResult = {
+        attempted: true,
+        executedSourceIds: [],
+        status: 'deferred',
+        reason: 'No runnable managed discovery sources were available.',
+      };
+      this.persistBootstrapStatus(companion.id, result);
+      return result;
+    }
+    if (this.webSearchProvider.mode === 'unavailable') {
+      const result: DiscoveryBootstrapResult = {
+        attempted: true,
+        executedSourceIds: [],
+        status: 'provider_unavailable',
+        reason: 'Search provider is not configured.',
+      };
+      for (const base of runnable.slice(0, 1)) {
+        this.db.updateDiscoveryBase({
+          ...base,
+          data: {
+            ...base.data,
+            lastResult: 'provider_unavailable',
+            bootstrapDiagnostic: result.reason,
+          },
+          updatedAt: this.now().toISOString(),
+        });
+      }
+      this.persistBootstrapStatus(companion.id, result);
+      return result;
+    }
+
+    const selected = runnable[0]!;
+    try {
+      const exploration = await this.runAutonomousExploration(
+        { companionId: companion.id, trigger: 'manual' },
+        selected.id,
+      );
+      const inspection = this.latestDiscoveryInspections.get(companion.id);
+      const executedSourceIds = (inspection?.executedBases ?? [])
+        .map((base) => base.id)
+        .filter((id) => id === selected.id);
+      const refreshed = this.db.getDiscoveryBase(selected.id, companion.id);
+      if (refreshed && executedSourceIds.length === 0) {
+        this.db.updateDiscoveryBase({
+          ...refreshed,
+          data: {
+            ...refreshed.data,
+            lastResult: 'not_executed',
+            bootstrapDiagnostic: 'Search provider did not execute this source.',
+          },
+          updatedAt: this.now().toISOString(),
+        });
+      } else if (refreshed) {
+        this.db.updateDiscoveryBase({
+          ...refreshed,
+          data: {
+            ...refreshed.data,
+            lastResult: exploration.discoveryCandidates.length > 0 ? 'completed' : 'no_candidates',
+          },
+          updatedAt: this.now().toISOString(),
+        });
+      }
+      const result: DiscoveryBootstrapResult = {
+        attempted: true,
+        executedSourceIds,
+        status: executedSourceIds.length === 0
+          ? 'provider_unavailable'
+          : exploration.discoveryCandidates.length > 0
+            ? 'completed'
+            : 'no_candidates',
+        reason: executedSourceIds.length === 0
+          ? 'Search provider is not configured or did not execute.'
+          : exploration.discoveryCandidates.length > 0
+            ? undefined
+            : 'No discovery candidates were found.',
+      };
+      this.persistBootstrapStatus(companion.id, result);
+      return result;
+    } catch (error) {
+      const result: DiscoveryBootstrapResult = {
+        attempted: true,
+        executedSourceIds: [],
+        status: 'provider_unavailable',
+        reason: error instanceof Error ? error.message : 'Initial discovery bootstrap failed.',
+      };
+      this.persistBootstrapStatus(companion.id, result);
+      return result;
+    }
   }
 
   private async probeDiscoveryFeed(locator: string, companionId: string): Promise<void> {
@@ -754,8 +1153,20 @@ export class AppServices {
         stagingDir = undefined;
         companion = this.db.updateCompanion(companion.id, { assetRoot: `companion://${companion.id}/assets` });
         if (shouldBecomePrimary) companion = this.db.setPrimaryCompanion(companion.id);
-        this.syncPersonalityDiscoverySeed(companion);
+        const seedPlan = this.resolveDiscoverySeedPlan(companion, analysis);
+        const seededSourceIds = this.syncPersonalityDiscoverySeed(companion, analysis);
+        const curatedIds = await this.ensureCuratedFeedSources(companion, seedPlan);
         this.personalityAnalyses.delete(input.personalityAnalysisId);
+        try {
+          await this.runInitialDiscoveryBootstrap(companion, [...seededSourceIds, ...curatedIds]);
+        } catch {
+          this.persistBootstrapStatus(companion.id, {
+            attempted: true,
+            executedSourceIds: [],
+            status: 'provider_unavailable',
+            reason: 'Initial discovery bootstrap failed after Companion creation.',
+          });
+        }
         return companion;
       } catch (error) {
         analysis.used = false;
@@ -892,7 +1303,23 @@ export class AppServices {
           ...profileInput,
           name: name ?? current.name,
         });
-        if (personalityChanged) this.syncPersonalityDiscoverySeed(updated);
+        if (personalityChanged) {
+          const analysisForSeed = consumedAnalysisId
+            ? this.personalityAnalyses.get(consumedAnalysisId)
+            : undefined;
+          const seedPlan = this.resolveDiscoverySeedPlan(updated, analysisForSeed);
+          const changedIds = this.syncPersonalityDiscoverySeed(updated, analysisForSeed);
+          void this.ensureCuratedFeedSources(updated, seedPlan).then(async (curatedIds) => {
+            const refreshIds = [...changedIds, ...curatedIds];
+            const first = refreshIds[0];
+            if (!first || this.webSearchProvider.mode === 'unavailable') return;
+            try {
+              await this.runAutonomousExploration({ companionId: updated.id, trigger: 'manual' }, first);
+            } catch {
+              // Bounded refresh must not fail the personality edit.
+            }
+          });
+        }
         if (consumedAnalysisId) this.personalityAnalyses.delete(consumedAnalysisId);
         return updated;
       } catch (error) {
@@ -934,6 +1361,7 @@ export class AppServices {
       if (this.db.listCompanions().length <= 1) throw new Error('Create another Companion before deleting your only Companion.');
       if (companion.isPrimary) throw new Error('Choose another primary Companion before deleting this Companion.');
       const result = this.db.deleteCompanion(id);
+      this.clearCompanionDiscoveryPreferences(id);
       const companionDir = path.join(app.getPath('userData'), 'companions', id);
       if (fs.existsSync(companionDir)) fs.rmSync(companionDir, { recursive: true, force: true });
       return result;
@@ -941,6 +1369,7 @@ export class AppServices {
     setPrimary: async (id: string): Promise<CompanionProfile> => {
       this.cancelCommandForCompanionSwitch(id);
       const companion = this.db.setPrimaryCompanion(id);
+      this.syncPersonalityDiscoverySeed(companion);
       this.startRuntimeIfReady();
       return companion;
     },
@@ -1232,10 +1661,51 @@ export class AppServices {
     },
     deleteBase: async (baseId: string): Promise<{ deleted: true }> => {
       const companionId = this.db.resolveActiveCompanionId();
-      if (!this.db.getDiscoveryBase(baseId, companionId)) throw new Error('DISCOVERY_SOURCE_NOT_FOUND');
+      const existing = this.db.getDiscoveryBase(baseId, companionId);
+      if (!existing) throw new Error('DISCOVERY_SOURCE_NOT_FOUND');
+      const platformId = platformIdFromManagedSource(existing.data);
       if (!this.db.deleteDiscoveryBase(baseId, companionId)) throw new Error('DISCOVERY_SOURCE_DELETE_FAILED');
+      if (platformId) this.suppressManagedPlatform(companionId, platformId);
       return { deleted: true };
     },
+    listSuppressedPlatforms: async (): Promise<ManagedDiscoveryPlatformPreference[]> => {
+      const companionId = this.db.resolveActiveCompanionId();
+      return this.listPlatformPreferences(companionId)
+        .filter((entry) => entry.state === 'suppressed');
+    },
+    restoreManagedPlatform: async (platformId: ManagedDiscoveryPlatformId): Promise<DiscoveryBase> => {
+      const companion = this.requireActiveCompanion();
+      if (!MANAGED_DISCOVERY_PLATFORM_PRESETS.some((preset) => preset.id === platformId)) {
+        throw new Error('DISCOVERY_PLATFORM_UNKNOWN');
+      }
+      this.clearPlatformSuppression(companion.id, platformId);
+      const seedPlan = this.resolveDiscoverySeedPlan(companion);
+      const platformQuery = seedPlan.platformQueries.find((entry) => entry.platformId === platformId);
+      if (!platformQuery) throw new Error('DISCOVERY_PLATFORM_QUERY_MISSING');
+      const revision = createSemanticFingerprint('personality_revision', [
+        companion.personalityDescription.trim().replace(/\s+/g, ' '),
+      ]);
+      const sourceId = this.syncManagedPlatformSeed({
+        companion,
+        platformId,
+        query: platformQuery.query,
+        topicKeys: seedPlan.interests,
+        revision,
+        now: this.now().toISOString(),
+        existingBases: this.db.listDiscoveryBases(companion.id, undefined, 1_000),
+      });
+      const restored = sourceId
+        ? this.db.getDiscoveryBase(sourceId, companion.id)
+        : this.db.listDiscoveryBases(companion.id, undefined, 1_000)
+          .find((base) => platformIdFromManagedSource(base.data) === platformId);
+      if (!restored) throw new Error('DISCOVERY_PLATFORM_RESTORE_FAILED');
+      return { ...restored, origin: restored.origin as DiscoveryBase['origin'] };
+    },
+    getAutoManageDefaultPlatforms: async (): Promise<boolean> => this.getAutoManageDefaultPlatforms(),
+    setAutoManageDefaultPlatforms: async (enabled: boolean): Promise<boolean> => {
+      return this.setAutoManageDefaultPlatforms(Boolean(enabled));
+    },
+    getBootstrapStatus: async (): Promise<DiscoveryBootstrapResult | null> => this.getBootstrapStatus(),
     runBaseNow: async (baseId: string): Promise<ExplorationCycleResult> => {
       const companionId = this.db.resolveActiveCompanionId();
       const base = this.db.getDiscoveryBase(baseId, companionId);
@@ -3852,21 +4322,27 @@ export class AppServices {
     if (!this.getAiSettings().apiKeyConfigured) {
       throw new Error('AI configuration is required before analyzing personality. Configure the API key, model, and endpoint, then retry.');
     }
+    const knownFeedIds = listCuratedDiscoveryFeedIds();
     const { content } = await this.sendToAi({
       channel: 'personality_analysis',
       source: 'creation',
       messages: [{
         role: 'user',
-        content: `Analyze this Companion personality description. Return JSON only, with integer values from 0 to 100 for exactly: energy, curiosity, sociability, diligence, playfulness, confidence, calmness, shyness. Description: ${trimmed}`,
+        content: [
+          'Analyze this Companion personality description.',
+          'Return JSON only with:',
+          '1) integer values from 0 to 100 for exactly: energy, curiosity, sociability, diligence, playfulness, confidence, calmness, shyness',
+          '2) interests: an array of 3 to 5 concise interest phrases (no duplicates, avoid overly broad words)',
+          '3) curatedFeedIds: an array of feed IDs chosen only from the provided registry IDs (may be empty). Never invent RSS URLs.',
+          `Known curated feed IDs: ${knownFeedIds.join(', ') || '(none)'}`,
+          `Description: ${trimmed}`,
+        ].join('\n'),
       }],
     });
     const match = content.match(/\{[\s\S]*\}/);
     if (!match) throw new Error('AI personality analysis did not return valid JSON.');
     const raw = JSON.parse(match[0]) as Record<string, unknown>;
     const keys: Array<keyof CompanionPersonality> = ['energy', 'curiosity', 'sociability', 'diligence', 'playfulness', 'confidence', 'calmness', 'shyness'];
-    if (Object.keys(raw).some((key) => !keys.includes(key as keyof CompanionPersonality))) {
-      throw new Error('AI personality analysis returned unexpected fields.');
-    }
     const personality = {} as CompanionPersonality;
     for (const key of keys) {
       const value = raw[key];
@@ -3875,11 +4351,24 @@ export class AppServices {
       }
       personality[key] = value;
     }
+    const discoverySeedPlan = parseDiscoverySeedPlanFromAnalysis(trimmed, raw);
     const analysisId = createId('personality_analysis');
     const expiresAt = this.now().getTime() + 10 * 60 * 1000;
-    this.personalityAnalyses.set(analysisId, { personality, description: trimmed, expiresAt, used: false });
+    this.personalityAnalyses.set(analysisId, {
+      personality,
+      description: trimmed,
+      expiresAt,
+      used: false,
+      discoverySeedPlan,
+    });
     this.prunePersonalityAnalyses();
-    return { analysisId, personality, description: trimmed, expiresAt: new Date(expiresAt).toISOString() };
+    return {
+      analysisId,
+      personality,
+      description: trimmed,
+      expiresAt: new Date(expiresAt).toISOString(),
+      discoverySeedPlan,
+    };
   }
 
   private updateAiSettings(input: UpdateAiSettingsInput): AiSettings {

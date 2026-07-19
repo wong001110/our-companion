@@ -23,6 +23,9 @@ export * from './discoveryBases';
 export * from './discoverySeen';
 export * from './discoveryContext';
 export * from './sourceManagement';
+export * from './discoveryPlatformPresets';
+export * from './curatedDiscoveryFeeds';
+export * from './companionDiscoverySeed';
 
 export interface DiscoveryFetchInput {
   query?: string;

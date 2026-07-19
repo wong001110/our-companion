@@ -72,6 +72,11 @@ const api: OurCompanionApi = {
     updateBaseState: (input) => invoke('discovery:updateBaseState', input),
     deleteBase: (baseId) => invoke('discovery:deleteBase', baseId),
     runBaseNow: (baseId) => invoke('discovery:runBaseNow', baseId),
+    listSuppressedPlatforms: () => invoke('discovery:listSuppressedPlatforms'),
+    restoreManagedPlatform: (platformId) => invoke('discovery:restoreManagedPlatform', platformId),
+    getAutoManageDefaultPlatforms: () => invoke('discovery:getAutoManageDefaultPlatforms'),
+    setAutoManageDefaultPlatforms: (enabled) => invoke('discovery:setAutoManageDefaultPlatforms', enabled),
+    getBootstrapStatus: () => invoke('discovery:getBootstrapStatus'),
     onAnnounce: (listener: (payload: DiscoveryAnnouncePayload) => void) => {
       const channel = 'discovery:announce';
       const handler = (_event: Electron.IpcRendererEvent, payload: DiscoveryAnnouncePayload) => listener(payload);

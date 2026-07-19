@@ -3,6 +3,9 @@ import type {
   AddDiscoveryBaseInput,
   DiscoveryBase,
   DiscoveryBaseState,
+  DiscoveryBootstrapResult,
+  ManagedDiscoveryPlatformId,
+  ManagedDiscoveryPlatformPreference,
   UserDiscoverySourceType,
 } from '@our-companion/shared';
 import { ConfirmDialog } from '../../components/feedback/ConfirmDialog';
@@ -43,9 +46,37 @@ function friendlySourceError(message: string, fallback: string): string {
   return fallback;
 }
 
+function isPersonalityManaged(base: DiscoveryBase): boolean {
+  return base.origin === 'personality'
+    || base.data.managedBy === 'personality_seed'
+    || base.data.managedBy === 'personality_platform_seed';
+}
+
+function platformBadge(base: DiscoveryBase): string | undefined {
+  if (typeof base.data.platformLabel === 'string' && base.data.platformLabel.trim()) {
+    return base.data.platformLabel;
+  }
+  if (base.connectorId === 'rss' || base.scope === 'feed') return 'RSS';
+  if (base.data.managedBy === 'personality_seed') return 'Open Web';
+  return undefined;
+}
+
+function lastResultLabel(base: DiscoveryBase, lang: 'en' | 'zh-CN'): string {
+  const result = typeof base.data.lastResult === 'string' ? base.data.lastResult : '';
+  if (result === 'provider_unavailable' || result === 'not_executed') {
+    return t(lang, 'discovery_source_provider_unavailable');
+  }
+  if (result === 'no_candidates') return t(lang, 'discovery_source_no_candidates');
+  if (!result) return t(lang, 'discovery_source_no_result');
+  return result.replaceAll('_', ' ');
+}
+
 export function DiscoverySourcesPanel({ onFeedRefresh }: { onFeedRefresh(): Promise<void> }) {
   const lang = useLang();
   const [bases, setBases] = useState<DiscoveryBase[]>([]);
+  const [suppressed, setSuppressed] = useState<ManagedDiscoveryPlatformPreference[]>([]);
+  const [bootstrap, setBootstrap] = useState<DiscoveryBootstrapResult | null>(null);
+  const [autoManage, setAutoManage] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState('');
@@ -60,7 +91,16 @@ export function DiscoverySourcesPanel({ onFeedRefresh }: { onFeedRefresh(): Prom
     setLoading(true);
     setError('');
     try {
-      setBases(await window.ourCompanion.discovery.listBases());
+      const [nextBases, nextSuppressed, nextBootstrap, nextAutoManage] = await Promise.all([
+        window.ourCompanion.discovery.listBases(),
+        window.ourCompanion.discovery.listSuppressedPlatforms(),
+        window.ourCompanion.discovery.getBootstrapStatus(),
+        window.ourCompanion.discovery.getAutoManageDefaultPlatforms(),
+      ]);
+      setBases(nextBases);
+      setSuppressed(nextSuppressed);
+      setBootstrap(nextBootstrap);
+      setAutoManage(nextAutoManage);
     } catch {
       setError(t(lang, 'discovery_sources_load_failed'));
     } finally {
@@ -138,6 +178,80 @@ export function DiscoverySourcesPanel({ onFeedRefresh }: { onFeedRefresh(): Prom
     }
   }
 
+  async function restorePlatform(platformId: ManagedDiscoveryPlatformId) {
+    setBusyId(`restore:${platformId}`);
+    setError('');
+    try {
+      await window.ourCompanion.discovery.restoreManagedPlatform(platformId);
+      await load();
+    } catch {
+      setError(t(lang, 'discovery_source_action_failed'));
+    } finally {
+      setBusyId('');
+    }
+  }
+
+  async function toggleAutoManage(next: boolean) {
+    setBusyId('auto-manage');
+    setError('');
+    try {
+      setAutoManage(await window.ourCompanion.discovery.setAutoManageDefaultPlatforms(next));
+    } catch {
+      setError(t(lang, 'discovery_source_action_failed'));
+    } finally {
+      setBusyId('');
+    }
+  }
+
+  const suggested = bases.filter(isPersonalityManaged);
+  const userAdded = bases.filter((base) => !isPersonalityManaged(base));
+  const showProviderNotice = bootstrap?.status === 'provider_unavailable'
+    || bases.some((base) => base.data.lastResult === 'provider_unavailable' || base.data.lastResult === 'not_executed');
+
+  function renderSourceRows(rows: DiscoveryBase[]) {
+    return rows.map((base) => {
+      const type = sourceType(base);
+      const isBusy = busyId === base.id;
+      const runnable = base.state === 'trial' || base.state === 'active';
+      const badge = platformBadge(base);
+      const disabledVisual = base.state === 'muted' || base.state === 'blocked' || base.state === 'expired' || base.state === 'rejected';
+      return (
+        <tr key={base.id} className={disabledVisual ? 'discovery-source-row-disabled' : undefined}>
+          <td data-label={t(lang, 'discovery_source_column_source')}>
+            <strong>{typeof base.data.label === 'string' ? base.data.label : base.locator}</strong>
+            {badge && <span className="source-platform-badge">{badge}</span>}
+            {typeof base.data.label === 'string' && <small>{base.locator}</small>}
+          </td>
+          <td data-label={t(lang, 'discovery_source_column_type_state')}>
+            <span>{t(lang, sourceTypeKey(type))}</span>
+            <span className={`source-state-badge source-state-${base.state}`}>{t(lang, stateKey(base.state))}</span>
+          </td>
+          <td data-label={t(lang, 'discovery_source_column_origin')}>
+            {isPersonalityManaged(base)
+              ? t(lang, 'discovery_source_suggested_by_personality')
+              : t(lang, 'discovery_source_added_by_user')}
+          </td>
+          <td data-label={t(lang, 'discovery_source_column_checked')}>{formatDate(base.lastCheckedAt, lang, t(lang, 'discovery_source_never'))}</td>
+          <td data-label={t(lang, 'discovery_source_column_result')}>{lastResultLabel(base, lang)}</td>
+          <td data-label={t(lang, 'discovery_source_column_created')}>{formatDate(base.discoveredAt, lang, t(lang, 'discovery_source_never'))}</td>
+          <td data-label={t(lang, 'discovery_source_column_actions')}>
+            <div className="source-action-menu">
+              <button type="button" disabled={isBusy || !runnable} onClick={() => void runNow(base)}>{t(lang, 'discovery_source_run_now')}</button>
+              {base.state !== 'active' && <button type="button" disabled={isBusy} onClick={() => void updateState(base, 'active')}>{t(lang, 'discovery_source_activate')}</button>}
+              {base.state !== 'muted' && <button type="button" disabled={isBusy} onClick={() => void updateState(base, 'muted')}>{t(lang, 'discovery_source_mute')}</button>}
+              {base.state !== 'blocked' && <button type="button" disabled={isBusy} onClick={() => void updateState(base, 'blocked')}>{t(lang, 'discovery_source_block')}</button>}
+              <button type="button" className="btn-danger" disabled={isBusy} onClick={() => setDeleteTarget(base)}>
+                {isPersonalityManaged(base) && base.data.managedBy === 'personality_platform_seed'
+                  ? t(lang, 'discovery_source_suppress')
+                  : t(lang, 'discovery_source_delete')}
+              </button>
+            </div>
+          </td>
+        </tr>
+      );
+    });
+  }
+
   return (
     <section className="discovery-sources-panel" aria-labelledby="discovery-sources-heading">
       <div className="discovery-section-heading">
@@ -149,59 +263,94 @@ export function DiscoverySourcesPanel({ onFeedRefresh }: { onFeedRefresh(): Prom
           {t(lang, 'discovery_source_add')}
         </button>
       </div>
+
+      <label className="discovery-auto-manage">
+        <input
+          type="checkbox"
+          checked={autoManage}
+          disabled={busyId === 'auto-manage'}
+          onChange={(event) => void toggleAutoManage(event.target.checked)}
+        />
+        <span>
+          <strong>{t(lang, 'discovery_auto_manage_title')}</strong>
+          <small>{t(lang, 'discovery_auto_manage_body')}</small>
+        </span>
+      </label>
+
+      {showProviderNotice && (
+        <InlineNotice tone="warning">
+          {t(lang, 'discovery_source_provider_unavailable_detail')}
+        </InlineNotice>
+      )}
       {error && <InlineNotice tone="error" action={<button type="button" onClick={() => void load()}>{t(lang, 'feedback_retry')}</button>}>{error}</InlineNotice>}
-      {loading ? <LoadingState /> : bases.length === 0 ? (
+      {loading ? <LoadingState /> : bases.length === 0 && suppressed.length === 0 ? (
         <EmptyState title={t(lang, 'discovery_sources_empty_title')} action={<button type="button" onClick={() => setAddOpen(true)}>{t(lang, 'discovery_source_add')}</button>}>
           {t(lang, 'discovery_sources_empty_body')}
         </EmptyState>
       ) : (
-        <div className="discovery-source-table-wrap">
-          <table className="discovery-source-table">
-            <thead>
-              <tr>
-                <th>{t(lang, 'discovery_source_column_source')}</th>
-                <th>{t(lang, 'discovery_source_column_type_state')}</th>
-                <th>{t(lang, 'discovery_source_column_origin')}</th>
-                <th>{t(lang, 'discovery_source_column_checked')}</th>
-                <th>{t(lang, 'discovery_source_column_result')}</th>
-                <th>{t(lang, 'discovery_source_column_created')}</th>
-                <th>{t(lang, 'discovery_source_column_actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bases.map((base) => {
-                const type = sourceType(base);
-                const isBusy = busyId === base.id;
-                const runnable = base.state === 'trial' || base.state === 'active';
-                return (
-                  <tr key={base.id}>
-                    <td data-label={t(lang, 'discovery_source_column_source')}>
-                      <strong>{typeof base.data.label === 'string' ? base.data.label : base.locator}</strong>
-                      {typeof base.data.label === 'string' && <small>{base.locator}</small>}
-                    </td>
-                    <td data-label={t(lang, 'discovery_source_column_type_state')}>
-                      <span>{t(lang, sourceTypeKey(type))}</span>
-                      <span className={`source-state-badge source-state-${base.state}`}>{t(lang, stateKey(base.state))}</span>
-                    </td>
-                    <td data-label={t(lang, 'discovery_source_column_origin')}>{t(lang, `discovery_source_origin_${base.origin}` as Parameters<typeof t>[1])}</td>
-                    <td data-label={t(lang, 'discovery_source_column_checked')}>{formatDate(base.lastCheckedAt, lang, t(lang, 'discovery_source_never'))}</td>
-                    <td data-label={t(lang, 'discovery_source_column_result')}>{typeof base.data.lastResult === 'string' ? base.data.lastResult.replaceAll('_', ' ') : t(lang, 'discovery_source_no_result')}</td>
-                    <td data-label={t(lang, 'discovery_source_column_created')}>{formatDate(base.discoveredAt, lang, t(lang, 'discovery_source_never'))}</td>
-                    <td data-label={t(lang, 'discovery_source_column_actions')}>
-                      <div className="source-action-menu">
-                        <button type="button" disabled={isBusy || !runnable} onClick={() => void runNow(base)}>{t(lang, 'discovery_source_run_now')}</button>
-                        {base.state !== 'active' && <button type="button" disabled={isBusy} onClick={() => void updateState(base, 'active')}>{t(lang, 'discovery_source_activate')}</button>}
-                        {base.state !== 'muted' && <button type="button" disabled={isBusy} onClick={() => void updateState(base, 'muted')}>{t(lang, 'discovery_source_mute')}</button>}
-                        {base.state !== 'blocked' && <button type="button" disabled={isBusy} onClick={() => void updateState(base, 'blocked')}>{t(lang, 'discovery_source_block')}</button>}
-                        <button type="button" className="btn-danger" disabled={isBusy} onClick={() => setDeleteTarget(base)}>{t(lang, 'discovery_source_delete')}</button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <>
+          {suggested.length > 0 && (
+            <div className="discovery-source-group">
+              <h3>{t(lang, 'discovery_source_suggested_by_personality')}</h3>
+              <div className="discovery-source-table-wrap">
+                <table className="discovery-source-table">
+                  <thead>
+                    <tr>
+                      <th>{t(lang, 'discovery_source_column_source')}</th>
+                      <th>{t(lang, 'discovery_source_column_type_state')}</th>
+                      <th>{t(lang, 'discovery_source_column_origin')}</th>
+                      <th>{t(lang, 'discovery_source_column_checked')}</th>
+                      <th>{t(lang, 'discovery_source_column_result')}</th>
+                      <th>{t(lang, 'discovery_source_column_created')}</th>
+                      <th>{t(lang, 'discovery_source_column_actions')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>{renderSourceRows(suggested)}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {userAdded.length > 0 && (
+            <div className="discovery-source-group">
+              <h3>{t(lang, 'discovery_source_added_by_user')}</h3>
+              <div className="discovery-source-table-wrap">
+                <table className="discovery-source-table">
+                  <thead>
+                    <tr>
+                      <th>{t(lang, 'discovery_source_column_source')}</th>
+                      <th>{t(lang, 'discovery_source_column_type_state')}</th>
+                      <th>{t(lang, 'discovery_source_column_origin')}</th>
+                      <th>{t(lang, 'discovery_source_column_checked')}</th>
+                      <th>{t(lang, 'discovery_source_column_result')}</th>
+                      <th>{t(lang, 'discovery_source_column_created')}</th>
+                      <th>{t(lang, 'discovery_source_column_actions')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>{renderSourceRows(userAdded)}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {suppressed.length > 0 && (
+            <div className="discovery-source-group">
+              <h3>{t(lang, 'discovery_source_suppressed_title')}</h3>
+              <ul className="discovery-suppressed-list">
+                {suppressed.map((entry) => (
+                  <li key={entry.platformId}>
+                    <span className="source-platform-badge">{entry.platformId}</span>
+                    <button
+                      type="button"
+                      disabled={busyId === `restore:${entry.platformId}`}
+                      onClick={() => void restorePlatform(entry.platformId)}
+                    >
+                      {t(lang, 'discovery_source_restore')}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
       )}
 
       {addOpen && (

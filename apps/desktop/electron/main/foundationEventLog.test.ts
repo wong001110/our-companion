@@ -315,7 +315,7 @@ describe('foundation event log', () => {
       assetRoot: '',
       assets: requiredAssets(),
     });
-    const originalSeed = (await services.discovery.listBases()).find((base) => base.origin === 'personality')!;
+    const originalSeed = (await services.discovery.listBases()).find((base) => base.data.managedBy === 'personality_seed')!;
     await services.discovery.updateBaseState({ baseId: originalSeed.id, state: 'blocked' });
     const manual = await services.discovery.addBase({
       sourceType: 'query',
@@ -340,7 +340,7 @@ describe('foundation event log', () => {
       personalityAnalysisId: 'personality-edit-success',
     });
     const bases = await services.discovery.listBases();
-    const updatedSeed = bases.find((base) => base.origin === 'personality');
+    const updatedSeed = bases.find((base) => base.data.managedBy === 'personality_seed');
     const preservedManual = bases.find((base) => base.id === manual.id);
     const preservedMuted = bases.find((base) => base.id === muted.id);
 
@@ -365,7 +365,9 @@ describe('foundation event log', () => {
       origin: 'user',
       state: 'muted',
     });
-    expect(bases).toHaveLength(3);
+    expect(bases.filter((base) => base.data.managedBy === 'personality_seed')).toHaveLength(1);
+    expect(bases.filter((base) => base.data.managedBy === 'personality_platform_seed')).toHaveLength(4);
+    expect(bases.filter((base) => base.origin === 'user')).toHaveLength(2);
     services.db.close();
   });
 
@@ -563,15 +565,30 @@ describe('foundation event log', () => {
     });
     expect(created.isPrimary).toBe(true);
     expect(internals.personalityAnalyses.has('success-fixture')).toBe(false);
-    expect(services.db.listDiscoveryBases(created.id, 'trial')).toEqual([
-      expect.objectContaining({
-        companionId: created.id,
-        connectorId: 'generic-web',
-        scope: 'query',
-        origin: 'personality',
-      }),
-    ]);
-    await expect(services.companionNew.create({
+    expect(services.db.listDiscoveryBases(created.id, 'trial')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          companionId: created.id,
+          connectorId: 'generic-web',
+          scope: 'query',
+          origin: 'personality',
+          data: expect.objectContaining({ managedBy: 'personality_seed' }),
+        }),
+        expect.objectContaining({
+          data: expect.objectContaining({ managedBy: 'personality_platform_seed', platformId: 'reddit' }),
+        }),
+        expect.objectContaining({
+          data: expect.objectContaining({ managedBy: 'personality_platform_seed', platformId: 'youtube' }),
+        }),
+        expect.objectContaining({
+          data: expect.objectContaining({ managedBy: 'personality_platform_seed', platformId: 'github' }),
+        }),
+        expect.objectContaining({
+          data: expect.objectContaining({ managedBy: 'personality_platform_seed', platformId: 'bilibili' }),
+        }),
+      ]),
+    );
+    expect(services.db.listDiscoveryBases(created.id, 'trial')).toHaveLength(5);    await expect(services.companionNew.create({
       name: 'Reuse', personalityDescription: 'Success fixture', personalityAnalysisId: 'success-fixture', assetRoot: '', assets: requiredAssets(),
     })).rejects.toThrow('invalid, expired, or already used');
 

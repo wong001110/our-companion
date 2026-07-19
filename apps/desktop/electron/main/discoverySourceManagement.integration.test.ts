@@ -106,44 +106,50 @@ describe('Discovery Source management', () => {
     expect(services.db.getDiscoveryBase(source.id, first.id)).toBeDefined();
   });
 
-  it('backfills one stable personality seed, updates it in place, and preserves blocked state', async () => {
+  it('backfills default managed platform sources, updates them in place, and preserves blocked state', async () => {
     const services = createServices();
     const companion = addCompanion(services, 'Seed', 'Calm product design research');
 
     const first = (await services.discovery.listBases()).filter((base) => base.origin === 'personality');
-    expect(first).toHaveLength(1);
-    expect(first[0]?.data).toMatchObject({ managedBy: 'personality_seed' });
-    const seedId = first[0]!.id;
+    expect(first.length).toBeGreaterThanOrEqual(5);
+    expect(first.filter((base) => base.data.managedBy === 'personality_seed')).toHaveLength(1);
+    expect(first.filter((base) => base.data.managedBy === 'personality_platform_seed')).toHaveLength(4);
+    expect(first.map((base) => base.data.platformId).sort()).toEqual([
+      'bilibili',
+      'generic-web',
+      'github',
+      'reddit',
+      'youtube',
+    ]);
+    const reddit = first.find((base) => base.data.platformId === 'reddit')!;
+    const seedId = reddit.id;
     await services.discovery.updateBaseState({ baseId: seedId, state: 'blocked' });
 
     services.db.updateCompanion(companion.id, {
       personalityDescription: 'Calm accessibility and interaction research',
     });
     const updated = (await services.discovery.listBases()).filter((base) => base.origin === 'personality');
-    expect(updated).toHaveLength(1);
-    expect(updated[0]).toMatchObject({
+    expect(updated.filter((base) => base.data.platformId === 'reddit')).toHaveLength(1);
+    expect(updated.find((base) => base.data.platformId === 'reddit')).toMatchObject({
       id: seedId,
       state: 'blocked',
     });
-    expect(updated[0]?.locator).toContain('accessibility');
+    expect(updated.find((base) => base.data.platformId === 'reddit')?.locator).toContain('accessibility');
   });
 
   it('updates the personality seed revision when only text beyond the query limit changes', async () => {
     const services = createServices();
-    const sharedPrefix = 'a'.repeat(240);
-    const companion = addCompanion(services, 'Long Seed', `${sharedPrefix} first ending`);
-    const first = (await services.discovery.listBases()).find((base) => base.origin === 'personality');
+    const sharedPrefix = 'Calm local-first AI research and thoughtful desktop companions ';
+    const companion = addCompanion(services, 'Long Seed', `${sharedPrefix}${'x'.repeat(200)} first ending`);
+    const first = (await services.discovery.listBases()).find((base) => base.data.managedBy === 'personality_seed');
     expect(first).toBeDefined();
 
     services.db.updateCompanion(companion.id, {
-      personalityDescription: `${sharedPrefix} second ending`,
+      personalityDescription: `${sharedPrefix}${'x'.repeat(200)} second ending`,
     });
-    const updated = (await services.discovery.listBases()).find((base) => base.origin === 'personality');
+    const updated = (await services.discovery.listBases()).find((base) => base.data.managedBy === 'personality_seed');
 
-    expect(updated).toMatchObject({
-      id: first!.id,
-      locator: first!.locator,
-    });
+    expect(updated?.id).toBe(first!.id);
     expect(updated?.data.personalityRevision).not.toBe(first?.data.personalityRevision);
   });
 
@@ -291,5 +297,145 @@ describe('Discovery Source management', () => {
     const refreshed = (await services.discovery.listBases()).find((base) => base.id === selected.id);
     expect(refreshed?.lastCheckedAt).toBeUndefined();
     expect(refreshed?.data.lastResult).toBe('not_executed');
+  });
+
+  it('suppresses deleted managed platforms and restores them once', async () => {
+    const services = createServices();
+    addCompanion(services, 'Suppress', 'Local-first AI character interaction research');
+    const bases = await services.discovery.listBases();
+    const youtube = bases.find((base) => base.data.platformId === 'youtube');
+    expect(youtube).toBeDefined();
+
+    await services.discovery.deleteBase(youtube!.id);
+    expect((await services.discovery.listBases()).some((base) => base.data.platformId === 'youtube')).toBe(false);
+    expect(await services.discovery.listSuppressedPlatforms()).toEqual([
+      expect.objectContaining({ platformId: 'youtube', state: 'suppressed' }),
+    ]);
+
+    // Edit-style reconciliation must not restore suppressed platforms.
+    await services.discovery.listBases();
+    expect((await services.discovery.listBases()).some((base) => base.data.platformId === 'youtube')).toBe(false);
+
+    const restored = await services.discovery.restoreManagedPlatform('youtube');
+    expect(restored.data.platformId).toBe('youtube');
+    expect((await services.discovery.listBases()).filter((base) => base.data.platformId === 'youtube')).toHaveLength(1);
+
+    const userSource = await services.discovery.addBase({
+      sourceType: 'query',
+      locator: 'user created research topic',
+    });
+    await services.discovery.deleteBase(userSource.id);
+    expect(await services.discovery.listSuppressedPlatforms()).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ platformId: 'reddit' })]),
+    );
+  });
+
+  it('preserves muted blocked trial active and expired platform states across reconciliation', async () => {
+    const services = createServices();
+    addCompanion(services, 'States', 'Thoughtful desktop companion research topics');
+    const bases = await services.discovery.listBases();
+    const byPlatform = Object.fromEntries(
+      bases
+        .filter((base) => typeof base.data.platformId === 'string')
+        .map((base) => [String(base.data.platformId), base]),
+    );
+
+    await services.discovery.updateBaseState({ baseId: byPlatform.reddit.id, state: 'muted' });
+    await services.discovery.updateBaseState({ baseId: byPlatform.youtube.id, state: 'blocked' });
+    await services.discovery.updateBaseState({ baseId: byPlatform.github.id, state: 'active' });
+    await services.discovery.updateBaseState({ baseId: byPlatform.bilibili.id, state: 'expired' });
+
+    const refreshed = await services.discovery.listBases();
+    expect(refreshed.find((base) => base.data.platformId === 'reddit')).toMatchObject({
+      id: byPlatform.reddit.id,
+      state: 'muted',
+    });
+    expect(refreshed.find((base) => base.data.platformId === 'youtube')).toMatchObject({
+      id: byPlatform.youtube.id,
+      state: 'blocked',
+    });
+    expect(refreshed.find((base) => base.data.platformId === 'github')).toMatchObject({
+      id: byPlatform.github.id,
+      state: 'active',
+    });
+    expect(refreshed.find((base) => base.data.platformId === 'bilibili')).toMatchObject({
+      id: byPlatform.bilibili.id,
+      state: 'expired',
+    });
+    expect(refreshed.filter((base) => base.data.platformId === 'reddit')).toHaveLength(1);
+  });
+
+  it('does not backfill platforms when auto-manage is disabled', async () => {
+    const services = createServices();
+    await services.discovery.setAutoManageDefaultPlatforms(false);
+    addCompanion(services, 'Manual', 'Curious open web research companion');
+    const bases = await services.discovery.listBases();
+    expect(bases.filter((base) => base.data.managedBy === 'personality_seed')).toHaveLength(1);
+    expect(bases.filter((base) => base.data.managedBy === 'personality_platform_seed')).toHaveLength(0);
+  });
+
+  it('records provider unavailable bootstrap status without inventing results', async () => {
+    const services = createServices({
+      webSearchProvider: { id: 'unavailable-search', mode: 'unavailable', search: async () => [] },
+    });
+    const personality = openPersonality;
+    const analyses = (services as unknown as {
+      personalityAnalyses: Map<string, {
+        personality: typeof personality;
+        description: string;
+        expiresAt: number;
+        used: boolean;
+      }>;
+    }).personalityAnalyses;
+    analyses.set('bootstrap-unavailable', {
+      personality,
+      description: 'Local-first AI research companion for careful discovery',
+      expiresAt: Date.now() + 60_000,
+      used: false,
+    });
+
+    // Creation path requires assets; use listBases backfill + explicit bootstrap helper instead.
+    const companion = addCompanion(services, 'Bootstrap', 'Local-first AI research companion for careful discovery');
+    const seeded = (await services.discovery.listBases()).filter((base) => base.origin === 'personality');
+    expect(seeded.length).toBeGreaterThanOrEqual(5);
+
+    const bootstrap = await (services as unknown as {
+      runInitialDiscoveryBootstrap(
+        companion: { id: string },
+        sourceIds: string[],
+      ): Promise<{ status: string; executedSourceIds: string[]; reason?: string }>;
+    }).runInitialDiscoveryBootstrap(companion, seeded.map((base) => base.id));
+
+    expect(bootstrap).toMatchObject({
+      attempted: true,
+      status: 'provider_unavailable',
+      executedSourceIds: [],
+    });
+    expect(bootstrap.reason).toMatch(/not configured/i);
+    const status = await services.discovery.getBootstrapStatus();
+    expect(status?.status).toBe('provider_unavailable');
+    for (const base of await services.discovery.listBases()) {
+      expect(base.lastCheckedAt).toBeUndefined();
+    }
+  });
+
+  it('clears platform suppression when a Companion is deleted', async () => {
+    const services = createServices();
+    const first = addCompanion(services, 'Keep', 'Keep companion research interests');
+    const second = addCompanion(services, 'Remove', 'Remove companion research interests', false);
+    services.db.setPrimaryCompanion(second.id);
+    await services.discovery.listBases();
+    const youtube = (await services.discovery.listBases()).find((base) => base.data.platformId === 'youtube');
+    await services.discovery.deleteBase(youtube!.id);
+    expect(await services.discovery.listSuppressedPlatforms()).toHaveLength(1);
+
+    services.db.setPrimaryCompanion(first.id);
+    await services.companionNew.delete(second.id);
+    services.db.setPrimaryCompanion(first.id);
+    expect(
+      (services as unknown as {
+        listPlatformPreferences(companionId: string): unknown[];
+      }).listPlatformPreferences(second.id),
+    ).toEqual([]);
   });
 });
