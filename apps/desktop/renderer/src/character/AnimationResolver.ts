@@ -1,7 +1,7 @@
 import type { CompanionPersonality } from '@our-companion/shared';
 import type { CompanionAnimationName } from '../companion/runtime/animationRegistry';
-import { ANIMATION_REGISTRY, getAnimationFallback } from '../companion/runtime/animationRegistry';
-import { categorizeIntent, CATEGORY_FALLBACKS, FALLBACK_CLIP } from './AnimationCategories';
+import { getAnimationFallback } from '../companion/runtime/animationRegistry';
+import { FALLBACK_CLIP } from './AnimationCategories';
 
 export interface AnimationRequest {
   intent: CompanionAnimationName;
@@ -33,24 +33,18 @@ export function resolveAnimation(
   }
 
   fallbackChain.push(resolvedIntent);
-
-  const registryFallback = getAnimationFallback(resolvedIntent);
-  if (availableClips.includes(registryFallback)) {
-    fallbackChain.push(registryFallback);
-    return { clip: registryFallback, intent: resolvedIntent, usedFallback: true, fallbackChain };
-  }
-
-  const category = categorizeIntent(resolvedIntent);
-  const categoryFallbacks = CATEGORY_FALLBACKS[category];
-
-  for (const fallback of categoryFallbacks) {
+  const attempted = new Set<CompanionAnimationName>([resolvedIntent]);
+  let fallback = getAnimationFallback(resolvedIntent);
+  while (!attempted.has(fallback)) {
     fallbackChain.push(fallback);
     if (availableClips.includes(fallback)) {
       return { clip: fallback, intent: resolvedIntent, usedFallback: true, fallbackChain };
     }
+    attempted.add(fallback);
+    fallback = getAnimationFallback(fallback);
   }
 
-  fallbackChain.push(FALLBACK_CLIP);
+  if (fallbackChain.at(-1) !== FALLBACK_CLIP) fallbackChain.push(FALLBACK_CLIP);
   return { clip: FALLBACK_CLIP, intent: resolvedIntent, usedFallback: true, fallbackChain };
 }
 

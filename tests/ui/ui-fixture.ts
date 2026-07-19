@@ -24,7 +24,14 @@ export class UiElectronFixture {
       // in repeated Playwright screenshots. This is test-only; production GPU behavior
       // remains covered by manual physical verification.
       args: ['--disable-gpu', path.join(clientRoot, 'apps', 'desktop')],
-      env: { ...process.env, OUR_COMPANION_SMOKE_TEST: '1', OUR_COMPANION_SMOKE_ROLE: 'visitor_owner', OUR_COMPANION_USER_DATA_DIR: this.userDataDir, OUR_COMPANION_SMOKE_SERVER_URL: 'http://127.0.0.1:9' },
+      env: {
+        ...process.env,
+        OUR_COMPANION_SMOKE_TEST: '1',
+        OUR_COMPANION_SMOKE_ROLE: 'visitor_owner',
+        OUR_COMPANION_RESEARCH_FIXTURE: '1',
+        OUR_COMPANION_USER_DATA_DIR: this.userDataDir,
+        OUR_COMPANION_SMOKE_SERVER_URL: 'http://127.0.0.1:9',
+      },
     });
     const firstWindow = await this.app.firstWindow();
     await firstWindow.evaluate(async () => window.ourCompanion.smoke?.bootstrapFixtureCompanion());

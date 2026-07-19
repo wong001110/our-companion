@@ -22,6 +22,7 @@ import {
   adjustDiscoveryModeWeights,
   buildBoundedDiscoveryContext,
   canStartDiscoveryTrial,
+  DEFAULT_DISCOVERY_TRIAL_POLICY,
   classifyDiscoveryAgainstSeen,
   createDiscoverySeenIdentities,
   createExplorationIntent as createAdaptiveExplorationIntent,
@@ -30,6 +31,7 @@ import {
   evaluateTopicSaturation,
   findSeenDiscoveryCandidates,
   normalizeDiscoveryUrl,
+  normalizeDiscoveryBaseInput,
   selectDiscoveryBasesForExecution,
   selectDiscoveryMode,
   startDiscoveryTrial,
@@ -51,6 +53,7 @@ import type {
   ActionPermissionState,
   ActionPlan,
   ActionResult,
+  AddDiscoveryBaseInput,
   AddDiscoveryToJourneyInput,
   AddJourneyMilestoneInput,
   AiDebugEntry,
@@ -61,6 +64,7 @@ import type {
   CompanionInsight,
   GeneratedInsight,
   CompanionAppendMessageInput,
+  CompanionAnimationName,
   CompanionHistoryInput,
   CompanionMessage,
   CompanionPersonality,
@@ -81,6 +85,7 @@ import type {
   DiscoveryFeedInput,
   DiscoveryFeedback,
   DiscoveryInspectionRecord,
+  DiscoveryBaseState,
   DiscoverySource,
   EngineProviderMode,
   EngineTrace,
@@ -465,6 +470,16 @@ export class AppServices {
     this.companionRuntime.setExplicitMode(
       this.db.getAppSetting<'available' | 'focused' | 'do_not_disturb'>('attention_mode') ?? 'available'
     );
+    for (const companion of this.db.listCompanions()) {
+      try {
+        this.syncPersonalityDiscoverySeed(companion);
+      } catch (error) {
+        console.warn(
+          `[our-companion] Personality Discovery Source backfill failed for ${companion.id}.`,
+          error,
+        );
+      }
+    }
   }
 
   hasActiveCompanion(): boolean {
@@ -517,7 +532,7 @@ export class AppServices {
     }
   }
 
-  private seedPersonalityDiscoveryBase(companion: CompanionProfile): void {
+  private syncPersonalityDiscoverySeed(companion: CompanionProfile): void {
     const now = this.now().toISOString();
     const topic = companion.personalityDescription.trim().replace(/\s+/g, ' ').slice(0, 240);
     if (!topic) return;
@@ -533,13 +548,51 @@ export class AppServices {
     });
     const locator = intent.searchTasks[0]?.trim();
     if (!locator) return;
+    const existingBases = this.db.listDiscoveryBases(companion.id, undefined, 1_000);
+    const existing = existingBases.find((base) => base.data.managedBy === 'personality_seed')
+      ?? existingBases.find((base) => base.origin === 'personality');
+    const revision = createSemanticFingerprint('personality_revision', [topic]);
+    const data = {
+      ...(existing?.data ?? {}),
+      managedBy: 'personality_seed',
+      personalityRevision: revision,
+      intentQuestion: intent.question,
+      mode: intent.mode,
+      expectedValue: intent.expectedValue,
+    };
+    if (existing) {
+      if (existing.data.managedBy && existing.data.managedBy !== 'personality_seed') return;
+      if (existing.data.userModifiedAt) return;
+      if (existing.data.personalityRevision === revision && existing.locator === locator) return;
+      const conflicting = this.db.getDiscoveryBaseByLocator(
+        companion.id,
+        'generic-web',
+        'query',
+        locator,
+      );
+      if (conflicting && conflicting.id !== existing.id) return;
+      this.db.updateDiscoveryBase({
+        ...existing,
+        connectorId: 'generic-web',
+        scope: 'query',
+        locator,
+        data,
+        updatedAt: now,
+      });
+      return;
+    }
+    const conflictingUserBase = this.db.getDiscoveryBaseByLocator(
+      companion.id,
+      'generic-web',
+      'query',
+      locator,
+    );
+    if (conflictingUserBase) return;
     const id = createSemanticFingerprint('discovery_base', [
       companion.id,
       'generic-web',
-      'personality',
-      locator,
+      'personality_seed',
     ]);
-    if (this.db.listDiscoveryBases(companion.id, undefined, 32).some((base) => base.id === id)) return;
     this.db.upsertDiscoveryBase(startDiscoveryTrial({
       base: {
         id,
@@ -547,16 +600,34 @@ export class AppServices {
         connectorId: 'generic-web',
         scope: 'query',
         locator,
-        data: {
-          intentQuestion: intent.question,
-          mode: intent.mode,
-          expectedValue: intent.expectedValue,
-        },
+        data,
         origin: 'personality',
         discoveredAt: now,
       },
       now,
     }));
+  }
+
+  private async probeDiscoveryFeed(locator: string, companionId: string): Promise<void> {
+    const probeId = createId('feed_probe');
+    const evidence = await this.manualResearchPageFetcher.fetchPage({
+      searchResult: {
+        id: probeId,
+        query: locator,
+        title: new URL(locator).hostname,
+        url: locator,
+        domain: new URL(locator).hostname.toLowerCase(),
+        rank: 1,
+        provider: 'discovery-source-probe',
+      },
+      userId: 'local',
+      companionId,
+      cycleId: probeId,
+      researchIntentId: probeId,
+      researchPlanId: probeId,
+      sourceType: 'rss',
+    });
+    if (evidence.sourceType !== 'rss') throw new Error('DISCOVERY_SOURCE_FEED_FORMAT_INVALID');
   }
 
   private requireActiveCompanion(): CompanionProfile {
@@ -606,11 +677,14 @@ export class AppServices {
       }
       const assetsByKey = new Map(assets.map((asset) => [asset.animationKey, asset]));
       const requiredAssets = COMPANION_ANIMATION_MANIFEST.filter((entry) => entry.requiredForCreation);
-      if (requiredAssets.some((entry) => !assetsByKey.has(entry.key))) {
-        throw new Error('All required Companion animation assets must be provided.');
+      const missingRequiredAssets = requiredAssets
+        .filter((entry) => !assetsByKey.has(entry.key))
+        .map((entry) => entry.key);
+      if (missingRequiredAssets.length) {
+        throw new Error(`Missing required Companion animations: ${missingRequiredAssets.join(', ')}`);
       }
       const manifestByKey = new Map(COMPANION_ANIMATION_MANIFEST.map((entry) => [entry.key, entry]));
-      const validatedAssets = new Map<string, Buffer>();
+      const validatedAssets = new Map<CompanionAnimationName, Buffer>();
       let totalBytes = 0;
       for (const asset of assets) {
         const definition = manifestByKey.get(asset.animationKey);
@@ -626,31 +700,51 @@ export class AppServices {
       analysis.used = true;
       let companion: CompanionProfile | undefined;
       let companionDir: string | undefined;
+      let stagingDir: string | undefined;
       try {
         const shouldBecomePrimary = !this.db.getPrimaryCompanion();
         companion = this.db.createCompanion({ ...input, name, personalityDescription: description, personality: analysis.personality });
         companionDir = this.resolveCompanionRoot(companion.id);
-        const animationsDir = this.resolveCompanionAssetPath({
-          companionId: companion.id,
-          relativePath: path.join('assets', 'animations')
-        }).target;
-        fs.mkdirSync(animationsDir, { recursive: true });
-        for (const entry of requiredAssets) {
-          const filePath = this.resolveCompanionAssetPath({
-            companionId: companion.id,
-            subfolder: 'animations',
-            fileName: entry.fileName
-          }).target;
-          fs.writeFileSync(filePath, validatedAssets.get(entry.key)!);
+        stagingDir = `${companionDir}.staging-${createId('assets')}`;
+        const stagingAnimationsDir = path.join(stagingDir, 'assets', 'animations');
+        fs.mkdirSync(stagingAnimationsDir, { recursive: true });
+        for (const entry of COMPANION_ANIMATION_MANIFEST) {
+          const bytes = validatedAssets.get(entry.key);
+          if (!bytes) continue;
+          fs.writeFileSync(path.join(stagingAnimationsDir, entry.fileName), bytes);
         }
+        const expectedFiles = [...validatedAssets.keys()]
+          .map((key) => manifestByKey.get(key)!.fileName)
+          .sort();
+        const actualFiles = fs.readdirSync(stagingAnimationsDir).sort();
+        if (
+          expectedFiles.length !== actualFiles.length
+          || expectedFiles.some((fileName, index) => fileName !== actualFiles[index])
+        ) {
+          throw new Error('Companion animation asset verification failed.');
+        }
+        for (const [key, expectedBytes] of validatedAssets) {
+          const definition = manifestByKey.get(key)!;
+          const persistedBytes = fs.readFileSync(path.join(stagingAnimationsDir, definition.fileName));
+          if (!persistedBytes.equals(expectedBytes)) {
+            throw new Error(`Companion animation asset verification failed: ${definition.key}`);
+          }
+        }
+        fs.mkdirSync(path.dirname(companionDir), { recursive: true });
+        if (fs.existsSync(companionDir)) {
+          throw new Error('Companion asset destination already exists.');
+        }
+        fs.renameSync(stagingDir, companionDir);
+        stagingDir = undefined;
         companion = this.db.updateCompanion(companion.id, { assetRoot: `companion://${companion.id}/assets` });
         if (shouldBecomePrimary) companion = this.db.setPrimaryCompanion(companion.id);
-        this.seedPersonalityDiscoveryBase(companion);
+        this.syncPersonalityDiscoverySeed(companion);
         this.personalityAnalyses.delete(input.personalityAnalysisId);
         return companion;
       } catch (error) {
         analysis.used = false;
         if (companion) this.db.rollbackCompanionCreation(companion.id);
+        if (stagingDir && fs.existsSync(stagingDir)) fs.rmSync(stagingDir, { recursive: true, force: true });
         if (companionDir && fs.existsSync(companionDir)) fs.rmSync(companionDir, { recursive: true, force: true });
         throw error;
       }
@@ -673,6 +767,8 @@ export class AppServices {
       const { id, ...rest } = input;
       const current = this.db.getCompanion(id);
       if (!current) throw new Error(`Companion not found: ${id}`);
+      const name = rest.name?.trim();
+      if (rest.name !== undefined && !name) throw new Error('Companion name is required.');
       const description = rest.personalityDescription?.trim() ?? current.personalityDescription;
       const personalityChanged = rest.personality !== undefined || description !== current.personalityDescription;
       let consumedAnalysis: { used: boolean } | undefined;
@@ -682,20 +778,138 @@ export class AppServices {
         if (!analysis || analysis.used || analysis.expiresAt <= this.now().getTime() || analysis.description !== description) {
           throw new Error('A current AI personality analysis is required to update personality.');
         }
-        analysis.used = true;
         consumedAnalysis = analysis;
         consumedAnalysisId = rest.personalityAnalysisId;
         rest.personality = analysis.personality;
         rest.personalityDescription = description;
       }
-      const { personalityAnalysisId: _analysisId, ...trusted } = rest;
+      const replacements = rest.assets ?? [];
+      const deleteAnimationKeys = rest.deleteAnimationKeys ?? [];
+      if (new Set(replacements.map((asset) => asset.animationKey)).size !== replacements.length) {
+        throw new Error('Duplicate Companion animation assets are not allowed.');
+      }
+      if (new Set(deleteAnimationKeys).size !== deleteAnimationKeys.length) {
+        throw new Error('Duplicate Companion animation deletions are not allowed.');
+      }
+      const manifestByKey = new Map(COMPANION_ANIMATION_MANIFEST.map((entry) => [entry.key, entry]));
+      const replacementsByKey = new Map<CompanionAnimationName, Buffer>();
+      for (const replacement of replacements) {
+        const definition = manifestByKey.get(replacement.animationKey);
+        if (!definition) throw new Error(`${replacement.animationKey} is not a supported Companion animation.`);
+        const bytes = toBuffer(replacement.buffer);
+        validateCompanionPngAsset(definition, bytes);
+        replacementsByKey.set(definition.key, bytes);
+      }
+      for (const key of deleteAnimationKeys) {
+        const definition = manifestByKey.get(key);
+        if (!definition) throw new Error(`${key} is not a supported Companion animation.`);
+        if (definition.requiredForCreation && !replacementsByKey.has(key)) {
+          throw new Error(`Required Companion animation cannot be deleted: ${key}`);
+        }
+      }
+      const hasAssetChanges = replacements.length > 0 || deleteAnimationKeys.length > 0;
+      const companionDir = this.resolveCompanionRoot(id);
+      let stagingDir: string | undefined;
+      let backupDir: string | undefined;
+      let assetsPromoted = false;
+      if (hasAssetChanges) {
+        stagingDir = `${companionDir}.edit-staging-${createId('assets')}`;
+        backupDir = `${companionDir}.edit-backup-${createId('assets')}`;
+        if (fs.existsSync(companionDir)) {
+          fs.cpSync(companionDir, stagingDir, { recursive: true, errorOnExist: true });
+        } else {
+          fs.mkdirSync(stagingDir, { recursive: true });
+        }
+        try {
+          const animationsDir = path.join(stagingDir, 'assets', 'animations');
+          fs.mkdirSync(animationsDir, { recursive: true });
+          for (const key of deleteAnimationKeys) {
+            const definition = manifestByKey.get(key)!;
+            const target = path.join(animationsDir, definition.fileName);
+            if (fs.existsSync(target)) fs.unlinkSync(target);
+          }
+          for (const [key, bytes] of replacementsByKey) {
+            fs.writeFileSync(path.join(animationsDir, manifestByKey.get(key)!.fileName), bytes);
+          }
+          const missingRequired = COMPANION_ANIMATION_MANIFEST
+            .filter((entry) => entry.requiredForCreation && !fs.existsSync(path.join(animationsDir, entry.fileName)))
+            .map((entry) => entry.key);
+          if (missingRequired.length) {
+            throw new Error(`Missing required Companion animations: ${missingRequired.join(', ')}`);
+          }
+          let totalBytes = 0;
+          for (const definition of COMPANION_ANIMATION_MANIFEST) {
+            const target = path.join(animationsDir, definition.fileName);
+            if (!fs.existsSync(target)) continue;
+            if (!fs.lstatSync(target).isFile()) {
+              throw new Error(`Companion animation is not a regular file: ${definition.key}`);
+            }
+            const bytes = fs.readFileSync(target);
+            validateCompanionPngAsset(definition, bytes);
+            totalBytes += bytes.byteLength;
+            if (totalBytes > MAX_COMPANION_TOTAL_ASSET_BYTES) {
+              throw new Error('Companion animation assets exceed the maximum total size.');
+            }
+          }
+          if (fs.existsSync(companionDir)) fs.renameSync(companionDir, backupDir);
+          fs.renameSync(stagingDir, companionDir);
+          stagingDir = undefined;
+          assetsPromoted = true;
+        } catch (error) {
+          if (stagingDir && fs.existsSync(stagingDir)) fs.rmSync(stagingDir, { recursive: true, force: true });
+          if (backupDir && fs.existsSync(backupDir) && !fs.existsSync(companionDir)) {
+            fs.renameSync(backupDir, companionDir);
+          }
+          throw error;
+        }
+      }
+      const {
+        personalityAnalysisId: _analysisId,
+        assets: _assets,
+        deleteAnimationKeys: _deleteAnimationKeys,
+        assetRoot: _assetRoot,
+        ...profileInput
+      } = rest;
       try {
-        const updated = this.db.updateCompanion(id, trusted);
+        if (consumedAnalysis) consumedAnalysis.used = true;
+        const updated = this.db.updateCompanion(id, {
+          ...profileInput,
+          name: name ?? current.name,
+        });
+        if (personalityChanged) this.syncPersonalityDiscoverySeed(updated);
         if (consumedAnalysisId) this.personalityAnalyses.delete(consumedAnalysisId);
         return updated;
       } catch (error) {
         if (consumedAnalysis) consumedAnalysis.used = false;
+        if (assetsPromoted) {
+          if (fs.existsSync(companionDir)) fs.rmSync(companionDir, { recursive: true, force: true });
+          if (backupDir && fs.existsSync(backupDir)) fs.renameSync(backupDir, companionDir);
+        }
+        try {
+          this.db.updateCompanion(id, {
+            name: current.name,
+            personalityDescription: current.personalityDescription,
+            personality: current.personality,
+            assetRoot: current.assetRoot,
+          });
+          if (personalityChanged) this.syncPersonalityDiscoverySeed(current);
+        } catch {
+          // Preserve the original update failure; rollback is best-effort after
+          // both the database and file snapshot have been restored.
+        }
         throw error;
+      } finally {
+        try {
+          if (stagingDir && fs.existsSync(stagingDir)) fs.rmSync(stagingDir, { recursive: true, force: true });
+        } catch {
+          // Cleanup failure must not reverse a successfully committed edit.
+        }
+        try {
+          if (backupDir && fs.existsSync(backupDir)) fs.rmSync(backupDir, { recursive: true, force: true });
+        } catch {
+          // The backup is outside the active companion path and can be cleaned
+          // up on a later maintenance pass without invalidating the edit.
+        }
       }
     },
     delete: async (id: string): Promise<{ id: string; deleted: true }> => {
@@ -748,7 +962,13 @@ export class AppServices {
       if (fs.existsSync(filePath) && !fs.lstatSync(filePath).isFile()) {
         throw new Error('Cannot overwrite a non-file Companion asset.');
       }
-      fs.writeFileSync(filePath, buf);
+      const temporaryPath = `${filePath}.tmp-${createId('asset')}`;
+      try {
+        fs.writeFileSync(temporaryPath, buf);
+        fs.renameSync(temporaryPath, filePath);
+      } finally {
+        if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
+      }
       return { name: definition.fileName, path: filePath };
     },
     listAssets: async (companionId: string): Promise<Array<{ name: string; size: number; subfolder: string }>> => {
@@ -777,6 +997,12 @@ export class AppServices {
     deleteAsset: async (input: { companionId: string; subfolder: string; fileName: string }): Promise<{ deleted: true }> => {
       if (!this.db.getCompanion(input.companionId)) throw new Error(`Companion not found: ${input.companionId}`);
       if (!isSupportedCompanionAssetExtension(input.fileName)) throw new Error('Unsupported Companion asset type.');
+      const animationDefinition = input.subfolder === 'animations'
+        ? COMPANION_ANIMATION_MANIFEST.find((entry) => entry.fileName === input.fileName)
+        : undefined;
+      if (animationDefinition?.requiredForCreation) {
+        throw new Error(`Required Companion animation cannot be deleted: ${animationDefinition.key}`);
+      }
       const filePath = this.resolveCompanionAssetPath({
         companionId: input.companionId,
         subfolder: input.subfolder,
@@ -888,6 +1114,146 @@ export class AppServices {
         discoveryId: discovery.id
       }, correlationId);
       return { journey, milestone, memory };
+    },
+    listBases: async (): Promise<DiscoveryBase[]> => {
+      const companion = this.requireActiveCompanion();
+      this.syncPersonalityDiscoverySeed(companion);
+      const now = this.now().toISOString();
+      for (const persistedBase of this.db.listDiscoveryBases(companion.id, 'trial', 1_000)) {
+        const transitioned = transitionDiscoveryBase({
+          base: {
+            ...persistedBase,
+            origin: persistedBase.origin as DiscoveryBase['origin'],
+          },
+          feedback: 'none',
+          now,
+        });
+        if (transitioned.state !== persistedBase.state) {
+          this.db.upsertDiscoveryBase(transitioned);
+        }
+      }
+      return this.db.listDiscoveryBases(companion.id, undefined, 1_000).map((base) => ({
+        ...base,
+        origin: base.origin as DiscoveryBase['origin'],
+      }));
+    },
+    addBase: async (input: AddDiscoveryBaseInput): Promise<DiscoveryBase> => {
+      const companionId = this.db.resolveActiveCompanionId();
+      const normalized = normalizeDiscoveryBaseInput(input);
+      const existing = this.db.getDiscoveryBaseByLocator(
+        companionId,
+        normalized.connectorId,
+        normalized.scope,
+        normalized.locator,
+      );
+      if (existing) return { ...existing, origin: existing.origin as DiscoveryBase['origin'] };
+      if (normalized.scope === 'feed') {
+        await this.probeDiscoveryFeed(normalized.locator, companionId);
+      }
+      const now = this.now().toISOString();
+      const owned = this.db.listDiscoveryBases(companionId, undefined, 1_000)
+        .map((base) => ({ ...base, origin: base.origin as DiscoveryBase['origin'] }));
+      const allowance = canStartDiscoveryTrial({
+        companionId,
+        bases: owned,
+        now,
+        policy: {
+          ...DEFAULT_DISCOVERY_TRIAL_POLICY,
+          // The daily cap protects automatic source growth. Explicit user
+          // additions remain bounded by the total Trial/Active limits.
+          maxNewTrialsPerDay: Number.MAX_SAFE_INTEGER,
+        },
+      });
+      if (!allowance.allowed) throw new Error(`DISCOVERY_SOURCE_LIMIT:${allowance.reason}`);
+      const trial = startDiscoveryTrial({
+        base: {
+          id: createSemanticFingerprint('discovery_base', [
+            companionId,
+            normalized.connectorId,
+            normalized.scope,
+            normalized.locator,
+          ]),
+          companionId,
+          connectorId: normalized.connectorId,
+          scope: normalized.scope,
+          locator: normalized.locator,
+          data: normalized.label ? { label: normalized.label } : {},
+          origin: 'user',
+          discoveredAt: now,
+        },
+        now,
+      });
+      const persisted = this.db.upsertDiscoveryBase(
+        normalized.initialState === 'active' ? { ...trial, state: 'active' } : trial,
+      );
+      return { ...persisted, origin: persisted.origin as DiscoveryBase['origin'] };
+    },
+    updateBaseState: async (input: { baseId: string; state: DiscoveryBaseState }): Promise<DiscoveryBase> => {
+      const companionId = this.db.resolveActiveCompanionId();
+      const base = this.db.getDiscoveryBase(input.baseId, companionId);
+      if (!base) throw new Error('DISCOVERY_SOURCE_NOT_FOUND');
+      const allowedStates = new Set<DiscoveryBaseState>([
+        'trial',
+        'active',
+        'expired',
+        'muted',
+        'blocked',
+        'rejected',
+      ]);
+      if (!allowedStates.has(input.state)) throw new Error('DISCOVERY_SOURCE_STATE_INVALID');
+      const now = this.now().toISOString();
+      const next = input.state === 'trial' && !base.trialStartedAt
+        ? startDiscoveryTrial({
+          base: {
+            ...base,
+            origin: base.origin as DiscoveryBase['origin'],
+          },
+          now,
+        })
+        : { ...base, state: input.state, updatedAt: now };
+      const persisted = this.db.upsertDiscoveryBase(next);
+      return { ...persisted, origin: persisted.origin as DiscoveryBase['origin'] };
+    },
+    deleteBase: async (baseId: string): Promise<{ deleted: true }> => {
+      const companionId = this.db.resolveActiveCompanionId();
+      if (!this.db.getDiscoveryBase(baseId, companionId)) throw new Error('DISCOVERY_SOURCE_NOT_FOUND');
+      if (!this.db.deleteDiscoveryBase(baseId, companionId)) throw new Error('DISCOVERY_SOURCE_DELETE_FAILED');
+      return { deleted: true };
+    },
+    runBaseNow: async (baseId: string): Promise<ExplorationCycleResult> => {
+      const companionId = this.db.resolveActiveCompanionId();
+      const base = this.db.getDiscoveryBase(baseId, companionId);
+      if (!base) throw new Error('DISCOVERY_SOURCE_NOT_FOUND');
+      if (base.state !== 'trial' && base.state !== 'active') {
+        throw new Error('DISCOVERY_SOURCE_NOT_RUNNABLE');
+      }
+      const result = await this.runAutonomousExploration(
+        { companionId, trigger: 'manual' },
+        baseId,
+      );
+      const inspection = this.latestDiscoveryInspections.get(companionId);
+      const refreshed = this.db.getDiscoveryBase(baseId, companionId);
+      const executed = inspection?.executedBases.some((item) => item.id === baseId) ?? false;
+      if (refreshed) {
+        this.db.updateDiscoveryBase({
+          ...refreshed,
+          data: {
+            ...refreshed.data,
+            lastResult: executed
+              ? inspection?.materialUpdateCount
+                ? 'material_update'
+                : inspection?.newCount
+                  ? 'new'
+                  : inspection?.duplicateCount
+                    ? 'duplicate'
+                    : 'completed'
+              : 'not_executed',
+          },
+          updatedAt: this.now().toISOString(),
+        });
+      }
+      if (!executed) throw new Error('DISCOVERY_SOURCE_NOT_EXECUTED');
+      return result;
     },
     generateNow: async () => {
       const result = await this.runDiscoveryRefresh();
@@ -1722,12 +2088,21 @@ export class AppServices {
     return trace;
   }
 
-  private async runAutonomousExploration(input: StartExplorationInput = {}): Promise<ExplorationCycleResult> {
+  private async runAutonomousExploration(
+    input: StartExplorationInput = {},
+    prioritizedDiscoveryBaseId?: string,
+  ): Promise<ExplorationCycleResult> {
     const companionId = this.db.resolveActiveCompanionId(input.companionId);
     if (this.localCompanionAway) throw new Error('EXPLORATION_ALREADY_RUNNING');
     const active = this.activeExplorations.get(companionId);
-    if (active) return active;
-    const operation = this.runAutonomousExplorationCycle({ ...input, companionId })
+    if (active) {
+      if (prioritizedDiscoveryBaseId) throw new Error('EXPLORATION_ALREADY_RUNNING');
+      return active;
+    }
+    const operation = this.runAutonomousExplorationCycle(
+      { ...input, companionId },
+      prioritizedDiscoveryBaseId,
+    )
       .catch((error) => {
         const current = this.db.getCurrentExplorationCycleForCompanion(companionId);
         if (current) {
@@ -1803,7 +2178,10 @@ export class AppServices {
     return report;
   }
 
-  private async runAutonomousExplorationCycle(input: StartExplorationInput = {}): Promise<ExplorationCycleResult> {
+  private async runAutonomousExplorationCycle(
+    input: StartExplorationInput = {},
+    prioritizedDiscoveryBaseId?: string,
+  ): Promise<ExplorationCycleResult> {
     const userId = input.userId ?? 'default';
     const companionId = this.db.resolveActiveCompanionId(input.companionId);
     const trigger = input.trigger ?? 'manual';
@@ -1834,6 +2212,16 @@ export class AppServices {
       return recorded;
     };
     const evaluatedAt = this.runtimeClock.now().toISOString();
+    const requestedDiscoveryBase = prioritizedDiscoveryBaseId
+      ? this.db.getDiscoveryBase(prioritizedDiscoveryBaseId, companionId)
+      : undefined;
+    if (
+      prioritizedDiscoveryBaseId
+      && (!requestedDiscoveryBase
+        || (requestedDiscoveryBase.state !== 'trial' && requestedDiscoveryBase.state !== 'active'))
+    ) {
+      throw new Error('DISCOVERY_SOURCE_NOT_RUNNABLE');
+    }
     const deletionCleanup = this.reconcileDeletedMemoryTombstones(companionId, userId, evaluatedAt);
     if (deletionCleanup.deletedMemoryIds.length > 0) {
       trace(
@@ -1945,6 +2333,35 @@ export class AppServices {
         );
       }
     }
+    if (requestedDiscoveryBase) {
+      const topic = requestedDiscoveryBase.scope === 'domain'
+        ? requestedDiscoveryBase.locator
+        : requestedDiscoveryBase.scope === 'page' || requestedDiscoveryBase.scope === 'feed'
+          ? new URL(requestedDiscoveryBase.locator).hostname
+          : requestedDiscoveryBase.locator;
+      const forcedTarget: CuriosityTarget = {
+        id: createSemanticFingerprint('run_now_curiosity', [cycleId, requestedDiscoveryBase.id]),
+        userId,
+        companionId,
+        topic,
+        topicFingerprint: createTopicFingerprint([topic]),
+        sourceFingerprint: requestedDiscoveryBase.id,
+        generatedFromIds: [requestedDiscoveryBase.id],
+        description: `Run the selected Discovery Source: ${requestedDiscoveryBase.locator}`,
+        source: 'character_trigger',
+        explorationType: 'deepening',
+        priority: 1,
+        confidence: 1,
+        reason: 'The user asked to run this Discovery Source now.',
+        expectedValue: `Check ${requestedDiscoveryBase.locator} for reliable new or materially updated information.`,
+        status: 'open',
+        createdAt: evaluatedAt,
+        updatedAt: evaluatedAt,
+      };
+      persistedCuriosityTargets.unshift(
+        this.db.upsertCuriosityTarget(forcedTarget, evaluatedAt).record,
+      );
+    }
     trace(
       'curiosity',
       'generate-targets',
@@ -1969,14 +2386,16 @@ export class AppServices {
           : 'presented' as const,
       occurredAt: discovery.updatedAt ?? discovery.createdAt,
     }));
-    let selectedCuriosityTarget: typeof rankedCuriosityTargets[number] | undefined;
+    let selectedCuriosityTarget: typeof rankedCuriosityTargets[number] | undefined = requestedDiscoveryBase
+      ? rankedCuriosityTargets.find((target) => target.sourceFingerprint === requestedDiscoveryBase.id)
+      : undefined;
     let selectedTopicSaturation: ReturnType<typeof evaluateTopicSaturation> | undefined;
     let savedTopicProbe: {
       target: typeof rankedCuriosityTargets[number];
       saturation: ReturnType<typeof evaluateTopicSaturation>;
     } | undefined;
     let saturationStopReason: ReturnType<typeof evaluateTopicSaturation>['reason'];
-    for (const target of rankedCuriosityTargets) {
+    for (const target of selectedCuriosityTarget ? [] : rankedCuriosityTargets) {
       const targetTopicFingerprint = createTopicFingerprint([target.topic])
         ?? createSemanticFingerprint('discovery_topic', [target.topic]);
       const targetSaturation = evaluateTopicSaturation({
@@ -1997,7 +2416,9 @@ export class AppServices {
     // A saved topic may be researched only as a bounded material-update probe.
     // Candidate-level saturation must still reject anything that is not a
     // verified material update.
-    const requiresMaterialUpdate = !selectedCuriosityTarget && Boolean(savedTopicProbe);
+    const requiresMaterialUpdate = !requestedDiscoveryBase
+      && !selectedCuriosityTarget
+      && Boolean(savedTopicProbe);
     if (!selectedCuriosityTarget && savedTopicProbe) {
       selectedCuriosityTarget = savedTopicProbe.target;
       selectedTopicSaturation = savedTopicProbe.saturation;
@@ -2104,14 +2525,24 @@ export class AppServices {
         this.db.upsertDiscoveryBase(transitioned);
       }
     }
-    const selectedDiscoveryBases = selectDiscoveryBasesForExecution({
-      bases: this.db.listDiscoveryBasesForExecution(companionId, 32).map((base) => ({
+    const executableDiscoveryBases = this.db.listDiscoveryBasesForExecution(companionId, 32).map((base) => ({
         ...base,
         origin: base.origin as DiscoveryBase['origin'],
-      })),
+      }));
+    const prioritizedDiscoveryBase = prioritizedDiscoveryBaseId
+      ? executableDiscoveryBases.find((base) => base.id === prioritizedDiscoveryBaseId)
+      : undefined;
+    if (prioritizedDiscoveryBaseId && !prioritizedDiscoveryBase) {
+      throw new Error('DISCOVERY_SOURCE_NOT_RUNNABLE');
+    }
+    const scheduledDiscoveryBases = selectDiscoveryBasesForExecution({
+      bases: executableDiscoveryBases.filter((base) => base.id !== prioritizedDiscoveryBaseId),
       intent: adaptiveIntent,
-      limit: 3,
+      limit: prioritizedDiscoveryBase ? 2 : 3,
     });
+    const selectedDiscoveryBases = prioritizedDiscoveryBase
+      ? [prioritizedDiscoveryBase, ...scheduledDiscoveryBases]
+      : scheduledDiscoveryBases;
     const discoveryInspection: DiscoveryInspectionRecord = {
       cycleId,
       companionId,

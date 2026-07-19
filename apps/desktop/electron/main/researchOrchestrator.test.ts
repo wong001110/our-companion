@@ -172,6 +172,87 @@ describe('ResearchOrchestrator', () => {
     });
   });
 
+  it('expands a fetched RSS document into independently identified item candidates', async () => {
+    const feedUrl = 'https://feed.example.test/rss.xml';
+    const feedBase: DiscoveryBase = {
+      id: 'base-feed-items',
+      companionId: 'owner',
+      connectorId: 'rss',
+      scope: 'feed',
+      locator: feedUrl,
+      data: {},
+      origin: 'user',
+      state: 'active',
+      discoveredAt: '2026-07-17T00:00:00.000Z',
+      updatedAt: '2026-07-18T00:00:00.000Z',
+    };
+    const feedFetcher: WebPageFetcher = {
+      id: 'fixture-feed-fetcher',
+      mode: 'fixture',
+      async fetchPage(input) {
+        return {
+          id: 'feed-document',
+          userId: input.userId,
+          companionId: input.companionId,
+          cycleId: input.cycleId,
+          researchIntentId: input.researchIntentId,
+          researchPlanId: input.researchPlanId,
+          searchResultId: input.searchResult.id,
+          query: input.searchResult.query,
+          provider: 'fixture-feed',
+          url: feedUrl,
+          canonicalUrl: feedUrl,
+          domain: 'feed.example.test',
+          title: 'Fixture Feed',
+          extractedText: 'Two independent entries.',
+          excerpt: 'Two independent entries.',
+          contentHash: 'feed-document-hash',
+          contentType: 'application/rss+xml',
+          fetchedAt: '2026-07-18T00:00:00.000Z',
+          sourceType: 'rss',
+          feedItems: [
+            {
+              externalId: 'entry-1',
+              canonicalUrl: feedUrl,
+              title: 'Same headline',
+              summary: 'First independently tracked feed item.',
+              contentHash: 'entry-1-hash',
+            },
+            {
+              externalId: 'entry-2',
+              canonicalUrl: feedUrl,
+              title: 'Same headline',
+              summary: 'Second independently tracked feed item.',
+              contentHash: 'entry-2-hash',
+            },
+          ],
+        };
+      },
+    };
+    const orchestrator = new ResearchOrchestrator({
+      searchProvider: { id: 'fixture-search', mode: 'fixture', search: async () => [] },
+      pageFetcher: feedFetcher,
+      structuredConnectors: [],
+    });
+
+    const outcome = await orchestrator.run({
+      userId: 'user',
+      companionId: 'owner',
+      cycleId: 'cycle',
+      curiosityTarget: target,
+      discoveryBases: [feedBase],
+    });
+
+    expect(outcome.usedBaseIds).toEqual(['base-feed-items']);
+    expect(outcome.evidence).toHaveLength(2);
+    expect(outcome.candidates).toHaveLength(2);
+    expect(outcome.candidates.map((candidate) => JSON.parse(candidate.rawEvidence ?? '{}').externalId))
+      .toEqual(['entry-1', 'entry-2']);
+    expect(outcome.candidates.every((candidate) => (
+      JSON.parse(candidate.rawEvidence ?? '{}').discoveryBaseIds?.[0] === feedBase.id
+    ))).toBe(true);
+  });
+
   it('treats successful structured-only output as compatible while keeping page coverage separate', async () => {
     const connector: DiscoveryConnector = {
       source: 'github', providerMode: 'fixture',

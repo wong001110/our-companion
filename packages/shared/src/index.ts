@@ -972,6 +972,20 @@ export interface WebPageEvidence {
   fetchedAt: string;
   publishedAt?: string;
   sourceType: ResearchSourceType;
+  /**
+   * Transient normalized entries extracted from RSS/Atom. Each entry becomes
+   * its own evidence/candidate record before persistence, so Seen and Material
+   * Update operate on item identity rather than the aggregate feed document.
+   */
+  feedItems?: Array<{
+    externalId: string;
+    canonicalUrl: string;
+    title: string;
+    summary: string;
+    contentHash: string;
+    publishedAt?: string;
+  }>;
+  externalId?: string;
 }
 
 /** A selection can only name an ID produced by the current search pass. */
@@ -1188,6 +1202,44 @@ export interface DiscoveryFeedback {
   note?: string;
   createdAt: string;
   feedbackDomain?: FeedbackDomain;
+}
+
+export type DiscoveryBaseState = 'trial' | 'active' | 'expired' | 'muted' | 'blocked' | 'rejected';
+export type DiscoveryBaseOrigin =
+  | 'generic_web'
+  | 'search_result'
+  | 'feed_detection'
+  | 'user'
+  | 'connector'
+  | 'personality';
+export type UserDiscoverySourceType = 'query' | 'domain' | 'page' | 'feed';
+
+export interface DiscoveryBase {
+  id: string;
+  companionId: string;
+  connectorId: string;
+  scope: string;
+  locator: string;
+  data: Readonly<Record<string, unknown>>;
+  origin: DiscoveryBaseOrigin;
+  state: DiscoveryBaseState;
+  discoveredAt: string;
+  trialStartedAt?: string;
+  trialExpiresAt?: string;
+  lastCheckedAt?: string;
+  updatedAt: string;
+}
+
+export interface AddDiscoveryBaseInput {
+  sourceType: UserDiscoverySourceType;
+  locator: string;
+  label?: string;
+  initialState?: 'trial' | 'active';
+}
+
+export interface UpdateDiscoveryBaseStateInput {
+  baseId: string;
+  state: DiscoveryBaseState;
 }
 
 export interface StartExplorationInput {
@@ -2099,7 +2151,7 @@ export interface CompanionAssetManifest {
   runtime: { defaultAnimation: 'Idle_Neutral'; portraitPath?: string; iconPath?: string; animations: Array<{ name: string; format: 'sprite_sheet' | 'frame_sequence' | 'gif' | 'static'; files: string[]; frameWidth?: number; frameHeight?: number; frameCount?: number; frameDurationMs?: number; loop: boolean }> };
   files: Array<{ relativePath: string; category: 'animation' | 'portrait' | 'icon' | 'voice' | 'metadata'; mimeType: string; sizeBytes: number; sha256: string }>;
 }
-export interface BuiltAssetPack { manifest: CompanionAssetManifest; manifestHash: string; totalFiles: number; totalBytes: number; requiredAnimations: Record<'Idle_Neutral' | 'Enter' | 'Leave', boolean>; }
+export interface BuiltAssetPack { manifest: CompanionAssetManifest; manifestHash: string; totalFiles: number; totalBytes: number; requiredAnimations: Readonly<Partial<Record<CompanionAnimationName, true>>>; }
 export interface NetworkAssetPack { id: string; companionId: string; manifestHash: string; schemaVersion: number; status: 'draft' | 'uploading' | 'verifying' | 'active' | 'superseded' | 'deleting' | 'failed' | 'abandoning' | 'abandoned'; totalFiles: number; totalBytes: number; failureCode?: string; createdAt: string; updatedAt: string; completedAt?: string; activatedAt?: string; supersededAt?: string; }
 export interface CompleteAssetPackResult { assetPack: NetworkAssetPack; companion: PublicCompanionProfile; }
 export interface NetworkCompanionLink { serverOrigin: string; networkAccountId: string; localCompanionId: string; networkCompanionId: string; activeAssetPackId?: string; lastPublishedManifestHash?: string; lastPublishedAt?: string; publishStatus?: string; }
@@ -2241,6 +2293,11 @@ export interface OurCompanionApi {
     markInterested(discoveryId: string): Promise<Discovery>;
     markNotInterested(discoveryId: string): Promise<Discovery>;
     addToJourney(input: AddDiscoveryToJourneyInput): Promise<{ journey: CompanionJourney; milestone: JourneyTimelineEntry; memory: MemoryRecord }>;
+    listBases(): Promise<DiscoveryBase[]>;
+    addBase(input: AddDiscoveryBaseInput): Promise<DiscoveryBase>;
+    updateBaseState(input: UpdateDiscoveryBaseStateInput): Promise<DiscoveryBase>;
+    deleteBase(baseId: string): Promise<{ deleted: true }>;
+    runBaseNow(baseId: string): Promise<ExplorationCycleResult>;
     onAnnounce(listener: (payload: DiscoveryAnnouncePayload) => void): () => void;
     generateNow(): Promise<Discovery[]>;
     presentNext(): Promise<boolean>;
@@ -2819,19 +2876,47 @@ export interface CompanionPersonalityAnalysis {
   expiresAt: string;
 }
 
-export const COMPANION_ANIMATION_NAMES = [
-  'Idle_Neutral', 'Idle_Breathe', 'Idle_Sleepy', 'Idle_Sleeping', 'Walk_Right', 'Walk_Left',
-  'Expedition_Return', 'Think', 'Work_Focus', 'Expedition_Present', 'Talk_Neutral', 'Talk_Happy',
-  'Expedition_Prepare', 'Expedition_Leave', 'Listening', 'Waiting_Response', 'Drag_Hold',
-  'Drag_Release', 'Talk_Thinking', 'Talk_Concerned', 'Walk_Up', 'Walk_Down', 'Walk_UpLeft',
-  'Walk_UpRight', 'Walk_DownLeft', 'Walk_DownRight', 'Enter', 'Leave', 'Music_Idle',
+const COMPANION_ANIMATION_MANIFEST_SOURCE = [
+  { key: 'Idle_Neutral', requiredForCreation: true, requiredForNetworkVisitor: true, fallback: 'Idle_Neutral', frameDurationMs: 520, loop: true, category: 'presence', purpose: 'Default idle state when companion is not doing anything else', priority: 0, interruptible: true },
+  { key: 'Idle_Breathe', requiredForCreation: false, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 620, loop: true, category: 'presence', purpose: 'Subtle living presence when companion is idle', priority: 0, interruptible: true },
+  { key: 'Idle_Sleepy', requiredForCreation: false, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 520, loop: true, category: 'presence', purpose: 'Low energy state after longer inactive periods', priority: 0, interruptible: true },
+  { key: 'Idle_Sleeping', requiredForCreation: false, requiredForNetworkVisitor: false, fallback: 'Idle_Sleepy', frameDurationMs: 560, loop: true, category: 'presence', purpose: 'Deep sleep state after extended inactivity', priority: 0, interruptible: true },
+  { key: 'Walk_Right', requiredForCreation: true, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 180, loop: true, category: 'movement', purpose: 'Walking right (walk-in-place)', priority: 1, interruptible: true },
+  { key: 'Walk_Left', requiredForCreation: true, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 180, loop: true, category: 'movement', purpose: 'Walking left (walk-in-place)', priority: 1, interruptible: true },
+  { key: 'Expedition_Return', requiredForCreation: false, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 220, loop: false, category: 'activity', purpose: 'Returning from discovery expedition', priority: 1, interruptible: false },
+  { key: 'Think', requiredForCreation: false, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 420, loop: true, category: 'thinking', purpose: 'Reasoning, internal processing, loading, waiting for AI response', priority: 1, interruptible: true },
+  { key: 'Work_Focus', requiredForCreation: false, requiredForNetworkVisitor: false, fallback: 'Think', frameDurationMs: 220, loop: true, category: 'activity', purpose: 'Focused on performing a task', priority: 1, interruptible: true },
+  { key: 'Expedition_Present', requiredForCreation: false, requiredForNetworkVisitor: false, fallback: 'Talk_Neutral', frameDurationMs: 260, loop: true, category: 'activity', purpose: 'Presenting discovery findings to user', priority: 2, interruptible: true },
+  { key: 'Talk_Neutral', requiredForCreation: true, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 280, loop: true, category: 'conversation', purpose: 'Neutral conversation state', priority: 2, interruptible: true },
+  { key: 'Talk_Happy', requiredForCreation: false, requiredForNetworkVisitor: false, fallback: 'Talk_Neutral', frameDurationMs: 300, loop: true, category: 'conversation', purpose: 'Happy or excited conversation', priority: 2, interruptible: true },
+  { key: 'Expedition_Prepare', requiredForCreation: false, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 300, loop: false, category: 'activity', purpose: 'Preparing for discovery expedition', priority: 1, interruptible: true },
+  { key: 'Expedition_Leave', requiredForCreation: false, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 320, loop: false, category: 'activity', purpose: 'Leaving for discovery expedition', priority: 1, interruptible: false },
+  { key: 'Listening', requiredForCreation: true, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 360, loop: true, category: 'interaction', purpose: 'Listening to user voice input', priority: 2, interruptible: true },
+  { key: 'Waiting_Response', requiredForCreation: false, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 300, loop: true, category: 'interaction', purpose: 'Waiting for user response after speaking', priority: 1, interruptible: true },
+  { key: 'Drag_Hold', requiredForCreation: true, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 180, loop: true, category: 'interaction', purpose: 'Being dragged by user', priority: 3, interruptible: false },
+  { key: 'Drag_Release', requiredForCreation: true, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 220, loop: false, category: 'interaction', purpose: 'Released after being dragged', priority: 2, interruptible: true },
+  { key: 'Talk_Thinking', requiredForCreation: false, requiredForNetworkVisitor: false, fallback: 'Talk_Neutral', frameDurationMs: 280, loop: true, category: 'conversation', purpose: 'Thinking while speaking', priority: 2, interruptible: true },
+  { key: 'Talk_Concerned', requiredForCreation: false, requiredForNetworkVisitor: false, fallback: 'Talk_Neutral', frameDurationMs: 280, loop: true, category: 'conversation', purpose: 'Concerned or serious conversation', priority: 2, interruptible: true },
+  { key: 'Walk_Up', requiredForCreation: true, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 180, loop: true, category: 'movement', purpose: 'Walking up (walk-in-place)', priority: 1, interruptible: true },
+  { key: 'Walk_Down', requiredForCreation: true, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 180, loop: true, category: 'movement', purpose: 'Walking down (walk-in-place)', priority: 1, interruptible: true },
+  { key: 'Walk_UpLeft', requiredForCreation: true, requiredForNetworkVisitor: false, fallback: 'Walk_Left', frameDurationMs: 180, loop: true, category: 'movement', purpose: 'Walking up-left (walk-in-place)', priority: 1, interruptible: true },
+  { key: 'Walk_UpRight', requiredForCreation: true, requiredForNetworkVisitor: false, fallback: 'Walk_Right', frameDurationMs: 180, loop: true, category: 'movement', purpose: 'Walking up-right (walk-in-place)', priority: 1, interruptible: true },
+  { key: 'Walk_DownLeft', requiredForCreation: true, requiredForNetworkVisitor: false, fallback: 'Walk_Left', frameDurationMs: 180, loop: true, category: 'movement', purpose: 'Walking down-left (walk-in-place)', priority: 1, interruptible: true },
+  { key: 'Walk_DownRight', requiredForCreation: true, requiredForNetworkVisitor: false, fallback: 'Walk_Right', frameDurationMs: 180, loop: true, category: 'movement', purpose: 'Walking down-right (walk-in-place)', priority: 1, interruptible: true },
+  { key: 'Enter', requiredForCreation: true, requiredForNetworkVisitor: true, fallback: 'Idle_Neutral', frameDurationMs: 320, loop: false, category: 'movement', purpose: 'Entering the desktop scene', priority: 2, interruptible: false },
+  { key: 'Leave', requiredForCreation: true, requiredForNetworkVisitor: true, fallback: 'Idle_Neutral', frameDurationMs: 320, loop: false, category: 'movement', purpose: 'Leaving the desktop scene', priority: 2, interruptible: false },
+  { key: 'Music_Idle', requiredForCreation: false, requiredForNetworkVisitor: false, fallback: 'Idle_Neutral', frameDurationMs: 400, loop: true, category: 'relaxation', purpose: 'Relaxed music-listening state', priority: 0, interruptible: true },
 ] as const;
-export type CompanionAnimationName = typeof COMPANION_ANIMATION_NAMES[number];
+
+export type CompanionAnimationName = typeof COMPANION_ANIMATION_MANIFEST_SOURCE[number]['key'];
+export type CompanionAnimationCategory = typeof COMPANION_ANIMATION_MANIFEST_SOURCE[number]['category'];
+export const COMPANION_ANIMATION_NAMES: readonly CompanionAnimationName[] = COMPANION_ANIMATION_MANIFEST_SOURCE.map(({ key }) => key);
 
 export interface CompanionAnimationManifestEntry {
   key: CompanionAnimationName;
   fileName: `${CompanionAnimationName}.png`;
   requiredForCreation: boolean;
+  requiredForNetworkVisitor: boolean;
   fallback: CompanionAnimationName;
   minFrames: number;
   maxFrames: number;
@@ -2839,31 +2924,20 @@ export interface CompanionAnimationManifestEntry {
   maxFrameSize: number;
   frameDurationMs: number;
   loop: boolean;
+  category: CompanionAnimationCategory;
+  purpose: string;
+  priority: number;
+  interruptible: boolean;
 }
 
-const REQUIRED_COMPANION_ANIMATION_KEYS = new Set<CompanionAnimationName>(COMPANION_ANIMATION_NAMES.slice(0, 15));
-
 /** Shared source of truth for creation, editing, and runtime asset names. */
-const COMPANION_ANIMATION_TIMING: Record<CompanionAnimationName, { frameDurationMs: number; loop: boolean }> = {
-  Idle_Neutral: { frameDurationMs: 520, loop: true }, Idle_Breathe: { frameDurationMs: 620, loop: true }, Idle_Sleepy: { frameDurationMs: 520, loop: true }, Idle_Sleeping: { frameDurationMs: 560, loop: true },
-  Walk_Right: { frameDurationMs: 180, loop: true }, Walk_Left: { frameDurationMs: 180, loop: true }, Think: { frameDurationMs: 420, loop: true }, Work_Focus: { frameDurationMs: 220, loop: true },
-  Expedition_Return: { frameDurationMs: 220, loop: false }, Expedition_Present: { frameDurationMs: 260, loop: true }, Talk_Neutral: { frameDurationMs: 280, loop: true }, Talk_Happy: { frameDurationMs: 300, loop: true },
-  Expedition_Prepare: { frameDurationMs: 300, loop: false }, Expedition_Leave: { frameDurationMs: 320, loop: false }, Listening: { frameDurationMs: 360, loop: true }, Waiting_Response: { frameDurationMs: 300, loop: true },
-  Drag_Hold: { frameDurationMs: 180, loop: true }, Drag_Release: { frameDurationMs: 220, loop: false }, Talk_Thinking: { frameDurationMs: 280, loop: true }, Talk_Concerned: { frameDurationMs: 280, loop: true },
-  Walk_Up: { frameDurationMs: 180, loop: true }, Walk_Down: { frameDurationMs: 180, loop: true }, Walk_UpLeft: { frameDurationMs: 180, loop: true }, Walk_UpRight: { frameDurationMs: 180, loop: true },
-  Walk_DownLeft: { frameDurationMs: 180, loop: true }, Walk_DownRight: { frameDurationMs: 180, loop: true }, Enter: { frameDurationMs: 320, loop: false }, Leave: { frameDurationMs: 320, loop: false }, Music_Idle: { frameDurationMs: 400, loop: true },
-};
-
-export const COMPANION_ANIMATION_MANIFEST: readonly CompanionAnimationManifestEntry[] = COMPANION_ANIMATION_NAMES.map((key) => ({
-  key,
-  fileName: `${key}.png`,
-  requiredForCreation: REQUIRED_COMPANION_ANIMATION_KEYS.has(key),
-  fallback: 'Idle_Neutral',
+export const COMPANION_ANIMATION_MANIFEST: readonly CompanionAnimationManifestEntry[] = COMPANION_ANIMATION_MANIFEST_SOURCE.map((definition) => ({
+  ...definition,
+  fileName: `${definition.key}.png`,
   minFrames: 1,
   maxFrames: 120,
   minFrameSize: 300,
   maxFrameSize: 4096,
-  ...COMPANION_ANIMATION_TIMING[key],
 }));
 export const COMPANION_ANIMATION_MANIFEST_BY_NAME: Readonly<Record<CompanionAnimationName, CompanionAnimationManifestEntry>> = Object.fromEntries(COMPANION_ANIMATION_MANIFEST.map(entry => [entry.key, entry])) as Record<CompanionAnimationName, CompanionAnimationManifestEntry>;
 
@@ -2888,6 +2962,10 @@ export interface UpdateCompanionInput {
   personality?: CompanionPersonality;
   personalityAnalysisId?: string;
   assetRoot?: string;
+  /** Atomic animation replacements committed with the profile update. */
+  assets?: CompanionCreationAsset[];
+  /** Optional animations removed in the same atomic update. */
+  deleteAnimationKeys?: CompanionAnimationName[];
 }
 
 export type CompanionAssetPack = {

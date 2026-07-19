@@ -332,7 +332,14 @@ export function createDiscoveryCandidatesFromEvidence(input: {
       fingerprint: fingerprintDiscovery({ title: item.title, canonicalUrl: item.canonicalUrl, sourceType: item.sourceType }),
       researchPlanId: input.researchPlanId,
       evidenceIds: [item.id],
-      rawEvidence: JSON.stringify({ evidenceId: item.id, contentHash: item.contentHash, domain: item.domain }),
+      rawEvidence: JSON.stringify({
+        evidenceId: item.id,
+        externalId: item.externalId,
+        canonicalUrl: item.canonicalUrl,
+        contentHash: item.contentHash,
+        publishedAt: item.publishedAt,
+        domain: item.domain,
+      }),
       collectedAt: item.fetchedAt
     }));
 }

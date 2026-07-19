@@ -47,6 +47,23 @@ function withCycleDeadline<T>(operation: Promise<T>, remainingMs: number): Promi
   });
 }
 
+function expandFeedEvidence(page: WebPageEvidence): WebPageEvidence[] {
+  if (page.sourceType !== 'rss' || !page.feedItems?.length) return [page];
+  return page.feedItems.map((item) => ({
+    ...page,
+    id: `feed_item:${createHash('sha256').update(`${page.id}:${item.externalId}`).digest('hex')}`,
+    url: item.canonicalUrl,
+    canonicalUrl: item.canonicalUrl,
+    title: item.title,
+    extractedText: item.summary,
+    excerpt: item.summary.slice(0, 700),
+    contentHash: item.contentHash,
+    publishedAt: item.publishedAt,
+    externalId: item.externalId,
+    feedItems: undefined,
+  }));
+}
+
 export interface ResearchProviderOutcome {
   id: string;
   providerMode: EngineProviderMode;
@@ -230,6 +247,7 @@ function dedupeResearchCandidates(candidates: DiscoveryCandidate[]): DiscoveryCa
   const deduplicated: DiscoveryCandidate[] = [];
   const indexByUrl = new Map<string, number>();
   const indexByFingerprint = new Map<string, number>();
+  const indexByExternalId = new Map<string, number>();
   const readRaw = (candidate: DiscoveryCandidate): Record<string, unknown> => {
     try {
       return candidate.rawEvidence
@@ -241,22 +259,34 @@ function dedupeResearchCandidates(candidates: DiscoveryCandidate[]): DiscoveryCa
   };
   for (const candidate of candidates) {
     const canonicalUrl = normalizeDiscoveryUrl(candidate.sourceUrl);
+    const candidateRaw = readRaw(candidate);
+    const candidateExternalId = typeof candidateRaw.externalId === 'string'
+      ? candidateRaw.externalId
+      : undefined;
     // Deliberately omit source type here so the same page from a structured
     // connector and a fetched web page is one research candidate.
     const comparisonFingerprint = fingerprintDiscovery({ title: candidate.title, canonicalUrl });
-    const existingIndex = (canonicalUrl ? indexByUrl.get(canonicalUrl) : undefined)
-      ?? indexByFingerprint.get(comparisonFingerprint);
+    const urlIndex = canonicalUrl ? indexByUrl.get(canonicalUrl) : undefined;
+    const urlMatchHasDifferentExternalId = urlIndex !== undefined
+      && candidateExternalId !== undefined
+      && (() => {
+        const existingExternalId = readRaw(deduplicated[urlIndex]!).externalId;
+        return typeof existingExternalId === 'string' && existingExternalId !== candidateExternalId;
+      })();
+    const existingIndex = (candidateExternalId ? indexByExternalId.get(candidateExternalId) : undefined)
+      ?? (urlMatchHasDifferentExternalId ? undefined : urlIndex)
+      ?? (candidateExternalId ? undefined : indexByFingerprint.get(comparisonFingerprint));
     if (existingIndex === undefined) {
       const index = deduplicated.length;
       deduplicated.push({ ...candidate, sourceUrl: canonicalUrl ?? candidate.sourceUrl });
       if (canonicalUrl) indexByUrl.set(canonicalUrl, index);
+      if (candidateExternalId) indexByExternalId.set(candidateExternalId, index);
       indexByFingerprint.set(comparisonFingerprint, index);
       continue;
     }
 
     const existing = deduplicated[existingIndex]!;
     const existingRaw = readRaw(existing);
-    const candidateRaw = readRaw(candidate);
     const existingBaseIds = Array.isArray(existingRaw.discoveryBaseIds)
       ? existingRaw.discoveryBaseIds.filter((id): id is string => typeof id === 'string')
       : [];
@@ -285,6 +315,7 @@ function dedupeResearchCandidates(candidates: DiscoveryCandidate[]): DiscoveryCa
       }),
     };
     if (canonicalUrl) indexByUrl.set(canonicalUrl, existingIndex);
+    if (candidateExternalId) indexByExternalId.set(candidateExternalId, existingIndex);
     indexByFingerprint.set(comparisonFingerprint, existingIndex);
   }
   return deduplicated;
@@ -336,7 +367,9 @@ async function fetchSelectedPages(input: {
         return undefined;
       }
     }));
-    evidence.push(...fetched.filter((page): page is WebPageEvidence => Boolean(page)));
+    evidence.push(...fetched
+      .filter((page): page is WebPageEvidence => Boolean(page))
+      .flatMap(expandFeedEvidence));
   }
   return evidence;
 }

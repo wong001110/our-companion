@@ -48,7 +48,12 @@ export function buildAssetManifest(input: { companionId: string; includeVoices?:
       return { name: definition.key, format: 'sprite_sheet' as const, files: [relativePath], frameWidth: sprite.frameWidth, frameHeight: sprite.frameHeight, frameCount: sprite.frameCount, frameDurationMs: definition.frameDurationMs, loop: definition.loop };
     });
   const animationNames = new Set(animations.map(animation => animation.name));
-  for (const required of ['Idle_Neutral', 'Enter', 'Leave'] as const) if (!animationNames.has(required)) throw new Error('ASSET_PACK_MANIFEST_INVALID');
+  const requiredVisitorAnimations = COMPANION_ANIMATION_MANIFEST
+    .filter((definition) => definition.requiredForNetworkVisitor)
+    .map((definition) => definition.key);
+  for (const required of requiredVisitorAnimations) {
+    if (!animationNames.has(required)) throw new Error('ASSET_PACK_MANIFEST_INVALID');
+  }
   const portraitPath = entries.find(entry => entry.category === 'portrait')?.relativePath;
   const iconPath = entries.find(entry => entry.category === 'icon')?.relativePath;
   const manifest: CompanionAssetManifest = {
@@ -57,7 +62,10 @@ export function buildAssetManifest(input: { companionId: string; includeVoices?:
     files: entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath)),
   };
   const canonical = canonicalJson(manifest);
-  return { manifest, manifestHash: createHash('sha256').update(canonical, 'utf8').digest('hex'), totalFiles: entries.length, totalBytes, requiredAnimations: { Idle_Neutral: true, Enter: true, Leave: true }, filePaths: new Map(entries.map(entry => [entry.relativePath, path.join(root.target, entry.relativePath.slice('assets/'.length))])) };
+  const requiredAnimations = Object.fromEntries(
+    requiredVisitorAnimations.map((name) => [name, true]),
+  ) as BuiltAssetPack['requiredAnimations'];
+  return { manifest, manifestHash: createHash('sha256').update(canonical, 'utf8').digest('hex'), totalFiles: entries.length, totalBytes, requiredAnimations, filePaths: new Map(entries.map(entry => [entry.relativePath, path.join(root.target, entry.relativePath.slice('assets/'.length))])) };
 }
 
 export function canonicalJson(value: unknown): string {

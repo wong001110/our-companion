@@ -75,4 +75,12 @@
   .debug-reset-item {
     grid-template-columns: 1fr;
   }
+
+  .discovery-section-heading {
+    flex-direction: column;
+  }
+
+  .discovery-section-heading > button {
+    width: 100%;
+  }
 }

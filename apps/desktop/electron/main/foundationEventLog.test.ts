@@ -58,6 +58,10 @@ describe('foundation event log', () => {
       .map((entry) => ({ animationKey: entry.key, buffer: bytes }));
   }
 
+  function allAssets(bytes = png(300, 300)) {
+    return COMPANION_ANIMATION_MANIFEST.map((entry) => ({ animationKey: entry.key, buffer: bytes }));
+  }
+
   function initializeCompanion(services: AppServices): string {
     const companion = services.db.createCompanion({
       name: 'Test', personalityDescription: 'A generated test Companion', personalityAnalysisId: 'db-fixture', assetRoot: 'companion://test/assets',
@@ -177,6 +181,213 @@ describe('foundation event log', () => {
     services.db.close();
   });
 
+  it('persists every validated required and optional animation before reporting success', async () => {
+    useTempUserData();
+    const services = new AppServices(':memory:');
+    const personality: CompanionPersonality = { energy: 50, curiosity: 60, sociability: 40, diligence: 70, playfulness: 55, confidence: 45, calmness: 75, shyness: 25 };
+    const analyses = (services as unknown as {
+      personalityAnalyses: Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>;
+    }).personalityAnalyses;
+    analyses.set('all-assets-fixture', {
+      personality,
+      description: 'All asset fixture',
+      expiresAt: Date.now() + 60_000,
+      used: false,
+    });
+
+    const created = await services.companionNew.create({
+      name: 'Complete',
+      personalityDescription: 'All asset fixture',
+      personalityAnalysisId: 'all-assets-fixture',
+      assetRoot: '',
+      assets: allAssets(),
+    });
+    const stored = await services.companionNew.listAssets(created.id);
+    expect(stored.filter((asset) => asset.subfolder === 'animations').map((asset) => asset.name).sort())
+      .toEqual(COMPANION_ANIMATION_MANIFEST.map((entry) => entry.fileName).sort());
+    services.db.close();
+  });
+
+  it('atomically saves profile edits, sprite replacements, and optional deletions', async () => {
+    const userDataRoot = useTempUserData();
+    const services = new AppServices(':memory:');
+    const personality: CompanionPersonality = { energy: 50, curiosity: 60, sociability: 40, diligence: 70, playfulness: 55, confidence: 45, calmness: 75, shyness: 25 };
+    const analyses = (services as unknown as {
+      personalityAnalyses: Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>;
+    }).personalityAnalyses;
+    analyses.set('edit-create-fixture', {
+      personality,
+      description: 'Edit creation fixture',
+      expiresAt: Date.now() + 60_000,
+      used: false,
+    });
+    const created = await services.companionNew.create({
+      name: 'Before Edit',
+      personalityDescription: 'Edit creation fixture',
+      personalityAnalysisId: 'edit-create-fixture',
+      assetRoot: '',
+      assets: allAssets(),
+    });
+
+    const replacement = png(600, 300);
+    const updated = await services.companionNew.update({
+      id: created.id,
+      name: 'After Edit',
+      assets: [{ animationKey: 'Idle_Neutral', buffer: replacement }],
+      deleteAnimationKeys: ['Idle_Breathe'],
+    });
+
+    expect(updated.name).toBe('After Edit');
+    const animationsDir = path.join(userDataRoot, 'companions', created.id, 'assets', 'animations');
+    expect(fs.readFileSync(path.join(animationsDir, 'Idle_Neutral.png'))).toEqual(Buffer.from(replacement));
+    expect(fs.existsSync(path.join(animationsDir, 'Idle_Breathe.png'))).toBe(false);
+    expect(fs.existsSync(path.join(animationsDir, 'Enter.png'))).toBe(true);
+    services.db.close();
+  });
+
+  it('rejects required animation deletion without changing profile or files', async () => {
+    const userDataRoot = useTempUserData();
+    const services = new AppServices(':memory:');
+    const personality: CompanionPersonality = { energy: 50, curiosity: 60, sociability: 40, diligence: 70, playfulness: 55, confidence: 45, calmness: 75, shyness: 25 };
+    const analyses = (services as unknown as {
+      personalityAnalyses: Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>;
+    }).personalityAnalyses;
+    analyses.set('required-delete-fixture', {
+      personality,
+      description: 'Required deletion fixture',
+      expiresAt: Date.now() + 60_000,
+      used: false,
+    });
+    const created = await services.companionNew.create({
+      name: 'Protected',
+      personalityDescription: 'Required deletion fixture',
+      personalityAnalysisId: 'required-delete-fixture',
+      assetRoot: '',
+      assets: requiredAssets(),
+    });
+    const requiredPath = path.join(userDataRoot, 'companions', created.id, 'assets', 'animations', 'Idle_Neutral.png');
+
+    await expect(services.companionNew.update({
+      id: created.id,
+      name: 'Must Not Persist',
+      deleteAnimationKeys: ['Idle_Neutral'],
+    })).rejects.toThrow('Required Companion animation cannot be deleted: Idle_Neutral');
+    await expect(services.companionNew.deleteAsset({
+      companionId: created.id,
+      subfolder: 'animations',
+      fileName: 'Idle_Neutral.png',
+    })).rejects.toThrow('Required Companion animation cannot be deleted: Idle_Neutral');
+
+    expect(services.db.getCompanion(created.id)?.name).toBe('Protected');
+    expect(fs.existsSync(requiredPath)).toBe(true);
+    services.db.close();
+  });
+
+  it('restores profile, personality seed, assets, and AI analysis when an edit fails', async () => {
+    const userDataRoot = useTempUserData();
+    const services = new AppServices(':memory:');
+    const originalPersonality: CompanionPersonality = { energy: 50, curiosity: 60, sociability: 40, diligence: 70, playfulness: 55, confidence: 45, calmness: 75, shyness: 25 };
+    const nextPersonality: CompanionPersonality = { ...originalPersonality, curiosity: 91 };
+    const internals = services as unknown as {
+      personalityAnalyses: Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>;
+      syncPersonalityDiscoverySeed(companion: { personality: CompanionPersonality }): void;
+    };
+    internals.personalityAnalyses.set('edit-rollback-create', {
+      personality: originalPersonality,
+      description: 'Original personality fixture',
+      expiresAt: Date.now() + 60_000,
+      used: false,
+    });
+    const created = await services.companionNew.create({
+      name: 'Original',
+      personalityDescription: 'Original personality fixture',
+      personalityAnalysisId: 'edit-rollback-create',
+      assetRoot: '',
+      assets: requiredAssets(),
+    });
+    internals.personalityAnalyses.set('edit-rollback-analysis', {
+      personality: nextPersonality,
+      description: 'Updated personality fixture',
+      expiresAt: Date.now() + 60_000,
+      used: false,
+    });
+    const originalAsset = fs.readFileSync(path.join(userDataRoot, 'companions', created.id, 'assets', 'animations', 'Idle_Neutral.png'));
+    const seedSync = vi.spyOn(internals, 'syncPersonalityDiscoverySeed').mockImplementationOnce(() => {
+      throw new Error('edit seed synchronization failure');
+    });
+
+    await expect(services.companionNew.update({
+      id: created.id,
+      name: 'Changed',
+      personalityDescription: 'Updated personality fixture',
+      personality: nextPersonality,
+      personalityAnalysisId: 'edit-rollback-analysis',
+      assets: [{ animationKey: 'Idle_Neutral', buffer: png(600, 300) }],
+    })).rejects.toThrow('edit seed synchronization failure');
+
+    const restored = services.db.getCompanion(created.id);
+    expect(restored).toEqual(expect.objectContaining({
+      name: 'Original',
+      personalityDescription: 'Original personality fixture',
+      personality: originalPersonality,
+    }));
+    expect(fs.readFileSync(path.join(userDataRoot, 'companions', created.id, 'assets', 'animations', 'Idle_Neutral.png')))
+      .toEqual(originalAsset);
+    expect(internals.personalityAnalyses.get('edit-rollback-analysis')?.used).toBe(false);
+    expect(seedSync).toHaveBeenCalledTimes(2);
+    services.db.close();
+  });
+
+  it('keeps legacy companions usable for profile edits and requires missing assets only when assets change', async () => {
+    useTempUserData();
+    const services = new AppServices(':memory:');
+    const id = initializeCompanion(services);
+
+    const updated = await services.companionNew.update({ id, name: 'Legacy Renamed' });
+    expect(updated.name).toBe('Legacy Renamed');
+    await expect(services.companionNew.update({
+      id,
+      assets: [{ animationKey: 'Idle_Neutral', buffer: png(300, 300) }],
+    })).rejects.toThrow('Missing required Companion animations');
+    expect(services.db.getCompanion(id)?.name).toBe('Legacy Renamed');
+    services.db.close();
+  });
+
+  it('rolls back a newly primary Companion and promoted assets when seed synchronization fails', async () => {
+    const userDataRoot = useTempUserData();
+    const services = new AppServices(':memory:');
+    const personality: CompanionPersonality = { energy: 50, curiosity: 60, sociability: 40, diligence: 70, playfulness: 55, confidence: 45, calmness: 75, shyness: 25 };
+    const internals = services as unknown as {
+      personalityAnalyses: Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>;
+      syncPersonalityDiscoverySeed(): void;
+    };
+    internals.personalityAnalyses.set('seed-failure-fixture', {
+      personality,
+      description: 'Seed failure fixture',
+      expiresAt: Date.now() + 60_000,
+      used: false,
+    });
+    vi.spyOn(internals, 'syncPersonalityDiscoverySeed').mockImplementation(() => {
+      throw new Error('seed synchronization failure');
+    });
+
+    await expect(services.companionNew.create({
+      name: 'Rollback Primary',
+      personalityDescription: 'Seed failure fixture',
+      personalityAnalysisId: 'seed-failure-fixture',
+      assetRoot: '',
+      assets: requiredAssets(),
+    })).rejects.toThrow('seed synchronization failure');
+
+    expect(services.db.listCompanions()).toEqual([]);
+    expect(services.db.getPrimaryCompanion()).toBeNull();
+    expect(services.db.listDiscoveryBases('missing-companion')).toEqual([]);
+    expect(internals.personalityAnalyses.get('seed-failure-fixture')?.used).toBe(false);
+    const companionRoot = path.join(userDataRoot, 'companions');
+    expect(fs.existsSync(companionRoot) ? fs.readdirSync(companionRoot) : []).toEqual([]);
+    services.db.close();
+  });
+
   it('enforces asset size limits, duplicate keys, and missing required animations', async () => {
     useTempUserData();
     const services = new AppServices(':memory:');
@@ -192,7 +403,8 @@ describe('foundation event log', () => {
     await expect(create('duplicate-fixture', [requiredAssets()[0], requiredAssets()[0]])).rejects.toThrow('Duplicate');
 
     analyses.set('missing-fixture', { personality, description: 'Limit fixture', expiresAt: Date.now() + 60_000, used: false });
-    await expect(create('missing-fixture', requiredAssets().slice(1))).rejects.toThrow('All required');
+    await expect(create('missing-fixture', requiredAssets().slice(1)))
+      .rejects.toThrow(`Missing required Companion animations: ${requiredAssets()[0]!.animationKey}`);
 
     const overFile = new Uint8Array(MAX_COMPANION_ASSET_BYTES + 1);
     png(300, 300).forEach((value, index) => { overFile[index] = value; });

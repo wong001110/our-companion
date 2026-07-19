@@ -31,8 +31,22 @@
 .animation-slot-check { color: #81c995; margin-right: 4px; }
 .animation-slot-size { font-size: 11px; color: rgba(248, 237, 245, 0.4); flex-shrink: 0; }
 .animation-slot-staged { font-size: 10px; color: #e8a838; background: rgba(232, 168, 56, 0.15); padding: 1px 6px; border-radius: 4px; flex-shrink: 0; }
+.animation-slot-metadata { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; color: rgba(248, 237, 245, 0.68); font-size: 10px; line-height: 1.35; }
+.animation-slot-metadata > span { padding: 2px 5px; border-radius: 4px; background: rgba(255, 255, 255, 0.045); }
+.animation-slot-metadata .asset-required-badge { color: #fff4d6; background: rgba(232, 168, 56, 0.22); font-weight: 700; }
+.animation-slot-metadata .asset-optional-badge { color: rgba(248, 237, 245, 0.65); }
+.animation-slot-metadata .asset-validation-valid { color: #a9e4b8; background: rgba(129, 201, 149, 0.14); }
+.animation-slot-metadata .asset-validation-required { color: #ffc2c0; background: rgba(242, 139, 130, 0.14); }
+.animation-slot-metadata .asset-validation-pending { color: rgba(248, 237, 245, 0.68); }
 .animation-slot-actions { display: flex; justify-content: flex-end; gap: 6px; }
-.animation-preview-placeholder { width: 100%; aspect-ratio: 1; background: rgba(0, 0, 0, 0.3); border-radius: 6px; }
+.animation-preview-placeholder {
+  width: 100%; aspect-ratio: 1; display: grid; place-items: center;
+  color: rgba(248, 237, 245, 0.28); font-size: 32px;
+  background:
+    radial-gradient(circle at center, rgba(186, 166, 224, 0.08), transparent 55%),
+    rgba(0, 0, 0, 0.3);
+  border: 1px dashed rgba(239, 206, 228, 0.15); border-radius: 6px;
+}
 .animation-preview-img { width: 100%; aspect-ratio: 1; object-fit: contain; border-radius: 6px; background: rgba(0, 0, 0, 0.2); }
 @keyframes asset-preview-enter { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .animation-slot-filled { animation: none; } }

@@ -85,6 +85,32 @@ describe('SafeWebPageFetcher', () => {
     expect(evidence.sourceType).toBe('rss');
     expect(evidence.extractedText).toMatch(/release details|adaptive discovery evidence/i);
     expect(evidence.contentType).toBe(contentType);
+    expect(evidence.feedItems).toHaveLength(1);
+    expect(evidence.feedItems?.[0]).toMatchObject({
+      title: expect.any(String),
+      externalId: expect.any(String),
+      canonicalUrl: 'https://public.example.test/feed',
+      contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+  });
+
+  it('normalizes RSS entries independently using guid, canonical URL, and content hash', async () => {
+    const body = `<?xml version="1.0"?><rss><channel><title>Releases</title>
+      <item><guid>release-2</guid><title>Release 2</title><link>https://public.example.test/releases/2</link><description>Second release details.</description><pubDate>2026-07-18</pubDate></item>
+      <item><guid>release-3</guid><title>Release 3</title><link>https://public.example.test/releases/3</link><description>Third release details.</description><pubDate>2026-07-19</pubDate></item>
+    </channel></rss>`;
+    const fetcher = new SafeWebPageFetcher({
+      fetch: async () => new Response(body, { headers: { 'content-type': 'application/rss+xml' } }),
+      lookup: publicLookup,
+    });
+    const evidence = await fetcher.fetchPage(fetchInput('https://public.example.test/feed'));
+    expect(evidence.feedItems).toHaveLength(2);
+    expect(evidence.feedItems?.map((item) => item.externalId)).toEqual(['release-2', 'release-3']);
+    expect(new Set(evidence.feedItems?.map((item) => item.contentHash)).size).toBe(2);
+    expect(evidence.feedItems?.map((item) => item.canonicalUrl)).toEqual([
+      'https://public.example.test/releases/2',
+      'https://public.example.test/releases/3',
+    ]);
   });
 
   it('connects through the exact approved DNS address rather than resolving again in the transport', async () => {

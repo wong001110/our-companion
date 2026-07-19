@@ -174,6 +174,27 @@ export class DatabaseService {
     return this.adaptiveDiscovery.upsertBase(base);
   }
 
+  updateDiscoveryBase(base: PersistedDiscoveryBase): PersistedDiscoveryBase {
+    return this.adaptiveDiscovery.updateBase(base);
+  }
+
+  getDiscoveryBase(id: string, companionId: string): PersistedDiscoveryBase | undefined {
+    return this.adaptiveDiscovery.getBase(id, companionId);
+  }
+
+  getDiscoveryBaseByLocator(
+    companionId: string,
+    connectorId: string,
+    scope: string,
+    locator: string,
+  ): PersistedDiscoveryBase | undefined {
+    return this.adaptiveDiscovery.getBaseByLocator(companionId, connectorId, scope, locator);
+  }
+
+  deleteDiscoveryBase(id: string, companionId: string): boolean {
+    return this.adaptiveDiscovery.deleteBase(id, companionId);
+  }
+
   insertDiscoveryBaseFeedback(
     feedback: PersistedDiscoveryBaseFeedback,
   ): PersistedDiscoveryBaseFeedback {
@@ -2734,7 +2755,21 @@ export class DatabaseService {
 
   /** Used only to roll back an uncommitted creation attempt. */
   rollbackCompanionCreation(id: string): void {
-    this.db.prepare('DELETE FROM companions WHERE id = ? AND is_primary = 0').run(id);
+    this.db.exec('BEGIN');
+    try {
+      this.db.prepare(
+        `DELETE FROM discovery_base_feedback
+         WHERE discovery_base_id IN (
+           SELECT id FROM discovery_bases WHERE companion_id = ?
+         )`,
+      ).run(id);
+      this.db.prepare('DELETE FROM discovery_bases WHERE companion_id = ?').run(id);
+      this.db.prepare('DELETE FROM companions WHERE id = ?').run(id);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   updatePendingActionDeferReason(id: string, deferReason: string): void {

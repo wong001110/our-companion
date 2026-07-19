@@ -22,6 +22,7 @@ export * from './adaptiveDiscovery';
 export * from './discoveryBases';
 export * from './discoverySeen';
 export * from './discoveryContext';
+export * from './sourceManagement';
 
 export interface DiscoveryFetchInput {
   query?: string;

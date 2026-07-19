@@ -385,20 +385,53 @@ function extractReadablePage(html: string, fallbackUrl: URL, limit: number): {
 }
 
 export function extractReadableFeed(xml: string, fallbackUrl: URL, limit: number): {
-  title: string; canonicalUrl: string; extractedText: string; excerpt: string; publishedAt?: string;
+  title: string;
+  canonicalUrl: string;
+  extractedText: string;
+  excerpt: string;
+  publishedAt?: string;
+  feedItems: NonNullable<WebPageEvidence['feedItems']>;
 } {
   const $ = load(xml, { xmlMode: true });
   const feedTitle = normalizeText($('channel > title').first().text() || $('feed > title').first().text())
     || fallbackUrl.hostname;
-  const entries = $('item, entry').slice(0, 20).map((_index, element) => {
+  const feedItems = $('item, entry').slice(0, 20).toArray().flatMap((
+    element,
+  ): NonNullable<WebPageEvidence['feedItems']> => {
     const entry = $(element);
     const title = normalizeText(entry.children('title').first().text());
     const body = normalizeText(
       entry.children('description, summary, content, content\\:encoded').first().text(),
     );
-    return [title, body].filter(Boolean).join(': ');
-  }).get().filter(Boolean);
-  const extractedText = normalizeText(entries.join(' ')).slice(0, limit);
+    const publishedAt = normalizeText(
+      entry.children('pubDate, published, updated').first().text(),
+    ) || undefined;
+    const rawLink = entry.children('link').first().attr('href')
+      ?? entry.children('link').first().text().trim();
+    let canonicalUrl = fallbackUrl.toString();
+    if (rawLink) {
+      try {
+        canonicalUrl = assertSafeResearchUrl(new URL(rawLink, fallbackUrl).toString()).toString();
+      } catch {
+        canonicalUrl = fallbackUrl.toString();
+      }
+    }
+    const suppliedId = normalizeText(entry.children('guid, id').first().text());
+    const material = normalizeText([title, body, publishedAt].filter(Boolean).join(' '));
+    if (!material) return [];
+    const contentHash = createHash('sha256').update(material).digest('hex');
+    return [{
+      externalId: suppliedId || (canonicalUrl !== fallbackUrl.toString() ? canonicalUrl : contentHash),
+      canonicalUrl,
+      title: title || feedTitle,
+      summary: body || title,
+      contentHash,
+      publishedAt,
+    }];
+  });
+  const extractedText = normalizeText(
+    feedItems.map((item) => `${item.title}: ${item.summary}`).join(' '),
+  ).slice(0, limit);
   const selfHref = $('feed > link[rel="self"]').first().attr('href')
     ?? $('rss > channel > atom\\:link[rel="self"]').first().attr('href');
   let canonicalUrl = fallbackUrl.toString();
@@ -416,6 +449,7 @@ export function extractReadableFeed(xml: string, fallbackUrl: URL, limit: number
     extractedText,
     excerpt: extractedText.slice(0, 700),
     publishedAt,
+    feedItems,
   };
 }
 
@@ -518,6 +552,9 @@ export class SafeWebPageFetcher implements WebPageFetcher {
         const canonical = assertSafeResearchUrl(extracted.canonicalUrl);
         const canonicalAddresses = await resolveSafely(canonical.hostname);
         if (canonicalAddresses.length === 0 || canonicalAddresses.some(({ address }) => isBlockedAddress(address))) throw new ResearchAdapterError('blocked_private_address');
+        const feedItems = FEED_CONTENT_TYPES.has(contentType)
+          ? (extracted as ReturnType<typeof extractReadableFeed>).feedItems
+          : undefined;
         return {
           id: createId('page_evidence'), userId: input.userId, companionId: input.companionId, cycleId: input.cycleId,
           researchIntentId: input.researchIntentId, researchPlanId: input.researchPlanId,
@@ -526,7 +563,8 @@ export class SafeWebPageFetcher implements WebPageFetcher {
           title: extracted.title, extractedText: extracted.extractedText, excerpt: extracted.excerpt,
           contentHash: createHash('sha256').update(extracted.extractedText).digest('hex'), contentType,
           fetchedAt: this.now().toISOString(), publishedAt: extracted.publishedAt,
-          sourceType: FEED_CONTENT_TYPES.has(contentType) ? 'rss' : input.sourceType
+          sourceType: FEED_CONTENT_TYPES.has(contentType) ? 'rss' : input.sourceType,
+          feedItems,
         };
       } catch (error) {
         if (controller.signal.aborted || (error as { name?: string }).name === 'AbortError') throw new ResearchAdapterError('timeout');

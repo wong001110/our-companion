@@ -16,16 +16,6 @@ export function categorizeIntent(intent: CompanionAnimationName): AnimationCateg
   return ANIMATION_REGISTRY[intent]?.category ?? 'presence';
 }
 
-export const CATEGORY_FALLBACKS: Record<AnimationCategory, CompanionAnimationName[]> = {
-  presence: ['Idle_Neutral', 'Idle_Breathe'],
-  interaction: ['Idle_Neutral', 'Listening'],
-  conversation: ['Talk_Neutral', 'Idle_Neutral'],
-  thinking: ['Think', 'Idle_Neutral'],
-  movement: ['Walk_Right', 'Idle_Neutral'],
-  activity: ['Think', 'Idle_Neutral'],
-  relaxation: ['Music_Idle', 'Idle_Neutral'],
-};
-
 export const FALLBACK_CLIP: CompanionAnimationName = 'Idle_Neutral';
 
 export { getAnimationFallback, ANIMATION_REGISTRY };

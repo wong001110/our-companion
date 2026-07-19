@@ -38,7 +38,7 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
   const [error, setError] = useState<string | null>(null);
   const { analyze, analyzing, error: analyzeError } = useAnalyzePersonality();
 
-  const { stagedAssets, missingRequired, errors: assetErrors, stageFile, stageBulkFiles, removeStaged } = useSpriteAssetStaging({ animationManifest: REQUIRED_ANIMATIONS });
+  const { stagedAssets, missingRequired, errors: assetErrors, stageFile, stageBulkFiles, removeStaged } = useSpriteAssetStaging({ animationManifest: COMPANION_ANIMATION_MANIFEST });
 
   const missingCount = missingRequired.length;
   const transitionLocked = pendingStep !== null || stepMotionState !== 'entered';
@@ -93,10 +93,12 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
     setError(null);
 
     try {
-      const assets = await Promise.all(REQUIRED_ANIMATIONS.map(async (animationKey) => ({
-        animationKey,
-        buffer: new Uint8Array(await stagedAssets[animationKey].file.arrayBuffer()),
-      })));
+      const assets = await Promise.all(COMPANION_ANIMATION_MANIFEST
+        .filter((entry) => stagedAssets[entry.key])
+        .map(async (entry) => ({
+          animationKey: entry.key,
+          buffer: new Uint8Array(await stagedAssets[entry.key]!.file.arrayBuffer()),
+        })));
       const companion = await window.ourCompanion.companionNew.create({
         name: name.trim(), personalityDescription: description.trim(), personalityAnalysisId,
         assetRoot: '', assets,
@@ -113,7 +115,7 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
     <div className="companion-creation-page">
       <div className="creation-card">
         <h1>{t(lang, 'creation_title')}</h1>
-        <p className="creation-subtitle">{t(lang, 'creation_subtitle')}</p>
+        <p className="creation-subtitle">{t(lang, displayedStep === 4 ? 'creation_assets_subtitle' : 'creation_subtitle')}</p>
 
         {displayedStep === 1 && (
           <div key={displayedStep} ref={stepRef} className={`creation-step creation-step-${stepDirection}`} data-motion-state={stepMotionState} data-step="1">
@@ -190,7 +192,7 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
             </div>
             <div style={{ marginTop: 12 }}>
               <SpriteAssetGrid
-                animationNames={REQUIRED_ANIMATIONS}
+                animationManifest={COMPANION_ANIMATION_MANIFEST}
                 stagedAssets={stagedAssets}
                 onStageFile={(animationName, file) => void stageFile(animationName, file)}
                 onRemoveStaged={removeStaged}
@@ -203,7 +205,7 @@ export function CompanionCreationPage({ onComplete, onCancel }: CompanionCreatio
                 {creating ? t(lang, 'creation_creating') : t(lang, 'creation_create')}
               </button>
             </div>
-            {missingCount > 0 && <p className="creation-error">{t(lang, 'creation_required_animations', { count: REQUIRED_ANIMATIONS.length })}</p>}
+            {missingCount > 0 && <p className="creation-error">{t(lang, 'creation_missing_animation_names', { names: missingRequired.join(', ') })}</p>}
             {assetErrors.map((assetError) => <p className="creation-error" key={`${assetError.code}-${assetError.name}`}>{formatSpriteAssetError(assetError, lang)}</p>)}
             {error && <p className="creation-error">{error}</p>}
           </div>

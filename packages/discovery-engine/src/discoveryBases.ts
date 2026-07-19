@@ -1,29 +1,11 @@
+import type {
+  DiscoveryBase,
+  DiscoveryBaseOrigin,
+  DiscoveryBaseState,
+} from '@our-companion/shared';
 import type { ExplorationIntent } from './adaptiveDiscovery';
 
-export type DiscoveryBaseState = 'trial' | 'active' | 'expired' | 'muted' | 'blocked' | 'rejected';
-export type DiscoveryBaseOrigin =
-  | 'generic_web'
-  | 'search_result'
-  | 'feed_detection'
-  | 'user'
-  | 'connector'
-  | 'personality';
-
-export interface DiscoveryBase {
-  id: string;
-  companionId: string;
-  connectorId: string;
-  scope: string;
-  locator: string;
-  data: Readonly<Record<string, unknown>>;
-  origin: DiscoveryBaseOrigin;
-  state: DiscoveryBaseState;
-  discoveredAt: string;
-  trialStartedAt?: string;
-  trialExpiresAt?: string;
-  lastCheckedAt?: string;
-  updatedAt: string;
-}
+export type { DiscoveryBase, DiscoveryBaseOrigin, DiscoveryBaseState } from '@our-companion/shared';
 
 export interface DiscoveryConnectorManifest {
   connectorId: string;
@@ -39,7 +21,7 @@ export const MVP_DISCOVERY_CONNECTOR_MANIFESTS: readonly DiscoveryConnectorManif
     connectorId: 'generic-web',
     version: '1',
     displayName: 'Generic Web',
-    scopes: ['page', 'domain'],
+    scopes: ['query', 'page', 'domain'],
     capabilities: ['safe_fetch', 'generic_extract', 'feed_detect'],
     providerMode: 'live'
   },

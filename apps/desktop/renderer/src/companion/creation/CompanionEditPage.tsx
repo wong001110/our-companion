@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { COMPANION_ANIMATION_MANIFEST, type
+  CompanionAnimationName,
   CompanionPersonality,
   CompanionProfile,
 } from "@our-companion/shared";
@@ -23,8 +24,6 @@ const PERSONALITY_LABEL_KEYS: Record<keyof CompanionPersonality, TranslationKey>
   energy: 'personality_energy', curiosity: 'personality_curiosity', sociability: 'personality_sociability', diligence: 'personality_diligence',
   playfulness: 'personality_playfulness', confidence: 'personality_confidence', calmness: 'personality_calmness', shyness: 'personality_shyness',
 };
-
-const ALL_ANIMATIONS = COMPANION_ANIMATION_MANIFEST.map((entry) => entry.key);
 
 interface AssetFile {
   name: string;
@@ -105,14 +104,22 @@ export function CompanionEditPage({
   const { analyze, analyzing, error: analyzeError } = useAnalyzePersonality();
 
   const [diskAssets, setDiskAssets] = useState<AssetFile[]>([]);
+  const [pendingDeletes, setPendingDeletes] = useState<CompanionAnimationName[]>([]);
 
-  const diskByName = new Map(
+  const diskByName = useMemo(() => new Map(
     diskAssets
-      .filter((a) => a.subfolder === "animations")
-      .map((a) => [a.name.replace(/\.[^.]+$/, ""), a]),
+      .filter((asset) => asset.subfolder === "animations")
+      .map((asset) => [asset.name.replace(/\.[^.]+$/, ""), asset]),
+  ), [diskAssets]);
+  const existingAssets = useMemo(
+    () => Object.fromEntries(
+      [...diskByName.keys()]
+        .filter((animationName) => !pendingDeletes.includes(animationName as CompanionAnimationName))
+        .map((animationName) => [animationName, true]),
+    ),
+    [diskByName, pendingDeletes],
   );
-  const existingAssets = Object.fromEntries([...diskByName.keys()].map((name) => [name, true]));
-  const { stagedAssets, missingRequired, errors: assetErrors, stageFile, stageBulkFiles, removeStaged, clear } = useSpriteAssetStaging({ animationManifest: ALL_ANIMATIONS, existingAssets });
+  const { stagedAssets, missingRequired, errors: assetErrors, stageFile, stageBulkFiles, removeStaged, clear } = useSpriteAssetStaging({ animationManifest: COMPANION_ANIMATION_MANIFEST, existingAssets });
 
   const loadAssets = useCallback(async () => {
     try {
@@ -120,8 +127,8 @@ export function CompanionEditPage({
         companion.id,
       );
       setDiskAssets(list);
-    } catch {
-      /* ignore */
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : String(loadError));
     }
   }, [companion.id]);
 
@@ -142,44 +149,21 @@ export function CompanionEditPage({
     const selected = await window.ourCompanion.dialog.openFiles();
     if (!selected || selected.length === 0) return;
 
-    await stageBulkFiles(selected);
+    const stagedKeys = new Set(await stageBulkFiles(selected));
+    setPendingDeletes((current) => current.filter((key) => !stagedKeys.has(key)));
   }
 
-  async function handleDeleteDiskAsset(subfolder: string, fileName: string) {
-    try {
-      await window.ourCompanion.companionNew.deleteAsset({
-        companionId: companion.id,
-        subfolder,
-        fileName,
-      });
-      await loadAssets();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+  async function handleStageFile(animationName: string, file: File) {
+    const staged = await stageFile(animationName, file);
+    if (staged) {
+      setPendingDeletes((current) => current.filter((key) => key !== animationName));
     }
   }
 
-  async function commitStagedAssets(): Promise<boolean> {
-    const entries = Object.entries(stagedAssets);
-    if (entries.length === 0) return true;
-
-    for (const [animName, staged] of entries) {
-      try {
-        const arrayBuffer = await staged.file.arrayBuffer();
-        const uint8 = new Uint8Array(arrayBuffer);
-        await window.ourCompanion.companionNew.uploadAsset({
-          companionId: companion.id,
-          fileName: `${animName}.png`,
-          buffer: uint8,
-        });
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-        return false;
-      }
-    }
-
-    clear();
-    await loadAssets();
-    return true;
+  function queueOptionalDelete(animationName: CompanionAnimationName) {
+    setPendingDeletes((current) => current.includes(animationName)
+      ? current
+      : [...current, animationName]);
   }
 
   async function handleSave() {
@@ -193,16 +177,31 @@ export function CompanionEditPage({
     setError(null);
 
     try {
-      const committed = await commitStagedAssets();
-      if (!committed) return;
+      const assetEntries = await Promise.all(
+        Object.entries(stagedAssets).map(async ([animationName, staged]) => ({
+          animationKey: animationName as CompanionAnimationName,
+          buffer: new Uint8Array(await staged.file.arrayBuffer()),
+        })),
+      );
+      const hasAssetChanges = assetEntries.length > 0 || pendingDeletes.length > 0;
+      if (hasAssetChanges && missingRequired.length > 0) {
+        setError(t(lang, 'creation_missing_animation_names', { names: missingRequired.join(', ') }));
+        return;
+      }
 
       const updated = await window.ourCompanion.companionNew.update({
         id: companion.id,
         name: name.trim(),
+        ...(hasAssetChanges ? {
+          assets: assetEntries,
+          deleteAnimationKeys: pendingDeletes,
+        } : {}),
         ...(personalityChanged ? {
           personalityDescription: description.trim(), personality, personalityAnalysisId: personalityAnalysisId!,
         } : {}),
       });
+      clear();
+      setPendingDeletes([]);
       onComplete(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -214,12 +213,19 @@ export function CompanionEditPage({
   const missingCount = missingRequired.length;
   const stagedCount = Object.keys(stagedAssets).length;
   const existingSpriteAssets = useMemo<Record<string, ExistingSpriteAsset>>(() => Object.fromEntries(
-    [...diskByName.entries()].map(([animationName, disk]) => [animationName, {
-      preview: <DiskSpritePreview companionId={companion.id} fileName={disk.name} />,
-      detail: formatSize(disk.size),
-      remove: () => { void handleDeleteDiskAsset(disk.subfolder, disk.name); },
-    }]),
-  ), [companion.id, diskByName]);
+    [...diskByName.entries()]
+      .filter(([animationName]) => !pendingDeletes.includes(animationName as CompanionAnimationName))
+      .map(([animationName, disk]) => {
+        const definition = COMPANION_ANIMATION_MANIFEST.find((entry) => entry.key === animationName);
+        return [animationName, {
+          preview: <DiskSpritePreview companionId={companion.id} fileName={disk.name} />,
+          detail: formatSize(disk.size),
+          ...(!definition?.requiredForCreation ? {
+            remove: () => queueOptionalDelete(animationName as CompanionAnimationName),
+          } : {}),
+        }];
+      }),
+  ), [companion.id, diskByName, pendingDeletes]);
 
   return (
     <div className="edit-page">
@@ -292,7 +298,7 @@ export function CompanionEditPage({
         <label className="edit-section-title">{t(lang, 'edit_sprite_animations')}</label>
         <p className="edit-section-hint">
           {missingCount > 0
-            ? t(lang, 'creation_missing_animations', { count: missingCount, total: ALL_ANIMATIONS.length })
+            ? t(lang, 'creation_missing_animations', { count: missingCount, total: COMPANION_ANIMATION_MANIFEST.filter((entry) => entry.requiredForCreation).length })
             : t(lang, 'creation_all_animations_uploaded')}
           {stagedCount > 0 && (
             <span className="edit-staged-badge">{t(lang, 'edit_staged_count', { count: stagedCount })}</span>
@@ -302,10 +308,10 @@ export function CompanionEditPage({
 
         <BulkAssetUploader onUpload={() => void handleBulkUpload()} />
         <SpriteAssetGrid
-          animationNames={ALL_ANIMATIONS}
+          animationManifest={COMPANION_ANIMATION_MANIFEST}
           stagedAssets={stagedAssets}
           existingAssets={existingSpriteAssets}
-          onStageFile={(animationName, file) => void stageFile(animationName, file)}
+          onStageFile={(animationName, file) => void handleStageFile(animationName, file)}
           onRemoveStaged={removeStaged}
         />
       </div>

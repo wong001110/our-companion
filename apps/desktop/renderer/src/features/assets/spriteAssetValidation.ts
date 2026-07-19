@@ -21,11 +21,15 @@ export function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-export function getSpriteImageHeight(dataUrl: string): Promise<number> {
+export function getSpriteImageDimensions(dataUrl: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve) => {
     const image = new Image();
-    image.onload = () => resolve(image.naturalHeight);
-    image.onerror = () => resolve(0);
+    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    image.onerror = () => resolve({ width: 0, height: 0 });
     image.src = dataUrl;
   });
+}
+
+export async function getSpriteImageHeight(dataUrl: string): Promise<number> {
+  return (await getSpriteImageDimensions(dataUrl)).height;
 }

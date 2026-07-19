@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { COMPANION_ANIMATION_MANIFEST, COMPANION_ANIMATION_NAMES, type CompanionAnimationName } from '@our-companion/shared';
 import { resolveAnimationFallback, resolveCompanionAnimation, resolveTalkAnimation, resolveWalkDirection } from './animationSelection';
+import { ANIMATION_REGISTRY } from '../companion/runtime/animationRegistry';
 
 const state = (overrides: Record<string, unknown>) => ({ characterId: 'companion', coreState: 'idle', intent: 'waiting', emotion: {}, ...overrides } as any);
 
@@ -35,5 +37,37 @@ describe('animation selection', () => {
     expect(resolveTalkAnimation({ focused: 70 } as any)).toBe('Talk_Thinking');
     expect(resolveAnimationFallback('Walk_UpLeft', new Set(['Walk_Left'] as any))).toBe('Walk_Left');
     expect(resolveAnimationFallback('Talk_Happy', new Set(['Talk_Neutral'] as any))).toBe('Talk_Neutral');
+  });
+
+  it('derives every runtime definition and fallback from the shared manifest', () => {
+    expect(Object.keys(ANIMATION_REGISTRY)).toEqual(COMPANION_ANIMATION_NAMES);
+    for (const entry of COMPANION_ANIMATION_MANIFEST) {
+      expect(ANIMATION_REGISTRY[entry.key]).toMatchObject({
+        name: entry.key,
+        category: entry.category,
+        purpose: entry.purpose,
+        loop: entry.loop,
+        priority: entry.priority,
+        interruptible: entry.interruptible,
+        fallback: entry.fallback,
+      });
+    }
+  });
+
+  it('uses the requested semantic fallback chains against real availability', () => {
+    const onlyIdle = new Set<CompanionAnimationName>(['Idle_Neutral']);
+    for (const name of [
+      'Idle_Breathe', 'Idle_Sleepy', 'Music_Idle', 'Waiting_Response',
+      'Expedition_Prepare', 'Expedition_Leave', 'Expedition_Return',
+    ] as const) {
+      expect(resolveAnimationFallback(name, onlyIdle)).toBe('Idle_Neutral');
+    }
+    for (const name of ['Talk_Happy', 'Talk_Thinking', 'Talk_Concerned', 'Expedition_Present'] as const) {
+      expect(resolveAnimationFallback(name, new Set<CompanionAnimationName>(['Talk_Neutral', 'Idle_Neutral'])))
+        .toBe('Talk_Neutral');
+      expect(resolveAnimationFallback(name, onlyIdle)).toBe('Idle_Neutral');
+    }
+    expect(resolveAnimationFallback('Walk_UpLeft', new Set<CompanionAnimationName>(['Walk_Left', 'Idle_Neutral']))).toBe('Walk_Left');
+    expect(resolveAnimationFallback('Walk_UpRight', new Set<CompanionAnimationName>(['Walk_Right', 'Idle_Neutral']))).toBe('Walk_Right');
   });
 });

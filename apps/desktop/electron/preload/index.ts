@@ -67,6 +67,11 @@ const api: OurCompanionApi = {
     markInterested: (discoveryId: string) => invoke('discovery:markInterested', discoveryId),
     markNotInterested: (discoveryId: string) => invoke('discovery:markNotInterested', discoveryId),
     addToJourney: (input: AddDiscoveryToJourneyInput) => invoke('discovery:addToJourney', input),
+    listBases: () => invoke('discovery:listBases'),
+    addBase: (input) => invoke('discovery:addBase', input),
+    updateBaseState: (input) => invoke('discovery:updateBaseState', input),
+    deleteBase: (baseId) => invoke('discovery:deleteBase', baseId),
+    runBaseNow: (baseId) => invoke('discovery:runBaseNow', baseId),
     onAnnounce: (listener: (payload: DiscoveryAnnouncePayload) => void) => {
       const channel = 'discovery:announce';
       const handler = (_event: Electron.IpcRendererEvent, payload: DiscoveryAnnouncePayload) => listener(payload);

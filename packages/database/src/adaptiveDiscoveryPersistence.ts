@@ -409,6 +409,50 @@ export class AdaptiveDiscoveryPersistence {
       ?? this.getBaseByLocator(base.companionId, base.connectorId, base.scope, base.locator)!;
   }
 
+  updateBase(base: PersistedDiscoveryBase): PersistedDiscoveryBase {
+    const result = this.db.prepare(
+      `UPDATE discovery_bases
+       SET connector_id = ?, scope = ?, locator = ?, data_json = ?, origin = ?, state = ?,
+           discovered_at = ?, trial_started_at = ?, trial_expires_at = ?, last_checked_at = ?, updated_at = ?
+       WHERE id = ? AND companion_id = ?`
+    ).run(
+      base.connectorId,
+      base.scope,
+      base.locator,
+      JSON.stringify(base.data),
+      base.origin,
+      base.state,
+      base.discoveredAt,
+      base.trialStartedAt ?? null,
+      base.trialExpiresAt ?? null,
+      base.lastCheckedAt ?? null,
+      base.updatedAt,
+      base.id,
+      base.companionId,
+    );
+    if (result.changes === 0) throw new Error('discovery_base_owner_mismatch');
+    return this.getBase(base.id, base.companionId)!;
+  }
+
+  deleteBase(id: string, companionId: string): boolean {
+    const existing = this.getBase(id, companionId);
+    if (!existing) return false;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare(
+        'DELETE FROM discovery_base_feedback WHERE discovery_base_id = ? AND companion_id = ?'
+      ).run(id, companionId);
+      const result = this.db.prepare(
+        'DELETE FROM discovery_bases WHERE id = ? AND companion_id = ?'
+      ).run(id, companionId);
+      this.db.exec('COMMIT');
+      return result.changes > 0;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   getBase(id: string, companionId: string): PersistedDiscoveryBase | undefined {
     const row = this.db.prepare(
       'SELECT * FROM discovery_bases WHERE id = ? AND companion_id = ?'

@@ -144,6 +144,37 @@ describe('adaptive discovery persistence store', () => {
     expect(store.listBaseFeedback({ companionId: 'companion-a', discoveryBaseId: base.id }))
       .toEqual([expect.objectContaining({ id: 'feedback', value: 'useful' })]);
     expect(store.listBaseFeedback({ companionId: 'companion-b' })).toEqual([]);
+
+    const updated = store.updateBase({
+      ...base,
+      locator: 'custom://updated',
+      data: { freeform: ['updated'] },
+      state: 'active',
+      updatedAt: '2026-07-19T00:00:00.000Z',
+    });
+    expect(updated).toMatchObject({
+      id: base.id,
+      companionId: 'companion-a',
+      locator: 'custom://updated',
+      state: 'active',
+    });
+    expect(() => store.updateBase({ ...updated, companionId: 'companion-b' }))
+      .toThrow('discovery_base_owner_mismatch');
+
+    db.prepare('INSERT INTO discoveries VALUES (?, ?, ?, ?, ?, ?)').run(
+      'historical-discovery',
+      'companion-a',
+      'external-history',
+      'Historical discovery',
+      'https://example.test/history',
+      now,
+    );
+    expect(store.deleteBase(base.id, 'companion-b')).toBe(false);
+    expect(store.deleteBase(base.id, 'companion-a')).toBe(true);
+    expect(store.getBase(base.id, 'companion-a')).toBeUndefined();
+    expect(store.listBaseFeedback({ companionId: 'companion-a', discoveryBaseId: base.id })).toEqual([]);
+    expect(db.prepare('SELECT id FROM discoveries WHERE id = ?').get('historical-discovery'))
+      .toEqual({ id: 'historical-discovery' });
     db.close();
   });
 

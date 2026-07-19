@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import type { Discovery, ExplorationCycleResult } from '@our-companion/shared';
 import { t } from '../i18n';
 import { InlineNotice } from '../components/feedback/InlineNotice';
 import { useDiscoveriesViewModel } from '../features/discoveries/useDiscoveriesViewModel';
+import { DiscoveryHistoryPanel } from '../features/discoveries/DiscoveryHistoryPanel';
+import { DiscoverySourcesPanel } from '../features/discoveries/DiscoverySourcesPanel';
 import { NotebookPage, StickyNote, useLang } from '../ui/NotebookPrimitives';
 import { formatDiscoveryTime } from '../ui/utils';
 
@@ -16,10 +19,29 @@ interface DiscoveriesPageProps {
 
 export function DiscoveriesPage({ discoveries, exploration, exploring, onStartExploration, onSubmitFeedback, onRefresh }: DiscoveriesPageProps) {
   const lang = useLang();
+  const [section, setSection] = useState<'feed' | 'sources' | 'history'>('feed');
   const { addToJourney, busy, error, filters, markNotInterested, refreshDiscovery, selectedFilter, setSelectedFilter, visibleDiscoveries } = useDiscoveriesViewModel({ discoveries, lang, onRefresh });
 
   return (
     <NotebookPage eyebrow={t(lang, 'discovery_eyebrow')} title={t(lang, 'discovery_title')} note={t(lang, 'discovery_note')} marker="discovery">
+      <div className="soft-filter-row discovery-section-tabs" role="tablist" aria-label={t(lang, 'discovery_sections_label')}>
+        {(['feed', 'sources', 'history'] as const).map((item) => (
+          <button
+            key={item}
+            id={`discovery-tab-${item}`}
+            type="button"
+            role="tab"
+            aria-selected={section === item}
+            aria-controls={`discovery-panel-${item}`}
+            className={section === item ? 'active' : ''}
+            onClick={() => setSection(item)}
+          >
+            {t(lang, `discovery_section_${item}`)}
+          </button>
+        ))}
+      </div>
+      <div id="discovery-panel-feed" role="tabpanel" aria-labelledby="discovery-tab-feed" hidden={section !== 'feed'}>
+      {section === 'feed' && <>
       <div className="toolbar notebook-toolbar">
         <div className="soft-filter-row" aria-label={t(lang, 'discovery_filters_label')}>
           {filters.map(({ key, label }) => (
@@ -67,6 +89,14 @@ export function DiscoveriesPage({ discoveries, exploration, exploring, onStartEx
           </article>
         ))}
         {visibleDiscoveries.length === 0 && <StickyNote title={t(lang, 'discovery_empty_title')}><p>{t(lang, 'discovery_empty_body')}</p></StickyNote>}
+      </div>
+      </>}
+      </div>
+      <div id="discovery-panel-sources" role="tabpanel" aria-labelledby="discovery-tab-sources" hidden={section !== 'sources'}>
+        {section === 'sources' && <DiscoverySourcesPanel onFeedRefresh={onRefresh} />}
+      </div>
+      <div id="discovery-panel-history" role="tabpanel" aria-labelledby="discovery-tab-history" hidden={section !== 'history'}>
+        {section === 'history' && <DiscoveryHistoryPanel />}
       </div>
     </NotebookPage>
   );

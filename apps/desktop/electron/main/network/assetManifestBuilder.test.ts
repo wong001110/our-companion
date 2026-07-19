@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { COMPANION_ANIMATION_MANIFEST } from '@our-companion/shared';
 import { buildAssetManifest } from './assetManifestBuilder';
 
 function withAssets(run: (root: string) => void) {
@@ -19,8 +20,20 @@ describe('S3 asset manifest builder', () => {
     const second = buildAssetManifest({ companionId: 'companion-1', pathOptions: options(root) });
     expect(first.manifestHash).toBe(second.manifestHash);
     expect(first.manifest.runtime.animations.map(animation => animation.name)).toEqual(['Enter', 'Idle_Neutral', 'Leave']);
+    expect(first.requiredAnimations).toEqual({ Idle_Neutral: true, Enter: true, Leave: true });
+    expect(COMPANION_ANIMATION_MANIFEST.filter(entry => entry.requiredForNetworkVisitor).map(entry => entry.key))
+      .toEqual(['Idle_Neutral', 'Enter', 'Leave']);
     expect(first.manifest.runtime.animations.find(animation => animation.name === 'Idle_Neutral')?.frameDurationMs).toBe(520);
   }));
+  it('rejects a pack missing any shared visitor-required animation', () => {
+    for (const missing of ['Idle_Neutral', 'Enter', 'Leave'] as const) {
+      withAssets(root => {
+        fs.unlinkSync(path.join(root, 'companions', 'companion-1', 'assets', 'animations', `${missing}.png`));
+        expect(() => buildAssetManifest({ companionId: 'companion-1', pathOptions: options(root) }))
+          .toThrow('ASSET_PACK_MANIFEST_INVALID');
+      });
+    }
+  });
   it('rejects symlinked and unsupported files', () => withAssets(root => {
     const animations = path.join(root, 'companions', 'companion-1', 'assets', 'animations');
     try { fs.symlinkSync(path.join(root, 'outside.png'), path.join(animations, 'escape.png')); } catch { return; }
