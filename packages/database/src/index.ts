@@ -265,6 +265,7 @@ export class DatabaseService {
         // Column may already exist in fresh schema
       }
     }
+    this.removeLegacyCharacterStateForeignKey();
     const discoveryColumns = new Set(
       (this.db.prepare('PRAGMA table_info(discoveries)').all() as Array<{ name: string }>)
         .map((column) => column.name)
@@ -285,6 +286,49 @@ export class DatabaseService {
     this.migratePriorBuiltinAnn();
     this.backfillMemoryFingerprints();
     this.backfillCognitiveFingerprints();
+  }
+
+  /**
+   * Older databases tied character_state to the retired characters table.
+   * Runtime character IDs now come from companions, so upgraded databases must
+   * match the unconstrained character_state table in the current schema.
+   */
+  private removeLegacyCharacterStateForeignKey(): void {
+    const foreignKeys = this.db
+      .prepare('PRAGMA foreign_key_list(character_state)')
+      .all() as Array<{ table: string }>;
+    if (foreignKeys.length === 0) return;
+
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.exec(`
+        CREATE TABLE character_state_without_legacy_owner (
+          character_id TEXT PRIMARY KEY,
+          core_state TEXT NOT NULL,
+          emotion_json TEXT NOT NULL,
+          intent TEXT NOT NULL,
+          position_json TEXT,
+          animation_intent TEXT,
+          life_activity TEXT NOT NULL DEFAULT 'idle',
+          last_activity_at TEXT,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO character_state_without_legacy_owner (
+          character_id, core_state, emotion_json, intent, position_json,
+          animation_intent, life_activity, last_activity_at, updated_at
+        )
+        SELECT
+          character_id, core_state, emotion_json, intent, position_json,
+          animation_intent, life_activity, last_activity_at, updated_at
+        FROM character_state;
+        DROP TABLE character_state;
+        ALTER TABLE character_state_without_legacy_owner RENAME TO character_state;
+      `);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   private backfillMemoryFingerprints(): void {

@@ -6,6 +6,77 @@ import { describe, expect, it } from 'vitest';
 import { DatabaseService } from './index';
 
 describe('schema compatibility migrations', () => {
+  it('removes the legacy character-state foreign key before saving companion runtime state', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'our-companion-character-state-db-'));
+    const dbPath = path.join(directory, 'legacy.sqlite');
+    const legacy = new DatabaseSync(dbPath);
+    legacy.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE characters (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        package_id TEXT NOT NULL,
+        is_primary INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE character_state (
+        character_id TEXT PRIMARY KEY,
+        core_state TEXT NOT NULL,
+        emotion_json TEXT NOT NULL,
+        intent TEXT NOT NULL,
+        position_json TEXT,
+        last_activity_at TEXT,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(character_id) REFERENCES characters(id)
+      );
+      INSERT INTO characters
+        (id, name, package_id, is_primary, is_active, created_at, updated_at)
+      VALUES
+        ('legacy-character', 'Legacy', 'legacy', 1, 1, '2026-07-18T00:00:00.000Z', '2026-07-18T00:00:00.000Z');
+      INSERT INTO character_state
+        (character_id, core_state, emotion_json, intent, updated_at)
+      VALUES
+        ('legacy-character', 'idle', '{"neutral":100}', 'waiting', '2026-07-18T00:00:00.000Z');
+    `);
+    legacy.close();
+
+    const db = new DatabaseService({ path: dbPath });
+    const raw = (db as unknown as { db: DatabaseSync }).db;
+    expect(raw.prepare('PRAGMA foreign_key_list(character_state)').all()).toEqual([]);
+    expect(raw.prepare('SELECT character_id, life_activity FROM character_state').get()).toEqual({
+      character_id: 'legacy-character',
+      life_activity: 'idle'
+    });
+
+    const timestamp = '2026-07-19T00:00:00.000Z';
+    raw.prepare(
+      `INSERT INTO companions (id, name, is_primary, created_at, updated_at)
+       VALUES ('current-companion', 'Current', 1, ?, ?)`
+    ).run(timestamp, timestamp);
+    const initial = db.getCharacterState('current-companion');
+    expect(() => db.saveCharacterState({
+      ...initial,
+      coreState: 'talking',
+      intent: 'helping_task',
+      updatedAt: timestamp
+    })).not.toThrow();
+    expect(db.getCharacterState('current-companion')).toMatchObject({
+      characterId: 'current-companion',
+      coreState: 'talking',
+      intent: 'helping_task'
+    });
+    db.close();
+
+    const reopened = new DatabaseService({ path: dbPath });
+    expect((reopened as unknown as { db: DatabaseSync }).db
+      .prepare('PRAGMA foreign_key_list(character_state)').all()).toEqual([]);
+    expect(reopened.getCharacterState('current-companion').coreState).toBe('talking');
+    reopened.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
   it('keeps web page evidence search-result provenance while trimming search-record domains', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'our-companion-page-evidence-db-'));
     const dbPath = path.join(directory, 'legacy.sqlite');
