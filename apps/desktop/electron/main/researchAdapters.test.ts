@@ -23,6 +23,10 @@ function fetchInput(url?: string) {
   };
 }
 
+function feedFetchInput(url?: string) {
+  return { ...fetchInput(url), sourceType: 'rss' as const };
+}
+
 describe('SafeWebPageFetcher', () => {
   it.each([
     'file:///etc/passwd', 'data:text/html,hello', 'javascript:alert(1)', 'ftp://public.example/file',
@@ -92,6 +96,34 @@ describe('SafeWebPageFetcher', () => {
       canonicalUrl: 'https://public.example.test/feed',
       contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
+  });
+
+  it('does not label ordinary HTML as RSS when a feed probe requested it', async () => {
+    const fetcher = new SafeWebPageFetcher({
+      fetch: async () => new Response(
+        '<html><head><title>Not a feed</title></head><body><main>Ordinary public page content.</main></body></html>',
+        { headers: { 'content-type': 'text/html' } },
+      ),
+      lookup: publicLookup,
+    });
+    const evidence = await fetcher.fetchPage(feedFetchInput('https://public.example.test/not-a-feed'));
+    expect(evidence).toMatchObject({
+      sourceType: 'open_web',
+      contentType: 'text/html',
+      feedItems: undefined,
+    });
+  });
+
+  it('rejects generic XML that is neither RSS nor Atom', async () => {
+    const fetcher = new SafeWebPageFetcher({
+      fetch: async () => new Response(
+        '<catalog><rss><channel><title>Nested, not a feed root</title><item><title>Not RSS</title><description>Generic XML item.</description></item></channel></rss></catalog>',
+        { headers: { 'content-type': 'application/xml' } },
+      ),
+      lookup: publicLookup,
+    });
+    await expect(fetcher.fetchPage(feedFetchInput('https://public.example.test/catalog.xml')))
+      .rejects.toMatchObject({ code: 'invalid_feed_format' });
   });
 
   it('normalizes RSS entries independently using guid, canonical URL, and content hash', async () => {

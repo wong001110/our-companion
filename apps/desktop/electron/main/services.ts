@@ -157,6 +157,7 @@ import { VisitService } from './network/visitService';
 import { VisualVisitService } from './network/visualVisitService';
 import { createSmokeFixturePng } from './platform/smokeFixture';
 import { assertSmokeTestRuntime } from './platform/smokeRuntime';
+import { PngStructureError, validatePngStructure } from './platform/pngValidation';
 import {
   BraveWebSearchProvider,
   FixtureWebPageFetcher,
@@ -534,8 +535,9 @@ export class AppServices {
 
   private syncPersonalityDiscoverySeed(companion: CompanionProfile): void {
     const now = this.now().toISOString();
-    const topic = companion.personalityDescription.trim().replace(/\s+/g, ' ').slice(0, 240);
-    if (!topic) return;
+    const normalizedDescription = companion.personalityDescription.trim().replace(/\s+/g, ' ');
+    if (!normalizedDescription) return;
+    const topic = normalizedDescription.slice(0, 240);
     const intent = createAdaptiveExplorationIntent({
       mode: companion.personality.curiosity >= 65 ? 'wildcard' : 'adjacent',
       topic,
@@ -551,7 +553,7 @@ export class AppServices {
     const existingBases = this.db.listDiscoveryBases(companion.id, undefined, 1_000);
     const existing = existingBases.find((base) => base.data.managedBy === 'personality_seed')
       ?? existingBases.find((base) => base.origin === 'personality');
-    const revision = createSemanticFingerprint('personality_revision', [topic]);
+    const revision = createSemanticFingerprint('personality_revision', [normalizedDescription]);
     const data = {
       ...(existing?.data ?? {}),
       managedBy: 'personality_seed',
@@ -627,7 +629,21 @@ export class AppServices {
       researchPlanId: probeId,
       sourceType: 'rss',
     });
-    if (evidence.sourceType !== 'rss') throw new Error('DISCOVERY_SOURCE_FEED_FORMAT_INVALID');
+    const feedContentTypes = new Set([
+      'application/rss+xml',
+      'application/atom+xml',
+      'application/xml',
+      'text/xml',
+    ]);
+    if (
+      evidence.sourceType !== 'rss'
+      || typeof evidence.contentType !== 'string'
+      || !feedContentTypes.has(evidence.contentType.toLowerCase())
+      || !Array.isArray(evidence.feedItems)
+      || evidence.feedItems.length === 0
+    ) {
+      throw new Error('DISCOVERY_SOURCE_FEED_FORMAT_INVALID');
+    }
   }
 
   private requireActiveCompanion(): CompanionProfile {
@@ -4053,9 +4069,14 @@ function validateCompanionPngAsset(definition: CompanionAnimationManifestEntry, 
   if (bytes.byteLength > MAX_COMPANION_ASSET_BYTES) {
     throw new Error(`${definition.key} exceeds the maximum file size.`);
   }
-  const dimensions = readPngDimensions(bytes, definition.key);
-  if (dimensions.width <= 0 || dimensions.height <= 0) {
-    throw new Error(`${definition.key} has invalid PNG dimensions.`);
+  let dimensions: { width: number; height: number };
+  try {
+    dimensions = validatePngStructure(bytes);
+  } catch (error) {
+    if (error instanceof PngStructureError && error.code === 'invalid_dimensions') {
+      throw new Error(`${definition.key} has invalid PNG dimensions.`);
+    }
+    throw new Error(`${definition.key} is not a valid PNG.`);
   }
   if (dimensions.width > definition.maxFrameSize * definition.maxFrames || dimensions.height > definition.maxFrameSize) {
     throw new Error(`${definition.key} dimensions exceed the maximum allowed size.`);
@@ -4070,19 +4091,4 @@ function validateCompanionPngAsset(definition: CompanionAnimationManifestEntry, 
   if (frameCount < definition.minFrames || frameCount > definition.maxFrames) {
     throw new Error(`${definition.key} has an invalid sprite-sheet frame count.`);
   }
-}
-
-function readPngDimensions(bytes: Buffer, label: string): { width: number; height: number } {
-  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-  if (bytes.byteLength < 24 || signature.some((value, index) => bytes[index] !== value)) {
-    throw new Error(`${label} is not a valid PNG.`);
-  }
-  const chunkType = bytes.toString('ascii', 12, 16);
-  if (chunkType !== 'IHDR') {
-    throw new Error(`${label} is not a valid PNG.`);
-  }
-  return {
-    width: bytes.readUInt32BE(16),
-    height: bytes.readUInt32BE(20),
-  };
 }

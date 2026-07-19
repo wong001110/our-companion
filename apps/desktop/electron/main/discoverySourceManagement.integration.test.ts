@@ -128,6 +128,25 @@ describe('Discovery Source management', () => {
     expect(updated[0]?.locator).toContain('accessibility');
   });
 
+  it('updates the personality seed revision when only text beyond the query limit changes', async () => {
+    const services = createServices();
+    const sharedPrefix = 'a'.repeat(240);
+    const companion = addCompanion(services, 'Long Seed', `${sharedPrefix} first ending`);
+    const first = (await services.discovery.listBases()).find((base) => base.origin === 'personality');
+    expect(first).toBeDefined();
+
+    services.db.updateCompanion(companion.id, {
+      personalityDescription: `${sharedPrefix} second ending`,
+    });
+    const updated = (await services.discovery.listBases()).find((base) => base.origin === 'personality');
+
+    expect(updated).toMatchObject({
+      id: first!.id,
+      locator: first!.locator,
+    });
+    expect(updated?.data.personalityRevision).not.toBe(first?.data.personalityRevision);
+  });
+
   it('deletes only the active Companion source', async () => {
     const services = createServices();
     addCompanion(services, 'Delete', 'Deletion-safe research');
@@ -137,6 +156,41 @@ describe('Discovery Source management', () => {
     });
     await expect(services.discovery.deleteBase(source.id)).resolves.toEqual({ deleted: true });
     expect((await services.discovery.listBases()).some((base) => base.id === source.id)).toBe(false);
+  });
+
+  it('deletes a Base without deleting its previously generated Discovery, Candidate, or Evidence history', async () => {
+    const clock = new DebugRuntimeClock(() => Date.parse('2026-07-18T00:00:00.000Z'));
+    const services = createServices({
+      clock,
+      webSearchProvider: createDeterministicFixtureSearchProvider(),
+      webPageFetcher: new FixtureWebPageFetcher(() => clock.now()),
+      discoveryConnectors: [],
+    });
+    const companion = addCompanion(services, 'History', 'Local-first desktop companion research');
+    const source = await services.discovery.addBase({
+      sourceType: 'query',
+      locator: 'local-first desktop companion history',
+      initialState: 'active',
+    });
+
+    const cycle = await services.discovery.runBaseNow(source.id);
+    const discoveryIds = (await services.discovery.getFeed({ limit: 50 })).map((item) => item.id);
+    const candidateIds = cycle.discoveryCandidates.map((item) => item.id);
+    const evidenceIds = (cycle.webPageEvidence ?? []).map((item) => item.id);
+    expect(discoveryIds.length).toBeGreaterThan(0);
+    expect(candidateIds.length).toBeGreaterThan(0);
+    expect(evidenceIds.length).toBeGreaterThan(0);
+
+    await expect(services.discovery.deleteBase(source.id)).resolves.toEqual({ deleted: true });
+    expect((await services.discovery.listBases()).some((base) => base.id === source.id)).toBe(false);
+    expect((await services.discovery.getFeed({ limit: 50 })).map((item) => item.id))
+      .toEqual(expect.arrayContaining(discoveryIds));
+    for (const candidateId of candidateIds) {
+      expect(services.db.getDiscoveryCandidate(candidateId)?.companionId).toBe(companion.id);
+    }
+    for (const evidenceId of evidenceIds) {
+      expect(services.db.getWebPageEvidence(evidenceId, companion.id)?.id).toBe(evidenceId);
+    }
   });
 
   it('expires elapsed trials when Sources is opened', async () => {
@@ -162,12 +216,26 @@ describe('Discovery Source management', () => {
         .manualResearchPageFetcher,
       'fetchPage',
     );
-    fetchPage.mockResolvedValueOnce({ sourceType: 'page' });
+    fetchPage.mockResolvedValueOnce({
+      sourceType: 'open_web',
+      contentType: 'text/html',
+      feedItems: undefined,
+    });
     await expect(services.discovery.addBase({
       sourceType: 'feed',
       locator: 'https://example.com/not-a-feed',
     })).rejects.toThrow('DISCOVERY_SOURCE_FEED_FORMAT_INVALID');
-    fetchPage.mockResolvedValueOnce({ sourceType: 'rss' });
+    fetchPage.mockResolvedValueOnce({
+      sourceType: 'rss',
+      contentType: 'application/rss+xml',
+      feedItems: [{
+        externalId: 'fixture-entry',
+        canonicalUrl: 'https://example.com/entry',
+        title: 'Fixture entry',
+        summary: 'Fixture feed entry.',
+        contentHash: 'fixture-content-hash',
+      }],
+    });
     await expect(services.discovery.addBase({
       sourceType: 'feed',
       locator: 'https://example.com/feed.xml',

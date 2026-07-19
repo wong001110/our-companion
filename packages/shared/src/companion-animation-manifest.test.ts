@@ -62,9 +62,10 @@ describe('Companion animation manifest contract', () => {
     expect(fallbackChain('Talk_Concerned')).toEqual(['Talk_Concerned', 'Talk_Neutral', 'Idle_Neutral']);
     expect(fallbackChain('Expedition_Present')).toEqual(['Expedition_Present', 'Talk_Neutral', 'Idle_Neutral']);
 
-    for (const name of ['Idle_Breathe', 'Idle_Sleepy', 'Music_Idle', 'Waiting_Response'] as const) {
+    for (const name of ['Idle_Breathe', 'Idle_Sleepy', 'Music_Idle'] as const) {
       expect(fallbackChain(name)).toEqual([name, 'Idle_Neutral']);
     }
+    expect(fallbackChain('Waiting_Response')).toEqual(['Waiting_Response', 'Listening', 'Idle_Neutral']);
     for (const name of ['Expedition_Prepare', 'Expedition_Leave', 'Expedition_Return'] as const) {
       expect(fallbackChain(name)).toEqual([name, 'Idle_Neutral']);
     }

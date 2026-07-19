@@ -5,6 +5,7 @@ import path from 'node:path';
 import { COMPANION_ANIMATION_MANIFEST, createId, nowIso, type CompanionCommand, type CompanionPersonality, type GeneratedInsight } from '@our-companion/shared';
 import { app } from 'electron';
 import { AppServices, MAX_COMPANION_ASSET_BYTES, MAX_COMPANION_TOTAL_ASSET_BYTES, toPersistedCompanionInsight } from './services';
+import { createPngFixture } from './platform/smokeFixture';
 
 vi.mock('electron', () => ({
   app: {
@@ -43,13 +44,7 @@ describe('foundation event log', () => {
   }
 
   function png(width: number, height: number): Uint8Array {
-    const buffer = Buffer.alloc(24);
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buffer, 0);
-    buffer.writeUInt32BE(13, 8);
-    buffer.write('IHDR', 12, 4, 'ascii');
-    buffer.writeUInt32BE(width, 16);
-    buffer.writeUInt32BE(height, 20);
-    return new Uint8Array(buffer);
+    return new Uint8Array(createPngFixture(width, height));
   }
 
   function requiredAssets(bytes = png(300, 300)) {
@@ -164,10 +159,28 @@ describe('foundation event log', () => {
       name: 'Bad', personalityDescription: 'PNG fixture', personalityAnalysisId: 'analysis-fixture', assetRoot: '', assets: requiredAssets(new Uint8Array([1])),
     })).rejects.toThrow('not a valid PNG');
 
+    analyses.set('analysis-fixture-truncated', { personality, description: 'PNG fixture', expiresAt: Date.now() + 60_000, used: false });
+    const truncated = createPngFixture(300, 300).subarray(0, -8);
+    await expect(services.companionNew.create({
+      name: 'Truncated', personalityDescription: 'PNG fixture', personalityAnalysisId: 'analysis-fixture-truncated', assetRoot: '', assets: requiredAssets(truncated),
+    })).rejects.toThrow('not a valid PNG');
+
+    analyses.set('analysis-fixture-corrupt', { personality, description: 'PNG fixture', expiresAt: Date.now() + 60_000, used: false });
+    const corrupt = Buffer.from(createPngFixture(300, 300));
+    corrupt[corrupt.length - 5] ^= 0xff;
+    await expect(services.companionNew.create({
+      name: 'Corrupt', personalityDescription: 'PNG fixture', personalityAnalysisId: 'analysis-fixture-corrupt', assetRoot: '', assets: requiredAssets(corrupt),
+    })).rejects.toThrow('not a valid PNG');
+
     analyses.set('analysis-fixture-2', { personality, description: 'PNG fixture', expiresAt: Date.now() + 60_000, used: false });
     await expect(services.companionNew.create({
       name: 'Zero', personalityDescription: 'PNG fixture', personalityAnalysisId: 'analysis-fixture-2', assetRoot: '', assets: requiredAssets(png(0, 300)),
     })).rejects.toThrow('invalid PNG dimensions');
+
+    analyses.set('analysis-fixture-frame-size', { personality, description: 'PNG fixture', expiresAt: Date.now() + 60_000, used: false });
+    await expect(services.companionNew.create({
+      name: 'SmallFrame', personalityDescription: 'PNG fixture', personalityAnalysisId: 'analysis-fixture-frame-size', assetRoot: '', assets: requiredAssets(png(299, 299)),
+    })).rejects.toThrow('frame size is outside the allowed range');
 
     analyses.set('analysis-fixture-3', { personality, description: 'PNG fixture', expiresAt: Date.now() + 60_000, used: false });
     await expect(services.companionNew.create({
@@ -242,6 +255,117 @@ describe('foundation event log', () => {
     expect(fs.readFileSync(path.join(animationsDir, 'Idle_Neutral.png'))).toEqual(Buffer.from(replacement));
     expect(fs.existsSync(path.join(animationsDir, 'Idle_Breathe.png'))).toBe(false);
     expect(fs.existsSync(path.join(animationsDir, 'Enter.png'))).toBe(true);
+    services.db.close();
+  });
+
+  it('replaces an existing Optional animation through the public edit service', async () => {
+    useTempUserData();
+    const services = new AppServices(':memory:');
+    const personality: CompanionPersonality = { energy: 50, curiosity: 60, sociability: 40, diligence: 70, playfulness: 55, confidence: 45, calmness: 75, shyness: 25 };
+    const analyses = (services as unknown as {
+      personalityAnalyses: Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>;
+    }).personalityAnalyses;
+    analyses.set('optional-replacement-create', {
+      personality,
+      description: 'Optional replacement fixture',
+      expiresAt: Date.now() + 60_000,
+      used: false,
+    });
+    const created = await services.companionNew.create({
+      name: 'Optional Replacement',
+      personalityDescription: 'Optional replacement fixture',
+      personalityAnalysisId: 'optional-replacement-create',
+      assetRoot: '',
+      assets: allAssets(),
+    });
+    const replacement = png(600, 300);
+
+    await services.companionNew.update({
+      id: created.id,
+      assets: [{ animationKey: 'Idle_Breathe', buffer: replacement }],
+    });
+
+    const persisted = await services.companionNew.readAsset({
+      companionId: created.id,
+      subfolder: 'animations',
+      fileName: 'Idle_Breathe.png',
+    });
+    expect(persisted?.dataUrl).toBe(`data:image/png;base64,${Buffer.from(replacement).toString('base64')}`);
+    services.db.close();
+  });
+
+  it('synchronizes the managed seed after Personality Edit while preserving user and muted/blocked Sources', async () => {
+    useTempUserData();
+    const services = new AppServices(':memory:');
+    const originalPersonality: CompanionPersonality = { energy: 50, curiosity: 60, sociability: 40, diligence: 70, playfulness: 55, confidence: 45, calmness: 75, shyness: 25 };
+    const nextPersonality: CompanionPersonality = { ...originalPersonality, curiosity: 91 };
+    const analyses = (services as unknown as {
+      personalityAnalyses: Map<string, { personality: CompanionPersonality; description: string; expiresAt: number; used: boolean }>;
+    }).personalityAnalyses;
+    analyses.set('personality-edit-create', {
+      personality: originalPersonality,
+      description: 'Calm local-first product design research',
+      expiresAt: Date.now() + 60_000,
+      used: false,
+    });
+    const created = await services.companionNew.create({
+      name: 'Seed Editor',
+      personalityDescription: 'Calm local-first product design research',
+      personalityAnalysisId: 'personality-edit-create',
+      assetRoot: '',
+      assets: requiredAssets(),
+    });
+    const originalSeed = (await services.discovery.listBases()).find((base) => base.origin === 'personality')!;
+    await services.discovery.updateBaseState({ baseId: originalSeed.id, state: 'blocked' });
+    const manual = await services.discovery.addBase({
+      sourceType: 'query',
+      locator: 'manual accessibility research',
+      initialState: 'active',
+    });
+    const muted = await services.discovery.addBase({
+      sourceType: 'query',
+      locator: 'quiet interaction archives',
+    });
+    await services.discovery.updateBaseState({ baseId: muted.id, state: 'muted' });
+    analyses.set('personality-edit-success', {
+      personality: nextPersonality,
+      description: 'Curious accessibility and interaction research',
+      expiresAt: Date.now() + 60_000,
+      used: false,
+    });
+
+    const updated = await services.companionNew.update({
+      id: created.id,
+      personalityDescription: 'Curious accessibility and interaction research',
+      personalityAnalysisId: 'personality-edit-success',
+    });
+    const bases = await services.discovery.listBases();
+    const updatedSeed = bases.find((base) => base.origin === 'personality');
+    const preservedManual = bases.find((base) => base.id === manual.id);
+    const preservedMuted = bases.find((base) => base.id === muted.id);
+
+    expect(updated.personalityDescription).toBe('Curious accessibility and interaction research');
+    expect(updated.personality).toEqual(nextPersonality);
+    expect(updatedSeed).toMatchObject({
+      id: originalSeed.id,
+      state: 'blocked',
+      origin: 'personality',
+    });
+    expect(updatedSeed?.locator).toContain('accessibility');
+    expect(updatedSeed?.data.personalityRevision).not.toBe(originalSeed.data.personalityRevision);
+    expect(preservedManual).toMatchObject({
+      id: manual.id,
+      locator: manual.locator,
+      origin: 'user',
+      state: 'active',
+    });
+    expect(preservedMuted).toMatchObject({
+      id: muted.id,
+      locator: muted.locator,
+      origin: 'user',
+      state: 'muted',
+    });
+    expect(bases).toHaveLength(3);
     services.db.close();
   });
 
@@ -411,8 +535,11 @@ describe('foundation event log', () => {
     analyses.set('large-fixture', { personality, description: 'Limit fixture', expiresAt: Date.now() + 60_000, used: false });
     await expect(create('large-fixture', requiredAssets(overFile))).rejects.toThrow('maximum file size');
 
-    const overTotal = new Uint8Array(Math.floor(MAX_COMPANION_TOTAL_ASSET_BYTES / 15) + 1);
-    png(300, 300).forEach((value, index) => { overTotal[index] = value; });
+    const overTotal = new Uint8Array(createPngFixture(
+      300,
+      300,
+      Math.floor(MAX_COMPANION_TOTAL_ASSET_BYTES / 15) + 1,
+    ));
     analyses.set('total-fixture', { personality, description: 'Limit fixture', expiresAt: Date.now() + 60_000, used: false });
     await expect(create('total-fixture', requiredAssets(overTotal))).rejects.toThrow('maximum total size');
     services.db.close();

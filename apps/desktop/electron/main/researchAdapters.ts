@@ -393,6 +393,10 @@ export function extractReadableFeed(xml: string, fallbackUrl: URL, limit: number
   feedItems: NonNullable<WebPageEvidence['feedItems']>;
 } {
   const $ = load(xml, { xmlMode: true });
+  const rootName = (($.root().children().first().get(0) as { name?: string } | undefined)?.name ?? '').toLowerCase();
+  const hasRssRoot = rootName === 'rss' || rootName === 'rdf:rdf';
+  const hasAtomRoot = rootName === 'feed';
+  if (!hasRssRoot && !hasAtomRoot) throw new ResearchAdapterError('invalid_feed_format');
   const feedTitle = normalizeText($('channel > title').first().text() || $('feed > title').first().text())
     || fallbackUrl.hostname;
   const feedItems = $('item, entry').slice(0, 20).toArray().flatMap((
@@ -563,7 +567,11 @@ export class SafeWebPageFetcher implements WebPageFetcher {
           title: extracted.title, extractedText: extracted.extractedText, excerpt: extracted.excerpt,
           contentHash: createHash('sha256').update(extracted.extractedText).digest('hex'), contentType,
           fetchedAt: this.now().toISOString(), publishedAt: extracted.publishedAt,
-          sourceType: FEED_CONTENT_TYPES.has(contentType) ? 'rss' : input.sourceType,
+          sourceType: FEED_CONTENT_TYPES.has(contentType)
+            ? 'rss'
+            : input.sourceType === 'rss'
+              ? 'open_web'
+              : input.sourceType,
           feedItems,
         };
       } catch (error) {

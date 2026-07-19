@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { COMPANION_ANIMATION_MANIFEST, type BuiltAssetPack, type CompanionAssetManifest } from '@our-companion/shared';
 import { resolveCompanionAssetPath, getCompanionAssetMimeType, type ResolveCompanionAssetPathOptions } from '../platform/companionAssetPaths';
+import { validatePngStructure } from '../platform/pngValidation';
 
 const ALLOWED = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.json', '.mp3', '.wav', '.ogg']);
 const VOICE = new Set(['.mp3', '.wav', '.ogg']);
@@ -89,8 +90,13 @@ function categoryFor(relativePath: string): CompanionAssetManifest['files'][numb
 function hashFile(filePath: string): string { return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex'); }
 function readPngSpriteMetadata(filePath: string) {
   const bytes = fs.readFileSync(filePath);
-  if (bytes.length < 24 || bytes.toString('ascii', 1, 4) !== 'PNG' || bytes.toString('ascii', 12, 16) !== 'IHDR') throw new Error('ASSET_PACK_FILE_INVALID');
-  const width = bytes.readUInt32BE(16); const height = bytes.readUInt32BE(20);
+  let width: number;
+  let height: number;
+  try {
+    ({ width, height } = validatePngStructure(bytes));
+  } catch {
+    throw new Error('ASSET_PACK_FILE_INVALID');
+  }
   if (!width || !height || width % height !== 0 || height < 300 || height > 4096) throw new Error('ASSET_PACK_MANIFEST_INVALID');
   const frameCount = width / height;
   if (frameCount < 1 || frameCount > 120) throw new Error('ASSET_PACK_MANIFEST_INVALID');

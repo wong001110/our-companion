@@ -1,4 +1,5 @@
 import { deflateSync } from 'node:zlib';
+import { pngCrc32 } from './pngValidation';
 
 /** A deterministic transparent 300px sprite-sheet PNG used only by smoke bootstrap. */
 export function createSmokeFixturePng(color: readonly [number, number, number] = [123, 82, 176], frames = 1): Buffer {
@@ -22,6 +23,28 @@ export function createSmokeFixturePng(color: readonly [number, number, number] =
   ]);
 }
 
+/** Structurally valid RGBA PNG for Main Process asset-validation tests. */
+export function createPngFixture(
+  width: number,
+  height: number,
+  paddingBytes = 0,
+  interlaceMethod: 0 | 1 = 0,
+): Buffer {
+  const safeWidth = Math.max(0, Math.floor(width));
+  const safeHeight = Math.max(0, Math.floor(height));
+  const raw = Buffer.alloc(filteredRgbaBytes(safeWidth, safeHeight, interlaceMethod));
+  const chunks = [
+    pngChunk('IHDR', pngHeader(safeWidth, safeHeight, interlaceMethod)),
+    pngChunk('IDAT', deflateSync(raw)),
+  ];
+  if (paddingBytes > 0) chunks.push(pngChunk('raNd', Buffer.alloc(Math.floor(paddingBytes))));
+  chunks.push(pngChunk('IEND', Buffer.alloc(0)));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    ...chunks,
+  ]);
+}
+
 /** A small neutral silhouette makes renderer QA inspect the real sprite path, not a solid test rectangle. */
 function smokeCompanionPixel(x: number, y: number, color: readonly [number, number, number]): [number, number, number, number] {
   const [red, green, blue] = color;
@@ -41,26 +64,36 @@ function smokeCompanionPixel(x: number, y: number, color: readonly [number, numb
   return [0, 0, 0, 0];
 }
 
-function pngHeader(width: number, height: number): Buffer {
+function pngHeader(width: number, height: number, interlaceMethod: 0 | 1 = 0): Buffer {
   const header = Buffer.alloc(13);
   header.writeUInt32BE(width, 0);
   header.writeUInt32BE(height, 4);
-  header.set([8, 6, 0, 0, 0], 8);
+  header.set([8, 6, 0, 0, interlaceMethod], 8);
   return header;
+}
+
+function filteredRgbaBytes(width: number, height: number, interlaceMethod: 0 | 1): number {
+  if (interlaceMethod === 0) return (width * 4 + 1) * height;
+  const passes = [
+    [0, 0, 8, 8],
+    [4, 0, 8, 8],
+    [0, 4, 4, 8],
+    [2, 0, 4, 4],
+    [0, 2, 2, 4],
+    [1, 0, 2, 2],
+    [0, 1, 1, 2],
+  ] as const;
+  return passes.reduce((total, [startX, startY, stepX, stepY]) => {
+    if (width <= startX || height <= startY) return total;
+    const passWidth = Math.ceil((width - startX) / stepX);
+    const passHeight = Math.ceil((height - startY) / stepY);
+    return total + (passWidth * 4 + 1) * passHeight;
+  }, 0);
 }
 
 function pngChunk(name: string, data: Buffer): Buffer {
   const type = Buffer.from(name, 'ascii');
   const length = Buffer.alloc(4); length.writeUInt32BE(data.length);
-  const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(Buffer.concat([type, data])) >>> 0);
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(pngCrc32(Buffer.concat([type, data])) >>> 0);
   return Buffer.concat([length, type, data, crc]);
-}
-
-function crc32(bytes: Buffer): number {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
 }
