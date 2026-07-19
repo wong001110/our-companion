@@ -315,8 +315,8 @@ describe('foundation event log', () => {
       assetRoot: '',
       assets: requiredAssets(),
     });
-    const originalSeed = (await services.discovery.listBases()).find((base) => base.data.managedBy === 'personality_seed')!;
-    await services.discovery.updateBaseState({ baseId: originalSeed.id, state: 'blocked' });
+    const originalSeed = (await services.discovery.listChannels()).find((channel) => channel.platformId === 'generic-web')!;
+    await services.discovery.updateChannelState({ platformId: 'generic-web', state: 'blocked' });
     const manual = await services.discovery.addBase({
       sourceType: 'query',
       locator: 'manual accessibility research',
@@ -340,19 +340,20 @@ describe('foundation event log', () => {
       personalityAnalysisId: 'personality-edit-success',
     });
     const bases = await services.discovery.listBases();
-    const updatedSeed = bases.find((base) => base.data.managedBy === 'personality_seed');
+    const channels = await services.discovery.listChannels();
+    const updatedChannel = channels.find((channel) => channel.platformId === 'generic-web');
     const preservedManual = bases.find((base) => base.id === manual.id);
     const preservedMuted = bases.find((base) => base.id === muted.id);
+    const profile = await services.discovery.getDiscoveryProfile();
 
     expect(updated.personalityDescription).toBe('Curious accessibility and interaction research');
     expect(updated.personality).toEqual(nextPersonality);
-    expect(updatedSeed).toMatchObject({
-      id: originalSeed.id,
+    expect(updatedChannel).toMatchObject({
+      platformId: 'generic-web',
       state: 'blocked',
-      origin: 'personality',
     });
-    expect(updatedSeed?.locator).toContain('accessibility');
-    expect(updatedSeed?.data.personalityRevision).not.toBe(originalSeed.data.personalityRevision);
+    expect(profile?.interests.some((interest) => interest.includes('accessibility'))).toBe(true);
+    expect(profile?.personalityRevision).not.toBeUndefined();
     expect(preservedManual).toMatchObject({
       id: manual.id,
       locator: manual.locator,
@@ -365,9 +366,8 @@ describe('foundation event log', () => {
       origin: 'user',
       state: 'muted',
     });
-    expect(bases.filter((base) => base.data.managedBy === 'personality_seed')).toHaveLength(1);
-    expect(bases.filter((base) => base.data.managedBy === 'personality_platform_seed')).toHaveLength(4);
-    expect(bases.filter((base) => base.origin === 'user')).toHaveLength(2);
+    expect(bases.some((base) => String(base.locator).includes('site:'))).toBe(false);
+    expect(channels.filter((channel) => channel.platformId !== 'generic-web' && channel.state === 'enabled').length).toBeGreaterThanOrEqual(4);
     services.db.close();
   });
 
@@ -565,30 +565,19 @@ describe('foundation event log', () => {
     });
     expect(created.isPrimary).toBe(true);
     expect(internals.personalityAnalyses.has('success-fixture')).toBe(false);
-    expect(services.db.listDiscoveryBases(created.id, 'trial')).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          companionId: created.id,
-          connectorId: 'generic-web',
-          scope: 'query',
-          origin: 'personality',
-          data: expect.objectContaining({ managedBy: 'personality_seed' }),
-        }),
-        expect.objectContaining({
-          data: expect.objectContaining({ managedBy: 'personality_platform_seed', platformId: 'reddit' }),
-        }),
-        expect.objectContaining({
-          data: expect.objectContaining({ managedBy: 'personality_platform_seed', platformId: 'youtube' }),
-        }),
-        expect.objectContaining({
-          data: expect.objectContaining({ managedBy: 'personality_platform_seed', platformId: 'github' }),
-        }),
-        expect.objectContaining({
-          data: expect.objectContaining({ managedBy: 'personality_platform_seed', platformId: 'bilibili' }),
-        }),
-      ]),
-    );
-    expect(services.db.listDiscoveryBases(created.id, 'trial')).toHaveLength(5);    await expect(services.companionNew.create({
+    expect(services.db.listDiscoveryBases(created.id, 'trial')).toEqual([]);
+    const channels = await services.discovery.listChannels();
+    expect(channels.map((channel) => channel.platformId).sort()).toEqual([
+      'bilibili',
+      'generic-web',
+      'github',
+      'reddit',
+      'youtube',
+    ]);
+    const profile = await services.discovery.getDiscoveryProfile();
+    expect(profile?.interests.length).toBeGreaterThanOrEqual(3);
+    expect(JSON.stringify(profile)).not.toContain('site:');
+    await expect(services.companionNew.create({
       name: 'Reuse', personalityDescription: 'Success fixture', personalityAnalysisId: 'success-fixture', assetRoot: '', assets: requiredAssets(),
     })).rejects.toThrow('invalid, expired, or already used');
 

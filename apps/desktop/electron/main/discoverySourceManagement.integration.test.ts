@@ -106,51 +106,56 @@ describe('Discovery Source management', () => {
     expect(services.db.getDiscoveryBase(source.id, first.id)).toBeDefined();
   });
 
-  it('backfills default managed platform sources, updates them in place, and preserves blocked state', async () => {
+  it('creates a Discovery Profile and default Channels without permanent site queries', async () => {
     const services = createServices();
-    const companion = addCompanion(services, 'Seed', 'Calm product design research');
+    addCompanion(services, 'Seed', 'Calm product design research');
 
-    const first = (await services.discovery.listBases()).filter((base) => base.origin === 'personality');
-    expect(first.length).toBeGreaterThanOrEqual(5);
-    expect(first.filter((base) => base.data.managedBy === 'personality_seed')).toHaveLength(1);
-    expect(first.filter((base) => base.data.managedBy === 'personality_platform_seed')).toHaveLength(4);
-    expect(first.map((base) => base.data.platformId).sort()).toEqual([
+    const bases = await services.discovery.listBases();
+    expect(bases.some((base) => String(base.locator).includes('site:reddit.com'))).toBe(false);
+    expect(bases.some((base) => base.data.managedBy === 'personality_platform_seed' && !base.data.curatedFeedId)).toBe(false);
+    expect(bases.some((base) => base.data.managedBy === 'personality_seed')).toBe(false);
+
+    const channels = await services.discovery.listChannels();
+    expect(channels.map((channel) => channel.platformId).sort()).toEqual([
       'bilibili',
       'generic-web',
       'github',
       'reddit',
       'youtube',
     ]);
-    const reddit = first.find((base) => base.data.platformId === 'reddit')!;
-    const seedId = reddit.id;
-    await services.discovery.updateBaseState({ baseId: seedId, state: 'blocked' });
+    expect(channels.every((channel) => channel.state === 'enabled')).toBe(true);
 
-    services.db.updateCompanion(companion.id, {
+    const profile = await services.discovery.getDiscoveryProfile();
+    expect(profile?.interests.length).toBeGreaterThanOrEqual(3);
+    expect(JSON.stringify(profile)).not.toContain('site:');
+
+    await services.discovery.updateChannelState({ platformId: 'reddit', state: 'blocked' });
+    services.db.updateCompanion(services.db.getPrimaryCompanion()!.id, {
       personalityDescription: 'Calm accessibility and interaction research',
     });
-    const updated = (await services.discovery.listBases()).filter((base) => base.origin === 'personality');
-    expect(updated.filter((base) => base.data.platformId === 'reddit')).toHaveLength(1);
-    expect(updated.find((base) => base.data.platformId === 'reddit')).toMatchObject({
-      id: seedId,
-      state: 'blocked',
-    });
-    expect(updated.find((base) => base.data.platformId === 'reddit')?.locator).toContain('accessibility');
+    await services.discovery.listChannels();
+    const afterEdit = await services.discovery.listChannels();
+    expect(afterEdit.find((channel) => channel.platformId === 'reddit')?.state).toBe('blocked');
+    const updatedProfile = await services.discovery.getDiscoveryProfile();
+    expect(updatedProfile?.interests.some((interest) => interest.includes('accessibility'))).toBe(true);
   });
 
-  it('updates the personality seed revision when only text beyond the query limit changes', async () => {
+  it('updates Discovery Profile revision when personality text changes', async () => {
     const services = createServices();
     const sharedPrefix = 'Calm local-first AI research and thoughtful desktop companions ';
     const companion = addCompanion(services, 'Long Seed', `${sharedPrefix}${'x'.repeat(200)} first ending`);
-    const first = (await services.discovery.listBases()).find((base) => base.data.managedBy === 'personality_seed');
+    await services.discovery.listChannels();
+    const first = await services.discovery.getDiscoveryProfile();
     expect(first).toBeDefined();
 
     services.db.updateCompanion(companion.id, {
       personalityDescription: `${sharedPrefix}${'x'.repeat(200)} second ending`,
     });
-    const updated = (await services.discovery.listBases()).find((base) => base.data.managedBy === 'personality_seed');
-
-    expect(updated?.id).toBe(first!.id);
-    expect(updated?.data.personalityRevision).not.toBe(first?.data.personalityRevision);
+    (services as unknown as {
+      syncPersonalityDiscoverySeed(companion: { id: string; personalityDescription: string; personality: typeof openPersonality; name: string }): void;
+    }).syncPersonalityDiscoverySeed(services.db.getCompanion(companion.id)!);
+    const updated = await services.discovery.getDiscoveryProfile();
+    expect(updated?.personalityRevision).not.toBe(first?.personalityRevision);
   });
 
   it('deletes only the active Companion source', async () => {
@@ -299,112 +304,66 @@ describe('Discovery Source management', () => {
     expect(refreshed?.data.lastResult).toBe('not_executed');
   });
 
-  it('suppresses deleted managed platforms and restores them once', async () => {
+  it('suppresses and restores Discovery Channels without creating query Bases', async () => {
     const services = createServices();
     addCompanion(services, 'Suppress', 'Local-first AI character interaction research');
-    const bases = await services.discovery.listBases();
-    const youtube = bases.find((base) => base.data.platformId === 'youtube');
-    expect(youtube).toBeDefined();
+    await services.discovery.listChannels();
 
-    await services.discovery.deleteBase(youtube!.id);
-    expect((await services.discovery.listBases()).some((base) => base.data.platformId === 'youtube')).toBe(false);
+    await services.discovery.updateChannelState({ platformId: 'youtube', state: 'suppressed' });
     expect(await services.discovery.listSuppressedPlatforms()).toEqual([
       expect.objectContaining({ platformId: 'youtube', state: 'suppressed' }),
     ]);
+    expect((await services.discovery.listChannels()).some((channel) => channel.platformId === 'youtube' && channel.state === 'enabled')).toBe(false);
 
-    // Edit-style reconciliation must not restore suppressed platforms.
-    await services.discovery.listBases();
-    expect((await services.discovery.listBases()).some((base) => base.data.platformId === 'youtube')).toBe(false);
+    await services.discovery.listChannels();
+    expect((await services.discovery.listChannels()).find((channel) => channel.platformId === 'youtube')?.state).toBe('suppressed');
 
     const restored = await services.discovery.restoreManagedPlatform('youtube');
-    expect(restored.data.platformId).toBe('youtube');
-    expect((await services.discovery.listBases()).filter((base) => base.data.platformId === 'youtube')).toHaveLength(1);
+    expect(restored).toMatchObject({ platformId: 'youtube', state: 'enabled' });
+    expect((await services.discovery.listBases()).some((base) => String(base.locator).includes('site:youtube.com'))).toBe(false);
 
     const userSource = await services.discovery.addBase({
       sourceType: 'query',
       locator: 'user created research topic',
     });
     await services.discovery.deleteBase(userSource.id);
-    expect(await services.discovery.listSuppressedPlatforms()).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ platformId: 'reddit' })]),
-    );
+    expect(await services.discovery.listSuppressedPlatforms()).toEqual([]);
   });
 
-  it('preserves muted blocked trial active and expired platform states across reconciliation', async () => {
+  it('preserves muted and blocked Channel states across reconciliation', async () => {
     const services = createServices();
     addCompanion(services, 'States', 'Thoughtful desktop companion research topics');
-    const bases = await services.discovery.listBases();
-    const byPlatform = Object.fromEntries(
-      bases
-        .filter((base) => typeof base.data.platformId === 'string')
-        .map((base) => [String(base.data.platformId), base]),
-    );
+    await services.discovery.listChannels();
+    await services.discovery.updateChannelState({ platformId: 'reddit', state: 'muted' });
+    await services.discovery.updateChannelState({ platformId: 'youtube', state: 'blocked' });
+    await services.discovery.updateChannelState({ platformId: 'github', state: 'enabled' });
 
-    await services.discovery.updateBaseState({ baseId: byPlatform.reddit.id, state: 'muted' });
-    await services.discovery.updateBaseState({ baseId: byPlatform.youtube.id, state: 'blocked' });
-    await services.discovery.updateBaseState({ baseId: byPlatform.github.id, state: 'active' });
-    await services.discovery.updateBaseState({ baseId: byPlatform.bilibili.id, state: 'expired' });
-
-    const refreshed = await services.discovery.listBases();
-    expect(refreshed.find((base) => base.data.platformId === 'reddit')).toMatchObject({
-      id: byPlatform.reddit.id,
-      state: 'muted',
-    });
-    expect(refreshed.find((base) => base.data.platformId === 'youtube')).toMatchObject({
-      id: byPlatform.youtube.id,
-      state: 'blocked',
-    });
-    expect(refreshed.find((base) => base.data.platformId === 'github')).toMatchObject({
-      id: byPlatform.github.id,
-      state: 'active',
-    });
-    expect(refreshed.find((base) => base.data.platformId === 'bilibili')).toMatchObject({
-      id: byPlatform.bilibili.id,
-      state: 'expired',
-    });
-    expect(refreshed.filter((base) => base.data.platformId === 'reddit')).toHaveLength(1);
+    const refreshed = await services.discovery.listChannels();
+    expect(refreshed.find((channel) => channel.platformId === 'reddit')?.state).toBe('muted');
+    expect(refreshed.find((channel) => channel.platformId === 'youtube')?.state).toBe('blocked');
+    expect(refreshed.find((channel) => channel.platformId === 'github')?.state).toBe('enabled');
   });
 
-  it('does not backfill platforms when auto-manage is disabled', async () => {
+  it('does not backfill platform Channels when auto-manage is disabled', async () => {
     const services = createServices();
     await services.discovery.setAutoManageDefaultPlatforms(false);
     addCompanion(services, 'Manual', 'Curious open web research companion');
-    const bases = await services.discovery.listBases();
-    expect(bases.filter((base) => base.data.managedBy === 'personality_seed')).toHaveLength(1);
-    expect(bases.filter((base) => base.data.managedBy === 'personality_platform_seed')).toHaveLength(0);
+    const channels = await services.discovery.listChannels();
+    expect(channels.some((channel) => channel.platformId === 'generic-web')).toBe(true);
+    expect(channels.some((channel) => channel.platformId === 'reddit')).toBe(false);
+    expect((await services.discovery.listBases()).filter((base) => base.data.managedBy === 'personality_platform_seed')).toHaveLength(0);
   });
 
   it('records provider unavailable bootstrap status without inventing results', async () => {
     const services = createServices({
       webSearchProvider: { id: 'unavailable-search', mode: 'unavailable', search: async () => [] },
     });
-    const personality = openPersonality;
-    const analyses = (services as unknown as {
-      personalityAnalyses: Map<string, {
-        personality: typeof personality;
-        description: string;
-        expiresAt: number;
-        used: boolean;
-      }>;
-    }).personalityAnalyses;
-    analyses.set('bootstrap-unavailable', {
-      personality,
-      description: 'Local-first AI research companion for careful discovery',
-      expiresAt: Date.now() + 60_000,
-      used: false,
-    });
-
-    // Creation path requires assets; use listBases backfill + explicit bootstrap helper instead.
     const companion = addCompanion(services, 'Bootstrap', 'Local-first AI research companion for careful discovery');
-    const seeded = (await services.discovery.listBases()).filter((base) => base.origin === 'personality');
-    expect(seeded.length).toBeGreaterThanOrEqual(5);
+    await services.discovery.listChannels();
 
     const bootstrap = await (services as unknown as {
-      runInitialDiscoveryBootstrap(
-        companion: { id: string },
-        sourceIds: string[],
-      ): Promise<{ status: string; executedSourceIds: string[]; reason?: string }>;
-    }).runInitialDiscoveryBootstrap(companion, seeded.map((base) => base.id));
+      runInitialDiscoveryBootstrap(companion: { id: string }): Promise<{ status: string; executedSourceIds: string[]; reason?: string }>;
+    }).runInitialDiscoveryBootstrap(companion);
 
     expect(bootstrap).toMatchObject({
       attempted: true,
@@ -414,28 +373,79 @@ describe('Discovery Source management', () => {
     expect(bootstrap.reason).toMatch(/not configured/i);
     const status = await services.discovery.getBootstrapStatus();
     expect(status?.status).toBe('provider_unavailable');
-    for (const base of await services.discovery.listBases()) {
-      expect(base.lastCheckedAt).toBeUndefined();
-    }
   });
 
-  it('clears platform suppression when a Companion is deleted', async () => {
+  it('migrates v1 managed platform query Bases into Channels and removes them', async () => {
+    const services = createServices();
+    const companion = addCompanion(services, 'Migrate', 'Local-first AI migration companion');
+    const now = new Date().toISOString();
+    for (const platformId of ['reddit', 'youtube', 'github', 'bilibili'] as const) {
+      services.db.upsertDiscoveryBase({
+        id: `legacy_${platformId}`,
+        companionId: companion.id,
+        connectorId: 'generic-web',
+        scope: 'query',
+        locator: `site:${platformId}.com legacy topics`,
+        data: {
+          managedBy: 'personality_platform_seed',
+          platformId,
+          bootstrapVersion: 1,
+        },
+        origin: 'personality',
+        state: platformId === 'reddit' ? 'muted' : platformId === 'youtube' ? 'blocked' : 'trial',
+        discoveredAt: now,
+        updatedAt: now,
+        trialStartedAt: now,
+        trialExpiresAt: now,
+      });
+    }
+    services.db.upsertDiscoveryBase({
+      id: 'legacy_generic',
+      companionId: companion.id,
+      connectorId: 'generic-web',
+      scope: 'query',
+      locator: 'legacy personality query',
+      data: { managedBy: 'personality_seed', bootstrapVersion: 1 },
+      origin: 'personality',
+      state: 'trial',
+      discoveredAt: now,
+      updatedAt: now,
+      trialStartedAt: now,
+      trialExpiresAt: now,
+    });
+    const user = await services.discovery.addBase({
+      sourceType: 'query',
+      locator: 'keep this user query',
+    });
+
+    await services.discovery.listChannels();
+    const bases = await services.discovery.listBases();
+    expect(bases.some((base) => base.id.startsWith('legacy_'))).toBe(false);
+    expect(bases.some((base) => base.id === user.id)).toBe(true);
+    const channels = await services.discovery.listChannels();
+    expect(channels.find((channel) => channel.platformId === 'reddit')?.state).toBe('muted');
+    expect(channels.find((channel) => channel.platformId === 'youtube')?.state).toBe('blocked');
+    expect(channels.find((channel) => channel.platformId === 'github')?.state).toBe('enabled');
+
+    await services.discovery.listChannels();
+    expect((await services.discovery.listChannels()).find((channel) => channel.platformId === 'reddit')?.state).toBe('muted');
+  });
+
+  it('clears Discovery Channel preferences when a Companion is deleted', async () => {
     const services = createServices();
     const first = addCompanion(services, 'Keep', 'Keep companion research interests');
     const second = addCompanion(services, 'Remove', 'Remove companion research interests', false);
     services.db.setPrimaryCompanion(second.id);
-    await services.discovery.listBases();
-    const youtube = (await services.discovery.listBases()).find((base) => base.data.platformId === 'youtube');
-    await services.discovery.deleteBase(youtube!.id);
+    await services.discovery.listChannels();
+    await services.discovery.updateChannelState({ platformId: 'youtube', state: 'suppressed' });
     expect(await services.discovery.listSuppressedPlatforms()).toHaveLength(1);
 
     services.db.setPrimaryCompanion(first.id);
     await services.companionNew.delete(second.id);
-    services.db.setPrimaryCompanion(first.id);
     expect(
       (services as unknown as {
-        listPlatformPreferences(companionId: string): unknown[];
-      }).listPlatformPreferences(second.id),
+        listDiscoveryChannels(companionId: string): unknown[];
+      }).listDiscoveryChannels(second.id),
     ).toEqual([]);
   });
 });

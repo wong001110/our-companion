@@ -4,31 +4,55 @@ import {
 } from './curatedDiscoveryFeeds';
 import {
   DISCOVERY_PLATFORM_BOOTSTRAP_VERSION,
-  MANAGED_DISCOVERY_PLATFORM_PRESETS,
-  getDiscoveryPlatformPreset,
-  renderDiscoveryPlatformQuery,
-  type ManagedDiscoveryPlatformId,
+  DEFAULT_DISCOVERY_PLATFORM_PRESETS,
+  isDiscoveryPlatformId,
+  type DiscoveryPlatformId,
 } from './discoveryPlatformPresets';
 
 export const PERSONALITY_SEED_MANAGED_BY = 'personality_seed';
 export const PERSONALITY_PLATFORM_SEED_MANAGED_BY = 'personality_platform_seed';
 
-export interface CompanionDiscoveryPlatformQuery {
-  platformId: ManagedDiscoveryPlatformId;
-  query: string;
-}
+export type DiscoveryPreferredContentType =
+  | 'articles'
+  | 'discussion'
+  | 'video'
+  | 'code'
+  | 'feeds';
+
+export type DiscoveryChannelState = 'enabled' | 'muted' | 'blocked' | 'suppressed';
 
 export interface CompanionDiscoverySeedPlan {
   interests: string[];
-  genericQuery: string;
-  platformQueries: CompanionDiscoveryPlatformQuery[];
+  preferredContentTypes: DiscoveryPreferredContentType[];
+  platformAffinities: Partial<Record<DiscoveryPlatformId, number>>;
   curatedFeedIds: string[];
 }
 
+export interface CompanionDiscoveryProfile {
+  version: number;
+  companionId: string;
+  personalityRevision: string;
+  interests: string[];
+  preferredContentTypes: DiscoveryPreferredContentType[];
+  platformAffinities: Partial<Record<DiscoveryPlatformId, number>>;
+  updatedAt: string;
+}
+
+export interface CompanionDiscoveryChannel {
+  companionId: string;
+  platformId: DiscoveryPlatformId;
+  state: DiscoveryChannelState;
+  source: 'default' | 'user';
+  updatedAt: string;
+  lastUsedAt?: string;
+  lastPlanningReason?: string;
+}
+
+/** @deprecated Prefer CompanionDiscoveryChannel.state. */
 export interface ManagedDiscoveryPlatformPreference {
   companionId: string;
-  platformId: ManagedDiscoveryPlatformId;
-  state: 'enabled' | 'suppressed';
+  platformId: DiscoveryPlatformId;
+  state: 'enabled' | 'suppressed' | 'muted' | 'blocked';
   updatedAt: string;
 }
 
@@ -45,6 +69,14 @@ const BROAD_INTERESTS = new Set([
   'technology', 'tech', 'science', 'news', 'life', 'things', 'stuff', 'world', 'general',
   'everything', 'anything', 'ideas', 'topics', 'research',
 ]);
+
+const CONTENT_TYPES: DiscoveryPreferredContentType[] = [
+  'articles',
+  'discussion',
+  'video',
+  'code',
+  'feeds',
+];
 
 export function extractDiscoveryInterests(description: string, requested?: readonly string[]): string[] {
   const fromRequested = normalizeInterestList(requested ?? []);
@@ -66,16 +98,13 @@ export function extractDiscoveryInterests(description: string, requested?: reado
 export function buildCompanionDiscoverySeedPlan(input: {
   description: string;
   interests?: readonly string[];
+  preferredContentTypes?: readonly string[];
+  platformAffinities?: Partial<Record<string, number>>;
   curatedFeedIds?: readonly string[];
 }): CompanionDiscoverySeedPlan {
   const interests = extractDiscoveryInterests(input.description, input.interests);
-  const topics = interests.slice(0, 4).join(' ');
-  const genericPreset = getDiscoveryPlatformPreset('generic-web');
-  const genericQuery = renderDiscoveryPlatformQuery(genericPreset.queryTemplate, topics);
-  const platformQueries = MANAGED_DISCOVERY_PLATFORM_PRESETS.map((preset) => ({
-    platformId: preset.id,
-    query: renderDiscoveryPlatformQuery(preset.queryTemplate, topics),
-  }));
+  const preferredContentTypes = normalizePreferredContentTypes(input.preferredContentTypes);
+  const platformAffinities = normalizePlatformAffinities(input.platformAffinities);
   const curatedFromModel = filterKnownCuratedFeedIds(input.curatedFeedIds ?? []);
   const curatedFeedIds = curatedFromModel.length > 0
     ? curatedFromModel
@@ -83,8 +112,8 @@ export function buildCompanionDiscoverySeedPlan(input: {
 
   return {
     interests,
-    genericQuery,
-    platformQueries,
+    preferredContentTypes,
+    platformAffinities,
     curatedFeedIds,
   };
 }
@@ -96,22 +125,50 @@ export function parseDiscoverySeedPlanFromAnalysis(
   const interests = Array.isArray(raw.interests)
     ? raw.interests.filter((value): value is string => typeof value === 'string')
     : undefined;
+  const preferredContentTypes = Array.isArray(raw.preferredContentTypes)
+    ? raw.preferredContentTypes.filter((value): value is string => typeof value === 'string')
+    : Array.isArray(raw.preferred_content_types)
+      ? raw.preferred_content_types.filter((value): value is string => typeof value === 'string')
+      : undefined;
+  const platformAffinities = parsePlatformAffinities(raw.platformAffinities ?? raw.platform_affinities);
   const curatedFeedIds = Array.isArray(raw.curatedFeedIds)
     ? raw.curatedFeedIds.filter((value): value is string => typeof value === 'string')
     : Array.isArray(raw.curated_feed_ids)
       ? raw.curated_feed_ids.filter((value): value is string => typeof value === 'string')
       : undefined;
 
-  // Ignore any model-supplied RSS URLs — only registry feed IDs are allowed.
+  // Ignore model-supplied platformQueries / RSS URLs — channels and feeds are app-owned.
   return buildCompanionDiscoverySeedPlan({
     description,
     interests,
+    preferredContentTypes,
+    platformAffinities,
     curatedFeedIds,
   });
 }
 
+export function buildCompanionDiscoveryProfile(input: {
+  companionId: string;
+  personalityRevision: string;
+  seedPlan: CompanionDiscoverySeedPlan;
+  updatedAt: string;
+}): CompanionDiscoveryProfile {
+  return {
+    version: DISCOVERY_PLATFORM_BOOTSTRAP_VERSION,
+    companionId: input.companionId,
+    personalityRevision: input.personalityRevision,
+    interests: input.seedPlan.interests,
+    preferredContentTypes: input.seedPlan.preferredContentTypes,
+    platformAffinities: input.seedPlan.platformAffinities,
+    updatedAt: input.updatedAt,
+  };
+}
+
 export function isManagedPlatformSeed(data: Readonly<Record<string, unknown>> | undefined): boolean {
-  return data?.managedBy === PERSONALITY_PLATFORM_SEED_MANAGED_BY;
+  return data?.managedBy === PERSONALITY_PLATFORM_SEED_MANAGED_BY
+    && typeof data.platformId === 'string'
+    && data.platformId !== 'generic-web'
+    && !data.curatedFeedId;
 }
 
 export function isPersonalityGenericSeed(data: Readonly<Record<string, unknown>> | undefined): boolean {
@@ -120,32 +177,49 @@ export function isPersonalityGenericSeed(data: Readonly<Record<string, unknown>>
 
 export function platformIdFromManagedSource(
   data: Readonly<Record<string, unknown>> | undefined,
-): ManagedDiscoveryPlatformId | undefined {
-  if (!isManagedPlatformSeed(data)) return undefined;
+): DiscoveryPlatformId | undefined {
+  if (!isManagedPlatformSeed(data) && data?.managedBy !== PERSONALITY_SEED_MANAGED_BY) return undefined;
   const platformId = data?.platformId;
-  if (typeof platformId !== 'string') return undefined;
-  return MANAGED_DISCOVERY_PLATFORM_PRESETS.some((preset) => preset.id === platformId)
-    ? platformId as ManagedDiscoveryPlatformId
-    : undefined;
+  if (typeof platformId !== 'string' || !isDiscoveryPlatformId(platformId)) return undefined;
+  if (data?.managedBy === PERSONALITY_PLATFORM_SEED_MANAGED_BY && platformId === 'generic-web') {
+    return undefined;
+  }
+  return platformId;
 }
 
-export function buildManagedPlatformSourceData(input: {
-  platformId: ManagedDiscoveryPlatformId;
-  personalityRevision: string;
-  topicKeys: readonly string[];
-  existing?: Readonly<Record<string, unknown>>;
-}): Record<string, unknown> {
-  const preset = getDiscoveryPlatformPreset(input.platformId);
-  return {
-    ...(input.existing ?? {}),
-    managedBy: PERSONALITY_PLATFORM_SEED_MANAGED_BY,
-    platformId: input.platformId,
-    platformLabel: preset.label,
-    label: preset.label,
-    bootstrapVersion: DISCOVERY_PLATFORM_BOOTSTRAP_VERSION,
-    personalityRevision: input.personalityRevision,
-    topicKeys: [...input.topicKeys],
-  };
+export function mapV1BaseStateToChannelState(
+  state: string,
+): Exclude<DiscoveryChannelState, 'suppressed'> {
+  if (state === 'muted') return 'muted';
+  if (state === 'blocked') return 'blocked';
+  // trial / active / expired / rejected → enabled (expired is not deliberate suppression)
+  return 'enabled';
+}
+
+export function buildDefaultDiscoveryChannels(input: {
+  companionId: string;
+  updatedAt: string;
+  existing?: readonly CompanionDiscoveryChannel[];
+  autoManage: boolean;
+}): CompanionDiscoveryChannel[] {
+  const byId = new Map(input.existing?.map((channel) => [channel.platformId, channel]));
+  const next: CompanionDiscoveryChannel[] = [];
+  for (const preset of DEFAULT_DISCOVERY_PLATFORM_PRESETS) {
+    const existing = byId.get(preset.id);
+    if (existing) {
+      next.push(existing);
+      continue;
+    }
+    if (!input.autoManage && preset.id !== 'generic-web') continue;
+    next.push({
+      companionId: input.companionId,
+      platformId: preset.id,
+      state: 'enabled',
+      source: 'default',
+      updatedAt: input.updatedAt,
+    });
+  }
+  return next;
 }
 
 function tokenizeInterestCandidates(description: string): string[] {
@@ -179,6 +253,40 @@ function normalizeInterestList(values: readonly string[]): string[] {
     if (seen.has(normalized)) continue;
     seen.add(normalized);
     result.push(normalized);
+  }
+  return result;
+}
+
+function normalizePreferredContentTypes(values?: readonly string[]): DiscoveryPreferredContentType[] {
+  const seen = new Set<DiscoveryPreferredContentType>();
+  for (const value of values ?? []) {
+    const normalized = value.trim().toLowerCase() as DiscoveryPreferredContentType;
+    if (CONTENT_TYPES.includes(normalized)) seen.add(normalized);
+  }
+  if (seen.size === 0) {
+    return ['articles', 'discussion', 'code'];
+  }
+  return CONTENT_TYPES.filter((type) => seen.has(type));
+}
+
+function normalizePlatformAffinities(
+  values?: Partial<Record<string, number>>,
+): Partial<Record<DiscoveryPlatformId, number>> {
+  if (!values) return {};
+  const result: Partial<Record<DiscoveryPlatformId, number>> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (!isDiscoveryPlatformId(key)) continue;
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+    result[key] = Math.max(0, Math.min(1, value));
+  }
+  return result;
+}
+
+function parsePlatformAffinities(raw: unknown): Partial<Record<string, number>> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const result: Partial<Record<string, number>> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'number') result[key] = value;
   }
   return result;
 }

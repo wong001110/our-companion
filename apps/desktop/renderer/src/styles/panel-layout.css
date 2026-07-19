@@ -1124,6 +1124,53 @@
   font-weight: 650;
 }
 
+.discovery-interest-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.discovery-interest-list li {
+  padding: 4px 10px;
+  border: 1px solid rgba(70, 92, 110, 0.16);
+  background: rgba(245, 248, 250, 0.9);
+  font-size: 13px;
+}
+
+.discovery-channel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.discovery-channel-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(70, 92, 110, 0.16);
+  background: linear-gradient(180deg, rgba(250, 252, 253, 0.95), rgba(236, 242, 246, 0.8));
+}
+
+.discovery-channel-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.discovery-channel-card small {
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.channel-state-muted,
+.channel-state-blocked {
+  opacity: 0.78;
+}
+
 .discovery-source-row-disabled {
   opacity: 0.72;
 }

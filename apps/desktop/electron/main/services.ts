@@ -37,22 +37,30 @@ import {
   startDiscoveryTrial,
   transitionDiscoveryBase,
   buildCompanionDiscoverySeedPlan,
-  buildManagedPlatformSourceData,
+  buildCompanionDiscoveryProfile,
+  buildBootstrapCuriosityTopic,
+  buildDefaultDiscoveryChannels,
+  buildFallbackDiscoveryResearchPlan,
+  enabledDiscoveryChannels,
   getCuratedDiscoveryFeed,
   getDiscoveryPlatformPreset,
+  isDiscoveryPlatformId,
   isManagedPlatformSeed,
+  isPersonalityGenericSeed,
   listCuratedDiscoveryFeedIds,
-  MANAGED_DISCOVERY_PLATFORM_PRESETS,
+  mapV1BaseStateToChannelState,
   parseDiscoverySeedPlanFromAnalysis,
   PERSONALITY_PLATFORM_SEED_MANAGED_BY,
   PERSONALITY_SEED_MANAGED_BY,
   platformIdFromManagedSource,
   DISCOVERY_PLATFORM_BOOTSTRAP_VERSION,
+  DEFAULT_DISCOVERY_PLATFORM_PRESETS,
+  validateDynamicDiscoveryResearchPlan,
   type CompanionDiscoverySeedPlan,
   type DiscoveryBase,
   type DiscoveryConnector,
-  type ManagedDiscoveryPlatformId,
-  type ManagedDiscoveryPlatformPreference,
+  type DiscoveryPlatformId,
+  type DynamicDiscoveryResearchPlan,
 } from '@our-companion/discovery-engine';
 import { generateInsights, selectPrimaryInsight } from '@our-companion/insight-engine';
 import { createJourney, createJourneyMilestone } from '@our-companion/journey-engine';
@@ -103,6 +111,9 @@ import type {
   DiscoveryBaseState,
   DiscoverySource,
   DiscoveryBootstrapResult,
+  CompanionDiscoveryChannel,
+  CompanionDiscoveryProfile,
+  DiscoveryChannelState,
   EngineProviderMode,
   EngineTrace,
   EngineTraceStatus,
@@ -194,7 +205,6 @@ const PERSONALITY_ANALYSIS_MAX_ENTRIES = 50;
 const DISCOVERY_REEVALUATION_BASE_MS = 2 * 60 * 1000;
 const DISCOVERY_REEVALUATION_MAX_MS = 30 * 60 * 1000;
 const AUTO_MANAGE_DEFAULT_PLATFORMS_KEY = 'discovery.autoManageDefaultPlatforms';
-const EXISTING_MANAGED_SOURCE_STATES = new Set(['trial', 'active', 'muted', 'blocked', 'expired', 'rejected']);
 export const MAX_COMPANION_ASSET_BYTES = 20 * 1024 * 1024;
 export const MAX_COMPANION_TOTAL_ASSET_BYTES = 200 * 1024 * 1024;
 
@@ -208,6 +218,14 @@ type PersonalityAnalysisRecord = {
 
 function companionDiscoveryPreferencesKey(companionId: string): string {
   return `companion.discovery.${companionId}.platformPreferences`;
+}
+
+function companionDiscoveryChannelsKey(companionId: string): string {
+  return `companion.discovery.${companionId}.channels`;
+}
+
+function companionDiscoveryProfileKey(companionId: string): string {
+  return `companion.discovery.${companionId}.profile`;
 }
 
 function companionDiscoveryBootstrapKey(companionId: string): string {
@@ -579,42 +597,62 @@ export class AppServices {
     return enabled;
   }
 
-  private listPlatformPreferences(companionId: string): ManagedDiscoveryPlatformPreference[] {
-    return this.db.getAppSetting<ManagedDiscoveryPlatformPreference[]>(
+  private listDiscoveryChannels(companionId: string): CompanionDiscoveryChannel[] {
+    const stored = this.db.getAppSetting<CompanionDiscoveryChannel[]>(
+      companionDiscoveryChannelsKey(companionId),
+    );
+    if (stored?.length) return stored;
+    // Legacy preferences (enabled/suppressed) from bootstrap v1.
+    const legacy = this.db.getAppSetting<Array<{
+      companionId: string;
+      platformId: string;
+      state: string;
+      updatedAt: string;
+    }>>(companionDiscoveryPreferencesKey(companionId)) ?? [];
+    if (!legacy.length) return [];
+    return legacy
+      .filter((entry) => isDiscoveryPlatformId(entry.platformId))
+      .map((entry) => ({
+        companionId,
+        platformId: entry.platformId as DiscoveryPlatformId,
+        state: entry.state === 'suppressed'
+          ? 'suppressed'
+          : entry.state === 'muted'
+            ? 'muted'
+            : entry.state === 'blocked'
+              ? 'blocked'
+              : 'enabled',
+        source: 'default' as const,
+        updatedAt: entry.updatedAt,
+      }));
+  }
+
+  private saveDiscoveryChannels(companionId: string, channels: CompanionDiscoveryChannel[]): void {
+    this.db.setAppSetting(companionDiscoveryChannelsKey(companionId), channels);
+    // Keep legacy preference key in sync for suppression lookups during migration.
+    this.db.setAppSetting(
       companionDiscoveryPreferencesKey(companionId),
-    ) ?? [];
+      channels.map((channel) => ({
+        companionId,
+        platformId: channel.platformId,
+        state: channel.state === 'suppressed' ? 'suppressed' : channel.state,
+        updatedAt: channel.updatedAt,
+      })),
+    );
   }
 
-  private savePlatformPreferences(
-    companionId: string,
-    preferences: ManagedDiscoveryPlatformPreference[],
-  ): void {
-    this.db.setAppSetting(companionDiscoveryPreferencesKey(companionId), preferences);
+  private readDiscoveryProfile(companionId: string): CompanionDiscoveryProfile | null {
+    return this.db.getAppSetting<CompanionDiscoveryProfile>(companionDiscoveryProfileKey(companionId)) ?? null;
   }
 
-  private isPlatformSuppressed(companionId: string, platformId: ManagedDiscoveryPlatformId): boolean {
-    return this.listPlatformPreferences(companionId)
-      .some((entry) => entry.platformId === platformId && entry.state === 'suppressed');
-  }
-
-  private suppressManagedPlatform(companionId: string, platformId: ManagedDiscoveryPlatformId): void {
-    const now = this.now().toISOString();
-    const preferences = this.listPlatformPreferences(companionId)
-      .filter((entry) => entry.platformId !== platformId);
-    preferences.push({ companionId, platformId, state: 'suppressed', updatedAt: now });
-    this.savePlatformPreferences(companionId, preferences);
-  }
-
-  private clearPlatformSuppression(companionId: string, platformId: ManagedDiscoveryPlatformId): void {
-    const now = this.now().toISOString();
-    const preferences = this.listPlatformPreferences(companionId)
-      .filter((entry) => entry.platformId !== platformId);
-    preferences.push({ companionId, platformId, state: 'enabled', updatedAt: now });
-    this.savePlatformPreferences(companionId, preferences);
+  private saveDiscoveryProfile(profile: CompanionDiscoveryProfile): void {
+    this.db.setAppSetting(companionDiscoveryProfileKey(profile.companionId), profile);
   }
 
   private clearCompanionDiscoveryPreferences(companionId: string): void {
     this.db.setAppSetting(companionDiscoveryPreferencesKey(companionId), []);
+    this.db.setAppSetting(companionDiscoveryChannelsKey(companionId), []);
+    this.db.setAppSetting(companionDiscoveryProfileKey(companionId), null);
     this.db.setAppSetting(companionDiscoveryBootstrapKey(companionId), null);
     this.discoveryBootstrapByCompanion.delete(companionId);
   }
@@ -640,208 +678,143 @@ export class AppServices {
     return buildCompanionDiscoverySeedPlan({ description: companion.personalityDescription });
   }
 
+  /**
+   * Persist Discovery Profile + Channel preferences. Does not create permanent
+   * platform query DiscoveryBases.
+   */
   private syncPersonalityDiscoverySeed(
     companion: CompanionProfile,
     analysis?: PersonalityAnalysisRecord,
   ): string[] {
-    return this.syncManagedDiscoverySources(companion, this.resolveDiscoverySeedPlan(companion, analysis));
-  }
-
-  private syncManagedDiscoverySources(
-    companion: CompanionProfile,
-    seedPlan: CompanionDiscoverySeedPlan,
-  ): string[] {
+    this.migrateV1ManagedPlatformQueries(companion);
+    const seedPlan = this.resolveDiscoverySeedPlan(companion, analysis);
     const now = this.now().toISOString();
-    const changedSourceIds: string[] = [];
     const normalizedDescription = companion.personalityDescription.trim().replace(/\s+/g, ' ');
-    if (!normalizedDescription) return changedSourceIds;
+    if (!normalizedDescription) return [];
     const revision = createSemanticFingerprint('personality_revision', [normalizedDescription]);
-    const existingBases = this.db.listDiscoveryBases(companion.id, undefined, 1_000);
-
-    const genericChanged = this.syncGenericPersonalitySeed({
-      companion,
+    this.saveDiscoveryProfile(buildCompanionDiscoveryProfile({
+      companionId: companion.id,
+      personalityRevision: revision,
       seedPlan,
-      revision,
-      now,
-      existingBases,
-    });
-    if (genericChanged) changedSourceIds.push(genericChanged);
+      updatedAt: now,
+    }));
+    this.reconcileDiscoveryChannels(companion.id, now);
+    return [];
+  }
 
-    if (this.getAutoManageDefaultPlatforms()) {
-      for (const platformQuery of seedPlan.platformQueries) {
-        const changed = this.syncManagedPlatformSeed({
-          companion,
-          platformId: platformQuery.platformId,
-          query: platformQuery.query,
-          topicKeys: seedPlan.interests,
-          revision,
-          now,
-          existingBases,
+  private reconcileDiscoveryChannels(companionId: string, now: string): CompanionDiscoveryChannel[] {
+    const existing = this.listDiscoveryChannels(companionId);
+    const next = buildDefaultDiscoveryChannels({
+      companionId,
+      updatedAt: now,
+      existing,
+      autoManage: this.getAutoManageDefaultPlatforms(),
+    });
+    // Preserve suppressed/muted/blocked; only add genuinely missing defaults.
+    const merged = next.map((channel) => {
+      const prior = existing.find((entry) => entry.platformId === channel.platformId);
+      return prior ?? channel;
+    });
+    for (const prior of existing) {
+      if (!merged.some((channel) => channel.platformId === prior.platformId)) {
+        merged.push(prior);
+      }
+    }
+    this.saveDiscoveryChannels(companionId, merged);
+    return merged;
+  }
+
+  private updateDiscoveryChannelState(
+    companionId: string,
+    platformId: DiscoveryPlatformId,
+    state: DiscoveryChannelState,
+  ): CompanionDiscoveryChannel {
+    const now = this.now().toISOString();
+    const channels = this.reconcileDiscoveryChannels(companionId, now);
+    const existing = channels.find((channel) => channel.platformId === platformId);
+    const next: CompanionDiscoveryChannel = existing
+      ? { ...existing, state, source: 'user', updatedAt: now }
+      : {
+        companionId,
+        platformId,
+        state,
+        source: 'user',
+        updatedAt: now,
+      };
+    const saved = [
+      ...channels.filter((channel) => channel.platformId !== platformId),
+      next,
+    ];
+    this.saveDiscoveryChannels(companionId, saved);
+    return next;
+  }
+
+  private migrateV1ManagedPlatformQueries(companion: CompanionProfile): void {
+    const now = this.now().toISOString();
+    const bases = this.db.listDiscoveryBases(companion.id, undefined, 1_000);
+    const channels = this.listDiscoveryChannels(companion.id);
+    const byPlatform = new Map(channels.map((channel) => [channel.platformId, channel]));
+    let channelsChanged = false;
+
+    for (const base of bases) {
+      if (!isManagedPlatformSeed(base.data)) continue;
+      const platformId = platformIdFromManagedSource(base.data);
+      if (!platformId || platformId === 'generic-web') continue;
+      const existing = byPlatform.get(platformId);
+      if (!existing || existing.state === 'enabled') {
+        const mapped = mapV1BaseStateToChannelState(base.state);
+        byPlatform.set(platformId, {
+          companionId: companion.id,
+          platformId,
+          state: mapped,
+          source: existing?.source ?? 'default',
+          updatedAt: now,
+          lastUsedAt: existing?.lastUsedAt,
+          lastPlanningReason: existing?.lastPlanningReason,
         });
-        if (changed) changedSourceIds.push(changed);
+        channelsChanged = true;
       }
+      this.db.deleteDiscoveryBase(base.id, companion.id);
     }
 
-    return changedSourceIds;
-  }
-
-  private syncGenericPersonalitySeed(input: {
-    companion: CompanionProfile;
-    seedPlan: CompanionDiscoverySeedPlan;
-    revision: string;
-    now: string;
-    existingBases: ReadonlyArray<ReturnType<DatabaseService['listDiscoveryBases']>[number]>;
-  }): string | undefined {
-    const locator = input.seedPlan.genericQuery.trim().replace(/\s+/g, ' ').slice(0, 500);
-    if (locator.length < 3) return undefined;
-    const intent = createAdaptiveExplorationIntent({
-      mode: input.companion.personality.curiosity >= 65 ? 'wildcard' : 'adjacent',
-      topic: locator.slice(0, 240),
-      expectedValue: `Find evidence-backed ideas that fit ${input.companion.name}'s personality and can broaden future exploration.`,
-      freshness: 'any',
-      trustRequirement: 'corroborated',
-      languages: [this.getAiSettings().replyLanguage === 'zh-CN' ? 'zh-CN' : 'en'],
-      searchTasks: [locator],
-      createdAt: input.now,
-    });
-    const existing = input.existingBases.find((base) => base.data.managedBy === PERSONALITY_SEED_MANAGED_BY)
-      ?? input.existingBases.find((base) => base.origin === 'personality' && !isManagedPlatformSeed(base.data));
-    const data = {
-      ...(existing?.data ?? {}),
-      managedBy: PERSONALITY_SEED_MANAGED_BY,
-      label: getDiscoveryPlatformPreset('generic-web').label,
-      platformId: 'generic-web',
-      platformLabel: getDiscoveryPlatformPreset('generic-web').label,
-      bootstrapVersion: DISCOVERY_PLATFORM_BOOTSTRAP_VERSION,
-      personalityRevision: input.revision,
-      topicKeys: input.seedPlan.interests,
-      intentQuestion: intent.question,
-      mode: intent.mode,
-      expectedValue: intent.expectedValue,
-    };
-    if (existing) {
-      if (existing.data.managedBy && existing.data.managedBy !== PERSONALITY_SEED_MANAGED_BY) return undefined;
-      if (existing.data.userModifiedAt) return undefined;
-      if (existing.data.personalityRevision === input.revision && existing.locator === locator) return undefined;
-      const conflicting = this.db.getDiscoveryBaseByLocator(
-        input.companion.id,
-        'generic-web',
-        'query',
-        locator,
-      );
-      if (conflicting && conflicting.id !== existing.id) return undefined;
-      this.db.updateDiscoveryBase({
-        ...existing,
-        connectorId: 'generic-web',
-        scope: 'query',
-        locator,
-        data,
-        updatedAt: input.now,
-      });
-      return existing.id;
-    }
-    const conflictingUserBase = this.db.getDiscoveryBaseByLocator(
-      input.companion.id,
-      'generic-web',
-      'query',
-      locator,
-    );
-    if (conflictingUserBase) return undefined;
-    const id = createSemanticFingerprint('discovery_base', [
-      input.companion.id,
-      'generic-web',
-      PERSONALITY_SEED_MANAGED_BY,
-    ]);
-    this.db.upsertDiscoveryBase(startDiscoveryTrial({
-      base: {
-        id,
-        companionId: input.companion.id,
-        connectorId: 'generic-web',
-        scope: 'query',
-        locator,
-        data,
-        origin: 'personality',
-        discoveredAt: input.now,
-      },
-      now: input.now,
-    }));
-    return id;
-  }
-
-  private syncManagedPlatformSeed(input: {
-    companion: CompanionProfile;
-    platformId: ManagedDiscoveryPlatformId;
-    query: string;
-    topicKeys: readonly string[];
-    revision: string;
-    now: string;
-    existingBases: ReadonlyArray<ReturnType<DatabaseService['listDiscoveryBases']>[number]>;
-  }): string | undefined {
-    if (this.isPlatformSuppressed(input.companion.id, input.platformId)) return undefined;
-    const locator = input.query.trim().replace(/\s+/g, ' ').slice(0, 500);
-    if (locator.length < 3) return undefined;
-    const existing = input.existingBases.find((base) =>
-      isManagedPlatformSeed(base.data) && platformIdFromManagedSource(base.data) === input.platformId
-    );
-    if (existing) {
-      if (!EXISTING_MANAGED_SOURCE_STATES.has(existing.state)) return undefined;
-      const data = buildManagedPlatformSourceData({
-        platformId: input.platformId,
-        personalityRevision: input.revision,
-        topicKeys: input.topicKeys,
-        existing: existing.data,
-      });
-      if (existing.data.personalityRevision === input.revision && existing.locator === locator) {
-        return undefined;
+    // Migrate generic personality seed into profile interests, then remove the base
+    // unless the user explicitly modified it (preserve as pinned query).
+    for (const base of bases) {
+      if (!isPersonalityGenericSeed(base.data) && !(base.origin === 'personality' && !isManagedPlatformSeed(base.data) && !base.data.curatedFeedId)) {
+        continue;
       }
-      const conflicting = this.db.getDiscoveryBaseByLocator(
-        input.companion.id,
-        'generic-web',
-        'query',
-        locator,
-      );
-      if (conflicting && conflicting.id !== existing.id) return undefined;
-      this.db.updateDiscoveryBase({
-        ...existing,
-        connectorId: 'generic-web',
-        scope: 'query',
-        locator,
-        data,
-        updatedAt: input.now,
-      });
-      return existing.id;
+      if (base.data.curatedFeedId) continue;
+      if (base.scope !== 'query') continue;
+      if (base.data.userModifiedAt) {
+        this.db.updateDiscoveryBase({
+          ...base,
+          origin: 'user',
+          data: {
+            ...base.data,
+            managedBy: undefined,
+            label: typeof base.data.label === 'string' ? base.data.label : 'Pinned personality topic',
+          },
+          updatedAt: now,
+        });
+        continue;
+      }
+      this.db.deleteDiscoveryBase(base.id, companion.id);
     }
-    const conflicting = this.db.getDiscoveryBaseByLocator(
-      input.companion.id,
-      'generic-web',
-      'query',
-      locator,
-    );
-    if (conflicting) return undefined;
-    const id = createSemanticFingerprint('discovery_base', [
-      input.companion.id,
-      'generic-web',
-      PERSONALITY_PLATFORM_SEED_MANAGED_BY,
-      input.platformId,
-    ]);
-    this.db.upsertDiscoveryBase(startDiscoveryTrial({
-      base: {
-        id,
-        companionId: input.companion.id,
-        connectorId: 'generic-web',
-        scope: 'query',
-        locator,
-        data: buildManagedPlatformSourceData({
-          platformId: input.platformId,
-          personalityRevision: input.revision,
-          topicKeys: input.topicKeys,
-        }),
-        origin: 'personality',
-        discoveredAt: input.now,
-      },
-      now: input.now,
-    }));
-    return id;
+
+    if (channelsChanged || channels.length === 0) {
+      const merged = buildDefaultDiscoveryChannels({
+        companionId: companion.id,
+        updatedAt: now,
+        existing: [...byPlatform.values()],
+        autoManage: this.getAutoManageDefaultPlatforms(),
+      }).map((channel) => byPlatform.get(channel.platformId) ?? channel);
+      for (const channel of byPlatform.values()) {
+        if (!merged.some((entry) => entry.platformId === channel.platformId)) {
+          merged.push(channel);
+        }
+      }
+      this.saveDiscoveryChannels(companion.id, merged);
+    }
   }
 
   private async ensureCuratedFeedSources(
@@ -908,92 +881,134 @@ export class AppServices {
     return changed;
   }
 
+  private async planDynamicDiscoveryResearch(input: {
+    companion: CompanionProfile;
+    curiosityTopic: string;
+    profile: CompanionDiscoveryProfile | null;
+    forcedPlatformId?: DiscoveryPlatformId;
+  }): Promise<DynamicDiscoveryResearchPlan> {
+    const channels = enabledDiscoveryChannels(this.listDiscoveryChannels(input.companion.id));
+    const enabledPlatformIds = channels.map((channel) => channel.platformId);
+    if (input.forcedPlatformId && !enabledPlatformIds.includes(input.forcedPlatformId)) {
+      return {
+        plannerMode: 'unavailable',
+        plannerReason: 'Forced channel is not enabled.',
+        tasks: [],
+        skippedChannels: [{ platformId: input.forcedPlatformId, reason: 'Channel is not enabled.' }],
+      };
+    }
+    if (enabledPlatformIds.length === 0) {
+      return {
+        plannerMode: 'unavailable',
+        plannerReason: 'No discovery channels are enabled.',
+        tasks: [],
+        skippedChannels: [],
+      };
+    }
+
+    const language = this.getAiSettings().replyLanguage === 'zh-CN' ? 'zh-CN' : 'en';
+    if (!this.getAiSettings().apiKeyConfigured) {
+      return buildFallbackDiscoveryResearchPlan({
+        curiosityTopic: input.curiosityTopic,
+        enabledPlatformIds,
+        forcedPlatformId: input.forcedPlatformId,
+        language,
+        reason: 'AI provider unavailable',
+      });
+    }
+
+    try {
+      const { content } = await this.sendToAi({
+        channel: 'discovery_research_plan',
+        source: 'discovery',
+        messages: [{
+          role: 'user',
+          content: [
+            'Plan a bounded Discovery research cycle.',
+            'Return JSON only: { "tasks": [{ "platformId", "query", "rationale", "language?" }] }',
+            'Rules:',
+            '- Choose at most 3 unique platforms from the enabled list',
+            '- query must be plain semantic search text (no URLs, no site: operators)',
+            '- Do not invent domains or feeds',
+            `Enabled platforms: ${enabledPlatformIds.join(', ')}`,
+            `Interests: ${(input.profile?.interests ?? []).join(', ') || '(none)'}`,
+            `Preferred content: ${(input.profile?.preferredContentTypes ?? []).join(', ') || '(none)'}`,
+            `Curiosity target: ${input.curiosityTopic}`,
+            input.forcedPlatformId ? `Force exactly this platform: ${input.forcedPlatformId}` : '',
+            `Language preference: ${language}`,
+          ].filter(Boolean).join('\n'),
+        }],
+      });
+      const match = content.match(/\{[\s\S]*\}/);
+      if (!match) {
+        return buildFallbackDiscoveryResearchPlan({
+          curiosityTopic: input.curiosityTopic,
+          enabledPlatformIds,
+          forcedPlatformId: input.forcedPlatformId,
+          language,
+          reason: 'AI planner returned invalid JSON',
+        });
+      }
+      const validated = validateDynamicDiscoveryResearchPlan({
+        candidate: JSON.parse(match[0]),
+        enabledPlatformIds,
+        forcedPlatformId: input.forcedPlatformId,
+      });
+      if (!validated) {
+        return buildFallbackDiscoveryResearchPlan({
+          curiosityTopic: input.curiosityTopic,
+          enabledPlatformIds,
+          forcedPlatformId: input.forcedPlatformId,
+          language,
+          reason: 'AI planner output failed validation',
+        });
+      }
+      return validated;
+    } catch (error) {
+      return buildFallbackDiscoveryResearchPlan({
+        curiosityTopic: input.curiosityTopic,
+        enabledPlatformIds,
+        forcedPlatformId: input.forcedPlatformId,
+        language,
+        reason: error instanceof Error ? error.message : 'AI planner failed',
+      });
+    }
+  }
+
   private async runInitialDiscoveryBootstrap(
     companion: CompanionProfile,
-    sourceIds: string[],
   ): Promise<DiscoveryBootstrapResult> {
-    const runnable = sourceIds
-      .map((id) => this.db.getDiscoveryBase(id, companion.id))
-      .filter((base): base is NonNullable<typeof base> => {
-        if (!base) return false;
-        return base.state === 'trial' || base.state === 'active';
-      });
-    if (runnable.length === 0) {
-      const result: DiscoveryBootstrapResult = {
-        attempted: true,
-        executedSourceIds: [],
-        status: 'deferred',
-        reason: 'No runnable managed discovery sources were available.',
-      };
-      this.persistBootstrapStatus(companion.id, result);
-      return result;
-    }
     if (this.webSearchProvider.mode === 'unavailable') {
       const result: DiscoveryBootstrapResult = {
         attempted: true,
         executedSourceIds: [],
+        executedPlatformIds: [],
         status: 'provider_unavailable',
         reason: 'Search provider is not configured.',
+        plannerMode: 'unavailable',
       };
-      for (const base of runnable.slice(0, 1)) {
-        this.db.updateDiscoveryBase({
-          ...base,
-          data: {
-            ...base.data,
-            lastResult: 'provider_unavailable',
-            bootstrapDiagnostic: result.reason,
-          },
-          updatedAt: this.now().toISOString(),
-        });
-      }
       this.persistBootstrapStatus(companion.id, result);
       return result;
     }
 
-    const selected = runnable[0]!;
     try {
       const exploration = await this.runAutonomousExploration(
         { companionId: companion.id, trigger: 'manual' },
-        selected.id,
       );
       const inspection = this.latestDiscoveryInspections.get(companion.id);
-      const executedSourceIds = (inspection?.executedBases ?? [])
-        .map((base) => base.id)
-        .filter((id) => id === selected.id);
-      const refreshed = this.db.getDiscoveryBase(selected.id, companion.id);
-      if (refreshed && executedSourceIds.length === 0) {
-        this.db.updateDiscoveryBase({
-          ...refreshed,
-          data: {
-            ...refreshed.data,
-            lastResult: 'not_executed',
-            bootstrapDiagnostic: 'Search provider did not execute this source.',
-          },
-          updatedAt: this.now().toISOString(),
-        });
-      } else if (refreshed) {
-        this.db.updateDiscoveryBase({
-          ...refreshed,
-          data: {
-            ...refreshed.data,
-            lastResult: exploration.discoveryCandidates.length > 0 ? 'completed' : 'no_candidates',
-          },
-          updatedAt: this.now().toISOString(),
-        });
-      }
+      const executedPlatformIds = (inspection?.selectedChannels ?? []).map((entry) => entry.platformId as DiscoveryPlatformId);
       const result: DiscoveryBootstrapResult = {
         attempted: true,
-        executedSourceIds,
-        status: executedSourceIds.length === 0
-          ? 'provider_unavailable'
+        executedSourceIds: (inspection?.executedBases ?? []).map((base) => base.id),
+        executedPlatformIds,
+        status: inspection?.plannerMode === 'unavailable'
+          ? 'planner_unavailable'
           : exploration.discoveryCandidates.length > 0
             ? 'completed'
             : 'no_candidates',
-        reason: executedSourceIds.length === 0
-          ? 'Search provider is not configured or did not execute.'
-          : exploration.discoveryCandidates.length > 0
-            ? undefined
-            : 'No discovery candidates were found.',
+        reason: inspection?.plannerReason
+          ?? (exploration.discoveryCandidates.length > 0 ? undefined : 'No discovery candidates were found.'),
+        plannerMode: inspection?.plannerMode,
       };
       this.persistBootstrapStatus(companion.id, result);
       return result;
@@ -1001,8 +1016,10 @@ export class AppServices {
       const result: DiscoveryBootstrapResult = {
         attempted: true,
         executedSourceIds: [],
+        executedPlatformIds: [],
         status: 'provider_unavailable',
         reason: error instanceof Error ? error.message : 'Initial discovery bootstrap failed.',
+        plannerMode: 'unavailable',
       };
       this.persistBootstrapStatus(companion.id, result);
       return result;
@@ -1154,17 +1171,19 @@ export class AppServices {
         companion = this.db.updateCompanion(companion.id, { assetRoot: `companion://${companion.id}/assets` });
         if (shouldBecomePrimary) companion = this.db.setPrimaryCompanion(companion.id);
         const seedPlan = this.resolveDiscoverySeedPlan(companion, analysis);
-        const seededSourceIds = this.syncPersonalityDiscoverySeed(companion, analysis);
-        const curatedIds = await this.ensureCuratedFeedSources(companion, seedPlan);
+        this.syncPersonalityDiscoverySeed(companion, analysis);
+        await this.ensureCuratedFeedSources(companion, seedPlan);
         this.personalityAnalyses.delete(input.personalityAnalysisId);
         try {
-          await this.runInitialDiscoveryBootstrap(companion, [...seededSourceIds, ...curatedIds]);
+          await this.runInitialDiscoveryBootstrap(companion);
         } catch {
           this.persistBootstrapStatus(companion.id, {
             attempted: true,
             executedSourceIds: [],
+            executedPlatformIds: [],
             status: 'provider_unavailable',
             reason: 'Initial discovery bootstrap failed after Companion creation.',
+            plannerMode: 'unavailable',
           });
         }
         return companion;
@@ -1308,13 +1327,11 @@ export class AppServices {
             ? this.personalityAnalyses.get(consumedAnalysisId)
             : undefined;
           const seedPlan = this.resolveDiscoverySeedPlan(updated, analysisForSeed);
-          const changedIds = this.syncPersonalityDiscoverySeed(updated, analysisForSeed);
-          void this.ensureCuratedFeedSources(updated, seedPlan).then(async (curatedIds) => {
-            const refreshIds = [...changedIds, ...curatedIds];
-            const first = refreshIds[0];
-            if (!first || this.webSearchProvider.mode === 'unavailable') return;
+          this.syncPersonalityDiscoverySeed(updated, analysisForSeed);
+          void this.ensureCuratedFeedSources(updated, seedPlan).then(async () => {
+            if (this.webSearchProvider.mode === 'unavailable') return;
             try {
-              await this.runAutonomousExploration({ companionId: updated.id, trigger: 'manual' }, first);
+              await this.runAutonomousExploration({ companionId: updated.id, trigger: 'manual' });
             } catch {
               // Bounded refresh must not fail the personality edit.
             }
@@ -1663,43 +1680,50 @@ export class AppServices {
       const companionId = this.db.resolveActiveCompanionId();
       const existing = this.db.getDiscoveryBase(baseId, companionId);
       if (!existing) throw new Error('DISCOVERY_SOURCE_NOT_FOUND');
-      const platformId = platformIdFromManagedSource(existing.data);
+      // Deleting a pinned/user Source does not suppress Discovery Channels.
       if (!this.db.deleteDiscoveryBase(baseId, companionId)) throw new Error('DISCOVERY_SOURCE_DELETE_FAILED');
-      if (platformId) this.suppressManagedPlatform(companionId, platformId);
       return { deleted: true };
     },
-    listSuppressedPlatforms: async (): Promise<ManagedDiscoveryPlatformPreference[]> => {
-      const companionId = this.db.resolveActiveCompanionId();
-      return this.listPlatformPreferences(companionId)
-        .filter((entry) => entry.state === 'suppressed');
-    },
-    restoreManagedPlatform: async (platformId: ManagedDiscoveryPlatformId): Promise<DiscoveryBase> => {
+    listChannels: async (): Promise<CompanionDiscoveryChannel[]> => {
       const companion = this.requireActiveCompanion();
-      if (!MANAGED_DISCOVERY_PLATFORM_PRESETS.some((preset) => preset.id === platformId)) {
-        throw new Error('DISCOVERY_PLATFORM_UNKNOWN');
+      this.migrateV1ManagedPlatformQueries(companion);
+      return this.reconcileDiscoveryChannels(companion.id, this.now().toISOString());
+    },
+    updateChannelState: async (input: {
+      platformId: DiscoveryPlatformId;
+      state: DiscoveryChannelState;
+    }): Promise<CompanionDiscoveryChannel> => {
+      const companion = this.requireActiveCompanion();
+      if (!isDiscoveryPlatformId(input.platformId)) throw new Error('DISCOVERY_PLATFORM_UNKNOWN');
+      if (!['enabled', 'muted', 'blocked', 'suppressed'].includes(input.state)) {
+        throw new Error('DISCOVERY_CHANNEL_STATE_INVALID');
       }
-      this.clearPlatformSuppression(companion.id, platformId);
-      const seedPlan = this.resolveDiscoverySeedPlan(companion);
-      const platformQuery = seedPlan.platformQueries.find((entry) => entry.platformId === platformId);
-      if (!platformQuery) throw new Error('DISCOVERY_PLATFORM_QUERY_MISSING');
-      const revision = createSemanticFingerprint('personality_revision', [
-        companion.personalityDescription.trim().replace(/\s+/g, ' '),
-      ]);
-      const sourceId = this.syncManagedPlatformSeed({
-        companion,
+      return this.updateDiscoveryChannelState(companion.id, input.platformId, input.state);
+    },
+    exploreChannelNow: async (platformId: DiscoveryPlatformId): Promise<ExplorationCycleResult> => {
+      const companion = this.requireActiveCompanion();
+      if (!isDiscoveryPlatformId(platformId)) throw new Error('DISCOVERY_PLATFORM_UNKNOWN');
+      const channel = this.listDiscoveryChannels(companion.id).find((entry) => entry.platformId === platformId);
+      if (!channel || channel.state !== 'enabled') throw new Error('DISCOVERY_CHANNEL_NOT_ENABLED');
+      return this.runAutonomousExploration(
+        { companionId: companion.id, trigger: 'manual' },
+        undefined,
         platformId,
-        query: platformQuery.query,
-        topicKeys: seedPlan.interests,
-        revision,
-        now: this.now().toISOString(),
-        existingBases: this.db.listDiscoveryBases(companion.id, undefined, 1_000),
-      });
-      const restored = sourceId
-        ? this.db.getDiscoveryBase(sourceId, companion.id)
-        : this.db.listDiscoveryBases(companion.id, undefined, 1_000)
-          .find((base) => platformIdFromManagedSource(base.data) === platformId);
-      if (!restored) throw new Error('DISCOVERY_PLATFORM_RESTORE_FAILED');
-      return { ...restored, origin: restored.origin as DiscoveryBase['origin'] };
+      );
+    },
+    listSuppressedPlatforms: async (): Promise<CompanionDiscoveryChannel[]> => {
+      const companion = this.requireActiveCompanion();
+      return this.listDiscoveryChannels(companion.id).filter((channel) => channel.state === 'suppressed');
+    },
+    restoreManagedPlatform: async (platformId: DiscoveryPlatformId): Promise<CompanionDiscoveryChannel> => {
+      if (!isDiscoveryPlatformId(platformId)) throw new Error('DISCOVERY_PLATFORM_UNKNOWN');
+      const companion = this.requireActiveCompanion();
+      return this.updateDiscoveryChannelState(companion.id, platformId, 'enabled');
+    },
+    getDiscoveryProfile: async (): Promise<CompanionDiscoveryProfile | null> => {
+      const companion = this.requireActiveCompanion();
+      this.syncPersonalityDiscoverySeed(companion);
+      return this.readDiscoveryProfile(companion.id);
     },
     getAutoManageDefaultPlatforms: async (): Promise<boolean> => this.getAutoManageDefaultPlatforms(),
     setAutoManageDefaultPlatforms: async (enabled: boolean): Promise<boolean> => {
@@ -2577,17 +2601,19 @@ export class AppServices {
   private async runAutonomousExploration(
     input: StartExplorationInput = {},
     prioritizedDiscoveryBaseId?: string,
+    forcedPlatformId?: DiscoveryPlatformId,
   ): Promise<ExplorationCycleResult> {
     const companionId = this.db.resolveActiveCompanionId(input.companionId);
     if (this.localCompanionAway) throw new Error('EXPLORATION_ALREADY_RUNNING');
     const active = this.activeExplorations.get(companionId);
     if (active) {
-      if (prioritizedDiscoveryBaseId) throw new Error('EXPLORATION_ALREADY_RUNNING');
+      if (prioritizedDiscoveryBaseId || forcedPlatformId) throw new Error('EXPLORATION_ALREADY_RUNNING');
       return active;
     }
     const operation = this.runAutonomousExplorationCycle(
       { ...input, companionId },
       prioritizedDiscoveryBaseId,
+      forcedPlatformId,
     )
       .catch((error) => {
         const current = this.db.getCurrentExplorationCycleForCompanion(companionId);
@@ -2667,6 +2693,7 @@ export class AppServices {
   private async runAutonomousExplorationCycle(
     input: StartExplorationInput = {},
     prioritizedDiscoveryBaseId?: string,
+    forcedPlatformId?: DiscoveryPlatformId,
   ): Promise<ExplorationCycleResult> {
     const userId = input.userId ?? 'default';
     const companionId = this.db.resolveActiveCompanionId(input.companionId);
@@ -2909,7 +2936,41 @@ export class AppServices {
       selectedCuriosityTarget = savedTopicProbe.target;
       selectedTopicSaturation = savedTopicProbe.saturation;
     }
-    if (selectedCuriosityTarget) {
+    let bootstrapCuriosity = false;
+    if (
+      !selectedCuriosityTarget
+      && rankedCuriosityTargets.length === 0
+      && !savedTopicProbe
+      && (input.trigger === 'manual' || input.trigger === undefined)
+    ) {
+      const companion = this.db.getCompanion(companionId);
+      if (companion) {
+        this.syncPersonalityDiscoverySeed(companion);
+        const profile = this.readDiscoveryProfile(companionId);
+        if (profile?.interests.length) {
+          const topic = buildBootstrapCuriosityTopic(profile);
+          bootstrapCuriosity = true;
+          selectedCuriosityTarget = {
+            id: createId('curiosity'),
+            userId,
+            companionId,
+            topic,
+            description: topic,
+            source: 'character_trigger',
+            explorationType: 'practical',
+            priority: 0.5 as never,
+            confidence: 0.5 as never,
+            reason: 'Bootstrap curiosity from Discovery Profile interests.',
+            sourceFingerprint: createSemanticFingerprint('bootstrap_curiosity', [companionId, profile.personalityRevision]),
+            expectedValue: `Explore public ideas related to ${profile.interests.slice(0, 3).join(', ')}.`,
+            status: 'exploring',
+            createdAt: evaluatedAt,
+            updatedAt: evaluatedAt,
+          } as typeof rankedCuriosityTargets[number];
+        }
+      }
+    }
+    if (selectedCuriosityTarget && !bootstrapCuriosity) {
       this.db.setCuriosityTargetStatus(selectedCuriosityTarget.id, 'exploring', evaluatedAt);
     }
     const companionName = this.requireCompanionName(companionId);
@@ -3067,6 +3128,51 @@ export class AppServices {
     cycle = this.saveCycleState(cycle, 'planning');
     this.setAutonomyCharacterState(companionId, 'discovering', 'sharing_discovery');
 
+    const discoveryProfile = companionProfile
+      ? (this.readDiscoveryProfile(companionId) ?? (
+        this.syncPersonalityDiscoverySeed(companionProfile),
+        this.readDiscoveryProfile(companionId)
+      ))
+      : null;
+    const dynamicPlan = companionProfile
+      ? await this.planDynamicDiscoveryResearch({
+        companion: companionProfile,
+        curiosityTopic: selectedCuriosityTarget.topic,
+        profile: discoveryProfile,
+        forcedPlatformId,
+      })
+      : {
+        plannerMode: 'unavailable' as const,
+        plannerReason: 'Companion profile missing',
+        tasks: [],
+        skippedChannels: [],
+      };
+    discoveryInspection.plannerMode = dynamicPlan.plannerMode;
+    discoveryInspection.plannerReason = dynamicPlan.plannerReason;
+    discoveryInspection.enabledChannels = this.listDiscoveryChannels(companionId)
+      .filter((channel) => channel.state === 'enabled')
+      .map((channel) => channel.platformId);
+    discoveryInspection.selectedChannels = dynamicPlan.tasks.map((task) => ({
+      platformId: task.platformId,
+      query: task.query,
+      rationale: task.rationale,
+    }));
+    discoveryInspection.skippedChannels = dynamicPlan.skippedChannels;
+    if (dynamicPlan.tasks.length > 0) {
+      const now = this.now().toISOString();
+      const channels = this.listDiscoveryChannels(companionId).map((channel) => {
+        const task = dynamicPlan.tasks.find((entry) => entry.platformId === channel.platformId);
+        if (!task) return channel;
+        return {
+          ...channel,
+          lastUsedAt: now,
+          lastPlanningReason: task.rationale,
+          updatedAt: now,
+        };
+      });
+      this.saveDiscoveryChannels(companionId, channels);
+    }
+
     cycle = this.saveCycleState(cycle, 'exploring');
     const research = await this.researchOrchestrator.run({
       userId,
@@ -3075,6 +3181,7 @@ export class AppServices {
       curiosityTarget: selectedCuriosityTarget,
       explorationIntent: adaptiveIntent,
       discoveryBases: selectedDiscoveryBases,
+      dynamicPlatformTasks: dynamicPlan.tasks,
       seenCanonicalUrls: new Set(discoveryHistory.map((discovery) => discovery.canonicalUrl ?? discovery.url).filter(Boolean) as string[]),
       materialUpdateProbe: requiresMaterialUpdate,
       onTrace: (event) => trace(
@@ -4333,7 +4440,9 @@ export class AppServices {
           'Return JSON only with:',
           '1) integer values from 0 to 100 for exactly: energy, curiosity, sociability, diligence, playfulness, confidence, calmness, shyness',
           '2) interests: an array of 3 to 5 concise interest phrases (no duplicates, avoid overly broad words)',
-          '3) curatedFeedIds: an array of feed IDs chosen only from the provided registry IDs (may be empty). Never invent RSS URLs.',
+          '3) preferredContentTypes: subset of articles, discussion, video, code, feeds',
+          '4) platformAffinities: optional object mapping generic-web|reddit|youtube|github|bilibili to 0..1',
+          '5) curatedFeedIds: feed IDs chosen only from the provided registry IDs (may be empty). Never invent RSS URLs or permanent site: queries.',
           `Known curated feed IDs: ${knownFeedIds.join(', ') || '(none)'}`,
           `Description: ${trimmed}`,
         ].join('\n'),
@@ -4413,7 +4522,7 @@ export class AppServices {
 
   private async sendToAi(input: {
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
-    channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis';
+    channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis' | 'discovery_research_plan';
     source: string;
   }): Promise<{ content: string; raw: unknown; requestBody: unknown }> {
     try {
@@ -4448,7 +4557,7 @@ export class AppServices {
 
   private async completeWithInjectedAi(input: {
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
-    channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis';
+    channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis' | 'discovery_research_plan';
     source: string;
   }): Promise<{ content: string; raw: unknown; requestBody: unknown }> {
     const requestBody = {

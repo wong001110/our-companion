@@ -403,6 +403,14 @@ export class ResearchOrchestrator {
     curiosityTarget: CuriosityTarget;
     explorationIntent?: ExplorationIntent;
     discoveryBases?: readonly DiscoveryBase[];
+    dynamicPlatformTasks?: Array<{
+      id: string;
+      platformId: string;
+      query: string;
+      semanticQuery: string;
+      rationale: string;
+      language?: string;
+    }>;
     seenCanonicalUrls?: Set<string>;
     materialUpdateProbe?: boolean;
     onTrace?: (event: ResearchTraceEvent) => void;
@@ -412,8 +420,14 @@ export class ResearchOrchestrator {
       .filter((base) =>
         base.companionId === input.companionId
         && (base.state === 'active' || base.state === 'trial')
+        // Dynamic platform channels must not rely on legacy managed platform query rows.
+        && base.data.managedBy !== 'personality_platform_seed'
       )
       .slice(0, 3);
+    const dynamicTasks = (input.dynamicPlatformTasks ?? []).slice(0, 3);
+    const dynamicQueries = dynamicTasks
+      .map((task) => task.query.trim())
+      .filter((query) => query.length >= 3);
     const baseUrls = new Map(
       eligibleBases.flatMap((base) => {
         const url = discoveryBaseUrl(base);
@@ -431,6 +445,10 @@ export class ResearchOrchestrator {
       const query = discoveryBaseQuery(base);
       if (!query) continue;
       baseIdsByQuery.set(query, [...(baseIdsByQuery.get(query) ?? []), base.id]);
+    }
+    const taskIdsByQuery = new Map<string, string[]>();
+    for (const task of dynamicTasks) {
+      taskIdsByQuery.set(task.query, [...(taskIdsByQuery.get(task.query) ?? []), task.id]);
     }
     const baseIntent = createResearchIntent({ ...input, now: this.now().toISOString() });
     const intent: ResearchIntent = input.explorationIntent
@@ -464,14 +482,14 @@ export class ResearchOrchestrator {
     const deterministic = input.explorationIntent
       ? {
         ...deterministicBase,
-        queries: [...new Set([...baseQueries, ...input.explorationIntent.searchTasks])]
+        queries: [...new Set([...baseQueries, ...dynamicQueries, ...input.explorationIntent.searchTasks])]
           .filter(Boolean)
-          .slice(0, deterministicBase.limits.maxQueries),
+          .slice(0, Math.max(deterministicBase.limits.maxQueries, baseQueries.length + Math.min(dynamicQueries.length, 3))),
       }
       : {
         ...deterministicBase,
-        queries: [...new Set([...baseQueries, ...deterministicBase.queries])]
-          .slice(0, deterministicBase.limits.maxQueries),
+        queries: [...new Set([...baseQueries, ...dynamicQueries, ...deterministicBase.queries])]
+          .slice(0, Math.max(deterministicBase.limits.maxQueries, baseQueries.length + Math.min(dynamicQueries.length, 3))),
       };
     let plan = deterministic;
     if (this.deps.refinePlan) {
@@ -490,11 +508,19 @@ export class ResearchOrchestrator {
       }
       return [];
     });
+    const dynamicCapabilityIds = dynamicQueries.length
+      ? [this.deps.searchProvider.id, this.deps.pageFetcher.id].filter((id) => availableCapabilityIds.has(id))
+      : [];
+    const queryBudget = Math.max(plan.limits.maxQueries, baseQueries.length + Math.min(dynamicQueries.length, 3));
     plan = {
       ...plan,
-      queries: [...new Set([...baseQueries, ...plan.queries])]
-        .slice(0, plan.limits.maxQueries),
-      selectedCapabilities: [...new Set([...plan.selectedCapabilities, ...baseCapabilityIds])],
+      limits: {
+        ...plan.limits,
+        maxQueries: queryBudget,
+      },
+      queries: [...new Set([...baseQueries, ...dynamicQueries, ...plan.queries])]
+        .slice(0, queryBudget),
+      selectedCapabilities: [...new Set([...plan.selectedCapabilities, ...baseCapabilityIds, ...dynamicCapabilityIds])],
     };
     input.onTrace?.({ operation: 'research-plan:create', status: 'completed', inputRefs: [intent.id], outputRefs: [plan.id] });
     const routed = routeResearchSources(intent, capabilities);

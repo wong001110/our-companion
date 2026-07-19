@@ -26,6 +26,7 @@ export * from './sourceManagement';
 export * from './discoveryPlatformPresets';
 export * from './curatedDiscoveryFeeds';
 export * from './companionDiscoverySeed';
+export * from './discoveryResearchPlanner';
 
 export interface DiscoveryFetchInput {
   query?: string;

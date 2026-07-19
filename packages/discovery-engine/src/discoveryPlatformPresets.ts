@@ -1,4 +1,4 @@
-export const DISCOVERY_PLATFORM_BOOTSTRAP_VERSION = 1;
+export const DISCOVERY_PLATFORM_BOOTSTRAP_VERSION = 2;
 
 export type DiscoveryPlatformId =
   | 'generic-web'
@@ -7,42 +7,56 @@ export type DiscoveryPlatformId =
   | 'github'
   | 'bilibili';
 
-export type ManagedDiscoveryPlatformId = Exclude<DiscoveryPlatformId, 'generic-web'>;
+export type DiscoveryPlatformContentKind = 'web' | 'discussion' | 'video' | 'code';
 
 export interface DiscoveryPlatformPreset {
   id: DiscoveryPlatformId;
   label: string;
-  queryTemplate: string;
+  allowedDomains: string[];
+  contentKinds: DiscoveryPlatformContentKind[];
+  languageHints?: string[];
 }
 
 export const DEFAULT_DISCOVERY_PLATFORM_PRESETS = [
   {
     id: 'generic-web',
     label: 'Open Web',
-    queryTemplate: '{{topics}}',
+    allowedDomains: [],
+    contentKinds: ['web'],
   },
   {
     id: 'reddit',
     label: 'Reddit',
-    queryTemplate: 'site:reddit.com {{topics}}',
+    allowedDomains: ['reddit.com'],
+    contentKinds: ['discussion'],
   },
   {
     id: 'youtube',
     label: 'YouTube',
-    queryTemplate: 'site:youtube.com {{topics}}',
+    allowedDomains: ['youtube.com', 'youtu.be'],
+    contentKinds: ['video'],
   },
   {
     id: 'github',
     label: 'GitHub',
-    queryTemplate: 'site:github.com {{topics}}',
+    allowedDomains: ['github.com'],
+    contentKinds: ['code'],
   },
   {
     id: 'bilibili',
     label: 'Bilibili',
-    queryTemplate: 'site:bilibili.com {{topics}}',
+    allowedDomains: ['bilibili.com'],
+    contentKinds: ['video'],
+    languageHints: ['zh-CN'],
   },
 ] as const satisfies readonly DiscoveryPlatformPreset[];
 
+export const DISCOVERY_PLATFORM_IDS = DEFAULT_DISCOVERY_PLATFORM_PRESETS.map((preset) => preset.id);
+
+/** @deprecated Use DISCOVERY_PLATFORM_IDS — kept for migration helpers. */
+export type ManagedDiscoveryPlatformId = Exclude<DiscoveryPlatformId, 'generic-web'>;
+
+/** @deprecated Prefer DEFAULT_DISCOVERY_PLATFORM_PRESETS. */
 export const MANAGED_DISCOVERY_PLATFORM_PRESETS = DEFAULT_DISCOVERY_PLATFORM_PRESETS.filter(
   (preset): preset is typeof DEFAULT_DISCOVERY_PLATFORM_PRESETS[number] & { id: ManagedDiscoveryPlatformId } =>
     preset.id !== 'generic-web',
@@ -56,7 +70,22 @@ export function getDiscoveryPlatformPreset(platformId: DiscoveryPlatformId): Dis
   return preset;
 }
 
-export function renderDiscoveryPlatformQuery(template: string, topics: string): string {
-  const rendered = template.replaceAll('{{topics}}', topics).trim().replace(/\s+/g, ' ');
-  return rendered.slice(0, 500);
+export function isDiscoveryPlatformId(value: string): value is DiscoveryPlatformId {
+  return DISCOVERY_PLATFORM_IDS.includes(value as DiscoveryPlatformId);
+}
+
+/**
+ * Apply deterministic domain fencing to a semantic query.
+ * The AI supplies only the semantic query; domains are owned by application code.
+ */
+export function fenceDiscoveryPlatformQuery(platformId: DiscoveryPlatformId, semanticQuery: string): string {
+  const query = semanticQuery.trim().replace(/\s+/g, ' ').slice(0, 420);
+  if (!query) return '';
+  const preset = getDiscoveryPlatformPreset(platformId);
+  if (preset.allowedDomains.length === 0) return query.slice(0, 500);
+  if (preset.allowedDomains.length === 1) {
+    return `site:${preset.allowedDomains[0]} ${query}`.slice(0, 500);
+  }
+  const siteClause = preset.allowedDomains.map((domain) => `site:${domain}`).join(' OR ');
+  return `(${siteClause}) ${query}`.slice(0, 500);
 }

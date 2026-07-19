@@ -1755,7 +1755,7 @@ export type UiLang = 'en' | 'zh-CN';
 
 export interface AiDebugEntry {
   id: string;
-  channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis';
+  channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis' | 'discovery_research_plan';
   source: string;
   status: 'success' | 'error';
   requestMessages: Array<{ role: string; content: string }>;
@@ -1888,6 +1888,18 @@ export interface DiscoveryInspectionRecord {
     connectorId: string;
     state: string;
     locator: string;
+  }>;
+  plannerMode?: 'ai' | 'fallback' | 'unavailable';
+  plannerReason?: string;
+  enabledChannels?: string[];
+  selectedChannels?: Array<{
+    platformId: string;
+    query: string;
+    rationale: string;
+  }>;
+  skippedChannels?: Array<{
+    platformId: string;
+    reason: string;
   }>;
   candidatesAccepted: string[];
   candidatesRejected: Array<{
@@ -2298,8 +2310,15 @@ export interface OurCompanionApi {
     updateBaseState(input: UpdateDiscoveryBaseStateInput): Promise<DiscoveryBase>;
     deleteBase(baseId: string): Promise<{ deleted: true }>;
     runBaseNow(baseId: string): Promise<ExplorationCycleResult>;
-    listSuppressedPlatforms(): Promise<ManagedDiscoveryPlatformPreference[]>;
-    restoreManagedPlatform(platformId: ManagedDiscoveryPlatformId): Promise<DiscoveryBase>;
+    listChannels(): Promise<CompanionDiscoveryChannel[]>;
+    updateChannelState(input: {
+      platformId: DiscoveryPlatformId;
+      state: DiscoveryChannelState;
+    }): Promise<CompanionDiscoveryChannel>;
+    exploreChannelNow(platformId: DiscoveryPlatformId): Promise<ExplorationCycleResult>;
+    listSuppressedPlatforms(): Promise<CompanionDiscoveryChannel[]>;
+    restoreManagedPlatform(platformId: DiscoveryPlatformId): Promise<CompanionDiscoveryChannel>;
+    getDiscoveryProfile(): Promise<CompanionDiscoveryProfile | null>;
     getAutoManageDefaultPlatforms(): Promise<boolean>;
     setAutoManageDefaultPlatforms(enabled: boolean): Promise<boolean>;
     getBootstrapStatus(): Promise<DiscoveryBootstrapResult | null>;
@@ -2874,18 +2893,50 @@ export interface CompanionProfile {
   updatedAt: string;
 }
 
-export type ManagedDiscoveryPlatformId = 'reddit' | 'youtube' | 'github' | 'bilibili';
+export type DiscoveryPlatformId =
+  | 'generic-web'
+  | 'reddit'
+  | 'youtube'
+  | 'github'
+  | 'bilibili';
 
-export interface CompanionDiscoveryPlatformQuery {
-  platformId: ManagedDiscoveryPlatformId;
-  query: string;
-}
+/** @deprecated Prefer DiscoveryPlatformId. */
+export type ManagedDiscoveryPlatformId = Exclude<DiscoveryPlatformId, 'generic-web'>;
+
+export type DiscoveryPreferredContentType =
+  | 'articles'
+  | 'discussion'
+  | 'video'
+  | 'code'
+  | 'feeds';
+
+export type DiscoveryChannelState = 'enabled' | 'muted' | 'blocked' | 'suppressed';
 
 export interface CompanionDiscoverySeedPlan {
   interests: string[];
-  genericQuery: string;
-  platformQueries: CompanionDiscoveryPlatformQuery[];
+  preferredContentTypes: DiscoveryPreferredContentType[];
+  platformAffinities: Partial<Record<DiscoveryPlatformId, number>>;
   curatedFeedIds: string[];
+}
+
+export interface CompanionDiscoveryProfile {
+  version: number;
+  companionId: string;
+  personalityRevision: string;
+  interests: string[];
+  preferredContentTypes: DiscoveryPreferredContentType[];
+  platformAffinities: Partial<Record<DiscoveryPlatformId, number>>;
+  updatedAt: string;
+}
+
+export interface CompanionDiscoveryChannel {
+  companionId: string;
+  platformId: DiscoveryPlatformId;
+  state: DiscoveryChannelState;
+  source: 'default' | 'user';
+  updatedAt: string;
+  lastUsedAt?: string;
+  lastPlanningReason?: string;
 }
 
 export interface CompanionPersonalityAnalysis {
@@ -2899,26 +2950,49 @@ export interface CompanionPersonalityAnalysis {
 export type DiscoveryBootstrapStatus =
   | 'completed'
   | 'provider_unavailable'
+  | 'planner_unavailable'
   | 'no_candidates'
   | 'deferred';
 
 export interface DiscoveryBootstrapResult {
   attempted: boolean;
   executedSourceIds: string[];
+  executedPlatformIds?: DiscoveryPlatformId[];
   status: DiscoveryBootstrapStatus;
   reason?: string;
+  plannerMode?: 'ai' | 'fallback' | 'unavailable';
 }
 
+/** @deprecated Prefer CompanionDiscoveryChannel. */
 export interface ManagedDiscoveryPlatformPreference {
   companionId: string;
-  platformId: ManagedDiscoveryPlatformId;
-  state: 'enabled' | 'suppressed';
+  platformId: DiscoveryPlatformId;
+  state: 'enabled' | 'suppressed' | 'muted' | 'blocked';
   updatedAt: string;
 }
 
 export interface CreateCompanionResult {
   companion: CompanionProfile;
   discoveryBootstrap: DiscoveryBootstrapResult;
+}
+
+export interface DynamicDiscoveryResearchTask {
+  id: string;
+  platformId: DiscoveryPlatformId;
+  query: string;
+  semanticQuery: string;
+  rationale: string;
+  language?: string;
+}
+
+export interface DynamicDiscoveryResearchPlan {
+  plannerMode: 'ai' | 'fallback' | 'unavailable';
+  plannerReason?: string;
+  tasks: DynamicDiscoveryResearchTask[];
+  skippedChannels: Array<{
+    platformId: DiscoveryPlatformId;
+    reason: string;
+  }>;
 }
 
 const COMPANION_ANIMATION_MANIFEST_SOURCE = [
