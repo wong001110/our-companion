@@ -87,6 +87,7 @@ import { isCompanionAnimationName, resolveWalkDirection } from '../character/ani
 import { startPerformancePlayback, type ActivePerformancePlayback } from '../character/performancePlayback';
 import { RemoteVisitorLayer, useVisualVisitState } from '../visits/RemoteVisitorLayer';
 import { useSettingsViewModel } from '../features/settings/useSettingsViewModel';
+import { validateLoginCredentials, validateRegistrationCredentials } from '../features/settings/networkAuthValidation';
 import { SETTINGS_CATEGORIES, settingsCategoryForKey, type SettingsCategory } from '../features/settings/settingsCategoryNavigation';
 
 export function SettingsPage({ state, behaviorSettings, onRefresh, onLangChange, companionId, assetRoot }: {
@@ -319,6 +320,11 @@ function OnlineModeCard() {
 
   async function handleRegister() {
     if (!username.trim() || !password.trim() || !email.trim()) return;
+    const validationError = validateRegistrationCredentials({ username, email, password });
+    if (validationError) {
+      setAuthError(t(lang, validationError));
+      return;
+    }
     setSaving(true); setAuthError('');
     try {
       await window.ourCompanion.network.register({ username: username.trim(), email: email.trim(), password });
@@ -329,6 +335,11 @@ function OnlineModeCard() {
 
   async function handleLogin() {
     if (!email.trim() || !password.trim()) return;
+    const validationError = validateLoginCredentials(email);
+    if (validationError) {
+      setAuthError(t(lang, validationError));
+      return;
+    }
     setSaving(true); setAuthError('');
     try {
       await window.ourCompanion.network.login({ email: email.trim(), password });
@@ -397,9 +408,9 @@ function OnlineModeCard() {
       ) : canShowAuthentication && showRegister ? (
         <div className="online-auth-form">
           <h3>{t(lang, 'online_create_account')}</h3>
-          <label><span>{t(lang, 'online_username')}</span><input value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t(lang, 'online_username')} autoFocus /></label>
-          <label><span>{t(lang, 'online_email')}</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t(lang, 'online_email')} /></label>
-          <label><span>{t(lang, 'online_password')}</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t(lang, 'online_password')} /></label>
+          <label><span>{t(lang, 'online_username')}</span><input value={username} minLength={3} maxLength={30} autoComplete="username" onChange={(e) => setUsername(e.target.value)} placeholder={t(lang, 'online_username')} autoFocus /></label>
+          <label><span>{t(lang, 'online_email')}</span><input type="email" value={email} autoComplete="email" onChange={(e) => setEmail(e.target.value)} placeholder={t(lang, 'online_email')} /></label>
+          <label><span>{t(lang, 'online_password')}</span><input type="password" value={password} minLength={8} maxLength={128} autoComplete="new-password" onChange={(e) => setPassword(e.target.value)} placeholder={t(lang, 'online_password')} /></label>
           {authError && <p className="creation-error" role="alert">{authError}</p>}
           <div className="action-row"><button className="btn-secondary btn-sm" onClick={() => { setShowRegister(false); resetForm(); }}>{t(lang, 'social_cancel')}</button><button className="btn-primary btn-sm" disabled={saving || !username.trim() || !password.trim() || !email.trim()} onClick={() => void handleRegister()}>{saving ? t(lang, 'online_creating') : t(lang, 'online_create_account')}</button></div>
           <p className="online-auth-switch">{t(lang, 'online_already_account')} <button className="btn-ghost btn-sm" onClick={() => { setShowRegister(false); setShowLogin(true); resetForm(); }}>{t(lang, 'online_login')}</button></p>
@@ -407,8 +418,8 @@ function OnlineModeCard() {
       ) : canShowAuthentication && showLogin ? (
         <div className="online-auth-form">
           <h3>{t(lang, 'online_login_title')}</h3>
-          <label><span>{t(lang, 'online_email')}</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t(lang, 'online_email')} autoFocus /></label>
-          <label><span>{t(lang, 'online_password')}</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t(lang, 'online_password')} /></label>
+          <label><span>{t(lang, 'online_email')}</span><input type="email" value={email} autoComplete="email" onChange={(e) => setEmail(e.target.value)} placeholder={t(lang, 'online_email')} autoFocus /></label>
+          <label><span>{t(lang, 'online_password')}</span><input type="password" value={password} autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} placeholder={t(lang, 'online_password')} /></label>
           {authError && <p className="creation-error" role="alert">{authError}</p>}
           <div className="action-row"><button className="btn-secondary btn-sm" onClick={() => { setShowLogin(false); resetForm(); }}>{t(lang, 'social_cancel')}</button><button className="btn-primary btn-sm" disabled={saving || !email.trim() || !password.trim()} onClick={() => void handleLogin()}>{saving ? t(lang, 'online_logging_in') : t(lang, 'online_login_title')}</button></div>
           <p className="online-auth-switch">{t(lang, 'online_no_account')} <button className="btn-ghost btn-sm" onClick={() => { setShowLogin(false); setShowRegister(true); resetForm(); }}>{t(lang, 'online_create_one')}</button></p>
