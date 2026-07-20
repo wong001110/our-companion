@@ -343,6 +343,7 @@ function registerIpc(): void {
     'discovery:getAutoManageDefaultPlatforms': services.discovery.getAutoManageDefaultPlatforms,
     'discovery:setAutoManageDefaultPlatforms': services.discovery.setAutoManageDefaultPlatforms,
     'discovery:getBootstrapStatus': services.discovery.getBootstrapStatus,
+    'discovery:getWebSearchDiagnostics': services.discovery.getWebSearchDiagnostics,
     'discovery:generateNow': services.discovery.generateNow,
     'discovery:presentNext': services.discovery.presentNext,
     'discovery:resetLifecycle': services.discovery.resetLifecycle,

@@ -186,14 +186,15 @@ import { createSmokeFixturePng } from './platform/smokeFixture';
 import { assertSmokeTestRuntime } from './platform/smokeRuntime';
 import { PngStructureError, validatePngStructure } from './platform/pngValidation';
 import {
-  BraveWebSearchProvider,
   FixtureWebPageFetcher,
   ResearchAdapterError,
   SafeWebPageFetcher,
   createDeterministicFixtureSearchProvider,
   type WebPageFetcher,
-  type WebSearchProvider
+  type WebSearchProvider,
+  type WebSearchProviderDiagnostics,
 } from './researchAdapters';
+import { getWebSearchProviderDiagnostics, resolveWebSearchProvider } from './browserSearch/resolveWebSearchProvider';
 import { ResearchOrchestrator } from './researchOrchestrator';
 import { CompanionTurnOrchestrator } from './application/CompanionTurnOrchestrator';
 import { SqliteMemoryContextProvider } from './application/MemoryContextProvider';
@@ -374,7 +375,10 @@ export class AppServices {
       && process.env.OUR_COMPANION_RESEARCH_FIXTURE === '1';
     this.manualResearchPageFetcher = new SafeWebPageFetcher({ now: this.now });
     this.webSearchProvider = runtimeDependencies.webSearchProvider
-      ?? (this.researchFixtureEnabled ? createDeterministicFixtureSearchProvider() : new BraveWebSearchProvider());
+      ?? resolveWebSearchProvider({
+        researchFixtureEnabled: this.researchFixtureEnabled,
+        isAppReady: () => app.isReady(),
+      });
     this.researchOrchestrator = new ResearchOrchestrator({
       searchProvider: this.webSearchProvider,
       pageFetcher: runtimeDependencies.webPageFetcher
@@ -1730,6 +1734,8 @@ export class AppServices {
       return this.setAutoManageDefaultPlatforms(Boolean(enabled));
     },
     getBootstrapStatus: async (): Promise<DiscoveryBootstrapResult | null> => this.getBootstrapStatus(),
+    getWebSearchDiagnostics: async (): Promise<WebSearchProviderDiagnostics> =>
+      getWebSearchProviderDiagnostics(this.webSearchProvider),
     runBaseNow: async (baseId: string): Promise<ExplorationCycleResult> => {
       const companionId = this.db.resolveActiveCompanionId();
       const base = this.db.getDiscoveryBase(baseId, companionId);

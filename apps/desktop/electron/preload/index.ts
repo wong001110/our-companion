@@ -81,6 +81,7 @@ const api: OurCompanionApi = {
     getAutoManageDefaultPlatforms: () => invoke('discovery:getAutoManageDefaultPlatforms'),
     setAutoManageDefaultPlatforms: (enabled) => invoke('discovery:setAutoManageDefaultPlatforms', enabled),
     getBootstrapStatus: () => invoke('discovery:getBootstrapStatus'),
+    getWebSearchDiagnostics: () => invoke('discovery:getWebSearchDiagnostics'),
     onAnnounce: (listener: (payload: DiscoveryAnnouncePayload) => void) => {
       const channel = 'discovery:announce';
       const handler = (_event: Electron.IpcRendererEvent, payload: DiscoveryAnnouncePayload) => listener(payload);

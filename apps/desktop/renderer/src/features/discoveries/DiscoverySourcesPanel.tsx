@@ -9,6 +9,7 @@ import type {
   DiscoveryChannelState,
   DiscoveryPlatformId,
   UserDiscoverySourceType,
+  WebSearchProviderDiagnostics,
 } from '@our-companion/shared';
 import { ConfirmDialog } from '../../components/feedback/ConfirmDialog';
 import { EmptyState } from '../../components/feedback/EmptyState';
@@ -87,23 +88,26 @@ export function DiscoverySourcesPanel({ onFeedRefresh }: { onFeedRefresh(): Prom
   const [locator, setLocator] = useState('');
   const [label, setLabel] = useState('');
   const [initialState, setInitialState] = useState<'trial' | 'active'>('trial');
+  const [webSearchDiagnostics, setWebSearchDiagnostics] = useState<WebSearchProviderDiagnostics | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [nextBases, nextChannels, nextProfile, nextBootstrap, nextAutoManage] = await Promise.all([
+      const [nextBases, nextChannels, nextProfile, nextBootstrap, nextAutoManage, nextDiagnostics] = await Promise.all([
         window.ourCompanion.discovery.listBases(),
         window.ourCompanion.discovery.listChannels(),
         window.ourCompanion.discovery.getDiscoveryProfile(),
         window.ourCompanion.discovery.getBootstrapStatus(),
         window.ourCompanion.discovery.getAutoManageDefaultPlatforms(),
+        window.ourCompanion.discovery.getWebSearchDiagnostics(),
       ]);
       setBases(nextBases.filter(isPinnedSource));
       setChannels(nextChannels);
       setProfile(nextProfile);
       setBootstrap(nextBootstrap);
       setAutoManage(nextAutoManage);
+      setWebSearchDiagnostics(nextDiagnostics);
     } catch {
       setError(t(lang, 'discovery_sources_load_failed'));
     } finally {
@@ -329,6 +333,20 @@ export function DiscoverySourcesPanel({ onFeedRefresh }: { onFeedRefresh(): Prom
               })}
             </div>
           </div>
+
+          {webSearchDiagnostics && (
+            <div className="discovery-source-group">
+              <h3>{t(lang, 'discovery_local_web_search')}</h3>
+              <div className="discovery-web-search-status">
+                <span className={`source-state-badge source-state-${webSearchDiagnostics.availability === 'ready' ? 'active' : webSearchDiagnostics.availability === 'challenge' ? 'blocked' : webSearchDiagnostics.availability === 'cooldown' ? 'muted' : 'blocked'}`}>
+                  {webSearchDiagnostics.availability === 'ready' && t(lang, 'discovery_local_web_search_ready')}
+                  {webSearchDiagnostics.availability === 'cooldown' && t(lang, 'discovery_local_web_search_cooldown')}
+                  {webSearchDiagnostics.availability === 'challenge' && t(lang, 'discovery_local_web_search_challenge')}
+                  {webSearchDiagnostics.availability === 'unavailable' && t(lang, 'discovery_local_web_search_unavailable')}
+                </span>
+              </div>
+            </div>
+          )}
 
           <div className="discovery-source-group">
             <h3>{t(lang, 'discovery_pinned_sources_title')}</h3>

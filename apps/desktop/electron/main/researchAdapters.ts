@@ -22,6 +22,21 @@ export interface WebSearchProvider {
   }): Promise<WebSearchResult[]>;
 }
 
+export interface WebSearchProviderDiagnostics {
+  providerId: string;
+  adapterId?: string;
+  availability: 'ready' | 'cooldown' | 'challenge' | 'unavailable';
+  lastAttemptAt?: string;
+  lastSuccessAt?: string;
+  lastErrorCode?: string;
+  cooldownUntil?: string;
+  cacheHit?: boolean;
+}
+
+export interface WebSearchProviderWithDiagnostics extends WebSearchProvider {
+  getDiagnostics?(): WebSearchProviderDiagnostics;
+}
+
 export interface WebPageFetcher {
   id: string;
   mode: ResearchAdapterMode;

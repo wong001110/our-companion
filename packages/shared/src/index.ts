@@ -930,6 +930,17 @@ export interface WebSearchResult {
   provider: string;
 }
 
+export interface WebSearchProviderDiagnostics {
+  providerId: string;
+  adapterId?: string;
+  availability: 'ready' | 'cooldown' | 'challenge' | 'unavailable';
+  lastAttemptAt?: string;
+  lastSuccessAt?: string;
+  lastErrorCode?: string;
+  cooldownUntil?: string;
+  cacheHit?: boolean;
+}
+
 /**
  * Persisted operational metadata only. Search result payloads (URLs, titles,
  * snippets, ranks, selected-result IDs, and result domains) remain transient in the research
@@ -2322,6 +2333,7 @@ export interface OurCompanionApi {
     getAutoManageDefaultPlatforms(): Promise<boolean>;
     setAutoManageDefaultPlatforms(enabled: boolean): Promise<boolean>;
     getBootstrapStatus(): Promise<DiscoveryBootstrapResult | null>;
+    getWebSearchDiagnostics(): Promise<WebSearchProviderDiagnostics>;
     onAnnounce(listener: (payload: DiscoveryAnnouncePayload) => void): () => void;
     generateNow(): Promise<Discovery[]>;
     presentNext(): Promise<boolean>;
