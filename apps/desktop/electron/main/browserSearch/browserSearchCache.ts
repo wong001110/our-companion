@@ -41,6 +41,7 @@ export class BrowserSearchCache {
     query: string;
     domainHints?: string[];
     excludedDomains?: string[];
+    requiredDomains?: string[];
     freshnessDays?: number;
     language?: string;
   }): string {
@@ -50,6 +51,7 @@ export class BrowserSearchCache {
       query: input.query.trim().toLowerCase(),
       domainHints: [...(input.domainHints ?? [])].sort(),
       excludedDomains: [...(input.excludedDomains ?? [])].sort(),
+      requiredDomains: [...(input.requiredDomains ?? [])].sort(),
       freshnessDays: input.freshnessDays ?? null,
       language: input.language ?? 'en',
     });

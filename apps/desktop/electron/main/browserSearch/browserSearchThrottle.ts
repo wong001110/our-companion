@@ -12,12 +12,13 @@ interface QueuedEntry {
 }
 
 export class BrowserSearchThrottle {
-  private active = false;
-  private lastStartedAt = 0;
+  private locked = false;
+  private lastStartedAt = -1;
   private recentStarts: number[] = [];
   private cooldownUntil = 0;
   private queue: QueuedEntry[] = [];
   private nextId = 0;
+  private draining = false;
 
   constructor(private readonly now: () => number = () => Date.now()) {}
 
@@ -38,94 +39,67 @@ export class BrowserSearchThrottle {
       throw new BrowserSearchError('browser_search_rate_limited');
     }
 
-    if (!this.active) {
-      if (this.recentStarts.length > 0) {
-        const elapsed = this.now() - this.lastStartedAt;
-        if (elapsed < BROWSER_SEARCH_MIN_INTERVAL_MS) {
-          const delay = BROWSER_SEARCH_MIN_INTERVAL_MS - elapsed;
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          if (this.isInCooldown()) {
-            throw new BrowserSearchError('browser_search_rate_limited');
-          }
-        }
-      }
-      this.pruneHourlyBudget();
-      if (this.recentStarts.length >= BROWSER_SEARCH_HOURLY_BUDGET) {
-        throw new BrowserSearchError('browser_search_rate_limited');
-      }
-      return this.grant();
-    }
-
     return new Promise<() => void>((resolve, reject) => {
       const id = this.nextId++;
       this.queue.push({ id, resolve, reject });
+      this.scheduleDrain();
     });
   }
 
-  private grant(): () => void {
-    this.active = true;
-    this.lastStartedAt = this.now();
-    this.recentStarts.push(this.lastStartedAt);
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      this.active = false;
-      this.processQueue();
-    };
+  private scheduleDrain(): void {
+    if (this.draining || this.locked) return;
+    this.draining = true;
+    setTimeout(() => {
+      this.draining = false;
+      void this.drain();
+    }, 0);
   }
 
-  private processQueue(): void {
-    while (this.queue.length > 0) {
+  private async drain(): Promise<void> {
+    while (this.queue.length > 0 && !this.locked) {
       if (this.isInCooldown()) {
-        for (const entry of this.queue) {
-          entry.reject(new BrowserSearchError('browser_search_rate_limited'));
-        }
-        this.queue = [];
+        this.rejectAll('browser_search_rate_limited');
         return;
       }
 
-      const elapsed = this.now() - this.lastStartedAt;
-      if (elapsed < BROWSER_SEARCH_MIN_INTERVAL_MS) {
-        const delay = BROWSER_SEARCH_MIN_INTERVAL_MS - elapsed;
-        const entry = this.queue.shift()!;
-        setTimeout(() => {
-          this.processEntry(entry);
-        }, delay);
-        return;
+      if (this.lastStartedAt >= 0) {
+        const elapsed = this.now() - this.lastStartedAt;
+        if (elapsed < BROWSER_SEARCH_MIN_INTERVAL_MS) {
+          const delay = BROWSER_SEARCH_MIN_INTERVAL_MS - elapsed;
+          await new Promise((r) => setTimeout(r, delay));
+          if (this.isInCooldown()) {
+            this.rejectAll('browser_search_rate_limited');
+            return;
+          }
+        }
       }
 
       this.pruneHourlyBudget();
       if (this.recentStarts.length >= BROWSER_SEARCH_HOURLY_BUDGET) {
-        for (const entry of this.queue) {
-          entry.reject(new BrowserSearchError('browser_search_rate_limited'));
-        }
-        this.queue = [];
+        this.rejectAll('browser_search_rate_limited');
         return;
       }
 
       const entry = this.queue.shift()!;
-      entry.resolve(this.grant());
+      this.locked = true;
+      this.lastStartedAt = this.now();
+      this.recentStarts.push(this.lastStartedAt);
+      let released = false;
+      entry.resolve(() => {
+        if (released) return;
+        released = true;
+        this.locked = false;
+        this.scheduleDrain();
+      });
       return;
     }
   }
 
-  private processEntry(entry: QueuedEntry): void {
-    if (this.isInCooldown()) {
-      entry.reject(new BrowserSearchError('browser_search_rate_limited'));
-      this.processQueue();
-      return;
+  private rejectAll(code: string): void {
+    for (const entry of this.queue) {
+      entry.reject(new BrowserSearchError(code as 'browser_search_rate_limited'));
     }
-
-    this.pruneHourlyBudget();
-    if (this.recentStarts.length >= BROWSER_SEARCH_HOURLY_BUDGET) {
-      entry.reject(new BrowserSearchError('browser_search_rate_limited'));
-      this.processQueue();
-      return;
-    }
-
-    entry.resolve(this.grant());
-    this.processQueue();
+    this.queue = [];
   }
 
   private pruneHourlyBudget(): void {

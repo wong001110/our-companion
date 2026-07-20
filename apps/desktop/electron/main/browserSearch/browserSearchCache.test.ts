@@ -136,4 +136,77 @@ describe('BrowserSearchCache', () => {
     expect(cache.consumeCacheHit()).toBe(true);
     expect(cache.consumeCacheHit()).toBe(false);
   });
+
+  describe('requiredDomains isolation', () => {
+    it('same query with GitHub requiredDomains and Open Web requiredDomains does not share results', () => {
+      const cache = new BrowserSearchCache();
+      const keyGithub = BrowserSearchCache.buildKey({
+        adapterId: 'ddg',
+        adapterVersion: 1,
+        query: 'test',
+        requiredDomains: ['github.com'],
+      });
+      const keyOpenWeb = BrowserSearchCache.buildKey({
+        adapterId: 'ddg',
+        adapterVersion: 1,
+        query: 'test',
+        requiredDomains: [],
+      });
+      expect(keyGithub).not.toBe(keyOpenWeb);
+
+      cache.set(keyGithub, [makeResult('gh')], 60_000);
+      cache.set(keyOpenWeb, [makeResult('ow')], 60_000);
+
+      expect(cache.get(keyGithub)![0]!.id).toBe('gh');
+      expect(cache.get(keyOpenWeb)![0]!.id).toBe('ow');
+    });
+
+    it('changing requiredDomains changes the Cache Key', () => {
+      const key1 = BrowserSearchCache.buildKey({
+        adapterId: 'ddg',
+        adapterVersion: 1,
+        query: 'test',
+        requiredDomains: ['github.com'],
+      });
+      const key2 = BrowserSearchCache.buildKey({
+        adapterId: 'ddg',
+        adapterVersion: 1,
+        query: 'test',
+        requiredDomains: ['reddit.com'],
+      });
+      expect(key1).not.toBe(key2);
+    });
+
+    it('malformed required domains produce different cache keys', () => {
+      const key1 = BrowserSearchCache.buildKey({
+        adapterId: 'ddg',
+        adapterVersion: 1,
+        query: 'test',
+        requiredDomains: ['github.com', ''],
+      });
+      const key2 = BrowserSearchCache.buildKey({
+        adapterId: 'ddg',
+        adapterVersion: 1,
+        query: 'test',
+        requiredDomains: ['github.com'],
+      });
+      expect(key1).not.toBe(key2);
+    });
+
+    it('subdomains continue to match their parent allowed domain', () => {
+      const key1 = BrowserSearchCache.buildKey({
+        adapterId: 'ddg',
+        adapterVersion: 1,
+        query: 'test',
+        requiredDomains: ['github.com'],
+      });
+      const key2 = BrowserSearchCache.buildKey({
+        adapterId: 'ddg',
+        adapterVersion: 1,
+        query: 'test',
+        requiredDomains: ['github.com'],
+      });
+      expect(key1).toBe(key2);
+    });
+  });
 });

@@ -124,6 +124,7 @@ export class ElectronBrowserSearchProvider implements WebSearchProvider {
         query: finalQuery,
         domainHints: input.domainHints,
         excludedDomains: input.excludedDomains,
+        requiredDomains: input.requiredDomains,
         freshnessDays: input.freshnessDays,
         language: this.language,
       });

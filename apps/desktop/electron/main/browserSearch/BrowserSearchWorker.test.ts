@@ -25,6 +25,7 @@ function createMockBrowserWindow() {
         if (code.includes('document.body')) return 'Test content';
         if (code.includes('document.readyState')) return 'complete';
         if (code.includes('document.documentElement.outerHTML')) return '<html><body></body></html>';
+        if (code.includes('.result') || code.includes('.msg') || code.includes('No results')) return true;
         return '';
       }),
       on: vi.fn(),
@@ -39,6 +40,8 @@ function createMockBrowserWindow() {
     isDestroyed: vi.fn(() => false),
     destroy: vi.fn(),
     loadURL: vi.fn(async () => {}),
+    on: vi.fn(),
+    removeListener: vi.fn(),
   };
 }
 
@@ -198,7 +201,7 @@ describe('BrowserSearchWorker', () => {
     expect(mockWindow.destroy).toHaveBeenCalled();
   });
 
-  it('cleans up navigation listeners after execution', async () => {
+  it('cleans up all listeners after execution', async () => {
     const { BrowserSearchWorker } = await import('./BrowserSearchWorker');
     const mockWindow = createMockBrowserWindow();
     const worker = new BrowserSearchWorker({
@@ -211,6 +214,7 @@ describe('BrowserSearchWorker', () => {
       limit: 10,
     });
     expect(mockWindow.webContents.removeListener).toHaveBeenCalled();
+    expect(mockWindow.removeListener).toHaveBeenCalled();
   });
 
   it('returns no results when adapter returns empty', async () => {
@@ -229,5 +233,55 @@ describe('BrowserSearchWorker', () => {
       searchUrl: new URL('https://html.duckduckgo.com/html/?q=test'),
       limit: 10,
     })).rejects.toMatchObject({ code: 'browser_search_no_results' });
+  });
+
+  it('extraction exception becomes browser_search_parse_failed', async () => {
+    const { BrowserSearchWorker } = await import('./BrowserSearchWorker');
+    const mockWindow = createMockBrowserWindow();
+    const failAdapter: BrowserSearchEngineAdapter = {
+      ...stubAdapter,
+      extractResults: async () => { throw new DOMException('Selector not found'); },
+    };
+    const worker = new BrowserSearchWorker({
+      isAppReady: () => true,
+      createWindow: () => mockWindow as any,
+    });
+    await expect(worker.execute({
+      adapter: failAdapter,
+      searchUrl: new URL('https://html.duckduckgo.com/html/?q=test'),
+      limit: 10,
+    })).rejects.toMatchObject({ code: 'browser_search_parse_failed' });
+  });
+
+  it('challenge appearing after initial page load is detected before timeout', async () => {
+    const { BrowserSearchWorker } = await import('./BrowserSearchWorker');
+    const mockWindow = createMockBrowserWindow();
+    mockWindow.webContents.executeJavaScript = vi.fn(async (code: string) => {
+      if (code.includes('document.title')) return 'Verify you are human';
+      if (code.includes('document.body')) return 'Please complete the CAPTCHA.';
+      if (code.includes('.result') || code.includes('.msg') || code.includes('No results')) return false;
+      return '';
+    });
+    const challengeAdapter: BrowserSearchEngineAdapter = {
+      ...stubAdapter,
+      waitForResults: async () => {},
+      detectChallenge: ({ title, visibleText }) => {
+        const text = `${title} ${visibleText}`;
+        if (text.includes('CAPTCHA') || text.includes('Verify you are human')) {
+          return { kind: 'captcha', matchedText: 'captcha' };
+        }
+        return null;
+      },
+    };
+    const worker = new BrowserSearchWorker({
+      isAppReady: () => true,
+      createWindow: () => mockWindow as any,
+    });
+    await expect(worker.execute({
+      adapter: challengeAdapter,
+      searchUrl: new URL('https://html.duckduckgo.com/html/?q=test'),
+      limit: 10,
+      timeoutMs: 500,
+    })).rejects.toMatchObject({ code: 'browser_search_challenge' });
   });
 });

@@ -54,22 +54,22 @@ function formatDate(value: string | undefined, lang: 'en' | 'zh-CN', never: stri
   return new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
 
-function friendlySourceError(message: string, fallback: string): string {
+function friendlySourceError(lang: 'en' | 'zh-CN', message: string, fallback: string): string {
   if (message.includes('DISCOVERY_SOURCE_URL_NOT_PUBLIC')) return 'This address is not a public HTTP or HTTPS source.';
   if (message.includes('DISCOVERY_SOURCE_FEED_FORMAT_INVALID')) return 'This address did not return a valid RSS or Atom feed.';
   if (message.includes('DISCOVERY_SOURCE_QUERY_INVALID')) return 'Enter a topic between 3 and 500 characters.';
   if (message.includes('DISCOVERY_SOURCE_DOMAIN_INVALID')) return 'Enter a valid public domain.';
   if (message.includes('DISCOVERY_SOURCE_LIMIT')) return 'This Companion has reached the active Source limit.';
   if (message.includes('DISCOVERY_CHANNEL_NOT_ENABLED')) return 'Enable this channel before exploring it.';
-  if (message.includes('browser_search_timeout')) return 'Local web search timed out. Please try again later.';
-  if (message.includes('browser_search_navigation_failed')) return 'Local web search could not load the search page.';
-  if (message.includes('browser_search_http_blocked')) return 'Local web search blocked an unsafe response.';
-  if (message.includes('browser_search_challenge')) return 'Search page requested human verification. Automated exploration has been temporarily paused.';
-  if (message.includes('browser_search_parse_failed')) return 'Search page structure changed.暂时无法读取结果。';
-  if (message.includes('browser_search_no_results')) return '这次没有找到符合条件的公开结果。';
-  if (message.includes('browser_search_destroyed')) return 'Local web search worker was destroyed.';
-  if (message.includes('browser_search_rate_limited')) return 'Local web search is temporarily rate-limited.';
-  if (message.includes('browser_search_unavailable')) return 'Local web search is currently unavailable, but RSS and pinned sources still work.';
+  if (message.includes('browser_search_timeout')) return t(lang, 'discovery_local_web_search_timeout');
+  if (message.includes('browser_search_navigation_failed')) return t(lang, 'discovery_local_web_search_navigation_failed');
+  if (message.includes('browser_search_http_blocked')) return t(lang, 'discovery_local_web_search_http_blocked');
+  if (message.includes('browser_search_challenge')) return t(lang, 'discovery_local_web_search_challenge');
+  if (message.includes('browser_search_parse_failed')) return t(lang, 'discovery_local_web_search_parse_failed');
+  if (message.includes('browser_search_no_results')) return t(lang, 'discovery_local_web_search_no_results');
+  if (message.includes('browser_search_destroyed')) return t(lang, 'discovery_local_web_search_destroyed');
+  if (message.includes('browser_search_rate_limited')) return t(lang, 'discovery_local_web_search_rate_limited');
+  if (message.includes('browser_search_unavailable')) return t(lang, 'discovery_local_web_search_unavailable_message');
   return fallback;
 }
 
@@ -146,7 +146,7 @@ export function DiscoverySourcesPanel({ onFeedRefresh }: { onFeedRefresh(): Prom
       setInitialState('trial');
       await load();
     } catch (caught) {
-      setError(friendlySourceError(
+      setError(friendlySourceError(lang,
         caught instanceof Error ? caught.message : '',
         t(lang, 'discovery_source_action_failed'),
       ));
@@ -174,8 +174,15 @@ export function DiscoverySourcesPanel({ onFeedRefresh }: { onFeedRefresh(): Prom
     try {
       await window.ourCompanion.discovery.runBaseNow(base.id);
       await Promise.all([load(), onFeedRefresh()]);
-    } catch {
-      setError(t(lang, 'discovery_source_run_failed'));
+    } catch (caught) {
+      setError(friendlySourceError(lang,
+        caught instanceof Error ? caught.message : '',
+        t(lang, 'discovery_source_run_failed'),
+      ));
+      try {
+        const diagnostics = await window.ourCompanion.discovery.getWebSearchDiagnostics();
+        setWebSearchDiagnostics(diagnostics);
+      } catch { /* ignore */ }
     } finally {
       setBusyId('');
     }
@@ -214,7 +221,7 @@ export function DiscoverySourcesPanel({ onFeedRefresh }: { onFeedRefresh(): Prom
       await window.ourCompanion.discovery.exploreChannelNow(platformId);
       await Promise.all([load(), onFeedRefresh()]);
     } catch (caught) {
-      setError(friendlySourceError(
+      setError(friendlySourceError(lang,
         caught instanceof Error ? caught.message : '',
         t(lang, 'discovery_source_run_failed'),
       ));

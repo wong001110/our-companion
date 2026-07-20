@@ -51,6 +51,20 @@ function mapHttpStatus(status: number): BrowserSearchError | null {
   return null;
 }
 
+async function readPageSnapshot(webContents: Electron.WebContents): Promise<{ url: string; title: string; visibleText: string }> {
+  const url = webContents.getURL();
+  const title = await webContents.executeJavaScript('document.title', true).catch(() => '');
+  const visibleText = await webContents.executeJavaScript(
+    'document.body ? document.body.innerText.slice(0, 12000) : ""',
+    true,
+  ).catch(() => '');
+  return {
+    url,
+    title: String(title ?? ''),
+    visibleText: String(visibleText ?? ''),
+  };
+}
+
 export class BrowserSearchWorker {
   constructor(private readonly deps: BrowserSearchWorkerDeps = {}) {}
 
@@ -63,8 +77,10 @@ export class BrowserSearchWorker {
     const workerSession = session.fromPartition(partition, { cache: false });
     const blockedResourceTypes = new Set(['image', 'media', 'font']);
     const blockedHosts = [/doubleclick\.net/i, /googlesyndication\.com/i, /adservice/i];
-    let httpStatus = 0;
-    let destroyed = false;
+    let mainFrameHttpStatus = 0;
+    let mainFrameLoadFailure = false;
+    let workerDestroyed = false;
+    const deadline = Date.now() + timeoutMs;
 
     workerSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
       if (blockedResourceTypes.has(details.resourceType)) {
@@ -87,11 +103,11 @@ export class BrowserSearchWorker {
     workerSession.webRequest.onHeadersReceived(
       { urls: ['*://*/*'] },
       (details, callback) => {
-        if (details.id === 1 && details.responseHeaders) {
+        if (details.resourceType === 'mainFrame' && details.responseHeaders) {
           const statusLine = details.statusLine;
           if (statusLine) {
             const match = statusLine.match(/HTTP\/[\d.]+ (\d+)/);
-            if (match) httpStatus = parseInt(match[1]!, 10);
+            if (match) mainFrameHttpStatus = parseInt(match[1]!, 10);
           }
         }
         callback({ responseHeaders: details.responseHeaders });
@@ -123,80 +139,73 @@ export class BrowserSearchWorker {
     worker.webContents.on('will-navigate', guardNavigation);
     worker.webContents.on('will-redirect', guardNavigation);
 
-    const onDidFailLoad = (_event: Electron.Event, errorCode: number, errorDescription: string) => {
+    const onDidFailLoad = (_event: Electron.Event, errorCode: number, _errorDescription: string, isMainFrame: boolean) => {
       if (errorCode === -3) return;
-      if (!destroyed) {
-        destroyed = true;
+      if (isMainFrame) {
+        mainFrameLoadFailure = true;
       }
     };
     worker.webContents.on('did-fail-load', onDidFailLoad);
 
+    const onClosed = () => { workerDestroyed = true; };
+    worker.on('closed', onClosed);
+
     try {
       await worker.loadURL(input.searchUrl.toString(), { timeout: timeoutMs });
 
-      if (worker.webContents.getURL().startsWith('http') && !hostAllowed(worker.webContents.getURL(), allowedHosts)) {
+      if (mainFrameLoadFailure) {
         throw new BrowserSearchError('browser_search_navigation_failed');
       }
 
-      if (httpStatus) {
-        const httpError = mapHttpStatus(httpStatus);
+      if (workerDestroyed || worker.isDestroyed()) {
+        throw new BrowserSearchError('browser_search_destroyed');
+      }
+
+      if (mainFrameHttpStatus) {
+        const httpError = mapHttpStatus(mainFrameHttpStatus);
         if (httpError) throw httpError;
       }
 
-      const checkChallengeEarly = async (): Promise<boolean> => {
-        try {
-          const title = await worker.webContents.executeJavaScript('document.title', true);
-          const visibleText = await worker.webContents.executeJavaScript(
-            'document.body ? document.body.innerText.slice(0, 12000) : ""',
-            true,
-          );
-          const challenge = input.adapter.detectChallenge({
-            url: worker.webContents.getURL(),
-            title: String(title ?? ''),
-            visibleText: String(visibleText ?? ''),
-          });
-          return challenge !== null;
-        } catch {
-          return false;
+      while (Date.now() < deadline) {
+        if (workerDestroyed || worker.isDestroyed()) {
+          throw new BrowserSearchError('browser_search_destroyed');
         }
-      };
+        if (mainFrameLoadFailure) {
+          throw new BrowserSearchError('browser_search_navigation_failed');
+        }
+        if (mainFrameHttpStatus) {
+          const httpError = mapHttpStatus(mainFrameHttpStatus);
+          if (httpError) throw httpError;
+        }
 
-      if (await checkChallengeEarly()) {
-        const title = await worker.webContents.executeJavaScript('document.title', true).catch(() => '');
-        const visibleText = await worker.webContents.executeJavaScript(
-          'document.body ? document.body.innerText.slice(0, 12000) : ""',
-          true,
-        ).catch(() => '');
-        const challenge = input.adapter.detectChallenge({
-          url: worker.webContents.getURL(),
-          title: String(title ?? ''),
-          visibleText: String(visibleText ?? ''),
-        });
+        const snapshot = await readPageSnapshot(worker.webContents);
+        const challenge = input.adapter.detectChallenge(snapshot);
         if (challenge) {
           if (challenge.kind === 'rate_limit' || challenge.kind === 'access_denied') {
             throw new BrowserSearchError('browser_search_rate_limited');
           }
           throw new BrowserSearchError('browser_search_challenge');
         }
+
+        const ready = await worker.webContents.executeJavaScript(
+          'Boolean(document.querySelector(".result") || document.querySelector(".msg") || document.body?.innerText?.includes("No results."))',
+          true,
+        ).catch(() => false);
+        if (ready) break;
+
+        await new Promise((r) => setTimeout(r, 150));
       }
 
-      await input.adapter.waitForResults({ webContents: worker.webContents, timeoutMs });
+      if (Date.now() >= deadline && !workerDestroyed && !worker.isDestroyed()) {
+        throw new BrowserSearchError('browser_search_timeout');
+      }
 
-      if (destroyed || worker.isDestroyed()) {
+      if (workerDestroyed || worker.isDestroyed()) {
         throw new BrowserSearchError('browser_search_destroyed');
       }
 
-      const title = await worker.webContents.executeJavaScript('document.title', true).catch(() => '');
-      const visibleText = await worker.webContents.executeJavaScript(
-        'document.body ? document.body.innerText.slice(0, 12000) : ""',
-        true,
-      ).catch(() => '');
-      const pageUrl = worker.webContents.getURL();
-      const challenge = input.adapter.detectChallenge({
-        url: pageUrl,
-        title: String(title ?? ''),
-        visibleText: String(visibleText ?? ''),
-      });
+      const snapshot = await readPageSnapshot(worker.webContents);
+      const challenge = input.adapter.detectChallenge(snapshot);
       if (challenge) {
         if (challenge.kind === 'rate_limit' || challenge.kind === 'access_denied') {
           throw new BrowserSearchError('browser_search_rate_limited');
@@ -218,9 +227,9 @@ export class BrowserSearchWorker {
         throw new BrowserSearchError('browser_search_no_results');
       }
       return {
-        url: pageUrl,
-        title: String(title ?? ''),
-        visibleText: String(visibleText ?? ''),
+        url: snapshot.url,
+        title: snapshot.title,
+        visibleText: snapshot.visibleText,
         results,
       };
     } catch (error) {
@@ -237,6 +246,7 @@ export class BrowserSearchWorker {
       worker.webContents.removeListener('will-navigate', guardNavigation);
       worker.webContents.removeListener('will-redirect', guardNavigation);
       worker.webContents.removeListener('did-fail-load', onDidFailLoad);
+      worker.removeListener('closed', onClosed);
       if (!worker.isDestroyed()) worker.destroy();
       await workerSession.clearStorageData().catch(() => undefined);
       await workerSession.clearCache().catch(() => undefined);
