@@ -261,9 +261,12 @@ export function DiscoverySourcesPanel({ onFeedRefresh }: { onFeedRefresh(): Prom
 
   const visibleChannels = channels.filter((channel) => channel.state !== 'suppressed');
   const suppressed = channels.filter((channel) => channel.state === 'suppressed');
-  const showProviderNotice = bootstrap?.status === 'provider_unavailable'
+  const currentProviderReady = webSearchDiagnostics?.availability === 'ready';
+  const showProviderNotice = !currentProviderReady && (
+    bootstrap?.status === 'provider_unavailable'
     || bootstrap?.status === 'planner_unavailable'
-    || bases.some((base) => base.data.lastResult === 'provider_unavailable' || base.data.lastResult === 'not_executed');
+    || bases.some((base) => base.data.lastResult === 'provider_unavailable' || base.data.lastResult === 'not_executed')
+  );
 
   return (
     <section className="discovery-sources-panel" aria-labelledby="discovery-sources-heading">
@@ -365,6 +368,14 @@ export function DiscoverySourcesPanel({ onFeedRefresh }: { onFeedRefresh(): Prom
                   {webSearchDiagnostics.availability === 'unavailable' && t(lang, 'discovery_local_web_search_unavailable')}
                 </span>
               </div>
+              {bootstrap && bootstrap.attempted && (
+                <p className="discovery-bootstrap-historical">
+                  <small>
+                    {t(lang, 'discovery_last_initial_bootstrap')}: {bootstrap.status}
+                    {bootstrap.reason && ` — ${bootstrap.reason}`}
+                  </small>
+                </p>
+              )}
             </div>
           )}
 

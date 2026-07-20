@@ -62,7 +62,7 @@ import {
   type DiscoveryPlatformId,
   type DynamicDiscoveryResearchPlan,
 } from '@our-companion/discovery-engine';
-import { generateInsights, selectPrimaryInsight } from '@our-companion/insight-engine';
+import { synthesizeDiscoveryInsight, generateInsights, selectPrimaryInsight } from '@our-companion/insight-engine';
 import { createJourney, createJourneyMilestone } from '@our-companion/journey-engine';
 import {
   buildInterestGraph,
@@ -102,6 +102,9 @@ import type {
   CreateMemoryNodeInput,
   CuriosityTarget,
   DebugDataResetInput,
+  DeveloperDebugEvent,
+  DeveloperDebugEventInput,
+  DeveloperDebugEventKind,
   Discovery,
   DiscoveryCandidate,
   DiscoveryAnnouncePayload,
@@ -135,6 +138,7 @@ import type {
   SpeechSettings,
   StartExplorationInput,
   SubmitDiscoveryFeedbackInput,
+  SynthesizeDiscoveryInsightInput,
   ToolExecuteInput,
   TranscribeAudioInput,
   UiLang,
@@ -157,6 +161,8 @@ import {
   normalizeActionUrl,
   createSemanticFingerprint,
   clampScore,
+  redactSecrets,
+  createTimer,
   type BaseEvent,
   type CompanionAnimationManifestEntry,
   type RuntimeClock,
@@ -319,7 +325,6 @@ export class AppServices {
   private commandBroadcaster?: (command: CompanionCommand) => void;
   private activeCommand: ActiveCommandRecord | null = null;
   private foundationEventBroadcaster?: (event: BaseEvent) => void;
-  private debugLog: AiDebugEntry[] = [];
   private foundationEventLog: BaseEvent[] = [];
   private lastSchedulerTick?: string;
   private runtimeStarted = false;
@@ -513,6 +518,7 @@ export class AppServices {
       if (status.state === 'online' && (!wasOnline || visitInvalidated)) {
         void visits?.reconcile();
         void visualVisits?.reconcile();
+        if (!wasOnline) void this.flushPendingDebugEvents();
       }
       wasOnline = status.state === 'online';
       this.networkStatusBroadcaster?.(status);
@@ -2011,8 +2017,38 @@ export class AppServices {
   }
 
   private pushDebugEntry(entry: Omit<AiDebugEntry, 'id' | 'createdAt'>): void {
-    this.debugLog.unshift({ ...entry, id: createId('dbg'), createdAt: nowIso() });
-    if (this.debugLog.length > DEBUG_LOG_MAX) this.debugLog.length = DEBUG_LOG_MAX;
+    const event: DeveloperDebugEvent = {
+      id: createId('devent'),
+      kind: 'ai_call',
+      operation: entry.channel,
+      status: entry.status,
+      summary: entry.content || entry.error || '',
+      payload: redactSecrets({
+        source: entry.source,
+        requestMessages: entry.requestMessages,
+        requestBody: entry.requestBody,
+        rawResponse: entry.rawResponse,
+      }) as Record<string, unknown>,
+      errorCode: entry.error,
+      errorMessage: entry.error,
+      createdAt: nowIso(),
+      syncStatus: 'pending',
+      syncAttemptCount: 0,
+    };
+    this.db.insertDeveloperDebugEvent(event);
+  }
+
+  private pushDeveloperDebugEvent(input: DeveloperDebugEventInput): DeveloperDebugEvent {
+    const event: DeveloperDebugEvent = {
+      ...input,
+      id: createId('devent'),
+      createdAt: nowIso(),
+      syncStatus: 'pending',
+      syncAttemptCount: 0,
+    };
+    const inserted = this.db.insertDeveloperDebugEvent(event);
+    void this.flushPendingDebugEvents();
+    return inserted;
   }
 
   private buildChatMessages(
@@ -2120,8 +2156,93 @@ export class AppServices {
       summary: input.content.slice(0, 180),
       importance_score: 50
     }),
-    getDebugLog: async (): Promise<AiDebugEntry[]> => [...this.debugLog]
+    getDebugLog: async (): Promise<AiDebugEntry[]> => {
+      const events = this.db.listDeveloperDebugEvents({ kind: 'ai_call', limit: 100 });
+      return events.map((e) => ({
+        id: e.id,
+        channel: (e.operation ?? 'chat') as AiDebugEntry['channel'],
+        source: (e.payload as Record<string, unknown>)?.source as string ?? '',
+        status: (e.status ?? 'success') as 'success' | 'error',
+        requestMessages: ((e.payload as Record<string, unknown>)?.requestMessages as Array<{ role: string; content: string }>) ?? [],
+        requestBody: (e.payload as Record<string, unknown>)?.requestBody,
+        rawResponse: (e.payload as Record<string, unknown>)?.rawResponse,
+        content: e.summary ?? '',
+        error: e.errorMessage,
+        createdAt: e.createdAt,
+      }));
+    }
   };
+
+  debugEvents = {
+    listEvents: async (options?: { kind?: DeveloperDebugEventKind; limit?: number; offset?: number }): Promise<DeveloperDebugEvent[]> =>
+      this.db.listDeveloperDebugEvents(options),
+    countEvents: async (options?: { kind?: DeveloperDebugEventKind }): Promise<number> =>
+      this.db.countDeveloperDebugEvents(options),
+  };
+
+  developer = {
+    getUploadSetting: async (): Promise<boolean> =>
+      this.db.getAppSetting<boolean>('developer.debugUploadEnabled') ?? false,
+    setUploadSetting: async (enabled: boolean): Promise<void> => {
+      this.db.setAppSetting('developer.debugUploadEnabled', enabled);
+      if (enabled) void this.flushPendingDebugEvents();
+    },
+    flushDebugEvents: async (): Promise<{ uploaded: number; failed: number }> => this.flushPendingDebugEvents(),
+    getUploadStatus: async () => {
+      const networkStatus = this.network.getStatusSnapshot();
+      return {
+        isDevBuild: !app.isPackaged,
+        onlineModeEnabled: networkStatus.onlineModeEnabled,
+        networkState: networkStatus.state,
+        authenticated: !!networkStatus.account,
+        uploadSettingEnabled: this.db.getAppSetting<boolean>('developer.debugUploadEnabled') ?? false,
+        pendingEvents: this.db.countDeveloperDebugEvents({ syncStatus: 'pending' }),
+        lastUploadAt: this.db.getAppSetting<string>('developer.lastUploadAt'),
+        lastUploadError: this.db.getAppSetting<string>('developer.lastUploadError'),
+      };
+    },
+  };
+
+  private async flushPendingDebugEvents(): Promise<{ uploaded: number; failed: number }> {
+    if (app.isPackaged) return { uploaded: 0, failed: 0 };
+    const networkStatus = this.network.getStatusSnapshot();
+    if (!networkStatus.onlineModeEnabled || networkStatus.state !== 'online') return { uploaded: 0, failed: 0 };
+    if (!networkStatus.account) return { uploaded: 0, failed: 0 };
+    const uploadEnabled = this.db.getAppSetting<boolean>('developer.debugUploadEnabled') ?? false;
+    if (!uploadEnabled) return { uploaded: 0, failed: 0 };
+    const pending = this.db.listDeveloperDebugEvents({ syncStatus: 'pending', limit: 50 });
+    if (pending.length === 0) return { uploaded: 0, failed: 0 };
+    const batch = pending.map((event) => ({
+      clientEventId: event.id,
+      deviceId: this.db.getAppSetting<string>('device.id') ?? 'unknown',
+      kind: event.kind,
+      operation: event.operation,
+      status: event.status,
+      provider: event.provider,
+      model: event.model,
+      companionId: event.companionId,
+      correlationId: event.correlationId,
+      cycleId: event.cycleId,
+      turnId: event.turnId,
+      summary: event.summary,
+      payload: redactSecrets(event.payload ?? {}),
+      errorCode: event.errorCode,
+      clientCreatedAt: event.createdAt,
+    }));
+    try {
+      this.db.markDeveloperDebugEventsUploading(pending.map((e) => e.id));
+      await this.network.postBatchDebugEvents(batch);
+      this.db.markDeveloperDebugEventsUploaded(pending.map((e) => e.id));
+      this.db.setAppSetting('developer.lastUploadAt', nowIso());
+      this.db.setAppSetting('developer.lastUploadError', undefined);
+      return { uploaded: pending.length, failed: 0 };
+    } catch (error) {
+      this.db.markDeveloperDebugEventsPending(pending.map((e) => e.id));
+      const msg = error instanceof Error ? error.message : String(error);
+      this.db.setAppSetting('developer.lastUploadError', msg);
+      return { uploaded: 0, failed: pending.length };
+    }
+  }
 
   speech = {
     getStatus: async () => {
@@ -3201,7 +3322,13 @@ export class AppServices {
           skipReason: event.skipReason,
           error: event.error
         }
-      )
+      ),
+      onDebugEvent: (event) => this.pushDeveloperDebugEvent({
+        ...event,
+        companionId,
+        cycleId,
+        correlationId,
+      }),
     });
     const executedBaseIds = new Set(research.usedBaseIds);
     discoveryInspection.executedBases = selectedDiscoveryBases
@@ -3443,17 +3570,63 @@ export class AppServices {
 
     cycle = this.saveCycleState(cycle, 'synthesizing');
 
-    const insights = generateInsights({
-      userId,
+    const synthesisInput: SynthesizeDiscoveryInsightInput = {
+      evidence: research.evidence.map((e) => ({
+        id: e.id,
+        title: e.title,
+        canonicalUrl: e.canonicalUrl,
+        domain: e.domain,
+        excerpt: e.excerpt,
+        extractedText: e.extractedText,
+        publishedAt: e.publishedAt,
+        contentHash: e.contentHash,
+      })),
+      candidates: discoveryCandidates,
+      context: {
+        userId,
+        companionId,
+        characterState,
+        characterProfile,
+        memoryNodes,
+        patterns: detectedPatterns,
+        interestGraph,
+        curiosityTarget: selectedCuriosityTarget,
+      },
+    };
+
+    const synthesisResult = await synthesizeDiscoveryInsight(
+      synthesisInput,
+      this.aiProvider
+        ? async (prompt) => {
+            const { content } = await this.sendToAi({
+              messages: [{ role: 'user', content: prompt }],
+              channel: 'discovery_reason',
+              source: 'evidence_synthesis',
+            });
+            return content;
+          }
+        : undefined,
+    );
+
+    this.pushDeveloperDebugEvent({
+      kind: 'evidence_synthesis',
+      operation: 'discovery_evidence_synthesis',
+      status: synthesisResult.usedFallback ? 'fallback' : 'completed',
       companionId,
-      characterState,
-      characterProfile,
-      memoryNodes,
-      patterns: detectedPatterns,
-      interestGraph,
-      curiosityTarget: selectedCuriosityTarget,
-      discoveryCandidates
+      correlationId,
+      cycleId,
+      summary: synthesisResult.usedFallback ? 'Used deterministic fallback' : 'AI synthesis succeeded',
+      payload: {
+        evidenceCount: synthesisResult.debugMetadata?.evidenceCount,
+        inputCharacterCount: synthesisResult.debugMetadata?.inputCharacterCount,
+        validated: synthesisResult.debugMetadata?.validated,
+        rejectionReason: synthesisResult.debugMetadata?.rejectionReason,
+        usedFallback: synthesisResult.usedFallback,
+        insightId: synthesisResult.insight.id,
+      },
     });
+
+    const insights = [synthesisResult.insight];
     for (const insight of insights) {
       this.db.insertCompanionInsight(toPersistedCompanionInsight(insight, companionId, selectedCuriosityTarget.reason, discoveryCandidates.map((candidate) => candidate.id)));
     }
@@ -3946,6 +4119,12 @@ export class AppServices {
         outputRefs: event.outputRefs,
         skipReason: event.skipReason,
         error: event.error,
+      }),
+      onDebugEvent: (event) => this.pushDeveloperDebugEvent({
+        ...event,
+        companionId,
+        cycleId,
+        correlationId,
       }),
     });
     this.db.insertResearchIntent(research.intent);
@@ -4528,13 +4707,15 @@ export class AppServices {
 
   private async sendToAi(input: {
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
-    channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis' | 'discovery_research_plan';
+    channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis' | 'discovery_research_plan' | 'discovery_evidence_synthesis';
     source: string;
-  }): Promise<{ content: string; raw: unknown; requestBody: unknown }> {
+  }): Promise<{ content: string; raw: unknown; requestBody: unknown; durationMs: number }> {
+    const timer = createTimer();
     try {
       const result = this.aiProvider
         ? await this.completeWithInjectedAi(input)
         : await this.createDeepSeekClient().chatDebug(input.messages);
+      const durationMs = timer.stop();
       this.pushDebugEntry({
         channel: input.channel,
         source: input.source,
@@ -4544,8 +4725,20 @@ export class AppServices {
         rawResponse: result.raw,
         content: result.content
       });
-      return result;
+      this.pushDeveloperDebugEvent({
+        kind: 'ai_call',
+        operation: input.channel,
+        status: 'success',
+        provider: this.aiProvider ? 'injected' : 'deepseek',
+        source: input.source,
+        payload: {
+          durationMs,
+          channel: input.channel,
+        },
+      });
+      return { ...result, durationMs };
     } catch (error) {
+      const durationMs = timer.stop();
       const message = error instanceof Error ? error.message : String(error);
       this.pushDebugEntry({
         channel: input.channel,
@@ -4557,13 +4750,25 @@ export class AppServices {
         content: '',
         error: message
       });
+      this.pushDeveloperDebugEvent({
+        kind: 'ai_call',
+        operation: input.channel,
+        status: 'error',
+        provider: this.aiProvider ? 'injected' : 'deepseek',
+        source: input.source,
+        errorMessage: message,
+        payload: {
+          durationMs,
+          channel: input.channel,
+        },
+      });
       throw error;
     }
   }
 
   private async completeWithInjectedAi(input: {
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
-    channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis' | 'discovery_research_plan';
+    channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis' | 'discovery_research_plan' | 'discovery_evidence_synthesis';
     source: string;
   }): Promise<{ content: string; raw: unknown; requestBody: unknown }> {
     const requestBody = {

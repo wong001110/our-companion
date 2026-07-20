@@ -185,6 +185,7 @@ export const zhCN = {
   "discovery_local_web_search_cooldown": "暂时受限",
   "discovery_local_web_search_challenge": "搜索页面要求人工验证",
   "discovery_local_web_search_unavailable": "不可用 — RSS 和固定页面仍可运行",
+  "discovery_last_initial_bootstrap": "上次初始引导",
   "discovery_local_web_search_timeout": "本地网络搜索超时，请稍后再试。",
   "discovery_local_web_search_navigation_failed": "本地网络搜索无法加载搜索页面。",
   "discovery_local_web_search_http_blocked": "搜索服务拒绝了本次请求。",

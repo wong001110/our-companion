@@ -33,3 +33,11 @@ export function unitToScore100(value: UnitScore): Score100 {
 export function score100ToUnit(value: Score100): UnitScore {
   return toUnitScore(toScore100(value) / 100);
 }
+
+export function createTimer() {
+  const startedAt = Date.now();
+  return {
+    elapsedMs: () => Date.now() - startedAt,
+    stop: () => Date.now() - startedAt,
+  };
+}

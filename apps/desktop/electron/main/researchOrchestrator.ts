@@ -329,6 +329,7 @@ async function fetchSelectedPages(input: {
   owner: Pick<ResearchIntent, 'userId' | 'companionId' | 'cycleId' | 'id'>;
   plan: ResearchPlan;
   onTrace?: (event: ResearchTraceEvent) => void;
+  onDebugEvent?: (event: import('@our-companion/shared').DeveloperDebugEventInput) => void;
   remainingMs: () => number;
 }): Promise<WebPageEvidence[]> {
   const byId = new Map(input.results.map((result) => [result.id, result]));
@@ -359,11 +360,13 @@ async function fetchSelectedPages(input: {
           cycleId: input.owner.cycleId, researchIntentId: input.owner.id, researchPlanId: input.plan.id,
           sourceType: selection.expectedEvidenceType
         }), input.remainingMs());
+        input.onDebugEvent?.({ kind: 'research_page_fetch', operation: 'web-page:fetch', status: 'completed', provider: input.fetcher.id, summary: `url=${result.url}`, payload: { url: result.url, domain: result.domain, contentHash: page.contentHash, contentType: page.contentType, textLength: page.extractedText.length } });
         input.onTrace?.({ operation: 'web-page:fetch', status: 'completed', providerMode: input.fetcher.mode, inputRefs: [input.plan.id], outputRefs: [page.id] });
         input.onTrace?.({ operation: 'web-page:extract', status: 'completed', providerMode: input.fetcher.mode, inputRefs: [page.id], outputRefs: [page.contentHash] });
         return page;
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
+        input.onDebugEvent?.({ kind: 'research_page_fetch', operation: 'web-page:fetch', status: 'failed', provider: input.fetcher.id, summary: `url=${result.url} error=${reason}`, errorMessage: reason });
         input.onTrace?.({ operation: 'web-page:fetch', status: 'skipped', providerMode: input.fetcher.mode, inputRefs: [input.plan.id], skipReason: reason });
         return undefined;
       }
@@ -415,6 +418,7 @@ export class ResearchOrchestrator {
     seenCanonicalUrls?: Set<string>;
     materialUpdateProbe?: boolean;
     onTrace?: (event: ResearchTraceEvent) => void;
+    onDebugEvent?: (event: import('@our-companion/shared').DeveloperDebugEventInput) => void;
   }): Promise<ResearchExecution> {
     const capabilities = toCapabilities(this.deps);
     const eligibleBases = (input.discoveryBases ?? [])
@@ -646,6 +650,7 @@ export class ResearchOrchestrator {
         providerOutcomes.push({ id: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: uniqueResults.length ? 'completed' : 'empty', itemCount: uniqueResults.length });
         const searchRecord = { id: createId('research_search'), query, provider: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: uniqueResults.length ? 'completed' as const : 'empty' as const, resultCount: uniqueResults.length };
         searchRecords.push(searchRecord);
+        input.onDebugEvent?.({ kind: 'research_search', operation: `web-search:${this.deps.searchProvider.id}`, status: searchRecord.status, provider: this.deps.searchProvider.id, summary: `query="${query}" results=${uniqueResults.length}`, payload: { query, resultCount: uniqueResults.length, providerMode: this.deps.searchProvider.mode } });
         // Provider result IDs are transient handles. Engine Trace references only
         // the persisted operational record, never a provider result or selection.
         input.onTrace?.({ operation: `web-search:${this.deps.searchProvider.id}`, status: searchRecord.status, providerMode: this.deps.searchProvider.mode, inputRefs: [plan.id], outputRefs: [searchRecord.id], skipReason: uniqueResults.length ? undefined : 'no_search_results' });
@@ -654,6 +659,7 @@ export class ResearchOrchestrator {
         if (error instanceof ResearchCycleTimeoutError) budgetStopReason ??= 'research_cycle_timeout';
         providerOutcomes.push({ id: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: 'failed', itemCount: 0, error: reason });
         searchRecords.push({ id: createId('research_search'), query, provider: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: 'failed', resultCount: 0, error: reason });
+        input.onDebugEvent?.({ kind: 'research_search', operation: `web-search:${this.deps.searchProvider.id}`, status: 'failed', provider: this.deps.searchProvider.id, summary: `query="${query}" error=${reason}`, errorMessage: reason });
         input.onTrace?.({ operation: `web-search:${this.deps.searchProvider.id}`, status: 'failed', providerMode: this.deps.searchProvider.mode, inputRefs: [plan.id], outputRefs: [], error: reason });
       }
     };
@@ -693,7 +699,7 @@ export class ResearchOrchestrator {
       }
       input.onTrace?.({ operation: 'web-search:select-results', status: selected.length ? 'completed' : 'empty', inputRefs: [plan.id], outputRefs: [], skipReason: selected.length ? undefined : 'no_selectable_results' });
       pageFetchesStarted += selected.length;
-      const pages = await fetchSelectedPages({ selected, results, fetcher: this.deps.pageFetcher, owner: intent, plan, onTrace: input.onTrace, remainingMs });
+      const pages = await fetchSelectedPages({ selected, results, fetcher: this.deps.pageFetcher, owner: intent, plan, onTrace: input.onTrace, onDebugEvent: input.onDebugEvent, remainingMs });
       for (const page of pages) {
         const remaining = plan.limits.maxTotalCharacters - evidenceCharacters;
         if (remaining <= 0) {
@@ -713,6 +719,7 @@ export class ResearchOrchestrator {
     };
     if (canSearch || canFetchBaseUrls) await fetchPass();
     let coverage = evaluateEvidenceCoverage(intent, evidence);
+    input.onDebugEvent?.({ kind: 'research_evidence', operation: 'research-evidence:evaluate', status: coverage.requirementsSatisfied ? 'completed' : evidence.length ? 'skipped' : 'empty', summary: `evidenceCount=${evidence.length} satisfied=${coverage.requirementsSatisfied}`, payload: { evidenceCount: evidence.length, sourceCount: coverage.sourceCount, independentDomainCount: coverage.independentDomainCount, missing: coverage.missing } });
     input.onTrace?.({ operation: 'research-evidence:evaluate', status: coverage.requirementsSatisfied ? 'completed' : evidence.length ? 'skipped' : 'empty', inputRefs: evidence.map((page) => page.id), outputRefs: [], skipReason: coverage.requirementsSatisfied ? undefined : coverage.missing.join(',') || 'no_valid_external_evidence' });
     const continuation = decideResearchContinuation({ intent, coverage, completedAdditionalPasses: 0 });
     let additionalPasses = 0;

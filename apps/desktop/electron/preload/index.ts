@@ -369,6 +369,25 @@ const api: OurCompanionApi = {
     listAssets: (companionId: string) => invoke<Array<{ name: string; size: number; subfolder: string }>>('companionNew:listAssets', companionId),
     deleteAsset: (input: { companionId: string; subfolder: string; fileName: string }) => invoke<{ deleted: true }>('companionNew:deleteAsset', input),
     readAsset: (input: { companionId: string; subfolder: string; fileName: string }) => invoke<{ dataUrl: string } | null>('companionNew:readAsset', input)
+  },
+  debugEvents: {
+    listEvents: (options?: { kind?: string; limit?: number; offset?: number }) => invoke<import('@our-companion/shared').DeveloperDebugEvent[]>('debugEvents:listEvents', options),
+    countEvents: (options?: { kind?: string }) => invoke<number>('debugEvents:countEvents', options),
+  },
+  developer: {
+    getUploadSetting: () => invoke<boolean>('developer:getUploadSetting'),
+    setUploadSetting: (enabled: boolean) => invoke<void>('developer:setUploadSetting', enabled),
+    flushDebugEvents: () => invoke<{ uploaded: number; failed: number }>('developer:flushDebugEvents'),
+    getUploadStatus: () => invoke<{
+      isDevBuild: boolean;
+      onlineModeEnabled: boolean;
+      networkState: string;
+      authenticated: boolean;
+      uploadSettingEnabled: boolean;
+      pendingEvents: number;
+      lastUploadAt?: string;
+      lastUploadError?: string;
+    }>('developer:getUploadStatus'),
   }
 };
 

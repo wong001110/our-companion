@@ -192,6 +192,7 @@ export const en = {
   discovery_local_web_search_cooldown: 'Temporarily rate-limited',
   discovery_local_web_search_challenge: 'Search page requested human verification',
   discovery_local_web_search_unavailable: 'Unavailable — RSS and pinned pages can still run',
+  discovery_last_initial_bootstrap: 'Last initial bootstrap',
   discovery_local_web_search_timeout: 'Local web search timed out. Please try again later.',
   discovery_local_web_search_navigation_failed: 'Local web search could not load the search page.',
   discovery_local_web_search_http_blocked: 'Local web search blocked an unsafe response.',

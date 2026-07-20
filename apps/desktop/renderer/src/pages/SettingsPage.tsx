@@ -47,6 +47,7 @@ import type { PresentationCandidate } from '../companion/PresentationCandidate';
 import { CompanionCanvas, type AnimationName, type CompanionDragPoint } from '../ui/CompanionCanvas';
 import { LangContext, useLang, NotebookPage, PaperCard, StickyNote, NotebookChatBubble } from '../ui/NotebookPrimitives';
 import { EngineObservatory } from '../features/developer/EngineObservatory';
+import { DeveloperDebugInspector } from '../features/developer/DeveloperDebugInspector';
 import { EngineObservatoryToolbar, loadObservatoryState, type EnginePanelKey } from '../features/developer/EngineObservatoryToolbar';
 import { EngineSnapshotCard } from '../features/developer/EngineSnapshotCard';
 import { useAudioCapture } from '../companion/useAudioCapture';
@@ -106,6 +107,7 @@ export function SettingsPage({ state, behaviorSettings, onRefresh, onLangChange,
     status, error, message, saving, saveSettings, refresh,
   } = useSettingsViewModel({ lang, onLangChange });
   const [developerOpen, setDeveloperOpen] = useState(() => localStorage.getItem('companion:developer:enabled') === 'true');
+  const [debugInspectorOpen, setDebugInspectorOpen] = useState(false);
   const [devAnimation, setDevAnimation] = useState<DevAnimation>('live');
   const [category, setCategory] = useState<SettingsCategory>('companion');
   const categoryTabsRef = useRef(new Map<SettingsCategory, HTMLButtonElement>());
@@ -183,7 +185,11 @@ export function SettingsPage({ state, behaviorSettings, onRefresh, onLangChange,
           <button onClick={() => setDeveloperOpen((open) => { const next = !open; localStorage.setItem('companion:developer:enabled', String(next)); return next; })}>
             {developerOpen ? t(lang, 'settings_developer_hide') : t(lang, 'settings_developer_show')}
           </button>
+          <button className="debug-inspector-launch-btn" onClick={() => setDebugInspectorOpen(true)}>
+            Open Full Debug Inspector
+          </button>
           {developerOpen && <DeveloperPreview state={previewState} devAnimation={devAnimation} animationOverride={animationOverride} onAnimationChange={setDevAnimation} settings={behaviorSettings} onRefresh={onRefresh} companionId={companionId} assetRoot={assetRoot} />}
+          <DeveloperDebugInspector open={debugInspectorOpen} onClose={() => setDebugInspectorOpen(false)} />
         </PaperCard>
         }
         </>}

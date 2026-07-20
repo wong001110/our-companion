@@ -532,4 +532,32 @@ CREATE TABLE IF NOT EXISTS network_asset_cache (
   PRIMARY KEY (server_origin, asset_pack_id)
 );
 CREATE INDEX IF NOT EXISTS idx_network_asset_cache_lru ON network_asset_cache(last_used_at);
+
+CREATE TABLE IF NOT EXISTS developer_debug_events (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  operation TEXT,
+  status TEXT,
+  provider TEXT,
+  model TEXT,
+  user_id TEXT,
+  device_id TEXT,
+  companion_id TEXT,
+  correlation_id TEXT,
+  cycle_id TEXT,
+  turn_id TEXT,
+  summary TEXT,
+  payload_json TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  sync_status TEXT NOT NULL DEFAULT 'pending',
+  sync_attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_sync_attempt_at TEXT,
+  uploaded_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_developer_debug_events_kind ON developer_debug_events(kind, created_at);
+CREATE INDEX IF NOT EXISTS idx_developer_debug_events_created ON developer_debug_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_developer_debug_events_sync ON developer_debug_events(sync_status, created_at);
 `;

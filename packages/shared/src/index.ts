@@ -8,7 +8,8 @@ export {
   toUnitScore,
   toScore100,
   unitToScore100,
-  score100ToUnit
+  score100ToUnit,
+  createTimer
 } from './utils';
 export type { UnitScore, Score100 } from './utils';
 
@@ -1766,7 +1767,7 @@ export type UiLang = 'en' | 'zh-CN';
 
 export interface AiDebugEntry {
   id: string;
-  channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis' | 'discovery_research_plan';
+  channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis' | 'discovery_research_plan' | 'discovery_evidence_synthesis';
   source: string;
   status: 'success' | 'error';
   requestMessages: Array<{ role: string; content: string }>;
@@ -1775,6 +1776,112 @@ export interface AiDebugEntry {
   content: string;
   error?: string;
   createdAt: string;
+}
+
+export type DeveloperDebugEventKind = 'ai_call' | 'research_search' | 'research_page_fetch' | 'research_evidence' | 'evidence_synthesis' | 'pipeline_failure';
+
+export interface DeveloperDebugEventInput {
+  kind: DeveloperDebugEventKind;
+  operation?: string;
+  status?: string;
+  provider?: string;
+  model?: string;
+  source?: string;
+  companionId?: string;
+  correlationId?: string;
+  cycleId?: string;
+  turnId?: string;
+  summary?: string;
+  payload?: Record<string, unknown>;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+export interface DeveloperDebugEvent extends DeveloperDebugEventInput {
+  id: string;
+  createdAt: string;
+  syncStatus: 'pending' | 'uploading' | 'uploaded';
+  syncAttemptCount: number;
+  lastSyncAttemptAt?: string;
+  uploadedAt?: string;
+}
+
+export interface EvidenceSynthesisResult {
+  title: string;
+  summary: string;
+  keyFacts: Array<{
+    statement: string;
+    evidenceIds: string[];
+  }>;
+  whyRelevant: string;
+  uncertainties: string[];
+  supportingEvidenceIds: string[];
+}
+
+export interface EvidenceInput {
+  id: string;
+  title: string;
+  canonicalUrl: string;
+  domain: string;
+  excerpt: string;
+  extractedText: string;
+  publishedAt?: string;
+  contentHash: string;
+}
+
+export interface SynthesizeDiscoveryInsightInput {
+  evidence: EvidenceInput[];
+  candidates: Array<{
+    id: string;
+    title: string;
+    summary: string;
+    relevanceScore: number;
+    noveltyScore: number;
+    usefulnessScore: number;
+    evidenceScore?: number;
+    evidenceIds?: string[];
+    sourceUrl?: string;
+    sourceName?: string;
+  }>;
+  context: {
+    userId: string;
+    companionId: string;
+    characterState: CharacterRuntimeState;
+    characterProfile?: CharacterProfile;
+    memoryNodes: MemoryNode[];
+    patterns: Pattern[];
+    interestGraph: InterestGraph;
+    curiosityTarget: CuriosityTarget;
+  };
+}
+
+export interface SynthesizeDiscoveryInsightResult {
+  insight: {
+    id: string;
+    userId: string;
+    category: InsightCategory;
+    title: string;
+    summary: string;
+    explanation: string;
+    supportingPatternIds: string[];
+    supportingMemoryIds: string[];
+    confidence: number;
+    importance: number;
+    novelty: number;
+    evidenceCount: number;
+    status: 'active' | 'archived';
+    createdAt: string;
+    updatedAt: string;
+  };
+  evidenceIds: string[];
+  synthesisResult?: EvidenceSynthesisResult;
+  usedFallback: boolean;
+  debugMetadata?: {
+    inputCharacterCount: number;
+    evidenceCount: number;
+    validated: boolean;
+    rejectionReason?: string;
+  };
 }
 
 export interface AiSettings {
@@ -2393,6 +2500,10 @@ export interface OurCompanionApi {
     summarizeMemory(input: { content: string }): Promise<MemorySummary>;
     getDebugLog(): Promise<AiDebugEntry[]>;
   };
+  debugEvents: {
+    listEvents(options?: { kind?: DeveloperDebugEventKind; limit?: number; offset?: number }): Promise<DeveloperDebugEvent[]>;
+    countEvents(options?: { kind?: DeveloperDebugEventKind }): Promise<number>;
+  };
   speech: {
     transcribe(input: TranscribeAudioInput): Promise<{ text: string; language?: string }>;
     getStatus(): Promise<SpeechStatus>;
@@ -2542,6 +2653,21 @@ export interface OurCompanionApi {
     openFiles(): Promise<Array<{ name: string; dataUrl: string }>>;
   };
   companionNew: CompanionApi;
+  developer: {
+    getUploadSetting(): Promise<boolean>;
+    setUploadSetting(enabled: boolean): Promise<void>;
+    flushDebugEvents(): Promise<{ uploaded: number; failed: number }>;
+    getUploadStatus(): Promise<{
+      isDevBuild: boolean;
+      onlineModeEnabled: boolean;
+      networkState: string;
+      authenticated: boolean;
+      uploadSettingEnabled: boolean;
+      pendingEvents: number;
+      lastUploadAt?: string;
+      lastUploadError?: string;
+    }>;
+  };
   /** Present only when OUR_COMPANION_SMOKE_TEST=1 before Electron starts. */
   smoke?: {
     getState(): Promise<SmokeTestState>;
@@ -2565,6 +2691,27 @@ export interface OurCompanionApi {
 
 export function nowIso(): string {
   return new Date().toISOString();
+}
+
+const REDACTED_KEYS = new Set([
+  'authorization', 'apikey', 'api_key', 'token', 'accesstoken',
+  'refreshtoken', 'password', 'cookie', 'set-cookie', 'secret', 'clientsecret'
+]);
+
+export function redactSecrets(obj: unknown): unknown {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === 'string') return obj;
+  if (typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(redactSecrets);
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    if (REDACTED_KEYS.has(key.toLowerCase())) {
+      result[key] = '[REDACTED]';
+    } else {
+      result[key] = redactSecrets(value);
+    }
+  }
+  return result;
 }
 
 export function createId(prefix: string): string {

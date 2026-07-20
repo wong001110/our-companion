@@ -473,7 +473,11 @@ export function extractReadableFeed(xml: string, fallbackUrl: URL, limit: number
   };
 }
 
-async function fetchWithPinnedAddress(url: URL, init: RequestInit, address: string): Promise<Response> {
+export async function fetchWithPinnedAddress(url: URL, init: RequestInit, address: string): Promise<Response> {
+  const family = net.isIP(address);
+  if (family !== 4 && family !== 6) {
+    throw new ResearchAdapterError('dns_resolution_failed', 'DNS resolver returned an invalid address.');
+  }
   const request = url.protocol === 'https:' ? httpsRequest : httpRequest;
   const headers = new Headers(init.headers);
   // Avoid a compressed body because this small, bounded reader operates on transfer bytes.
@@ -487,9 +491,17 @@ async function fetchWithPinnedAddress(url: URL, init: RequestInit, address: stri
       method: init.method ?? 'GET',
       headers: Object.fromEntries(headers.entries()),
       signal: init.signal ?? undefined,
+      family,
+      autoSelectFamily: false,
       // The request keeps the hostname for TLS/SNI but always connects to the address just validated above.
-      lookup: (_hostname, _options, callback) => callback(null, address, net.isIP(address))
-    }, (incoming) => {
+      lookup: (_hostname: string, options: { all?: boolean }, callback: (err: Error | null, address: string | Array<{ address: string; family: number }>, family?: number) => void) => {
+        if (typeof options === 'object' && options !== null && 'all' in options && options.all) {
+          callback(null, [{ address, family }]);
+          return;
+        }
+        callback(null, address, family);
+      }
+    } as unknown as Parameters<typeof request>[0], (incoming) => {
       const responseHeaders = new Headers();
       for (const [name, value] of Object.entries(incoming.headers)) {
         if (value !== undefined) responseHeaders.set(name, Array.isArray(value) ? value.join(', ') : value);

@@ -1,14 +1,36 @@
 import { describe, expect, it, vi } from 'vitest';
+import http from 'node:http';
+import https from 'node:https';
+import { Readable } from 'node:stream';
 import {
   assertSafeResearchUrl,
   BraveWebSearchProvider,
   FixtureWebSearchProvider,
   FixtureWebPageFetcher,
   createDeterministicFixtureSearchProvider,
+  fetchWithPinnedAddress,
   isBlockedAddress,
   ResearchAdapterError,
   SafeWebPageFetcher
 } from './researchAdapters';
+
+vi.mock('node:http', () => ({
+  default: { request: vi.fn() },
+  request: vi.fn(),
+}));
+vi.mock('node:https', () => ({
+  default: { request: vi.fn() },
+  request: vi.fn(),
+}));
+
+vi.mock('node:http', () => {
+  const fn = vi.fn();
+  return { request: fn, default: { request: fn } };
+});
+vi.mock('node:https', () => {
+  const fn = vi.fn();
+  return { request: fn, default: { request: fn } };
+});
 
 const publicLookup = async () => [{ address: '93.184.216.34' }];
 
@@ -193,6 +215,115 @@ describe('SafeWebPageFetcher', () => {
       timeoutMs: 1
     });
     await expect(fetcher.fetchPage(fetchInput())).rejects.toMatchObject({ code: 'timeout' });
+  });
+
+  describe('fetchWithPinnedAddress transport', () => {
+    function makeFakeResponse() {
+      const fakeHeaders = { 'content-type': 'text/plain' };
+      return Object.assign(new Readable({ read() { this.push('OK'); this.push(null); } }), {
+        statusCode: 200,
+        statusMessage: 'OK',
+        headers: fakeHeaders,
+      }) as unknown as http.IncomingMessage;
+    }
+
+    function installMock(protocol: string) {
+      const requestFn = vi.fn((_options: unknown, callback: (res: http.IncomingMessage) => void) => {
+        callback(makeFakeResponse());
+        return { once: vi.fn(), end: vi.fn() };
+      });
+      const mod = protocol === 'https:' ? https : http;
+      (mod.request as ReturnType<typeof vi.fn>).mockImplementation(requestFn);
+      return requestFn;
+    }
+
+    it('validated IPv4 address succeeds', async () => {
+      const requestFn = installMock('https:');
+      const url = new URL('https://example.test/page');
+      await fetchWithPinnedAddress(url, { method: 'GET' }, '93.184.216.34');
+      expect(requestFn).toHaveBeenCalledTimes(1);
+      const options = requestFn.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(options.family).toBe(4);
+      expect(options.autoSelectFamily).toBe(false);
+      expect(options.hostname).toBe('example.test');
+    });
+
+    it('validated IPv6 address succeeds', async () => {
+      const requestFn = installMock('https:');
+      const url = new URL('https://example.test/page');
+      await fetchWithPinnedAddress(url, { method: 'GET' }, '2606:4700::6810:85e5');
+      expect(requestFn).toHaveBeenCalledTimes(1);
+      const options = requestFn.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(options.family).toBe(6);
+      expect(options.autoSelectFamily).toBe(false);
+    });
+
+    it('all:true lookup returns an address array', async () => {
+      const requestFn = installMock('https:');
+      const url = new URL('https://example.test/page');
+      await fetchWithPinnedAddress(url, { method: 'GET' }, '93.184.216.34');
+      const options = requestFn.mock.calls[0]?.[0] as Record<string, unknown>;
+      const lookup = options.lookup as (
+        hostname: string,
+        opts: { all?: boolean },
+        callback: (err: Error | null, result: unknown) => void,
+      ) => void;
+      const allResult = await new Promise<{ address: string; family: number }[]>((resolve, reject) => {
+        lookup('example.test', { all: true }, (err, result) => {
+          if (err) reject(err); else resolve(result as { address: string; family: number }[]);
+        });
+      });
+      expect(allResult).toEqual([{ address: '93.184.216.34', family: 4 }]);
+    });
+
+    it('normal lookup returns address and family', async () => {
+      const requestFn = installMock('https:');
+      const url = new URL('https://example.test/page');
+      await fetchWithPinnedAddress(url, { method: 'GET' }, '93.184.216.34');
+      const options = requestFn.mock.calls[0]?.[0] as Record<string, unknown>;
+      const lookup = options.lookup as (
+        hostname: string,
+        opts: object,
+        callback: (err: Error | null, address: string, family: number) => void,
+      ) => void;
+      const result = await new Promise<{ address: string; family: number }>((resolve, reject) => {
+        lookup('example.test', {}, (err, address, family) => {
+          if (err) reject(err); else resolve({ address, family });
+        });
+      });
+      expect(result).toEqual({ address: '93.184.216.34', family: 4 });
+    });
+
+    it('autoSelectFamily is disabled on the request options', async () => {
+      const requestFn = installMock('https:');
+      const url = new URL('https://example.test/page');
+      await fetchWithPinnedAddress(url, { method: 'GET' }, '93.184.216.34');
+      const options = requestFn.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(options.autoSelectFamily).toBe(false);
+    });
+
+    it('invalid resolver address returns dns_resolution_failed', async () => {
+      await expect(
+        fetchWithPinnedAddress(new URL('https://example.test/page'), { method: 'GET' }, 'not-an-ip')
+      ).rejects.toMatchObject({ code: 'dns_resolution_failed' });
+    });
+
+    it('request preserves original hostname for TLS/SNI', async () => {
+      const requestFn = installMock('https:');
+      const url = new URL('https://example.test/page');
+      await fetchWithPinnedAddress(url, { method: 'GET' }, '93.184.216.34');
+      const options = requestFn.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(options.hostname).toBe('example.test');
+    });
+
+    it('invalid IP address: undefined cannot recur', async () => {
+      await expect(
+        fetchWithPinnedAddress(new URL('https://example.test/page'), { method: 'GET' }, 'undefined')
+      ).rejects.not.toThrow('Invalid IP address: undefined');
+      await expect(
+        fetchWithPinnedAddress(new URL('https://example.test/page'), { method: 'GET' }, 'undefined')
+      ).rejects.toMatchObject({ code: 'dns_resolution_failed' });
+    });
   });
 });
 

@@ -707,6 +707,103 @@ export class DatabaseService {
     this.db.close();
   }
 
+  // ─── Developer Debug Events ────────────────────────────────────────────────
+
+  insertDeveloperDebugEvent(event: import('@our-companion/shared').DeveloperDebugEvent): import('@our-companion/shared').DeveloperDebugEvent {
+    this.db.prepare(
+      `INSERT INTO developer_debug_events
+       (id, kind, operation, status, provider, model, user_id, device_id, companion_id,
+        correlation_id, cycle_id, turn_id, summary, payload_json, error_code, error_message,
+        created_at, sync_status, sync_attempt_count, last_sync_attempt_at, uploaded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      event.id, event.kind, event.operation ?? null, event.status ?? null,
+      event.provider ?? null, event.model ?? null, null, null,
+      event.companionId ?? null, event.correlationId ?? null,
+      event.cycleId ?? null, event.turnId ?? null, event.summary ?? null,
+      event.payload ? JSON.stringify(event.payload) : null,
+      event.errorCode ?? null, event.errorMessage ?? null,
+      event.createdAt, event.syncStatus, event.syncAttemptCount,
+      event.lastSyncAttemptAt ?? null, event.uploadedAt ?? null
+    );
+    return event;
+  }
+
+  listDeveloperDebugEvents(options?: { kind?: string; syncStatus?: string; limit?: number; offset?: number }): import('@our-companion/shared').DeveloperDebugEvent[] {
+    const limit = Math.min(options?.limit ?? 100, 500);
+    const offset = options?.offset ?? 0;
+    let sql = 'SELECT * FROM developer_debug_events';
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (options?.kind) {
+      conditions.push('kind = ?');
+      params.push(options.kind);
+    }
+    if (options?.syncStatus) {
+      conditions.push('sync_status = ?');
+      params.push(options.syncStatus);
+    }
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ');
+    }
+    sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+    return (this.db.prepare(sql).all(...params) as Array<Record<string, unknown>>).map(mapDeveloperDebugEvent);
+  }
+
+  getDeveloperDebugEvent(id: string): import('@our-companion/shared').DeveloperDebugEvent | undefined {
+    const row = this.db.prepare('SELECT * FROM developer_debug_events WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    return row ? mapDeveloperDebugEvent(row) : undefined;
+  }
+
+  markDeveloperDebugEventsUploading(ids: string[]): void {
+    const stmt = this.db.prepare(
+      "UPDATE developer_debug_events SET sync_status = 'uploading', sync_attempt_count = sync_attempt_count + 1, last_sync_attempt_at = ? WHERE id = ?"
+    );
+    const at = nowIso();
+    for (const id of ids) stmt.run(at, id);
+  }
+
+  markDeveloperDebugEventsUploaded(ids: string[]): void {
+    const stmt = this.db.prepare(
+      "UPDATE developer_debug_events SET sync_status = 'uploaded', uploaded_at = ? WHERE id = ?"
+    );
+    const at = nowIso();
+    for (const id of ids) stmt.run(at, id);
+  }
+
+  markDeveloperDebugEventsPending(ids: string[]): void {
+    const stmt = this.db.prepare(
+      "UPDATE developer_debug_events SET sync_status = 'pending' WHERE id = ?"
+    );
+    for (const id of ids) stmt.run(id);
+  }
+
+  pruneDeveloperDebugEvents(olderThanDays = 14): number {
+    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+    const result = this.db.prepare('DELETE FROM developer_debug_events WHERE created_at < ?').run(cutoff);
+    return result.changes;
+  }
+
+  countDeveloperDebugEvents(options?: { kind?: string; syncStatus?: string }): number {
+    let sql = 'SELECT COUNT(*) as count FROM developer_debug_events';
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (options?.kind) {
+      conditions.push('kind = ?');
+      params.push(options.kind);
+    }
+    if (options?.syncStatus) {
+      conditions.push('sync_status = ?');
+      params.push(options.syncStatus);
+    }
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ');
+    }
+    const row = this.db.prepare(sql).get(...params) as { count: number };
+    return row.count;
+  }
+
   getCharacterState(characterId?: string): CharacterRuntimeState {
     const id = this.resolveActiveCompanionId(characterId);
     const row = this.db
@@ -3302,6 +3399,30 @@ function mapCachedNetworkAssetPack(row: Record<string, unknown>): CachedAssetPac
   return {
     serverOrigin: String(row.server_origin), assetPackId: String(row.asset_pack_id), networkCompanionId: String(row.network_companion_id), manifestHash: String(row.manifest_hash), cacheRoot: String(row.cache_root),
     totalBytes: Number(row.total_bytes), downloadedAt: String(row.downloaded_at), lastUsedAt: String(row.last_used_at), pinned: Number(row.pinned) === 1, verified: Number(row.verified) === 1,
+  };
+}
+
+function mapDeveloperDebugEvent(row: Record<string, unknown>): import('@our-companion/shared').DeveloperDebugEvent {
+  return {
+    id: String(row.id),
+    kind: String(row.kind) as import('@our-companion/shared').DeveloperDebugEventKind,
+    operation: row.operation ? String(row.operation) : undefined,
+    status: row.status ? String(row.status) : undefined,
+    provider: row.provider ? String(row.provider) : undefined,
+    model: row.model ? String(row.model) : undefined,
+    companionId: row.companion_id ? String(row.companion_id) : undefined,
+    correlationId: row.correlation_id ? String(row.correlation_id) : undefined,
+    cycleId: row.cycle_id ? String(row.cycle_id) : undefined,
+    turnId: row.turn_id ? String(row.turn_id) : undefined,
+    summary: row.summary ? String(row.summary) : undefined,
+    payload: row.payload_json ? JSON.parse(String(row.payload_json)) : undefined,
+    errorCode: row.error_code ? String(row.error_code) : undefined,
+    errorMessage: row.error_message ? String(row.error_message) : undefined,
+    createdAt: String(row.created_at),
+    syncStatus: String(row.sync_status) as 'pending' | 'uploading' | 'uploaded',
+    syncAttemptCount: Number(row.sync_attempt_count),
+    lastSyncAttemptAt: row.last_sync_attempt_at ? String(row.last_sync_attempt_at) : undefined,
+    uploadedAt: row.uploaded_at ? String(row.uploaded_at) : undefined,
   };
 }
 
