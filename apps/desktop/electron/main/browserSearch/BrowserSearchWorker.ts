@@ -82,7 +82,7 @@ export class BrowserSearchWorker {
     let workerDestroyed = false;
     const deadline = Date.now() + timeoutMs;
 
-    workerSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
+    const onBeforeRequest = (details: Electron.OnBeforeRequestListenerDetails, callback: (response: Electron.BeforeRequestResponse) => void) => {
       if (blockedResourceTypes.has(details.resourceType)) {
         callback({ cancel: true });
         return;
@@ -98,23 +98,12 @@ export class BrowserSearchWorker {
         return;
       }
       callback({});
-    });
+    };
+    workerSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, onBeforeRequest);
 
-    workerSession.webRequest.onHeadersReceived(
-      { urls: ['*://*/*'] },
-      (details, callback) => {
-        if (details.resourceType === 'mainFrame' && details.responseHeaders) {
-          const statusLine = details.statusLine;
-          if (statusLine) {
-            const match = statusLine.match(/HTTP\/[\d.]+ (\d+)/);
-            if (match) mainFrameHttpStatus = parseInt(match[1]!, 10);
-          }
-        }
-        callback({ responseHeaders: details.responseHeaders });
-      },
-    );
+    const onPermissionRequest = (_webContents: Electron.WebContents, _permission: Electron.Permission, callback: (granted: boolean) => void) => callback(false);
+    workerSession.setPermissionRequestHandler(onPermissionRequest);
 
-    workerSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     const worker = this.deps.createWindow?.(partition) ?? new BrowserWindow({
       show: false,
       webPreferences: {
@@ -126,9 +115,21 @@ export class BrowserSearchWorker {
         partition,
       },
     });
+
+    const onHeadersReceived = (details: Electron.OnHeadersReceivedListenerDetails, callback: (response: Electron.HeadersReceivedResponse) => void) => {
+      if (details.resourceType === 'mainFrame' && details.webContentsId === worker.webContents.id) {
+        mainFrameHttpStatus = details.statusCode;
+      }
+      callback({ responseHeaders: details.responseHeaders });
+    };
+    workerSession.webRequest.onHeadersReceived({ urls: ['*://*/*'] }, onHeadersReceived);
     worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    worker.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-    worker.webContents.session.on('will-download', (event) => event.preventDefault());
+
+    const onWorkerPermissionRequest = (_webContents: Electron.WebContents, _permission: Electron.Permission, callback: (granted: boolean) => void) => callback(false);
+    worker.webContents.session.setPermissionRequestHandler(onWorkerPermissionRequest);
+
+    const onWillDownload = (event: Electron.Event) => event.preventDefault();
+    worker.webContents.session.on('will-download', onWillDownload);
 
     const allowedHosts = input.adapter.allowedNavigationHosts;
     const guardNavigation = (event: Electron.Event, url: string) => {
@@ -139,7 +140,13 @@ export class BrowserSearchWorker {
     worker.webContents.on('will-navigate', guardNavigation);
     worker.webContents.on('will-redirect', guardNavigation);
 
-    const onDidFailLoad = (_event: Electron.Event, errorCode: number, _errorDescription: string, isMainFrame: boolean) => {
+    const onDidFailLoad = (
+      _event: Electron.Event,
+      errorCode: number,
+      _errorDescription: string,
+      _validatedURL: string,
+      isMainFrame: boolean,
+    ) => {
       if (errorCode === -3) return;
       if (isMainFrame) {
         mainFrameLoadFailure = true;
@@ -151,7 +158,18 @@ export class BrowserSearchWorker {
     worker.on('closed', onClosed);
 
     try {
-      await worker.loadURL(input.searchUrl.toString(), { timeout: timeoutMs });
+      const navigationTimeout = new Promise<never>((_, reject) => {
+        const timer = setTimeout(() => {
+          reject(new BrowserSearchError('browser_search_timeout'));
+        }, timeoutMs);
+        const originalFinally = () => clearTimeout(timer);
+        (navigationTimeout as any).__cleanup = originalFinally;
+      });
+
+      await Promise.race([
+        worker.loadURL(input.searchUrl.toString()),
+        navigationTimeout,
+      ]);
 
       if (mainFrameLoadFailure) {
         throw new BrowserSearchError('browser_search_navigation_failed');
@@ -187,11 +205,9 @@ export class BrowserSearchWorker {
           throw new BrowserSearchError('browser_search_challenge');
         }
 
-        const ready = await worker.webContents.executeJavaScript(
-          'Boolean(document.querySelector(".result") || document.querySelector(".msg") || document.body?.innerText?.includes("No results."))',
-          true,
-        ).catch(() => false);
-        if (ready) break;
+        const state = await input.adapter.detectResultState({ webContents: worker.webContents });
+        if (state === 'results') break;
+        if (state === 'no_results') throw new BrowserSearchError('browser_search_no_results');
 
         await new Promise((r) => setTimeout(r, 150));
       }
@@ -247,6 +263,11 @@ export class BrowserSearchWorker {
       worker.webContents.removeListener('will-redirect', guardNavigation);
       worker.webContents.removeListener('did-fail-load', onDidFailLoad);
       worker.removeListener('closed', onClosed);
+      worker.webContents.session.setPermissionRequestHandler(null as any);
+      worker.webContents.session.removeListener('will-download', onWillDownload);
+      workerSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, null as any);
+      workerSession.webRequest.onHeadersReceived({ urls: ['*://*/*'] }, null as any);
+      workerSession.setPermissionRequestHandler(null as any);
       if (!worker.isDestroyed()) worker.destroy();
       await workerSession.clearStorageData().catch(() => undefined);
       await workerSession.clearCache().catch(() => undefined);

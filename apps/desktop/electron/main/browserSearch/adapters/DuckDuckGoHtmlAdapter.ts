@@ -1,6 +1,6 @@
 import { detectBrowserSearchChallenge } from '../browserSearchChallenge';
 import { extractOrganicResultsFromHtml } from '../browserSearchExtraction';
-import type { BrowserSearchEngineAdapter } from '../BrowserSearchEngineAdapter';
+import type { BrowserSearchEngineAdapter, ResultState } from '../BrowserSearchEngineAdapter';
 
 export const DUCKDUCKGO_HTML_ADAPTER_ID = 'duckduckgo-html';
 
@@ -17,17 +17,12 @@ export class DuckDuckGoHtmlAdapter implements BrowserSearchEngineAdapter {
     return url;
   }
 
-  async waitForResults(input: { webContents: import('electron').WebContents; timeoutMs: number }): Promise<void> {
-    const started = Date.now();
-    while (Date.now() - started < input.timeoutMs) {
-      const ready = await input.webContents.executeJavaScript(
-        'Boolean(document.querySelector(".result") || document.querySelector(".msg") || document.body?.innerText?.includes("No results."))',
-        true,
-      ).catch(() => false);
-      if (ready) return;
-      await new Promise((resolve) => setTimeout(resolve, 150));
-    }
-    throw new Error('browser_search_timeout');
+  async detectResultState(input: { webContents: import('electron').WebContents }): Promise<ResultState> {
+    const state = await input.webContents.executeJavaScript(
+      'Boolean(document.querySelector(".result")) ? "results" : Boolean(document.querySelector(".msg") || document.body?.innerText?.includes("No results.")) ? "no_results" : "loading"',
+      true,
+    ).catch(() => 'loading');
+    return state as ResultState;
   }
 
   detectChallenge(input: { url: string; title: string; visibleText: string }) {

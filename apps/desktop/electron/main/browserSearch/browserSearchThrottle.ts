@@ -49,10 +49,14 @@ export class BrowserSearchThrottle {
   private scheduleDrain(): void {
     if (this.draining || this.locked) return;
     this.draining = true;
-    setTimeout(() => {
+
+    void this.drain().finally(() => {
       this.draining = false;
-      void this.drain();
-    }, 0);
+
+      if (!this.locked && this.queue.length > 0) {
+        this.scheduleDrain();
+      }
+    });
   }
 
   private async drain(): Promise<void> {

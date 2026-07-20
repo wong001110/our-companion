@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BrowserSearchError } from './browserSearchTypes';
 import type { BrowserSearchEngineAdapter } from './BrowserSearchEngineAdapter';
 
@@ -7,6 +7,7 @@ vi.mock('electron', () => {
     webRequest: { onBeforeRequest: vi.fn(), onHeadersReceived: vi.fn() },
     setPermissionRequestHandler: vi.fn(),
     on: vi.fn(),
+    removeListener: vi.fn(),
     clearStorageData: vi.fn(async () => {}),
     clearCache: vi.fn(async () => {}),
   };
@@ -20,12 +21,12 @@ function createMockBrowserWindow() {
   return {
     webContents: {
       getURL: vi.fn(() => 'https://html.duckduckgo.com/html/?q=test'),
+      id: 1,
       executeJavaScript: vi.fn(async (code: string) => {
         if (code.includes('document.title')) return 'Test Page';
         if (code.includes('document.body')) return 'Test content';
-        if (code.includes('document.readyState')) return 'complete';
         if (code.includes('document.documentElement.outerHTML')) return '<html><body></body></html>';
-        if (code.includes('.result') || code.includes('.msg') || code.includes('No results')) return true;
+        if (code.includes('"results"') || code.includes('"no_results"') || code.includes('"loading"')) return 'results';
         return '';
       }),
       on: vi.fn(),
@@ -34,6 +35,7 @@ function createMockBrowserWindow() {
       session: {
         setPermissionRequestHandler: vi.fn(),
         on: vi.fn(),
+        removeListener: vi.fn(),
       },
       setWindowOpenHandler: vi.fn(),
     },
@@ -50,15 +52,12 @@ const stubAdapter: BrowserSearchEngineAdapter = {
   version: 1,
   allowedNavigationHosts: ['html.duckduckgo.com'],
   buildSearchUrl: (input) => new URL(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(input.query)}`),
-  waitForResults: async () => {},
+  detectResultState: async () => 'results',
   detectChallenge: () => null,
   extractResults: async () => [{ title: 'Result', url: 'https://example.com', snippet: 'test' }],
 };
 
 describe('BrowserSearchWorker', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
 
   it('throws when app is not ready', async () => {
     const { BrowserSearchWorker } = await import('./BrowserSearchWorker');
@@ -201,7 +200,7 @@ describe('BrowserSearchWorker', () => {
     expect(mockWindow.destroy).toHaveBeenCalled();
   });
 
-  it('cleans up all listeners after execution', async () => {
+  it('cleans up all listeners after success', async () => {
     const { BrowserSearchWorker } = await import('./BrowserSearchWorker');
     const mockWindow = createMockBrowserWindow();
     const worker = new BrowserSearchWorker({
@@ -215,6 +214,27 @@ describe('BrowserSearchWorker', () => {
     });
     expect(mockWindow.webContents.removeListener).toHaveBeenCalled();
     expect(mockWindow.removeListener).toHaveBeenCalled();
+    expect(mockWindow.webContents.session.removeListener).toHaveBeenCalled();
+  });
+
+  it('cleans up all listeners after failure', async () => {
+    const { BrowserSearchWorker } = await import('./BrowserSearchWorker');
+    const mockWindow = createMockBrowserWindow();
+    const failAdapter: BrowserSearchEngineAdapter = {
+      ...stubAdapter,
+      extractResults: async () => { throw new Error('extraction failed'); },
+    };
+    const worker = new BrowserSearchWorker({
+      isAppReady: () => true,
+      createWindow: () => mockWindow as any,
+    });
+    await worker.execute({
+      adapter: failAdapter,
+      searchUrl: new URL('https://html.duckduckgo.com/html/?q=test'),
+      limit: 10,
+    }).catch(() => {});
+    expect(mockWindow.webContents.removeListener).toHaveBeenCalled();
+    expect(mockWindow.removeListener).toHaveBeenCalled();
   });
 
   it('returns no results when adapter returns empty', async () => {
@@ -222,7 +242,7 @@ describe('BrowserSearchWorker', () => {
     const mockWindow = createMockBrowserWindow();
     const emptyAdapter: BrowserSearchEngineAdapter = {
       ...stubAdapter,
-      extractResults: async () => [],
+      detectResultState: async () => 'no_results',
     };
     const worker = new BrowserSearchWorker({
       isAppReady: () => true,
@@ -259,12 +279,12 @@ describe('BrowserSearchWorker', () => {
     mockWindow.webContents.executeJavaScript = vi.fn(async (code: string) => {
       if (code.includes('document.title')) return 'Verify you are human';
       if (code.includes('document.body')) return 'Please complete the CAPTCHA.';
-      if (code.includes('.result') || code.includes('.msg') || code.includes('No results')) return false;
+      if (code.includes('"results"') || code.includes('"no_results"') || code.includes('"loading"')) return 'loading';
       return '';
     });
     const challengeAdapter: BrowserSearchEngineAdapter = {
       ...stubAdapter,
-      waitForResults: async () => {},
+      detectResultState: async () => 'loading',
       detectChallenge: ({ title, visibleText }) => {
         const text = `${title} ${visibleText}`;
         if (text.includes('CAPTCHA') || text.includes('Verify you are human')) {
@@ -284,4 +304,22 @@ describe('BrowserSearchWorker', () => {
       timeoutMs: 500,
     })).rejects.toMatchObject({ code: 'browser_search_challenge' });
   });
+
+  it('navigation timeout occurs when loadURL never resolves', async () => {
+    const { BrowserSearchWorker } = await import('./BrowserSearchWorker');
+    const mockWindow = createMockBrowserWindow();
+    mockWindow.loadURL = vi.fn(() => new Promise(() => {}));
+    const worker = new BrowserSearchWorker({
+      isAppReady: () => true,
+      createWindow: () => mockWindow as any,
+    });
+    await expect(worker.execute({
+      adapter: stubAdapter,
+      searchUrl: new URL('https://html.duckduckgo.com/html/?q=test'),
+      limit: 10,
+      timeoutMs: 200,
+    })).rejects.toThrow();
+    expect(mockWindow.destroy).toHaveBeenCalled();
+  });
+
 });

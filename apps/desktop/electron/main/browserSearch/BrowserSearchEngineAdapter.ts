@@ -1,6 +1,8 @@
 import type { WebContents } from 'electron';
 import type { BrowserSearchChallenge, BrowserSearchExtractedResult } from './browserSearchTypes';
 
+export type ResultState = 'loading' | 'results' | 'no_results';
+
 export interface BrowserSearchEngineAdapter {
   id: string;
   version: number;
@@ -14,10 +16,9 @@ export interface BrowserSearchEngineAdapter {
 
   allowedNavigationHosts: string[];
 
-  waitForResults(input: {
+  detectResultState(input: {
     webContents: WebContents;
-    timeoutMs: number;
-  }): Promise<void>;
+  }): Promise<ResultState>;
 
   detectChallenge(input: {
     url: string;

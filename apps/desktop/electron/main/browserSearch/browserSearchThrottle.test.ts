@@ -236,4 +236,27 @@ describe('BrowserSearchThrottle', () => {
     const p = throttle.acquire();
     await expect(p).rejects.toMatchObject({ code: 'browser_search_rate_limited' });
   });
+
+  it('new acquire during minimum-interval wait cannot start another drain', async () => {
+    let now = 0;
+    const throttle = new BrowserSearchThrottle(() => now);
+
+    const release1 = await throttle.acquire();
+    const p2 = throttle.acquire();
+    const p3 = throttle.acquire();
+
+    release1();
+    now += BROWSER_SEARCH_MIN_INTERVAL_MS + 1;
+    const release2 = await p2;
+
+    let resolved3 = false;
+    p3.then(() => { resolved3 = true; });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(resolved3).toBe(false);
+
+    release2();
+    now += BROWSER_SEARCH_MIN_INTERVAL_MS + 1;
+    await p3;
+    expect(resolved3).toBe(true);
+  });
 });
