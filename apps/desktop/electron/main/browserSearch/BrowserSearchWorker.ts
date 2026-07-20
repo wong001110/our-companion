@@ -157,18 +157,20 @@ export class BrowserSearchWorker {
     const onClosed = () => { workerDestroyed = true; };
     worker.on('closed', onClosed);
 
-    try {
-      const navigationTimeout = new Promise<never>((_, reject) => {
-        const timer = setTimeout(() => {
-          reject(new BrowserSearchError('browser_search_timeout'));
-        }, timeoutMs);
-        const originalFinally = () => clearTimeout(timer);
-        (navigationTimeout as any).__cleanup = originalFinally;
-      });
+    let navigationTimer: ReturnType<typeof setTimeout> | undefined;
 
+    try {
       await Promise.race([
         worker.loadURL(input.searchUrl.toString()),
-        navigationTimeout,
+
+        new Promise<never>((_, reject) => {
+          navigationTimer = setTimeout(() => {
+            if (!worker.isDestroyed()) {
+              worker.webContents.stop();
+            }
+            reject(new BrowserSearchError('browser_search_timeout'));
+          }, timeoutMs);
+        }),
       ]);
 
       if (mainFrameLoadFailure) {
@@ -259,6 +261,10 @@ export class BrowserSearchWorker {
       }
       throw new BrowserSearchError('browser_search_unavailable', message);
     } finally {
+      if (navigationTimer !== undefined) {
+        clearTimeout(navigationTimer);
+        navigationTimer = undefined;
+      }
       worker.webContents.removeListener('will-navigate', guardNavigation);
       worker.webContents.removeListener('will-redirect', guardNavigation);
       worker.webContents.removeListener('did-fail-load', onDidFailLoad);

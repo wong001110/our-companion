@@ -32,6 +32,7 @@ function createMockBrowserWindow() {
       on: vi.fn(),
       removeListener: vi.fn(),
       removeAllListeners: vi.fn(),
+      stop: vi.fn(),
       session: {
         setPermissionRequestHandler: vi.fn(),
         on: vi.fn(),
@@ -305,21 +306,84 @@ describe('BrowserSearchWorker', () => {
     })).rejects.toMatchObject({ code: 'browser_search_challenge' });
   });
 
-  it('navigation timeout occurs when loadURL never resolves', async () => {
-    const { BrowserSearchWorker } = await import('./BrowserSearchWorker');
-    const mockWindow = createMockBrowserWindow();
-    mockWindow.loadURL = vi.fn(() => new Promise(() => {}));
-    const worker = new BrowserSearchWorker({
-      isAppReady: () => true,
-      createWindow: () => mockWindow as any,
+  describe('navigation timeout', () => {
+    it('pending navigation times out with browser_search_timeout', async () => {
+      const { BrowserSearchWorker } = await import('./BrowserSearchWorker');
+      const mockWindow = createMockBrowserWindow();
+      mockWindow.loadURL = vi.fn(() => new Promise(() => {}));
+      const worker = new BrowserSearchWorker({
+        isAppReady: () => true,
+        createWindow: () => mockWindow as any,
+      });
+      const error = await worker.execute({
+        adapter: stubAdapter,
+        searchUrl: new URL('https://html.duckduckgo.com/html/?q=test'),
+        limit: 10,
+        timeoutMs: 200,
+      }).catch((caught) => caught);
+
+      expect(error).toBeInstanceOf(BrowserSearchError);
+      expect(error.code).toBe('browser_search_timeout');
+      expect(error).not.toBeInstanceOf(ReferenceError);
+      expect(mockWindow.destroy).toHaveBeenCalled();
     });
-    await expect(worker.execute({
-      adapter: stubAdapter,
-      searchUrl: new URL('https://html.duckduckgo.com/html/?q=test'),
-      limit: 10,
-      timeoutMs: 200,
-    })).rejects.toThrow();
-    expect(mockWindow.destroy).toHaveBeenCalled();
+
+    it('successful navigation clears the timer', async () => {
+      const { BrowserSearchWorker } = await import('./BrowserSearchWorker');
+      const mockWindow = createMockBrowserWindow();
+      let loadResolve: () => void;
+      mockWindow.loadURL = vi.fn(() => new Promise<void>((resolve) => { loadResolve = resolve; }));
+      const worker = new BrowserSearchWorker({
+        isAppReady: () => true,
+        createWindow: () => mockWindow as any,
+      });
+      const execPromise = worker.execute({
+        adapter: stubAdapter,
+        searchUrl: new URL('https://html.duckduckgo.com/html/?q=test'),
+        limit: 10,
+        timeoutMs: 200,
+      });
+      loadResolve!();
+      const result = await execPromise;
+      expect(result.results).toHaveLength(1);
+      expect(mockWindow.destroy).toHaveBeenCalled();
+    });
+
+    it('failed navigation maps to browser_search_navigation_failed', async () => {
+      const { BrowserSearchWorker } = await import('./BrowserSearchWorker');
+      const mockWindow = createMockBrowserWindow();
+      mockWindow.loadURL = vi.fn(async () => {
+        throw new Error('ERR_BLOCKED_BY_CLIENT');
+      });
+      const worker = new BrowserSearchWorker({
+        isAppReady: () => true,
+        createWindow: () => mockWindow as any,
+      });
+      await expect(worker.execute({
+        adapter: stubAdapter,
+        searchUrl: new URL('https://html.duckduckgo.com/html/?q=test'),
+        limit: 10,
+        timeoutMs: 200,
+      })).rejects.toMatchObject({ code: 'browser_search_navigation_failed' });
+    });
+
+    it('no lingering timer after successful execution', async () => {
+      const { BrowserSearchWorker } = await import('./BrowserSearchWorker');
+      const mockWindow = createMockBrowserWindow();
+      const worker = new BrowserSearchWorker({
+        isAppReady: () => true,
+        createWindow: () => mockWindow as any,
+      });
+      const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+      await worker.execute({
+        adapter: stubAdapter,
+        searchUrl: new URL('https://html.duckduckgo.com/html/?q=test'),
+        limit: 10,
+        timeoutMs: 200,
+      });
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+      clearTimeoutSpy.mockRestore();
+    });
   });
 
 });
