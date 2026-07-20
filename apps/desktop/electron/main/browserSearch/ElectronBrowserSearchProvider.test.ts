@@ -150,6 +150,222 @@ describe('ElectronBrowserSearchProvider', () => {
     const diagnostics = provider.getDiagnostics();
     expect(diagnostics.availability).toBe('unavailable');
   });
+
+  describe('requiredDomains filtering', () => {
+    it('GitHub accepts github.com', async () => {
+      const provider = new ElectronBrowserSearchProvider({
+        worker: createMockWorker({
+          url: 'https://html.duckduckgo.com/html/?q=test',
+          title: 'Test',
+          visibleText: '',
+          results: [
+            { title: 'GitHub Result', url: 'https://github.com/repo', snippet: 'GitHub' },
+            { title: 'Other Result', url: 'https://example.com/page', snippet: 'Other' },
+          ],
+        }) as any,
+        isAppReady: () => true,
+      });
+      const results = await provider.search({
+        query: 'test',
+        limit: 10,
+        requiredDomains: ['github.com'],
+      });
+      expect(results).toHaveLength(1);
+      expect(results[0]!.domain).toBe('github.com');
+    });
+
+    it('GitHub accepts subdomains of github.com', async () => {
+      const provider = new ElectronBrowserSearchProvider({
+        worker: createMockWorker({
+          url: 'https://html.duckduckgo.com/html/?q=test',
+          title: 'Test',
+          visibleText: '',
+          results: [
+            { title: 'GitHub Docs', url: 'https://docs.github.com/page', snippet: 'Docs' },
+            { title: 'GitHub API', url: 'https://api.github.com/repos', snippet: 'API' },
+          ],
+        }) as any,
+        isAppReady: () => true,
+      });
+      const results = await provider.search({
+        query: 'test',
+        limit: 10,
+        requiredDomains: ['github.com'],
+      });
+      expect(results).toHaveLength(2);
+      expect(results.every((r) => r.domain.endsWith('github.com'))).toBe(true);
+    });
+
+    it('GitHub rejects example.com', async () => {
+      const provider = new ElectronBrowserSearchProvider({
+        worker: createMockWorker({
+          url: 'https://html.duckduckgo.com/html/?q=test',
+          title: 'Test',
+          visibleText: '',
+          results: [
+            { title: 'GitHub Result', url: 'https://github.com/repo', snippet: 'GitHub' },
+            { title: 'Other Result', url: 'https://example.com/page', snippet: 'Other' },
+          ],
+        }) as any,
+        isAppReady: () => true,
+      });
+      const results = await provider.search({
+        query: 'test',
+        limit: 10,
+        requiredDomains: ['github.com'],
+      });
+      expect(results).toHaveLength(1);
+      expect(results[0]!.domain).toBe('github.com');
+    });
+
+    it('YouTube accepts youtube.com and youtu.be', async () => {
+      const provider = new ElectronBrowserSearchProvider({
+        worker: createMockWorker({
+          url: 'https://html.duckduckgo.com/html/?q=test',
+          title: 'Test',
+          visibleText: '',
+          results: [
+            { title: 'YouTube Video', url: 'https://youtube.com/watch?v=123', snippet: 'YouTube' },
+            { title: 'YouTube Short', url: 'https://youtu.be/123', snippet: 'Short' },
+            { title: 'Other Result', url: 'https://example.com/page', snippet: 'Other' },
+          ],
+        }) as any,
+        isAppReady: () => true,
+      });
+      const results = await provider.search({
+        query: 'test',
+        limit: 10,
+        requiredDomains: ['youtube.com', 'youtu.be'],
+      });
+      expect(results).toHaveLength(2);
+      expect(results.every((r) => r.domain === 'youtube.com' || r.domain === 'youtu.be')).toBe(true);
+    });
+
+    it('Reddit rejects non-reddit domains', async () => {
+      const provider = new ElectronBrowserSearchProvider({
+        worker: createMockWorker({
+          url: 'https://html.duckduckgo.com/html/?q=test',
+          title: 'Test',
+          visibleText: '',
+          results: [
+            { title: 'Reddit Post', url: 'https://reddit.com/r/test', snippet: 'Reddit' },
+            { title: 'Other Result', url: 'https://example.com/page', snippet: 'Other' },
+          ],
+        }) as any,
+        isAppReady: () => true,
+      });
+      const results = await provider.search({
+        query: 'test',
+        limit: 10,
+        requiredDomains: ['reddit.com'],
+      });
+      expect(results).toHaveLength(1);
+      expect(results[0]!.domain).toBe('reddit.com');
+    });
+
+    it('Open Web has no required-domain filter', async () => {
+      const provider = new ElectronBrowserSearchProvider({
+        worker: createMockWorker({
+          url: 'https://html.duckduckgo.com/html/?q=test',
+          title: 'Test',
+          visibleText: '',
+          results: [
+            { title: 'Result 1', url: 'https://example.com/1', snippet: 'Result 1' },
+            { title: 'Result 2', url: 'https://other.com/2', snippet: 'Result 2' },
+          ],
+        }) as any,
+        isAppReady: () => true,
+      });
+      const results = await provider.search({
+        query: 'test',
+        limit: 10,
+        requiredDomains: [],
+      });
+      expect(results).toHaveLength(2);
+    });
+
+    it('Excluded domains are always removed', async () => {
+      const provider = new ElectronBrowserSearchProvider({
+        worker: createMockWorker({
+          url: 'https://html.duckduckgo.com/html/?q=test',
+          title: 'Test',
+          visibleText: '',
+          results: [
+            { title: 'Result 1', url: 'https://example.com/1', snippet: 'Result 1' },
+            { title: 'Result 2', url: 'https://spam.com/2', snippet: 'Result 2' },
+          ],
+        }) as any,
+        isAppReady: () => true,
+      });
+      const results = await provider.search({
+        query: 'test',
+        limit: 10,
+        excludedDomains: ['spam.com'],
+      });
+      expect(results).toHaveLength(1);
+      expect(results[0]!.domain).toBe('example.com');
+    });
+
+    it('All rejected results produce no-results outcome', async () => {
+      const provider = new ElectronBrowserSearchProvider({
+        worker: createMockWorker({
+          url: 'https://html.duckduckgo.com/html/?q=test',
+          title: 'Test',
+          visibleText: '',
+          results: [
+            { title: 'Other Result', url: 'https://example.com/page', snippet: 'Other' },
+          ],
+        }) as any,
+        isAppReady: () => true,
+      });
+      await expect(provider.search({
+        query: 'test',
+        limit: 10,
+        requiredDomains: ['github.com'],
+      })).rejects.toMatchObject({ code: 'browser_search_no_results' });
+    });
+  });
+
+  describe('no-results keeps availability ready', () => {
+    it('no results keeps availability ready', async () => {
+      const provider = new ElectronBrowserSearchProvider({
+        worker: createFailWorker(new BrowserSearchError('browser_search_no_results')) as any,
+        isAppReady: () => true,
+      });
+      await provider.search({ query: 'test', limit: 10 }).catch(() => {});
+      const diagnostics = provider.getDiagnostics();
+      expect(diagnostics.availability).toBe('ready');
+    });
+
+    it('timeout sets availability unavailable', async () => {
+      const provider = new ElectronBrowserSearchProvider({
+        worker: createFailWorker(new BrowserSearchError('browser_search_timeout')) as any,
+        isAppReady: () => true,
+      });
+      await provider.search({ query: 'test', limit: 10 }).catch(() => {});
+      const diagnostics = provider.getDiagnostics();
+      expect(diagnostics.availability).toBe('unavailable');
+    });
+
+    it('successful retry clears prior transient error', async () => {
+      const provider = new ElectronBrowserSearchProvider({
+        worker: createFailWorker(new BrowserSearchError('browser_search_timeout')) as any,
+        isAppReady: () => true,
+      });
+      await provider.search({ query: 'test', limit: 10 }).catch(() => {});
+      expect(provider.getDiagnostics().lastErrorCode).toBe('browser_search_timeout');
+
+      const worker2 = createMockWorker();
+      const provider2 = new ElectronBrowserSearchProvider({
+        worker: worker2 as any,
+        isAppReady: () => true,
+      });
+      await provider2.search({ query: 'test', limit: 10 });
+      const diagnostics = provider2.getDiagnostics();
+      expect(diagnostics.availability).toBe('ready');
+      expect(diagnostics.lastErrorCode).toBeUndefined();
+    });
+  });
 });
 
 describe('mapBrowserSearchAvailabilityMessage', () => {
@@ -159,6 +375,10 @@ describe('mapBrowserSearchAvailabilityMessage', () => {
     expect(mapBrowserSearchAvailabilityMessage('browser_search_rate_limited')).toContain('rate-limited');
     expect(mapBrowserSearchAvailabilityMessage('browser_search_unavailable')).toContain('unavailable');
     expect(mapBrowserSearchAvailabilityMessage('browser_search_no_results')).toContain('no results');
+    expect(mapBrowserSearchAvailabilityMessage('browser_search_parse_failed')).toContain('could not read');
+    expect(mapBrowserSearchAvailabilityMessage('browser_search_http_blocked')).toContain('blocked');
+    expect(mapBrowserSearchAvailabilityMessage('browser_search_destroyed')).toContain('destroyed');
+    expect(mapBrowserSearchAvailabilityMessage('browser_search_navigation_failed')).toContain('load the search page');
   });
 
   it('returns default for unknown codes', () => {

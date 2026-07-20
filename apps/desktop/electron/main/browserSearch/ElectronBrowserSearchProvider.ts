@@ -28,6 +28,30 @@ export interface ElectronBrowserSearchProviderOptions {
   language?: string;
 }
 
+function hostnameMatchesDomain(hostname: string, domain: string): boolean {
+  return hostname === domain || hostname.endsWith(`.${domain}`);
+}
+
+function filterByRequiredDomains(
+  results: WebSearchResult[],
+  requiredDomains: string[],
+): WebSearchResult[] {
+  if (requiredDomains.length === 0) return results;
+  return results.filter((result) =>
+    requiredDomains.some((domain) => hostnameMatchesDomain(result.domain, domain))
+  );
+}
+
+function filterByExcludedDomains(
+  results: WebSearchResult[],
+  excludedDomains: string[],
+): WebSearchResult[] {
+  if (excludedDomains.length === 0) return results;
+  return results.filter((result) =>
+    !excludedDomains.some((domain) => hostnameMatchesDomain(result.domain, domain))
+  );
+}
+
 export class ElectronBrowserSearchProvider implements WebSearchProvider {
   readonly id = BROWSER_SEARCH_PROVIDER_ID;
   readonly mode: ResearchAdapterMode = 'live';
@@ -74,6 +98,9 @@ export class ElectronBrowserSearchProvider implements WebSearchProvider {
 
   async search(input: Parameters<WebSearchProvider['search']>[0]): Promise<WebSearchResult[]> {
     const attemptedAt = this.now().toISOString();
+    const requiredDomains = input.requiredDomains ?? [];
+    const excludedDomains = input.excludedDomains ?? [];
+
     updateBrowserSearchDiagnostics({
       providerId: this.id,
       adapterId: this.adapter.id,
@@ -102,13 +129,20 @@ export class ElectronBrowserSearchProvider implements WebSearchProvider {
       });
       const cached = this.cache.get(cacheKey);
       if (cached) {
+        const filtered = filterByRequiredDomains(
+          filterByExcludedDomains(cached, excludedDomains),
+          requiredDomains,
+        );
+        if (requiredDomains.length > 0 && filtered.length === 0) {
+          throw new BrowserSearchError('browser_search_no_results');
+        }
         updateBrowserSearchDiagnostics({
           availability: 'ready',
           cacheHit: true,
           lastSuccessAt: attemptedAt,
           lastErrorCode: undefined,
         });
-        return cached.slice(0, input.limit);
+        return filtered.slice(0, input.limit);
       }
       const searchUrl = this.adapter.buildSearchUrl({
         query: finalQuery,
@@ -125,15 +159,22 @@ export class ElectronBrowserSearchProvider implements WebSearchProvider {
         query: input.query,
         providerId: this.id,
         results: workerResult.results,
-      }).slice(0, input.limit);
-      this.cache.set(cacheKey, normalized, BrowserSearchCache.ttlMs(input.freshnessDays));
+      });
+      const filtered = filterByRequiredDomains(
+        filterByExcludedDomains(normalized, excludedDomains),
+        requiredDomains,
+      );
+      if (requiredDomains.length > 0 && filtered.length === 0) {
+        throw new BrowserSearchError('browser_search_no_results');
+      }
+      this.cache.set(cacheKey, filtered, BrowserSearchCache.ttlMs(input.freshnessDays));
       updateBrowserSearchDiagnostics({
         availability: 'ready',
         lastSuccessAt: this.now().toISOString(),
         lastErrorCode: undefined,
         cacheHit: false,
       });
-      return normalized;
+      return filtered.slice(0, input.limit);
     } catch (error) {
       const code = error instanceof BrowserSearchError
         ? error.code
@@ -144,11 +185,7 @@ export class ElectronBrowserSearchProvider implements WebSearchProvider {
         this.throttle.noteChallengeOrRateLimit();
       }
       updateBrowserSearchDiagnostics({
-        availability: code === 'browser_search_challenge'
-          ? 'challenge'
-          : code === 'browser_search_rate_limited'
-            ? 'cooldown'
-            : 'unavailable',
+        availability: getAvailabilityForError(code),
         lastErrorCode: code,
         cooldownUntil: this.throttle.isInCooldown()
           ? new Date(this.throttle.getCooldownUntil()).toISOString()
@@ -161,6 +198,19 @@ export class ElectronBrowserSearchProvider implements WebSearchProvider {
     } finally {
       release?.();
     }
+  }
+}
+
+function getAvailabilityForError(code: string): 'ready' | 'cooldown' | 'challenge' | 'unavailable' {
+  switch (code) {
+    case 'browser_search_challenge':
+      return 'challenge';
+    case 'browser_search_rate_limited':
+      return 'cooldown';
+    case 'browser_search_no_results':
+      return 'ready';
+    default:
+      return 'unavailable';
   }
 }
 

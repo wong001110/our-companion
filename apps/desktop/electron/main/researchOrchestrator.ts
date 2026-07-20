@@ -27,6 +27,7 @@ import {
   type ResearchCapability,
   validateAiResearchPlan
 } from '@our-companion/discovery-engine';
+import { getDiscoveryPlatformPreset, isDiscoveryPlatformId } from '@our-companion/discovery-engine';
 import type { WebPageFetcher, WebSearchProvider } from './researchAdapters';
 
 class ResearchCycleTimeoutError extends Error {
@@ -428,6 +429,15 @@ export class ResearchOrchestrator {
     const dynamicQueries = dynamicTasks
       .map((task) => task.query.trim())
       .filter((query) => query.length >= 3);
+    const dynamicTaskRequiredDomains = new Map<string, string[]>();
+    for (const task of dynamicTasks) {
+      if (isDiscoveryPlatformId(task.platformId)) {
+        const preset = getDiscoveryPlatformPreset(task.platformId);
+        if (preset.allowedDomains.length > 0) {
+          dynamicTaskRequiredDomains.set(task.query, [...preset.allowedDomains]);
+        }
+      }
+    }
     const baseUrls = new Map(
       eligibleBases.flatMap((base) => {
         const url = discoveryBaseUrl(base);
@@ -614,10 +624,11 @@ export class ResearchOrchestrator {
       }
       searchesStarted += 1;
       const queryBaseIds = baseIdsByQuery.get(query) ?? [];
+      const requiredDomains = dynamicTaskRequiredDomains.get(query) ?? [];
       for (const baseId of queryBaseIds) usedBaseIds.add(baseId);
       try {
         const found = await withCycleDeadline(
-          this.deps.searchProvider.search({ query, limit: plan.limits.maxSearchResultsPerQuery, freshnessDays: intent.freshnessDays, domainHints: intent.domainHints, excludedDomains: intent.excludedDomains }),
+          this.deps.searchProvider.search({ query, limit: plan.limits.maxSearchResultsPerQuery, freshnessDays: intent.freshnessDays, domainHints: intent.domainHints, excludedDomains: intent.excludedDomains, requiredDomains }),
           remainingMs()
         );
         for (const result of found) {

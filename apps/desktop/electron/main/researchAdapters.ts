@@ -19,6 +19,7 @@ export interface WebSearchProvider {
     freshnessDays?: number;
     domainHints?: string[];
     excludedDomains?: string[];
+    requiredDomains?: string[];
   }): Promise<WebSearchResult[]>;
 }
 

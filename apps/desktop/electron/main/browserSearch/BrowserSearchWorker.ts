@@ -44,18 +44,28 @@ function blockedNavigation(url: string): boolean {
   }
 }
 
+function mapHttpStatus(status: number): BrowserSearchError | null {
+  if (status === 429) return new BrowserSearchError('browser_search_rate_limited');
+  if (status === 401 || status === 403) return new BrowserSearchError('browser_search_http_blocked');
+  if (status >= 500) return new BrowserSearchError('browser_search_navigation_failed');
+  return null;
+}
+
 export class BrowserSearchWorker {
   constructor(private readonly deps: BrowserSearchWorkerDeps = {}) {}
 
   async execute(input: BrowserSearchWorkerRequest): Promise<BrowserSearchWorkerResult> {
     if (this.deps.isAppReady && !this.deps.isAppReady()) {
-      throw new BrowserSearchError('browser_search_unavailable', 'Electron app is not ready.');
+      throw new BrowserSearchError('browser_search_unavailable');
     }
     const timeoutMs = input.timeoutMs ?? BROWSER_SEARCH_HARD_TIMEOUT_MS;
     const partition = `browser-search-${createId('session')}`;
     const workerSession = session.fromPartition(partition, { cache: false });
     const blockedResourceTypes = new Set(['image', 'media', 'font']);
     const blockedHosts = [/doubleclick\.net/i, /googlesyndication\.com/i, /adservice/i];
+    let httpStatus = 0;
+    let destroyed = false;
+
     workerSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
       if (blockedResourceTypes.has(details.resourceType)) {
         callback({ cancel: true });
@@ -73,6 +83,21 @@ export class BrowserSearchWorker {
       }
       callback({});
     });
+
+    workerSession.webRequest.onHeadersReceived(
+      { urls: ['*://*/*'] },
+      (details, callback) => {
+        if (details.id === 1 && details.responseHeaders) {
+          const statusLine = details.statusLine;
+          if (statusLine) {
+            const match = statusLine.match(/HTTP\/[\d.]+ (\d+)/);
+            if (match) httpStatus = parseInt(match[1]!, 10);
+          }
+        }
+        callback({ responseHeaders: details.responseHeaders });
+      },
+    );
+
     workerSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     const worker = this.deps.createWindow?.(partition) ?? new BrowserWindow({
       show: false,
@@ -88,6 +113,7 @@ export class BrowserSearchWorker {
     worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     worker.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     worker.webContents.session.on('will-download', (event) => event.preventDefault());
+
     const allowedHosts = input.adapter.allowedNavigationHosts;
     const guardNavigation = (event: Electron.Event, url: string) => {
       if (blockedNavigation(url) || !hostAllowed(url, allowedHosts)) {
@@ -96,16 +122,70 @@ export class BrowserSearchWorker {
     };
     worker.webContents.on('will-navigate', guardNavigation);
     worker.webContents.on('will-redirect', guardNavigation);
+
+    const onDidFailLoad = (_event: Electron.Event, errorCode: number, errorDescription: string) => {
+      if (errorCode === -3) return;
+      if (!destroyed) {
+        destroyed = true;
+      }
+    };
+    worker.webContents.on('did-fail-load', onDidFailLoad);
+
     try {
       await worker.loadURL(input.searchUrl.toString(), { timeout: timeoutMs });
+
       if (worker.webContents.getURL().startsWith('http') && !hostAllowed(worker.webContents.getURL(), allowedHosts)) {
         throw new BrowserSearchError('browser_search_navigation_failed');
       }
-      const httpCode = worker.webContents.getURL().length > 0
-        ? await worker.webContents.executeJavaScript('document.readyState', true).catch(() => 'complete')
-        : 'complete';
-      if (!httpCode) throw new BrowserSearchError('browser_search_navigation_failed');
+
+      if (httpStatus) {
+        const httpError = mapHttpStatus(httpStatus);
+        if (httpError) throw httpError;
+      }
+
+      const checkChallengeEarly = async (): Promise<boolean> => {
+        try {
+          const title = await worker.webContents.executeJavaScript('document.title', true);
+          const visibleText = await worker.webContents.executeJavaScript(
+            'document.body ? document.body.innerText.slice(0, 12000) : ""',
+            true,
+          );
+          const challenge = input.adapter.detectChallenge({
+            url: worker.webContents.getURL(),
+            title: String(title ?? ''),
+            visibleText: String(visibleText ?? ''),
+          });
+          return challenge !== null;
+        } catch {
+          return false;
+        }
+      };
+
+      if (await checkChallengeEarly()) {
+        const title = await worker.webContents.executeJavaScript('document.title', true).catch(() => '');
+        const visibleText = await worker.webContents.executeJavaScript(
+          'document.body ? document.body.innerText.slice(0, 12000) : ""',
+          true,
+        ).catch(() => '');
+        const challenge = input.adapter.detectChallenge({
+          url: worker.webContents.getURL(),
+          title: String(title ?? ''),
+          visibleText: String(visibleText ?? ''),
+        });
+        if (challenge) {
+          if (challenge.kind === 'rate_limit' || challenge.kind === 'access_denied') {
+            throw new BrowserSearchError('browser_search_rate_limited');
+          }
+          throw new BrowserSearchError('browser_search_challenge');
+        }
+      }
+
       await input.adapter.waitForResults({ webContents: worker.webContents, timeoutMs });
+
+      if (destroyed || worker.isDestroyed()) {
+        throw new BrowserSearchError('browser_search_destroyed');
+      }
+
       const title = await worker.webContents.executeJavaScript('document.title', true).catch(() => '');
       const visibleText = await worker.webContents.executeJavaScript(
         'document.body ? document.body.innerText.slice(0, 12000) : ""',
@@ -118,12 +198,22 @@ export class BrowserSearchWorker {
         visibleText: String(visibleText ?? ''),
       });
       if (challenge) {
+        if (challenge.kind === 'rate_limit' || challenge.kind === 'access_denied') {
+          throw new BrowserSearchError('browser_search_rate_limited');
+        }
         throw new BrowserSearchError('browser_search_challenge');
       }
-      const results = await input.adapter.extractResults({
-        webContents: worker.webContents,
-        limit: input.limit,
-      });
+
+      let results: BrowserSearchExtractedResult[];
+      try {
+        results = await input.adapter.extractResults({
+          webContents: worker.webContents,
+          limit: input.limit,
+        });
+      } catch {
+        throw new BrowserSearchError('browser_search_parse_failed');
+      }
+
       if (!results.length) {
         throw new BrowserSearchError('browser_search_no_results');
       }
@@ -144,8 +234,9 @@ export class BrowserSearchWorker {
       }
       throw new BrowserSearchError('browser_search_unavailable', message);
     } finally {
-      worker.webContents.removeAllListeners('will-navigate');
-      worker.webContents.removeAllListeners('will-redirect');
+      worker.webContents.removeListener('will-navigate', guardNavigation);
+      worker.webContents.removeListener('will-redirect', guardNavigation);
+      worker.webContents.removeListener('did-fail-load', onDidFailLoad);
       if (!worker.isDestroyed()) worker.destroy();
       await workerSession.clearStorageData().catch(() => undefined);
       await workerSession.clearCache().catch(() => undefined);

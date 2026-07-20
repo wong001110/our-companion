@@ -4,7 +4,7 @@ import type { BrowserSearchEngineAdapter } from './BrowserSearchEngineAdapter';
 
 vi.mock('electron', () => {
   const sessionInstance = {
-    webRequest: { onBeforeRequest: vi.fn() },
+    webRequest: { onBeforeRequest: vi.fn(), onHeadersReceived: vi.fn() },
     setPermissionRequestHandler: vi.fn(),
     on: vi.fn(),
     clearStorageData: vi.fn(async () => {}),
@@ -28,6 +28,7 @@ function createMockBrowserWindow() {
         return '';
       }),
       on: vi.fn(),
+      removeListener: vi.fn(),
       removeAllListeners: vi.fn(),
       session: {
         setPermissionRequestHandler: vi.fn(),
@@ -209,7 +210,7 @@ describe('BrowserSearchWorker', () => {
       searchUrl: new URL('https://html.duckduckgo.com/html/?q=test'),
       limit: 10,
     });
-    expect(mockWindow.webContents.removeAllListeners).toHaveBeenCalled();
+    expect(mockWindow.webContents.removeListener).toHaveBeenCalled();
   });
 
   it('returns no results when adapter returns empty', async () => {
