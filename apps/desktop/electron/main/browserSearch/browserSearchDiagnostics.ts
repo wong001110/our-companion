@@ -1,4 +1,3 @@
-import { createId } from '@our-companion/shared';
 import type { WebSearchProviderDiagnostics } from '@our-companion/shared';
 import type { BrowserSearchErrorCode } from './browserSearchTypes';
 import { BROWSER_SEARCH_PROVIDER_ID } from './browserSearchTypes';
@@ -50,8 +49,4 @@ export function toSharedWebSearchDiagnostics(
     cooldownUntil: state.cooldownUntil,
     cacheHit: state.cacheHit,
   };
-}
-
-export function createBrowserSearchAttemptId(): string {
-  return createId('browser_search');
 }

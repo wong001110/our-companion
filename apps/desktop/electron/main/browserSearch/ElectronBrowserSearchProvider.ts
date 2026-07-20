@@ -12,11 +12,7 @@ import {
 } from './browserSearchDiagnostics';
 import { toWebSearchResults } from './browserSearchExtraction';
 import { BrowserSearchThrottle } from './browserSearchThrottle';
-import {
-  BROWSER_SEARCH_PROVIDER_ID,
-  BrowserSearchError,
-  type BrowserSearchErrorCode,
-} from './browserSearchTypes';
+import { BROWSER_SEARCH_PROVIDER_ID, BrowserSearchError } from './browserSearchTypes';
 import type { BrowserSearchEngineAdapter } from './BrowserSearchEngineAdapter';
 
 export interface ElectronBrowserSearchProviderOptions {
@@ -64,14 +60,15 @@ export class ElectronBrowserSearchProvider implements WebSearchProvider {
   private readonly isAppReady: () => boolean;
 
   constructor(options: ElectronBrowserSearchProviderOptions = {}) {
+    const now = options.now ?? (() => new Date());
     this.adapter = options.adapter ?? new DuckDuckGoHtmlAdapter();
     this.worker = options.worker ?? new BrowserSearchWorker({
       ...options.workerDeps,
       isAppReady: options.isAppReady ?? options.workerDeps?.isAppReady,
     });
-    this.cache = new BrowserSearchCache(() => (options.now ?? (() => new Date()))().getTime());
-    this.throttle = new BrowserSearchThrottle(() => (options.now ?? (() => new Date()))().getTime());
-    this.now = options.now ?? (() => new Date());
+    this.cache = new BrowserSearchCache(() => now().getTime());
+    this.throttle = new BrowserSearchThrottle(() => now().getTime());
+    this.now = now;
     this.language = options.language ?? 'en';
     this.isAppReady = options.isAppReady ?? (() => true);
     updateBrowserSearchDiagnostics({
@@ -130,11 +127,7 @@ export class ElectronBrowserSearchProvider implements WebSearchProvider {
       });
       const cached = this.cache.get(cacheKey);
       if (cached) {
-        const filtered = filterByRequiredDomains(
-          filterByExcludedDomains(cached, excludedDomains),
-          requiredDomains,
-        );
-        if (requiredDomains.length > 0 && filtered.length === 0) {
+        if (requiredDomains.length > 0 && cached.length === 0) {
           throw new BrowserSearchError('browser_search_no_results');
         }
         updateBrowserSearchDiagnostics({
@@ -143,7 +136,7 @@ export class ElectronBrowserSearchProvider implements WebSearchProvider {
           lastSuccessAt: attemptedAt,
           lastErrorCode: undefined,
         });
-        return filtered.slice(0, input.limit);
+        return cached.slice(0, input.limit);
       }
       const searchUrl = this.adapter.buildSearchUrl({
         query: finalQuery,
@@ -213,19 +206,4 @@ function getAvailabilityForError(code: string): 'ready' | 'cooldown' | 'challeng
     default:
       return 'unavailable';
   }
-}
-
-export function mapBrowserSearchAvailabilityMessage(code?: string): string {
-  const mapping: Record<BrowserSearchErrorCode, string> = {
-    browser_search_timeout: 'Local web search timed out.',
-    browser_search_navigation_failed: 'Local web search could not load the search page.',
-    browser_search_http_blocked: 'Local web search blocked an unsafe response.',
-    browser_search_challenge: 'Search page requested human verification.',
-    browser_search_parse_failed: 'Local web search could not read results.',
-    browser_search_no_results: 'Local web search returned no results.',
-    browser_search_destroyed: 'Local web search worker was destroyed.',
-    browser_search_rate_limited: 'Local web search is temporarily rate-limited.',
-    browser_search_unavailable: 'Local web search is unavailable.',
-  };
-  return mapping[code as BrowserSearchErrorCode] ?? 'Local web search is unavailable.';
 }

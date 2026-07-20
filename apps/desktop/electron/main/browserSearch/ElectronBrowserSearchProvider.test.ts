@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ElectronBrowserSearchProvider, mapBrowserSearchAvailabilityMessage } from './ElectronBrowserSearchProvider';
+import { ElectronBrowserSearchProvider } from './ElectronBrowserSearchProvider';
 import { BrowserSearchError, BROWSER_SEARCH_PROVIDER_ID } from './browserSearchTypes';
 import { resetBrowserSearchDiagnosticsForTests } from './browserSearchDiagnostics';
 import type { BrowserSearchWorkerResult } from './BrowserSearchWorker';
@@ -324,6 +324,125 @@ describe('ElectronBrowserSearchProvider', () => {
         requiredDomains: ['github.com'],
       })).rejects.toMatchObject({ code: 'browser_search_no_results' });
     });
+
+    it('GitHub Cache Hit returns only GitHub results', async () => {
+      const worker = createMockWorker({
+        url: 'https://html.duckduckgo.com/html/?q=test',
+        title: 'Test',
+        visibleText: '',
+        results: [
+          { title: 'GitHub Result', url: 'https://github.com/repo', snippet: 'GitHub' },
+          { title: 'Other Result', url: 'https://example.com/page', snippet: 'Other' },
+        ],
+      });
+      const provider = new ElectronBrowserSearchProvider({
+        worker: worker as any,
+        isAppReady: () => true,
+        now: () => new Date('2026-01-01T00:00:00Z'),
+      });
+      const first = await provider.search({
+        query: 'test',
+        limit: 10,
+        requiredDomains: ['github.com'],
+      });
+      expect(first).toHaveLength(1);
+      expect(first[0]!.domain).toBe('github.com');
+
+      const second = await provider.search({
+        query: 'test',
+        limit: 10,
+        requiredDomains: ['github.com'],
+      });
+      expect(second).toHaveLength(1);
+      expect(second[0]!.domain).toBe('github.com');
+      expect(worker.execute).toHaveBeenCalledTimes(1);
+    });
+
+    it('Excluded-domain Cache Hit remains filtered', async () => {
+      const worker = createMockWorker({
+        url: 'https://html.duckduckgo.com/html/?q=test',
+        title: 'Test',
+        visibleText: '',
+        results: [
+          { title: 'Result 1', url: 'https://example.com/1', snippet: 'Result 1' },
+          { title: 'Result 2', url: 'https://spam.com/2', snippet: 'Result 2' },
+        ],
+      });
+      const provider = new ElectronBrowserSearchProvider({
+        worker: worker as any,
+        isAppReady: () => true,
+        now: () => new Date('2026-01-01T00:00:00Z'),
+      });
+      const first = await provider.search({
+        query: 'test',
+        limit: 10,
+        excludedDomains: ['spam.com'],
+      });
+      expect(first).toHaveLength(1);
+      expect(first[0]!.domain).toBe('example.com');
+
+      const second = await provider.search({
+        query: 'test',
+        limit: 10,
+        excludedDomains: ['spam.com'],
+      });
+      expect(second).toHaveLength(1);
+      expect(second[0]!.domain).toBe('example.com');
+      expect(worker.execute).toHaveBeenCalledTimes(1);
+    });
+
+    it('Open Web and GitHub do not share incompatible cache entries', async () => {
+      const worker = createMockWorker({
+        url: 'https://html.duckduckgo.com/html/?q=test',
+        title: 'Test',
+        visibleText: '',
+        results: [
+          { title: 'GitHub Result', url: 'https://github.com/repo', snippet: 'GitHub' },
+          { title: 'Other Result', url: 'https://example.com/page', snippet: 'Other' },
+        ],
+      });
+      const provider = new ElectronBrowserSearchProvider({
+        worker: worker as any,
+        isAppReady: () => true,
+        now: () => new Date('2026-01-01T00:00:00Z'),
+      });
+
+      const githubResults = await provider.search({
+        query: 'test',
+        limit: 10,
+        requiredDomains: ['github.com'],
+      });
+      expect(githubResults).toHaveLength(1);
+      expect(githubResults[0]!.domain).toBe('github.com');
+
+      const openWebResults = await provider.search({
+        query: 'test',
+        limit: 10,
+        requiredDomains: [],
+      });
+      expect(openWebResults).toHaveLength(2);
+      expect(worker.execute).toHaveBeenCalledTimes(2);
+    });
+
+    it('Cache Hit still sets diagnostics.cacheHit = true', async () => {
+      const worker = createMockWorker({
+        url: 'https://html.duckduckgo.com/html/?q=test',
+        title: 'Test',
+        visibleText: '',
+        results: [{ title: 'Cached', url: 'https://cached.com', snippet: 'cached' }],
+      });
+      const provider = new ElectronBrowserSearchProvider({
+        worker: worker as any,
+        isAppReady: () => true,
+        now: () => new Date('2026-01-01T00:00:00Z'),
+      });
+      await provider.search({ query: 'test', limit: 10 });
+      const second = await provider.search({ query: 'test', limit: 10 });
+      expect(second).toHaveLength(1);
+      expect(worker.execute).toHaveBeenCalledTimes(1);
+      const diagnostics = provider.getDiagnostics();
+      expect(diagnostics.cacheHit).toBe(true);
+    });
   });
 
   describe('no-results keeps availability ready', () => {
@@ -365,24 +484,5 @@ describe('ElectronBrowserSearchProvider', () => {
       expect(diagnostics.availability).toBe('ready');
       expect(diagnostics.lastErrorCode).toBeUndefined();
     });
-  });
-});
-
-describe('mapBrowserSearchAvailabilityMessage', () => {
-  it('maps all error codes to human-readable messages', () => {
-    expect(mapBrowserSearchAvailabilityMessage('browser_search_timeout')).toContain('timed out');
-    expect(mapBrowserSearchAvailabilityMessage('browser_search_challenge')).toContain('human verification');
-    expect(mapBrowserSearchAvailabilityMessage('browser_search_rate_limited')).toContain('rate-limited');
-    expect(mapBrowserSearchAvailabilityMessage('browser_search_unavailable')).toContain('unavailable');
-    expect(mapBrowserSearchAvailabilityMessage('browser_search_no_results')).toContain('no results');
-    expect(mapBrowserSearchAvailabilityMessage('browser_search_parse_failed')).toContain('could not read');
-    expect(mapBrowserSearchAvailabilityMessage('browser_search_http_blocked')).toContain('blocked');
-    expect(mapBrowserSearchAvailabilityMessage('browser_search_destroyed')).toContain('destroyed');
-    expect(mapBrowserSearchAvailabilityMessage('browser_search_navigation_failed')).toContain('load the search page');
-  });
-
-  it('returns default for unknown codes', () => {
-    expect(mapBrowserSearchAvailabilityMessage('unknown_code')).toContain('unavailable');
-    expect(mapBrowserSearchAvailabilityMessage()).toContain('unavailable');
   });
 });

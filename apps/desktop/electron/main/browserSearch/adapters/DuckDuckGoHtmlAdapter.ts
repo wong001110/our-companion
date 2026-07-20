@@ -37,14 +37,6 @@ export class DuckDuckGoHtmlAdapter implements BrowserSearchEngineAdapter {
       pageUrl,
       limit: input.limit,
       isSponsored: (element) => element.hasClass('result--ad') || element.hasClass('result--pub'),
-      pickLink: (element) => {
-        const link = element.find('a.result__a').first();
-        const href = link.attr('href') ?? undefined;
-        const title = link.text().trim() || undefined;
-        const snippet = element.find('.result__snippet').first().text().trim() || undefined;
-        if (!href || !title) return null;
-        return { href, title, snippet };
-      },
     });
     return results;
   }

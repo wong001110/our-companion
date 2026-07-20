@@ -7,15 +7,8 @@ interface CacheEntry {
 
 export class BrowserSearchCache {
   private readonly entries = new Map<string, CacheEntry>();
-  private lastCacheHit = false;
 
   constructor(private readonly now: () => number = () => Date.now()) {}
-
-  consumeCacheHit(): boolean {
-    const hit = this.lastCacheHit;
-    this.lastCacheHit = false;
-    return hit;
-  }
 
   get(key: string): WebSearchResult[] | undefined {
     const entry = this.entries.get(key);
@@ -24,7 +17,6 @@ export class BrowserSearchCache {
       this.entries.delete(key);
       return undefined;
     }
-    this.lastCacheHit = true;
     return entry.results.map((result) => ({ ...result }));
   }
 

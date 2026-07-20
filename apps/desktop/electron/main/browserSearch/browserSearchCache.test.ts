@@ -128,15 +128,6 @@ describe('BrowserSearchCache', () => {
     });
   });
 
-  it('tracks cache hits', () => {
-    const cache = new BrowserSearchCache();
-    expect(cache.consumeCacheHit()).toBe(false);
-    cache.set('key1', [makeResult('r1')], 60_000);
-    cache.get('key1');
-    expect(cache.consumeCacheHit()).toBe(true);
-    expect(cache.consumeCacheHit()).toBe(false);
-  });
-
   describe('requiredDomains isolation', () => {
     it('same query with GitHub requiredDomains and Open Web requiredDomains does not share results', () => {
       const cache = new BrowserSearchCache();

@@ -4,7 +4,6 @@ import {
   updateBrowserSearchDiagnostics,
   resetBrowserSearchDiagnosticsForTests,
   toSharedWebSearchDiagnostics,
-  createBrowserSearchAttemptId,
 } from './browserSearchDiagnostics';
 import { BROWSER_SEARCH_PROVIDER_ID } from './browserSearchTypes';
 
@@ -67,15 +66,6 @@ describe('browserSearchDiagnostics', () => {
         cooldownUntil: '2026-01-01T01:00:00Z',
         cacheHit: true,
       });
-    });
-  });
-
-  describe('createBrowserSearchAttemptId', () => {
-    it('creates unique attempt IDs', () => {
-      const id1 = createBrowserSearchAttemptId();
-      const id2 = createBrowserSearchAttemptId();
-      expect(id1).not.toBe(id2);
-      expect(id1).toMatch(/^browser_search_/);
     });
   });
 });

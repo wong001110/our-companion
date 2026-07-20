@@ -18,6 +18,14 @@ vi.mock('electron', () => {
 });
 
 function createMockBrowserWindow() {
+  const sessionMock = {
+    webRequest: { onBeforeRequest: vi.fn(), onHeadersReceived: vi.fn() },
+    setPermissionRequestHandler: vi.fn(),
+    on: vi.fn(),
+    removeListener: vi.fn(),
+    clearStorageData: vi.fn(async () => {}),
+    clearCache: vi.fn(async () => {}),
+  };
   return {
     webContents: {
       getURL: vi.fn(() => 'https://html.duckduckgo.com/html/?q=test'),
@@ -33,11 +41,7 @@ function createMockBrowserWindow() {
       removeListener: vi.fn(),
       removeAllListeners: vi.fn(),
       stop: vi.fn(),
-      session: {
-        setPermissionRequestHandler: vi.fn(),
-        on: vi.fn(),
-        removeListener: vi.fn(),
-      },
+      session: sessionMock,
       setWindowOpenHandler: vi.fn(),
     },
     isDestroyed: vi.fn(() => false),
@@ -45,6 +49,7 @@ function createMockBrowserWindow() {
     loadURL: vi.fn(async () => {}),
     on: vi.fn(),
     removeListener: vi.fn(),
+    _sessionMock: sessionMock,
   };
 }
 
@@ -119,8 +124,8 @@ describe('BrowserSearchWorker', () => {
       searchUrl: new URL('https://html.duckduckgo.com/html/?q=test'),
       limit: 10,
     });
-    expect(mockWindow.webContents.session.setPermissionRequestHandler).toHaveBeenCalled();
-    const handler = mockWindow.webContents.session.setPermissionRequestHandler.mock.calls[0]?.[0];
+    expect(mockWindow._sessionMock.setPermissionRequestHandler).toHaveBeenCalled();
+    const handler = mockWindow._sessionMock.setPermissionRequestHandler.mock.calls[0]?.[0];
     const callback = vi.fn();
     handler({}, 'geolocation', callback);
     expect(callback).toHaveBeenCalledWith(false);
@@ -138,8 +143,8 @@ describe('BrowserSearchWorker', () => {
       searchUrl: new URL('https://html.duckduckgo.com/html/?q=test'),
       limit: 10,
     });
-    expect(mockWindow.webContents.session.on).toHaveBeenCalled();
-    const downloadHandler = mockWindow.webContents.session.on.mock.calls.find(
+    expect(mockWindow._sessionMock.on).toHaveBeenCalled();
+    const downloadHandler = mockWindow._sessionMock.on.mock.calls.find(
       (call: any[]) => call[0] === 'will-download'
     );
     expect(downloadHandler).toBeDefined();
@@ -215,7 +220,7 @@ describe('BrowserSearchWorker', () => {
     });
     expect(mockWindow.webContents.removeListener).toHaveBeenCalled();
     expect(mockWindow.removeListener).toHaveBeenCalled();
-    expect(mockWindow.webContents.session.removeListener).toHaveBeenCalled();
+    expect(mockWindow._sessionMock.removeListener).toHaveBeenCalled();
   });
 
   it('cleans up all listeners after failure', async () => {

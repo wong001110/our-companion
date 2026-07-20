@@ -6,7 +6,6 @@ import {
 } from './browserSearchTypes';
 
 interface QueuedEntry {
-  id: number;
   resolve: (release: () => void) => void;
   reject: (error: BrowserSearchError) => void;
 }
@@ -17,7 +16,6 @@ export class BrowserSearchThrottle {
   private recentStarts: number[] = [];
   private cooldownUntil = 0;
   private queue: QueuedEntry[] = [];
-  private nextId = 0;
   private draining = false;
 
   constructor(private readonly now: () => number = () => Date.now()) {}
@@ -40,8 +38,7 @@ export class BrowserSearchThrottle {
     }
 
     return new Promise<() => void>((resolve, reject) => {
-      const id = this.nextId++;
-      this.queue.push({ id, resolve, reject });
+      this.queue.push({ resolve, reject });
       this.scheduleDrain();
     });
   }

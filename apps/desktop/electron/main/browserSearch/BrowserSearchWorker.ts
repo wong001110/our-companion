@@ -1,4 +1,4 @@
-import { BrowserWindow, session } from 'electron';
+import { BrowserWindow } from 'electron';
 import { createId } from '@our-companion/shared';
 import type { BrowserSearchEngineAdapter } from './BrowserSearchEngineAdapter';
 import {
@@ -65,6 +65,24 @@ async function readPageSnapshot(webContents: Electron.WebContents): Promise<{ ur
   };
 }
 
+function assertWorkerHealthy(
+  workerDestroyed: boolean,
+  worker: Electron.BrowserWindow,
+  mainFrameLoadFailure: boolean,
+  mainFrameHttpStatus: number,
+): void {
+  if (workerDestroyed || worker.isDestroyed()) {
+    throw new BrowserSearchError('browser_search_destroyed');
+  }
+  if (mainFrameLoadFailure) {
+    throw new BrowserSearchError('browser_search_navigation_failed');
+  }
+  if (mainFrameHttpStatus) {
+    const httpError = mapHttpStatus(mainFrameHttpStatus);
+    if (httpError) throw httpError;
+  }
+}
+
 export class BrowserSearchWorker {
   constructor(private readonly deps: BrowserSearchWorkerDeps = {}) {}
 
@@ -74,13 +92,26 @@ export class BrowserSearchWorker {
     }
     const timeoutMs = input.timeoutMs ?? BROWSER_SEARCH_HARD_TIMEOUT_MS;
     const partition = `browser-search-${createId('session')}`;
-    const workerSession = session.fromPartition(partition, { cache: false });
     const blockedResourceTypes = new Set(['image', 'media', 'font']);
     const blockedHosts = [/doubleclick\.net/i, /googlesyndication\.com/i, /adservice/i];
     let mainFrameHttpStatus = 0;
     let mainFrameLoadFailure = false;
     let workerDestroyed = false;
     const deadline = Date.now() + timeoutMs;
+
+    const worker = this.deps.createWindow?.(partition) ?? new BrowserWindow({
+      show: false,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: true,
+        javascript: true,
+        partition,
+      },
+    });
+
+    const workerSession = worker.webContents.session;
 
     const onBeforeRequest = (details: Electron.OnBeforeRequestListenerDetails, callback: (response: Electron.BeforeRequestResponse) => void) => {
       if (blockedResourceTypes.has(details.resourceType)) {
@@ -104,18 +135,6 @@ export class BrowserSearchWorker {
     const onPermissionRequest = (_webContents: Electron.WebContents, _permission: Electron.Permission, callback: (granted: boolean) => void) => callback(false);
     workerSession.setPermissionRequestHandler(onPermissionRequest);
 
-    const worker = this.deps.createWindow?.(partition) ?? new BrowserWindow({
-      show: false,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-        webSecurity: true,
-        javascript: true,
-        partition,
-      },
-    });
-
     const onHeadersReceived = (details: Electron.OnHeadersReceivedListenerDetails, callback: (response: Electron.HeadersReceivedResponse) => void) => {
       if (details.resourceType === 'mainFrame' && details.webContentsId === worker.webContents.id) {
         mainFrameHttpStatus = details.statusCode;
@@ -125,11 +144,8 @@ export class BrowserSearchWorker {
     workerSession.webRequest.onHeadersReceived({ urls: ['*://*/*'] }, onHeadersReceived);
     worker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
-    const onWorkerPermissionRequest = (_webContents: Electron.WebContents, _permission: Electron.Permission, callback: (granted: boolean) => void) => callback(false);
-    worker.webContents.session.setPermissionRequestHandler(onWorkerPermissionRequest);
-
     const onWillDownload = (event: Electron.Event) => event.preventDefault();
-    worker.webContents.session.on('will-download', onWillDownload);
+    workerSession.on('will-download', onWillDownload);
 
     const allowedHosts = input.adapter.allowedNavigationHosts;
     const guardNavigation = (event: Electron.Event, url: string) => {
@@ -173,30 +189,10 @@ export class BrowserSearchWorker {
         }),
       ]);
 
-      if (mainFrameLoadFailure) {
-        throw new BrowserSearchError('browser_search_navigation_failed');
-      }
-
-      if (workerDestroyed || worker.isDestroyed()) {
-        throw new BrowserSearchError('browser_search_destroyed');
-      }
-
-      if (mainFrameHttpStatus) {
-        const httpError = mapHttpStatus(mainFrameHttpStatus);
-        if (httpError) throw httpError;
-      }
+      assertWorkerHealthy(workerDestroyed, worker, mainFrameLoadFailure, mainFrameHttpStatus);
 
       while (Date.now() < deadline) {
-        if (workerDestroyed || worker.isDestroyed()) {
-          throw new BrowserSearchError('browser_search_destroyed');
-        }
-        if (mainFrameLoadFailure) {
-          throw new BrowserSearchError('browser_search_navigation_failed');
-        }
-        if (mainFrameHttpStatus) {
-          const httpError = mapHttpStatus(mainFrameHttpStatus);
-          if (httpError) throw httpError;
-        }
+        assertWorkerHealthy(workerDestroyed, worker, mainFrameLoadFailure, mainFrameHttpStatus);
 
         const snapshot = await readPageSnapshot(worker.webContents);
         const challenge = input.adapter.detectChallenge(snapshot);
@@ -218,9 +214,7 @@ export class BrowserSearchWorker {
         throw new BrowserSearchError('browser_search_timeout');
       }
 
-      if (workerDestroyed || worker.isDestroyed()) {
-        throw new BrowserSearchError('browser_search_destroyed');
-      }
+      assertWorkerHealthy(workerDestroyed, worker, mainFrameLoadFailure, mainFrameHttpStatus);
 
       const snapshot = await readPageSnapshot(worker.webContents);
       const challenge = input.adapter.detectChallenge(snapshot);
@@ -269,11 +263,10 @@ export class BrowserSearchWorker {
       worker.webContents.removeListener('will-redirect', guardNavigation);
       worker.webContents.removeListener('did-fail-load', onDidFailLoad);
       worker.removeListener('closed', onClosed);
-      worker.webContents.session.setPermissionRequestHandler(null as any);
-      worker.webContents.session.removeListener('will-download', onWillDownload);
+      workerSession.setPermissionRequestHandler(null as any);
+      workerSession.removeListener('will-download', onWillDownload);
       workerSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, null as any);
       workerSession.webRequest.onHeadersReceived({ urls: ['*://*/*'] }, null as any);
-      workerSession.setPermissionRequestHandler(null as any);
       if (!worker.isDestroyed()) worker.destroy();
       await workerSession.clearStorageData().catch(() => undefined);
       await workerSession.clearCache().catch(() => undefined);
