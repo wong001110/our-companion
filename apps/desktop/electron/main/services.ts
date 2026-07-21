@@ -326,6 +326,7 @@ export class AppServices {
   private activeCommand: ActiveCommandRecord | null = null;
   private foundationEventBroadcaster?: (event: BaseEvent) => void;
   private foundationEventLog: BaseEvent[] = [];
+  private debugFlushPromise?: Promise<{ uploaded: number; failed: number }>;
   private lastSchedulerTick?: string;
   private runtimeStarted = false;
   private readonly personalityAnalyses = new Map<string, PersonalityAnalysisRecord>();
@@ -2016,26 +2017,43 @@ export class AppServices {
     return runActionPlan(plan, orchDeps, correlationId);
   }
 
-  private pushDebugEntry(entry: Omit<AiDebugEntry, 'id' | 'createdAt'>): void {
-    const event: DeveloperDebugEvent = {
-      id: createId('devent'),
+  private recordAiDeveloperEvent(input: {
+    channel: string;
+    source: string;
+    status: 'success' | 'error';
+    requestMessages: Array<{ role: string; content: string }>;
+    requestBody?: unknown;
+    rawResponse?: unknown;
+    content: string;
+    error?: string;
+    durationMs: number;
+    provider?: string;
+    companionId?: string;
+    correlationId?: string;
+    cycleId?: string;
+    turnId?: string;
+  }): void {
+    this.pushDeveloperDebugEvent({
       kind: 'ai_call',
-      operation: entry.channel,
-      status: entry.status,
-      summary: entry.content || entry.error || '',
+      operation: input.channel,
+      status: input.status,
+      provider: input.provider ?? (this.aiProvider ? 'injected' : 'deepseek'),
+      source: input.source,
+      companionId: input.companionId,
+      correlationId: input.correlationId,
+      cycleId: input.cycleId,
+      turnId: input.turnId,
+      summary: input.content || input.error || '',
+      errorMessage: input.error,
       payload: redactSecrets({
-        source: entry.source,
-        requestMessages: entry.requestMessages,
-        requestBody: entry.requestBody,
-        rawResponse: entry.rawResponse,
+        channel: input.channel,
+        source: input.source,
+        requestMessages: input.requestMessages,
+        requestBody: input.requestBody,
+        rawResponse: input.rawResponse,
+        durationMs: input.durationMs,
       }) as Record<string, unknown>,
-      errorCode: entry.error,
-      errorMessage: entry.error,
-      createdAt: nowIso(),
-      syncStatus: 'pending',
-      syncAttemptCount: 0,
-    };
-    this.db.insertDeveloperDebugEvent(event);
+    });
   }
 
   private pushDeveloperDebugEvent(input: DeveloperDebugEventInput): DeveloperDebugEvent {
@@ -2205,6 +2223,12 @@ export class AppServices {
 
   private async flushPendingDebugEvents(): Promise<{ uploaded: number; failed: number }> {
     if (app.isPackaged) return { uploaded: 0, failed: 0 };
+    if (this.debugFlushPromise) return this.debugFlushPromise;
+    this.debugFlushPromise = this.doFlushPendingDebugEvents();
+    try { return await this.debugFlushPromise; } finally { this.debugFlushPromise = undefined; }
+  }
+
+  private async doFlushPendingDebugEvents(): Promise<{ uploaded: number; failed: number }> {
     const networkStatus = this.network.getStatusSnapshot();
     if (!networkStatus.onlineModeEnabled || networkStatus.state !== 'online') return { uploaded: 0, failed: 0 };
     if (!networkStatus.account) return { uploaded: 0, failed: 0 };
@@ -2214,7 +2238,6 @@ export class AppServices {
     if (pending.length === 0) return { uploaded: 0, failed: 0 };
     const batch = pending.map((event) => ({
       clientEventId: event.id,
-      deviceId: this.db.getAppSetting<string>('device.id') ?? 'unknown',
       kind: event.kind,
       operation: event.operation,
       status: event.status,
@@ -3594,14 +3617,18 @@ export class AppServices {
       },
     };
 
+    const hasAi = Boolean(this.aiProvider) || this.getAiSettings().apiKeyConfigured;
     const synthesisResult = await synthesizeDiscoveryInsight(
       synthesisInput,
-      this.aiProvider
+      hasAi
         ? async (prompt) => {
             const { content } = await this.sendToAi({
               messages: [{ role: 'user', content: prompt }],
-              channel: 'discovery_reason',
+              channel: 'discovery_evidence_synthesis',
               source: 'evidence_synthesis',
+              companionId,
+              correlationId,
+              cycleId,
             });
             return content;
           }
@@ -4709,6 +4736,10 @@ export class AppServices {
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
     channel: 'chat' | 'turn' | 'discovery_reason' | 'personality_analysis' | 'discovery_research_plan' | 'discovery_evidence_synthesis';
     source: string;
+    companionId?: string;
+    correlationId?: string;
+    cycleId?: string;
+    turnId?: string;
   }): Promise<{ content: string; raw: unknown; requestBody: unknown; durationMs: number }> {
     const timer = createTimer();
     try {
@@ -4716,31 +4747,25 @@ export class AppServices {
         ? await this.completeWithInjectedAi(input)
         : await this.createDeepSeekClient().chatDebug(input.messages);
       const durationMs = timer.stop();
-      this.pushDebugEntry({
+      this.recordAiDeveloperEvent({
         channel: input.channel,
         source: input.source,
         status: 'success',
         requestMessages: input.messages,
         requestBody: result.requestBody,
         rawResponse: result.raw,
-        content: result.content
-      });
-      this.pushDeveloperDebugEvent({
-        kind: 'ai_call',
-        operation: input.channel,
-        status: 'success',
-        provider: this.aiProvider ? 'injected' : 'deepseek',
-        source: input.source,
-        payload: {
-          durationMs,
-          channel: input.channel,
-        },
+        content: result.content,
+        durationMs,
+        companionId: input.companionId,
+        correlationId: input.correlationId,
+        cycleId: input.cycleId,
+        turnId: input.turnId,
       });
       return { ...result, durationMs };
     } catch (error) {
       const durationMs = timer.stop();
       const message = error instanceof Error ? error.message : String(error);
-      this.pushDebugEntry({
+      this.recordAiDeveloperEvent({
         channel: input.channel,
         source: input.source,
         status: 'error',
@@ -4748,19 +4773,12 @@ export class AppServices {
         requestBody: getDebugRequestBody(error),
         rawResponse: getDebugResponseBody(error),
         content: '',
-        error: message
-      });
-      this.pushDeveloperDebugEvent({
-        kind: 'ai_call',
-        operation: input.channel,
-        status: 'error',
-        provider: this.aiProvider ? 'injected' : 'deepseek',
-        source: input.source,
-        errorMessage: message,
-        payload: {
-          durationMs,
-          channel: input.channel,
-        },
+        error: message,
+        durationMs,
+        companionId: input.companionId,
+        correlationId: input.correlationId,
+        cycleId: input.cycleId,
+        turnId: input.turnId,
       });
       throw error;
     }
