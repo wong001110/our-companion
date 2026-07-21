@@ -205,7 +205,7 @@ describe('DebugFlushWorker', () => {
           markDeveloperDebugEventsUploading: (ids) => { for (const id of ids) { const e = pendingEvents.find((x) => x.id === id); if (e) e.syncStatus = 'uploading'; } },
           markDeveloperDebugEventsUploaded: (ids) => { for (const id of ids) { const e = pendingEvents.find((x) => x.id === id); if (e) e.syncStatus = 'uploaded'; } },
           markDeveloperDebugEventsPending: (ids) => { for (const id of ids) { const e = pendingEvents.find((x) => x.id === id); if (e) e.syncStatus = 'pending'; } },
-          getAppSetting: () => true,
+          getAppSetting: <T,>(key: string): T | undefined => key === 'developer.debugUploadEnabled' ? true as T : undefined,
           setAppSetting: () => {},
         };
       }

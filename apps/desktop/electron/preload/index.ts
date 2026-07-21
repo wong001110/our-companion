@@ -225,6 +225,7 @@ const api: OurCompanionApi = {
   window: {
     openPanel: (input?: { companionX?: number; companionY?: number; initialTab?: PanelTab }) => invoke('window:openPanel', input),
     openPanelForSwitch: () => invoke('window:openPanelForSwitch'),
+    closePanel: () => invoke<boolean>('window:closePanel'),
     onPanelNavigate: (listener) => {
       const channel = 'panel:navigate';
       const handler = (_event: Electron.IpcRendererEvent, tab: unknown) => listener(tab);

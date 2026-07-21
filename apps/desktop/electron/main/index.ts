@@ -136,6 +136,7 @@ function createPanelWindow(): BrowserWindow {
     minWidth: 760,
     minHeight: 580,
     show: false,
+    frame: false,
     title: 'Our Companion',
     webPreferences: {
       preload: preloadPath(),
@@ -144,6 +145,8 @@ function createPanelWindow(): BrowserWindow {
       sandbox: true
     }
   });
+
+  window.removeMenu();
 
   window.on('close', (event) => {
     if (isQuitting) return;
@@ -604,6 +607,15 @@ function registerIpc(): void {
     createCreationWindow();
     return true;
     });
+  });
+
+  ipcMain.handle('window:closePanel', (event) => {
+    const senderWindow = getSenderWindow(event);
+    if (!panelWindow || panelWindow.isDestroyed() || senderWindow !== panelWindow) {
+      throw new Error('WINDOW_CLOSE_PANEL_INVALID_SENDER');
+    }
+    panelWindow.close();
+    return true;
   });
 
   ipcMain.handle('creation:completed', (_event, companion) => {

@@ -2657,6 +2657,7 @@ export interface OurCompanionApi {
   window: {
     openPanel(input?: { companionX?: number; companionY?: number; initialTab?: PanelTab }): Promise<boolean>;
     openPanelForSwitch(): Promise<boolean>;
+    closePanel(): Promise<boolean>;
     onPanelNavigate(listener: (tab: unknown) => void): () => void;
     showCompanion(): Promise<void>;
     getBounds(): Promise<WindowBounds>;

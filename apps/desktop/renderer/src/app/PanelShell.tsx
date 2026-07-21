@@ -14,6 +14,28 @@ import { InlineNotice } from '../components/feedback/InlineNotice';
 import { ResponsiveNavigation } from '../layouts/ResponsiveNavigation';
 import { usePanelDashboardViewModel } from './usePanelDashboardViewModel';
 
+function PanelTitleBar() {
+  return (
+    <header className="panel-titlebar">
+      <div className="panel-titlebar-brand">
+        <span className="panel-titlebar-mark" aria-hidden="true">✦</span>
+        <span>Our Companion</span>
+      </div>
+      <button
+        type="button"
+        className="panel-titlebar-close"
+        aria-label="Close Our Companion panel"
+        title="Close"
+        onClick={() => {
+          void window.ourCompanion.window.closePanel();
+        }}
+      >
+        ×
+      </button>
+    </header>
+  );
+}
+
 export function PanelShell() {
   return <PanelDashboard />;
 }
@@ -58,60 +80,66 @@ function PanelDashboard() {
 
   if (onboardingRequired !== false) {
     return (
-      <main className="panel-shell companion-onboarding-panel">
-        {onboardingRequired === null ? <p>{t(lang, 'onboarding_checking')}</p> : (
-          <>
-            <h1>{t(lang, 'onboarding_none_title')}</h1>
-            <p>{t(lang, 'onboarding_none_body')}</p>
-            <button onClick={() => void window.ourCompanion.creation.openWindow()}>{t(lang, 'onboarding_create')}</button>
-          </>
-        )}
-      </main>
+      <div className="panel-window-shell">
+        <PanelTitleBar />
+        <main className="panel-window-content panel-shell companion-onboarding-panel">
+          {onboardingRequired === null ? <p>{t(lang, 'onboarding_checking')}</p> : (
+            <>
+              <h1>{t(lang, 'onboarding_none_title')}</h1>
+              <p>{t(lang, 'onboarding_none_body')}</p>
+              <button onClick={() => void window.ourCompanion.creation.openWindow()}>{t(lang, 'onboarding_create')}</button>
+            </>
+          )}
+        </main>
+      </div>
     );
   }
 
   return (
-    <LangContext.Provider value={lang}>
-      <main className="panel-shell">
-        <ResponsiveNavigation tab={selectedTab} lang={lang} onSelect={selectTab} onExit={() => void window.ourCompanion.app.exitWithAnimation()} />
-        <section ref={workspaceRef} className="workspace">
-          {loadError && <InlineNotice action={<button onClick={() => void refreshAll()}>{t(lang, 'feedback_retry')}</button>}>{t(lang, 'panel_partial_load_error')}</InlineNotice>}
-          <div key={displayedTab} ref={pageHeadingRef} className="panel-page-transition" data-motion-state={pageMotionState} tabIndex={-1} data-testid={`panel-page-${displayedTab}`}>
-          {displayedTab === 'home' && (
-            <HomePage
-              state={state}
-              character={characters[0]}
-              companion={primaryCompanion ?? undefined}
-              discoveries={discoveries}
-              journeys={journeys}
-              diary={diary}
-              exploration={exploration}
-              explorationEvents={explorationEvents}
-              exploring={exploring}
-              onStartExploration={sendCompanionExploring}
-              onSubmitFeedback={submitExplorationFeedback}
-              onRefresh={refreshAll}
-            />
-          )}
-          {displayedTab === 'discovery' && (
-            <DiscoveriesPage
-              discoveries={discoveries}
-              exploration={exploration}
-              exploring={exploring}
-              onStartExploration={sendCompanionExploring}
-              onSubmitFeedback={submitExplorationFeedback}
-              onRefresh={refreshAll}
-            />
-          )}
-          {displayedTab === 'journey' && <JourneysPage journeys={journeys} timeline={timeline} onRefresh={refreshAll} />}
-          {displayedTab === 'memory' && <MemoriesPage graph={memoryGraph} onRefresh={refreshAll} />}
-          {displayedTab === 'chat' && <ChatPage />}
-          {displayedTab === 'social' && <SocialPage />}
-          {displayedTab === 'settings' && <SettingsPage state={state} behaviorSettings={behaviorSettings} onRefresh={refreshAll} onLangChange={setLang} companionId={primaryCompanion?.id} assetRoot={primaryCompanion?.assetRoot} />}
-          </div>
-        </section>
-      </main>
-    </LangContext.Provider>
+    <div className="panel-window-shell">
+      <PanelTitleBar />
+      <LangContext.Provider value={lang}>
+        <main className="panel-window-content panel-shell">
+          <ResponsiveNavigation tab={selectedTab} lang={lang} onSelect={selectTab} onExit={() => void window.ourCompanion.app.exitWithAnimation()} />
+          <section ref={workspaceRef} className="workspace">
+            {loadError && <InlineNotice action={<button onClick={() => void refreshAll()}>{t(lang, 'feedback_retry')}</button>}>{t(lang, 'panel_partial_load_error')}</InlineNotice>}
+            <div key={displayedTab} ref={pageHeadingRef} className="panel-page-transition" data-motion-state={pageMotionState} tabIndex={-1} data-testid={`panel-page-${displayedTab}`}>
+            {displayedTab === 'home' && (
+              <HomePage
+                state={state}
+                character={characters[0]}
+                companion={primaryCompanion ?? undefined}
+                discoveries={discoveries}
+                journeys={journeys}
+                diary={diary}
+                exploration={exploration}
+                explorationEvents={explorationEvents}
+                exploring={exploring}
+                onStartExploration={sendCompanionExploring}
+                onSubmitFeedback={submitExplorationFeedback}
+                onRefresh={refreshAll}
+              />
+            )}
+            {displayedTab === 'discovery' && (
+              <DiscoveriesPage
+                discoveries={discoveries}
+                exploration={exploration}
+                exploring={exploring}
+                onStartExploration={sendCompanionExploring}
+                onSubmitFeedback={submitExplorationFeedback}
+                onRefresh={refreshAll}
+              />
+            )}
+            {displayedTab === 'journey' && <JourneysPage journeys={journeys} timeline={timeline} onRefresh={refreshAll} />}
+            {displayedTab === 'memory' && <MemoriesPage graph={memoryGraph} onRefresh={refreshAll} />}
+            {displayedTab === 'chat' && <ChatPage />}
+            {displayedTab === 'social' && <SocialPage />}
+            {displayedTab === 'settings' && <SettingsPage state={state} behaviorSettings={behaviorSettings} onRefresh={refreshAll} onLangChange={setLang} companionId={primaryCompanion?.id} assetRoot={primaryCompanion?.assetRoot} />}
+            </div>
+          </section>
+        </main>
+      </LangContext.Provider>
+    </div>
   );
 }
 
