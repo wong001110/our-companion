@@ -331,6 +331,8 @@ export const en = {
   settings_developer_title: 'Developer Mode',
   settings_developer_show: 'Show developer tools',
   settings_developer_hide: 'Hide developer tools',
+  settings_developer_upload_label: 'Upload developer debug data while Online Mode is connected',
+  settings_developer_upload_error: 'Failed to save upload setting',
   settings_category_companion: 'Companion',
   settings_category_ai: 'AI',
   settings_category_voice: 'Voice',

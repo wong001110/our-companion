@@ -188,6 +188,7 @@ export function SettingsPage({ state, behaviorSettings, onRefresh, onLangChange,
           <button className="debug-inspector-launch-btn" onClick={() => setDebugInspectorOpen(true)}>
             Open Full Debug Inspector
           </button>
+          <DeveloperUploadToggle />
           {developerOpen && <DeveloperPreview state={previewState} devAnimation={devAnimation} animationOverride={animationOverride} onAnimationChange={setDevAnimation} settings={behaviorSettings} onRefresh={onRefresh} companionId={companionId} assetRoot={assetRoot} />}
           <DeveloperDebugInspector open={debugInspectorOpen} onClose={() => setDebugInspectorOpen(false)} />
         </PaperCard>
@@ -578,6 +579,51 @@ function DeveloperPreview({ state, devAnimation, animationOverride, onAnimationC
       <DebugAiLog />
       <DebugDataResetPanel onRefresh={onRefresh} />
     </div>
+  );
+}
+
+function DeveloperUploadToggle() {
+  const lang = useLang();
+  const [uploadEnabled, setUploadEnabled] = useState(false);
+  const [isDevBuild, setIsDevBuild] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      window.ourCompanion.developer.getUploadStatus(),
+      window.ourCompanion.developer.getUploadSetting(),
+    ]).then(([status, setting]) => {
+      if (active) {
+        setIsDevBuild(status.isDevBuild);
+        setUploadEnabled(setting);
+        setLoading(false);
+      }
+    }).catch(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  async function handleToggle(enabled: boolean) {
+    const previous = uploadEnabled;
+    setUploadEnabled(enabled);
+    setError(null);
+    try {
+      await window.ourCompanion.developer.setUploadSetting(enabled);
+    } catch {
+      setUploadEnabled(previous);
+      setError(t(lang, 'settings_developer_upload_error'));
+    }
+  }
+
+  if (loading || !isDevBuild) return null;
+
+  return (
+    <label className="checkbox-row">
+      <input type="checkbox" checked={uploadEnabled} onChange={(e) => void handleToggle(e.target.checked)} />
+      <span>{t(lang, 'settings_developer_upload_label')}</span>
+      {error && <span className="inline-error" role="alert">{error}</span>}
+    </label>
   );
 }
 

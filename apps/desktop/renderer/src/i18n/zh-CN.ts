@@ -312,6 +312,8 @@ export const zhCN = {
   "settings_developer_title": "开发者模式",
   "settings_developer_show": "显示开发者工具",
   "settings_developer_hide": "隐藏开发者工具",
+  "settings_developer_upload_label": "在线模式连接时上传开发者调试数据",
+  "settings_developer_upload_error": "保存上传设置失败",
   "settings_category_companion": "伙伴",
   "settings_category_ai": "AI",
   "settings_category_voice": "语音",

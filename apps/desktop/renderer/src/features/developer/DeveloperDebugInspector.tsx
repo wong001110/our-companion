@@ -148,7 +148,7 @@ export function DeveloperDebugInspector({ open, onClose }: { open: boolean; onCl
 
         <div className="debug-inspector-content">
           {tab === 'upload_status' ? (
-            <UploadStatusPanel />
+            <UploadStatusPanel onRefreshEvents={() => { void fetchEvents(page); }} />
           ) : (
             <>
               {loading && <p className="debug-inspector-status">Loading...</p>}
@@ -206,12 +206,13 @@ export function DeveloperDebugInspector({ open, onClose }: { open: boolean; onCl
   );
 }
 
-function UploadStatusPanel() {
+function UploadStatusPanel({ onRefreshEvents }: { onRefreshEvents?: () => void }) {
   const [status, setStatus] = useState<Awaited<ReturnType<typeof window.ourCompanion.developer.getUploadStatus>> | null>(null);
   const [loading, setLoading] = useState(true);
   const [flushing, setFlushing] = useState(false);
   const [uploadEnabled, setUploadEnabled] = useState(false);
   const [flushResult, setFlushResult] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -236,6 +237,7 @@ function UploadStatusPanel() {
       setFlushResult(`Uploaded ${result.uploaded}, failed ${result.failed}`);
       const updated = await window.ourCompanion.developer.getUploadStatus();
       setStatus(updated);
+      onRefreshEvents?.();
     } catch (error) {
       setFlushResult(error instanceof Error ? error.message : 'Flush failed');
     } finally {
@@ -246,25 +248,34 @@ function UploadStatusPanel() {
   async function handleUploadToggle(enabled: boolean) {
     const previous = uploadEnabled;
     setUploadEnabled(enabled);
+    setToggleError(null);
     try {
       await window.ourCompanion.developer.setUploadSetting(enabled);
       const updated = await window.ourCompanion.developer.getUploadStatus();
       setStatus(updated);
     } catch {
       setUploadEnabled(previous);
+      setToggleError('Failed to save upload setting');
     }
   }
 
   if (loading) return <p className="debug-inspector-status">Loading upload status...</p>;
 
-  const canFlush = status?.isDevBuild && status.onlineModeEnabled && status.authenticated && status.uploadSettingEnabled && (status.pendingEvents ?? 0) > 0 && !flushing;
+  const disableReason = !status?.isDevBuild ? 'Packaged build'
+    : !status?.onlineModeEnabled ? 'Online Mode disabled'
+    : status?.networkState !== 'online' ? `Network ${status?.networkState ?? 'unknown'}`
+    : !status?.authenticated ? 'Authentication required'
+    : !status?.uploadSettingEnabled ? 'Upload disabled'
+    : (status?.pendingEvents ?? 0) === 0 ? 'No pending events'
+    : null;
+
+  const canFlush = disableReason === null && !flushing;
 
   return (
     <div className="debug-inspector-upload-status">
       <h3>Upload Status</h3>
       <dl className="debug-inspector-detail-grid">
-        <div><dt>Dev Build</dt><dd>{status?.isDevBuild ? 'Yes' : 'No'}</dd></div>
-        <div><dt>Online Mode</dt><dd>{status?.onlineModeEnabled ? 'Enabled' : 'Disabled'}</dd></div>
+        <div><dt>Upload Enabled</dt><dd>{status?.uploadSettingEnabled ? 'Yes' : 'No'}</dd></div>
         <div><dt>Network State</dt><dd>{status?.networkState ?? 'unknown'}</dd></div>
         <div><dt>Authenticated</dt><dd>{status?.authenticated ? 'Yes' : 'No'}</dd></div>
         <div><dt>Pending Events</dt><dd>{status?.pendingEvents ?? 0}</dd></div>
@@ -275,10 +286,12 @@ function UploadStatusPanel() {
         <label className="checkbox-row">
           <input type="checkbox" checked={uploadEnabled} onChange={(e) => void handleUploadToggle(e.target.checked)} />
           <span>Enable debug event upload</span>
+          {toggleError && <span className="inline-error" role="alert">{toggleError}</span>}
         </label>
       )}
       <div className="debug-inspector-actions">
-        <button onClick={() => void handleFlush()} disabled={!canFlush}>{flushing ? 'Flushing...' : 'Flush Events'}</button>
+        <button onClick={() => void handleFlush()} disabled={!canFlush} title={disableReason ?? undefined}>{flushing ? 'Flushing...' : 'Flush Events'}</button>
+        {disableReason && <span className="debug-inspector-status">{disableReason}</span>}
       </div>
       {flushResult && <p className="debug-inspector-status">{flushResult}</p>}
     </div>

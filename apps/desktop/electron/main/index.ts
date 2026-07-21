@@ -1138,8 +1138,9 @@ function forceCleanup(): void {
       win.destroy();
     }
   }
-  try { services?.db.close(); } catch { /* ignore */ }
+  try { services?.cleanupFlushTimer(); } catch { /* ignore */ }
   try { services?.network.dispose(); } catch { /* ignore */ }
+  try { services?.db.close(); } catch { /* ignore */ }
 }
 
 app.on('before-quit', () => {

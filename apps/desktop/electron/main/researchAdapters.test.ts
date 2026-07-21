@@ -14,23 +14,12 @@ import {
   SafeWebPageFetcher
 } from './researchAdapters';
 
-vi.mock('node:http', () => ({
-  default: { request: vi.fn() },
-  request: vi.fn(),
+const { httpMockFn, httpsMockFn } = vi.hoisted(() => ({
+  httpMockFn: vi.fn(),
+  httpsMockFn: vi.fn(),
 }));
-vi.mock('node:https', () => ({
-  default: { request: vi.fn() },
-  request: vi.fn(),
-}));
-
-vi.mock('node:http', () => {
-  const fn = vi.fn();
-  return { request: fn, default: { request: fn } };
-});
-vi.mock('node:https', () => {
-  const fn = vi.fn();
-  return { request: fn, default: { request: fn } };
-});
+vi.mock('node:http', () => ({ request: httpMockFn, default: { request: httpMockFn } }));
+vi.mock('node:https', () => ({ request: httpsMockFn, default: { request: httpsMockFn } }));
 
 const publicLookup = async () => [{ address: '93.184.216.34' }];
 

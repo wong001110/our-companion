@@ -1,5 +1,10 @@
 import type { DeveloperDebugEvent, DeveloperDebugUploadEvent } from '@our-companion/shared';
-import { redactSecrets } from '@our-companion/shared';
+
+const SENSITIVE_KEYS = new Set([
+  'authorization', 'apikey', 'api_key', 'token', 'accesstoken',
+  'refreshtoken', 'refresh_token', 'access_token',
+  'password', 'cookie', 'set-cookie', 'secret', 'clientsecret', 'client_secret',
+]);
 
 export const FIELD_LIMITS = {
   clientEventId: 128,
@@ -55,7 +60,11 @@ export function sanitizeDeveloperDebugValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitizeDeveloperDebugValue);
   const result: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-    result[key] = sanitizeDeveloperDebugValue(val);
+    if (SENSITIVE_KEYS.has(key.toLowerCase())) {
+      result[key] = '[REDACTED]';
+    } else {
+      result[key] = sanitizeDeveloperDebugValue(val);
+    }
   }
   return result;
 }

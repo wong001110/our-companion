@@ -126,8 +126,88 @@ describe('upload projection helpers', () => {
     it('redacts secrets in payload', () => {
       const payload = { authorization: 'Bearer secret-token', safe: 'ok' };
       const result = buildBoundedPayload(payload);
-      expect(result.authorization).toBe('Bearer [REDACTED]');
+      expect(result.authorization).toBe('[REDACTED]');
       expect(result.safe).toBe('ok');
+    });
+
+    it('redacts sensitive keys by key name', () => {
+      const payload = {
+        apiKey: 'secret123',
+        api_key: 'secret123',
+        accessToken: 'secret123',
+        refreshToken: 'secret123',
+        clientSecret: 'secret123',
+        password: 'secret123',
+        authorization: 'arbitrary-secret',
+        cookie: 'session=secret',
+        safe: 'visible',
+      };
+      const result = buildBoundedPayload(payload);
+      expect(result.apiKey).toBe('[REDACTED]');
+      expect(result.api_key).toBe('[REDACTED]');
+      expect(result.accessToken).toBe('[REDACTED]');
+      expect(result.refreshToken).toBe('[REDACTED]');
+      expect(result.clientSecret).toBe('[REDACTED]');
+      expect(result.password).toBe('[REDACTED]');
+      expect(result.authorization).toBe('[REDACTED]');
+      expect(result.cookie).toBe('[REDACTED]');
+      expect(result.safe).toBe('visible');
+    });
+
+    it('redacts sensitive keys in nested objects', () => {
+      const payload = {
+        headers: { authorization: 'Bearer x', cookie: 'session=abc' },
+        safe: 'ok',
+      };
+      const result = buildBoundedPayload(payload);
+      expect(result.headers).toEqual({ authorization: '[REDACTED]', cookie: '[REDACTED]' });
+      expect(result.safe).toBe('ok');
+    });
+
+    it('redacts sensitive keys in arrays of objects', () => {
+      const payload = {
+        items: [{ apiKey: 'secret', normal: 'keep' }],
+      };
+      const result = buildBoundedPayload(payload);
+      expect(result.items).toEqual([{ apiKey: '[REDACTED]', normal: 'keep' }]);
+    });
+
+    it('redacts Bearer/JWT in requestMessages content', () => {
+      const payload = {
+        requestMessages: [
+          { role: 'user', content: 'Bearer sk-abc123secret' },
+          { role: 'assistant', content: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U' },
+        ],
+      };
+      const result = buildBoundedPayload(payload);
+      expect(result.requestMessages[0].content).toBe('Bearer [REDACTED]');
+      expect(result.requestMessages[1].content).toBe('[REDACTED_JWT]');
+    });
+
+    it('redacts secrets in summary field via buildDeveloperDebugUploadEvent', () => {
+      const event: DeveloperDebugEvent = {
+        id: 'evt-1',
+        kind: 'ai_call',
+        summary: 'apiKey=secret123 and Bearer token',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        syncStatus: 'pending',
+        syncAttemptCount: 0,
+      };
+      const uploadEvent = buildDeveloperDebugUploadEvent(event);
+      expect(uploadEvent.summary).toBe('apiKey=[REDACTED] and Bearer [REDACTED]');
+    });
+
+    it('redacts secrets in errorMessage field', () => {
+      const event: DeveloperDebugEvent = {
+        id: 'evt-1',
+        kind: 'ai_call',
+        errorMessage: 'password=secret123 failed',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        syncStatus: 'pending',
+        syncAttemptCount: 0,
+      };
+      const uploadEvent = buildDeveloperDebugUploadEvent(event);
+      expect(uploadEvent.errorMessage).toBe('password=[REDACTED] failed');
     });
 
     it('preserves priority fields when payload exceeds limit', () => {
@@ -237,7 +317,7 @@ describe('upload projection helpers', () => {
         syncAttemptCount: 0,
       };
       const uploadEvent = buildDeveloperDebugUploadEvent(event);
-      expect(uploadEvent.payload.authorization).toBe('Bearer [REDACTED]');
+      expect(uploadEvent.payload.authorization).toBe('[REDACTED]');
       expect(uploadEvent.payload.safe).toBe('ok');
     });
   });
