@@ -182,27 +182,49 @@ describe('DebugFlushWorker', () => {
   });
 
   describe('promise finally race', () => {
-    it('event inserted after drain completes but before promise clear gets follow-up', async () => {
-      const db = createTestDb(); setupWorkerDb(db); insertEvents(db, 50);
+    it('inserting event + calling flush during active drain triggers follow-up via debugFlushRequested', async () => {
+      let hookFired = false;
+      const pendingEvents: DeveloperDebugEvent[] = [];
+      for (let i = 0; i < 50; i++) pendingEvents.push(makeEvent({ id: `evt_${i}`, payload: { i } }));
+
+      function makeHookedDb(): FlushDb {
+        return {
+          listDeveloperDebugEvents: (opts) => {
+            const result = pendingEvents.filter((e) => e.syncStatus === (opts.syncStatus ?? 'pending')).slice(0, opts.limit ?? 50);
+            if (!hookFired && result.length === 0) {
+              hookFired = true;
+              for (let i = 0; i < 3; i++) {
+                const evt = makeEvent({ id: `injected_${i}`, payload: { i } });
+                pendingEvents.push(evt);
+              }
+              void worker.flushPendingDebugEvents();
+            }
+            return result;
+          },
+          countDeveloperDebugEvents: (opts) => pendingEvents.filter((e) => e.syncStatus === (opts.syncStatus ?? 'pending')).length,
+          markDeveloperDebugEventsUploading: (ids) => { for (const id of ids) { const e = pendingEvents.find((x) => x.id === id); if (e) e.syncStatus = 'uploading'; } },
+          markDeveloperDebugEventsUploaded: (ids) => { for (const id of ids) { const e = pendingEvents.find((x) => x.id === id); if (e) e.syncStatus = 'uploaded'; } },
+          markDeveloperDebugEventsPending: (ids) => { for (const id of ids) { const e = pendingEvents.find((x) => x.id === id); if (e) e.syncStatus = 'pending'; } },
+          getAppSetting: () => true,
+          setAppSetting: () => {},
+        };
+      }
+
       const network = makeNetwork();
-      const worker = new DebugFlushWorker(db as unknown as FlushDb, network, makeConfig());
-
+      const hookedDb = makeHookedDb();
       vi.useFakeTimers();
-      const flushPromise = worker.flushPendingDebugEvents();
-      await vi.advanceTimersByTimeAsync(50);
-      const r1 = await flushPromise;
-      expect(r1.uploaded).toBe(50);
+      const worker = new DebugFlushWorker(hookedDb, network, makeConfig());
 
-      db.insertDeveloperDebugEvent(makeEvent({ id: 'late_1', payload: { x: 1 } }));
-      db.insertDeveloperDebugEvent(makeEvent({ id: 'late_2', payload: { x: 2 } }));
-      db.insertDeveloperDebugEvent(makeEvent({ id: 'late_3', payload: { x: 3 } }));
-      expect(syncCounts(db).pending).toBe(3);
+      await worker.flushPendingDebugEvents();
+      expect(hookFired).toBe(true);
+      expect(network._postFn).toHaveBeenCalledTimes(1);
 
-      const p2 = worker.flushPendingDebugEvents();
-      await vi.advanceTimersByTimeAsync(50);
-      const r2 = await p2;
-      expect(r2.uploaded).toBe(3);
-      expect(syncCounts(db).pending).toBe(0);
+      await vi.advanceTimersByTimeAsync(1100);
+
+      expect(network._postFn).toHaveBeenCalledTimes(2);
+      const counts = { pending: pendingEvents.filter((e) => e.syncStatus === 'pending').length, uploaded: pendingEvents.filter((e) => e.syncStatus === 'uploaded').length };
+      expect(counts.pending).toBe(0);
+      expect(counts.uploaded).toBe(53);
       worker.cleanupFlushTimer();
     });
   });
