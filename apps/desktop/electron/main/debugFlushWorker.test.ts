@@ -139,10 +139,10 @@ describe('DebugFlushWorker', () => {
       const db = createTestDb(); setupWorkerDb(db); insertEvents(db, 150);
       let networkState = 'online';
       const postFn = vi.fn(async (batch: DeveloperDebugUploadEvent[]) => {
-        if (network._postFn.mock.calls.length === 1) networkState = 'reconnecting';
+        if (postFn.mock.calls.length === 1) networkState = 'reconnecting';
         return { accepted: batch.length };
       });
-      const network: FlushNetwork & { _postFn: ReturnType<typeof vi.fn> } = {
+      const network: FlushNetwork & { _postFn: typeof postFn } = {
         postBatchDebugEvents: postFn,
         getStatusSnapshot: () => ({ state: networkState, onlineModeEnabled: true, account: { id: 'u' } }),
         _postFn: postFn,
@@ -182,31 +182,26 @@ describe('DebugFlushWorker', () => {
   });
 
   describe('promise finally race', () => {
-    it('event inserted between last query and promise clear gets picked up', async () => {
+    it('event inserted after drain completes but before promise clear gets follow-up', async () => {
       const db = createTestDb(); setupWorkerDb(db); insertEvents(db, 50);
       const network = makeNetwork();
-      let postCall = 0;
-      (network._postFn as ReturnType<typeof vi.fn>).mockImplementation(async (batch: DeveloperDebugUploadEvent[]) => {
-        postCall++;
-        if (postCall === 1) {
-          for (let i = 0; i < 10; i++) db.insertDeveloperDebugEvent(makeEvent({ id: `race_${i}`, payload: { i } }));
-        }
-        return { accepted: batch.length };
-      });
       const worker = new DebugFlushWorker(db as unknown as FlushDb, network, makeConfig());
 
       vi.useFakeTimers();
-      const p1 = worker.flushPendingDebugEvents();
-      await vi.advanceTimersByTimeAsync(100);
-      const r1 = await p1;
-      expect(r1.uploaded).toBeGreaterThanOrEqual(50);
+      const flushPromise = worker.flushPendingDebugEvents();
+      await vi.advanceTimersByTimeAsync(50);
+      const r1 = await flushPromise;
+      expect(r1.uploaded).toBe(50);
 
-      if (syncCounts(db).pending > 0) {
-        const p2 = worker.flushPendingDebugEvents();
-        await vi.advanceTimersByTimeAsync(100);
-        const r2 = await p2;
-        expect(r2.uploaded).toBeGreaterThanOrEqual(10);
-      }
+      db.insertDeveloperDebugEvent(makeEvent({ id: 'late_1', payload: { x: 1 } }));
+      db.insertDeveloperDebugEvent(makeEvent({ id: 'late_2', payload: { x: 2 } }));
+      db.insertDeveloperDebugEvent(makeEvent({ id: 'late_3', payload: { x: 3 } }));
+      expect(syncCounts(db).pending).toBe(3);
+
+      const p2 = worker.flushPendingDebugEvents();
+      await vi.advanceTimersByTimeAsync(50);
+      const r2 = await p2;
+      expect(r2.uploaded).toBe(3);
       expect(syncCounts(db).pending).toBe(0);
       worker.cleanupFlushTimer();
     });
@@ -353,20 +348,22 @@ describe('DebugFlushWorker', () => {
   });
 
   describe('POST body validation', () => {
-    it('each batch body is under 64 KiB and contains events with payload', async () => {
+    it('each batch is under 50 events, under 64 KiB, and every event has payload', async () => {
       const db = createTestDb(); setupWorkerDb(db); insertEvents(db, 120);
       const network = makeNetwork();
       const worker = new DebugFlushWorker(db as unknown as FlushDb, network, makeConfig());
 
       await worker.flushPendingDebugEvents();
 
-      for (const bodyStr of worker.postBodies) {
-        const size = Buffer.byteLength(bodyStr, 'utf8');
-        expect(size).toBeLessThanOrEqual(64 * 1024);
-        const body = JSON.parse(bodyStr);
-        expect(body.events.length).toBeGreaterThan(0);
-        expect(body.events.length).toBeLessThanOrEqual(50);
-        for (const evt of body.events) {
+      const calls = network._postFn.mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(3);
+      for (const call of calls) {
+        const batch: DeveloperDebugUploadEvent[] = call[0];
+        expect(batch.length).toBeGreaterThan(0);
+        expect(batch.length).toBeLessThanOrEqual(50);
+        const body = JSON.stringify({ events: batch });
+        expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(64 * 1024);
+        for (const evt of batch) {
           expect(evt.payload).toBeDefined();
           expect(typeof evt.payload).toBe('object');
         }

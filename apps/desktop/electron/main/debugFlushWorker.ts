@@ -33,11 +33,6 @@ export class DebugFlushWorker {
   private debugFlushPromise?: Promise<FlushResult>;
   private debugFlushRequested = false;
   private debugFlushTimer?: ReturnType<typeof setTimeout>;
-  private _postCount = 0;
-  private _postBodies: string[] = [];
-
-  get postCount(): number { return this._postCount; }
-  get postBodies(): string[] { return this._postBodies; }
 
   constructor(
     private readonly db: FlushDb,
@@ -119,8 +114,6 @@ export class DebugFlushWorker {
         const fallbackIds = pending.slice(0, 1).map((e) => e.id);
         try {
           this.db.markDeveloperDebugEventsUploading(fallbackIds);
-          this._postCount++;
-          this._postBodies.push(JSON.stringify({ events: fallback }));
           const result = await this.network.postBatchDebugEvents(fallback);
           postsThisDrain++;
           if (result.accepted !== fallback.length) {
@@ -150,8 +143,6 @@ export class DebugFlushWorker {
 
       try {
         this.db.markDeveloperDebugEventsUploading(dbIds);
-        this._postCount++;
-        this._postBodies.push(JSON.stringify({ events: batch }));
         const result = await this.network.postBatchDebugEvents(batch);
         postsThisDrain++;
 
