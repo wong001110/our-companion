@@ -185,6 +185,86 @@ describe('evidence synthesis', () => {
         expect(result.reason).toBe('uncertainties_too_many');
       }
     });
+
+    it('rejects uncertainty with non-string value', () => {
+      const synthesis = makeValidSynthesis(['ev1']);
+      synthesis.uncertainties = [123 as unknown as string];
+      const result = validateSynthesisResult(synthesis, ['ev1']);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.reason).toBe('uncertainty_not_string');
+      }
+    });
+
+    it('rejects uncertainty with null value', () => {
+      const synthesis = makeValidSynthesis(['ev1']);
+      synthesis.uncertainties = [null as unknown as string];
+      const result = validateSynthesisResult(synthesis, ['ev1']);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.reason).toBe('uncertainty_not_string');
+      }
+    });
+
+    it('rejects uncertainty that is empty after trim', () => {
+      const synthesis = makeValidSynthesis(['ev1']);
+      synthesis.uncertainties = [''];
+      const result = validateSynthesisResult(synthesis, ['ev1']);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.reason).toBe('uncertainty_empty');
+      }
+    });
+
+    it('rejects uncertainty that exceeds max length', () => {
+      const synthesis = makeValidSynthesis(['ev1']);
+      synthesis.uncertainties = ['a'.repeat(501)];
+      const result = validateSynthesisResult(synthesis, ['ev1']);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.reason).toBe('uncertainty_too_long');
+      }
+    });
+
+    it('rejects key fact evidenceIds with non-string value', () => {
+      const synthesis = makeValidSynthesis(['ev1']);
+      synthesis.keyFacts = [{ statement: 'Fact 1', evidenceIds: [123 as unknown as string] }];
+      const result = validateSynthesisResult(synthesis, ['ev1']);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.reason).toBe('keyFact_invalid_evidence_id');
+      }
+    });
+
+    it('rejects key fact evidenceIds with duplicate', () => {
+      const synthesis = makeValidSynthesis(['ev1']);
+      synthesis.keyFacts = [{ statement: 'Fact 1', evidenceIds: ['ev1', 'ev1'] }];
+      const result = validateSynthesisResult(synthesis, ['ev1']);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.reason).toContain('keyFact_duplicate_evidence');
+      }
+    });
+
+    it('rejects supportingEvidenceIds with non-string value', () => {
+      const synthesis = makeValidSynthesis(['ev1']);
+      synthesis.supportingEvidenceIds = [{} as unknown as string];
+      const result = validateSynthesisResult(synthesis, ['ev1']);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.reason).toBe('supporting_invalid_evidence_id');
+      }
+    });
+
+    it('rejects key fact statement exceeding max length', () => {
+      const synthesis = makeValidSynthesis(['ev1']);
+      synthesis.keyFacts = [{ statement: 'a'.repeat(501), evidenceIds: ['ev1'] }];
+      const result = validateSynthesisResult(synthesis, ['ev1']);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.reason).toBe('keyFact_statement_too_long');
+      }
+    });
   });
 
   describe('synthesizeDiscoveryInsightDeterministic', () => {

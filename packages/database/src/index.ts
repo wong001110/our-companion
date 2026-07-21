@@ -41,7 +41,9 @@ import type {
   ResearchIntent,
   ResearchPlan,
   ResearchSearchRecord,
-  WebPageEvidence
+  WebPageEvidence,
+  DeveloperDebugEventQuery,
+  DeveloperDebugEventKind
 } from '@our-companion/shared';
 import type { ActionPermissionState } from '@our-companion/shared';
 import {
@@ -729,26 +731,12 @@ export class DatabaseService {
     return event;
   }
 
-  listDeveloperDebugEvents(options?: { kind?: string; syncStatus?: string; limit?: number; offset?: number }): import('@our-companion/shared').DeveloperDebugEvent[] {
+  listDeveloperDebugEvents(options?: DeveloperDebugEventQuery): import('@our-companion/shared').DeveloperDebugEvent[] {
     const limit = Math.min(options?.limit ?? 100, 500);
     const offset = options?.offset ?? 0;
-    let sql = 'SELECT * FROM developer_debug_events';
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-    if (options?.kind) {
-      conditions.push('kind = ?');
-      params.push(options.kind);
-    }
-    if (options?.syncStatus) {
-      conditions.push('sync_status = ?');
-      params.push(options.syncStatus);
-    }
-    if (conditions.length > 0) {
-      sql += ' WHERE ' + conditions.join(' AND ');
-    }
-    sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
-    return (this.db.prepare(sql).all(...params) as Array<Record<string, unknown>>).map(mapDeveloperDebugEvent);
+    const { where, params } = this.buildDeveloperDebugEventWhere(options);
+    const sql = `SELECT * FROM developer_debug_events ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+    return (this.db.prepare(sql).all(...params, limit, offset) as Array<Record<string, unknown>>).map(mapDeveloperDebugEvent);
   }
 
   getDeveloperDebugEvent(id: string): import('@our-companion/shared').DeveloperDebugEvent | undefined {
@@ -779,29 +767,67 @@ export class DatabaseService {
     for (const id of ids) stmt.run(id);
   }
 
+  resetUploadingDeveloperDebugEventsToPending(): number {
+    const stmt = this.db.prepare(
+      `UPDATE developer_debug_events SET sync_status = 'pending', sync_attempt_count = 0 WHERE sync_status = 'uploading'`
+    );
+    const result = stmt.run();
+    return result.changes;
+  }
+
   pruneDeveloperDebugEvents(olderThanDays = 14): number {
     const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
     const result = this.db.prepare('DELETE FROM developer_debug_events WHERE created_at < ?').run(cutoff);
     return result.changes;
   }
 
-  countDeveloperDebugEvents(options?: { kind?: string; syncStatus?: string }): number {
-    let sql = 'SELECT COUNT(*) as count FROM developer_debug_events';
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-    if (options?.kind) {
-      conditions.push('kind = ?');
-      params.push(options.kind);
-    }
-    if (options?.syncStatus) {
-      conditions.push('sync_status = ?');
-      params.push(options.syncStatus);
-    }
-    if (conditions.length > 0) {
-      sql += ' WHERE ' + conditions.join(' AND ');
-    }
+  countDeveloperDebugEvents(options?: DeveloperDebugEventQuery): number {
+    const { where, params } = this.buildDeveloperDebugEventWhere(options);
+    const sql = `SELECT COUNT(*) as count FROM developer_debug_events ${where}`;
     const row = this.db.prepare(sql).get(...params) as { count: number };
     return row.count;
+  }
+
+  private buildDeveloperDebugEventWhere(options?: DeveloperDebugEventQuery): { where: string; params: (string | number)[] } {
+    const conditions: string[] = [];
+    const params: (string | number)[] = [];
+
+    if (options?.kinds?.length) {
+      const placeholders = options.kinds.map(() => '?').join(',');
+      conditions.push(`kind IN (${placeholders})`);
+      params.push(...options.kinds);
+    }
+    if (options?.operation) {
+      conditions.push(`operation LIKE ?`);
+      params.push(`%${options.operation}%`);
+    }
+    if (options?.status) {
+      conditions.push(`status = ?`);
+      params.push(options.status);
+    }
+    if (options?.provider) {
+      conditions.push(`provider LIKE ?`);
+      params.push(`%${options.provider}%`);
+    }
+    if (options?.cycleId) {
+      conditions.push(`cycle_id LIKE ?`);
+      params.push(`%${options.cycleId}%`);
+    }
+    if (options?.correlationId) {
+      conditions.push(`correlation_id LIKE ?`);
+      params.push(`%${options.correlationId}%`);
+    }
+    if (options?.turnId) {
+      conditions.push(`turn_id LIKE ?`);
+      params.push(`%${options.turnId}%`);
+    }
+    if (options?.syncStatus) {
+      conditions.push(`sync_status = ?`);
+      params.push(options.syncStatus);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    return { where, params };
   }
 
   getCharacterState(characterId?: string): CharacterRuntimeState {

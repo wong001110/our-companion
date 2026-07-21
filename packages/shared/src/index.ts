@@ -1806,6 +1806,37 @@ export interface DeveloperDebugEvent extends DeveloperDebugEventInput {
   uploadedAt?: string;
 }
 
+export interface DeveloperDebugEventQuery {
+  kinds?: DeveloperDebugEventKind[];
+  operation?: string;
+  status?: string;
+  provider?: string;
+  cycleId?: string;
+  correlationId?: string;
+  turnId?: string;
+  syncStatus?: DeveloperDebugEvent['syncStatus'];
+  limit?: number;
+  offset?: number;
+}
+
+export interface DeveloperDebugUploadEvent {
+  clientEventId: string;
+  kind: string;
+  operation?: string;
+  status?: string;
+  provider?: string;
+  model?: string;
+  companionId?: string;
+  correlationId?: string;
+  cycleId?: string;
+  turnId?: string;
+  summary?: string;
+  payload?: Record<string, unknown>;
+  errorCode?: string;
+  errorMessage?: string;
+  clientCreatedAt: string;
+}
+
 export interface EvidenceSynthesisResult {
   title: string;
   summary: string;
@@ -2501,8 +2532,8 @@ export interface OurCompanionApi {
     getDebugLog(): Promise<AiDebugEntry[]>;
   };
   debugEvents: {
-    listEvents(options?: { kind?: DeveloperDebugEventKind; limit?: number; offset?: number }): Promise<DeveloperDebugEvent[]>;
-    countEvents(options?: { kind?: DeveloperDebugEventKind }): Promise<number>;
+    listEvents(options?: DeveloperDebugEventQuery): Promise<DeveloperDebugEvent[]>;
+    countEvents(options?: DeveloperDebugEventQuery): Promise<number>;
   };
   speech: {
     transcribe(input: TranscribeAudioInput): Promise<{ text: string; language?: string }>;

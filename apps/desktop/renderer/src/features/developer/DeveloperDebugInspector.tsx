@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { DeveloperDebugEvent, DeveloperDebugEventKind } from '@our-companion/shared';
+import type { DeveloperDebugEvent, DeveloperDebugEventKind, DeveloperDebugEventQuery } from '@our-companion/shared';
 import { formatJson } from '../../ui/utils';
 import { DebugJsonBlock } from '../../ui/DebugComponents';
 
@@ -44,20 +44,33 @@ export function DeveloperDebugInspector({ open, onClose }: { open: boolean; onCl
     return TAB_KINDS[tab as Exclude<InspectorTab, 'upload_status'>] ?? [];
   }, [tab, kindFilter]);
 
+  const buildQuery = useCallback((pageNum: number): DeveloperDebugEventQuery => {
+    return {
+      kinds: activeKinds.length > 0 ? activeKinds : undefined,
+      operation: operationFilter || undefined,
+      status: statusFilter || undefined,
+      provider: providerFilter || undefined,
+      cycleId: cycleFilter || undefined,
+      correlationId: correlationFilter || undefined,
+      limit: PAGE_SIZE,
+      offset: pageNum * PAGE_SIZE,
+    };
+  }, [activeKinds, operationFilter, statusFilter, providerFilter, cycleFilter, correlationFilter]);
+
   const fetchEvents = useCallback(async (pageNum: number) => {
     setLoading(true);
     try {
-      const kind = kindFilter !== 'all' ? kindFilter : undefined;
+      const query = buildQuery(pageNum);
       const [listed, counted] = await Promise.all([
-        window.ourCompanion.debugEvents.listEvents({ kind, limit: PAGE_SIZE, offset: pageNum * PAGE_SIZE }),
-        window.ourCompanion.debugEvents.countEvents({ kind }),
+        window.ourCompanion.debugEvents.listEvents(query),
+        window.ourCompanion.debugEvents.countEvents(query),
       ]);
       setEvents(listed);
       setTotalCount(counted);
     } finally {
       setLoading(false);
     }
-  }, [kindFilter]);
+  }, [buildQuery]);
 
   useEffect(() => {
     if (!open) return;
@@ -65,18 +78,6 @@ export function DeveloperDebugInspector({ open, onClose }: { open: boolean; onCl
     setPage(0);
     setExpandedId(null);
   }, [open, fetchEvents]);
-
-  const filteredEvents = useMemo(() => {
-    return events.filter((e) => {
-      if (tab !== 'upload_status' && activeKinds.length > 0 && !activeKinds.includes(e.kind)) return false;
-      if (operationFilter && !(e.operation ?? '').toLowerCase().includes(operationFilter.toLowerCase())) return false;
-      if (statusFilter && !(e.status ?? '').toLowerCase().includes(statusFilter.toLowerCase())) return false;
-      if (cycleFilter && !(e.cycleId ?? '').includes(cycleFilter)) return false;
-      if (correlationFilter && !(e.correlationId ?? '').includes(correlationFilter)) return false;
-      if (providerFilter && !(e.provider ?? '').toLowerCase().includes(providerFilter.toLowerCase())) return false;
-      return true;
-    });
-  }, [events, tab, activeKinds, operationFilter, statusFilter, cycleFilter, correlationFilter, providerFilter]);
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
@@ -151,9 +152,9 @@ export function DeveloperDebugInspector({ open, onClose }: { open: boolean; onCl
           ) : (
             <>
               {loading && <p className="debug-inspector-status">Loading...</p>}
-              {!loading && filteredEvents.length === 0 && <p className="debug-inspector-status">No events found.</p>}
+              {!loading && events.length === 0 && <p className="debug-inspector-status">No events found.</p>}
               <div className="debug-inspector-event-list">
-                {filteredEvents.map((event) => (
+                {events.map((event) => (
                   <div key={event.id} className="debug-inspector-event">
                     <button className="debug-inspector-event-header" onClick={() => setExpandedId(expandedId === event.id ? null : event.id)} aria-expanded={expandedId === event.id}>
                       <span className="debug-inspector-event-time">{new Date(event.createdAt).toLocaleString()}</span>
@@ -206,40 +207,80 @@ export function DeveloperDebugInspector({ open, onClose }: { open: boolean; onCl
 }
 
 function UploadStatusPanel() {
-  const [status, setStatus] = useState<{ pendingCount: number; lastAttemptAt?: string; onlineMode?: boolean } | null>(null);
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof window.ourCompanion.developer.getUploadStatus>> | null>(null);
   const [loading, setLoading] = useState(true);
   const [flushing, setFlushing] = useState(false);
+  const [uploadEnabled, setUploadEnabled] = useState(false);
+  const [flushResult, setFlushResult] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    void window.ourCompanion.debugEvents.countEvents({ kind: 'ai_call' }).then((count: number) => {
-      if (active) { setStatus({ pendingCount: count }); setLoading(false); }
+    Promise.all([
+      window.ourCompanion.developer.getUploadStatus(),
+      window.ourCompanion.developer.getUploadSetting(),
+    ]).then(([uploadStatus, uploadSetting]) => {
+      if (active) {
+        setStatus(uploadStatus);
+        setUploadEnabled(uploadSetting);
+        setLoading(false);
+      }
     }).catch(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
 
   async function handleFlush() {
     setFlushing(true);
+    setFlushResult(null);
     try {
-      const count = await window.ourCompanion.debugEvents.countEvents({});
-      setStatus((prev) => prev ? { ...prev, pendingCount: count, lastAttemptAt: new Date().toISOString() } : prev);
+      const result = await window.ourCompanion.developer.flushDebugEvents();
+      setFlushResult(`Uploaded ${result.uploaded}, failed ${result.failed}`);
+      const updated = await window.ourCompanion.developer.getUploadStatus();
+      setStatus(updated);
+    } catch (error) {
+      setFlushResult(error instanceof Error ? error.message : 'Flush failed');
     } finally {
       setFlushing(false);
     }
   }
 
+  async function handleUploadToggle(enabled: boolean) {
+    const previous = uploadEnabled;
+    setUploadEnabled(enabled);
+    try {
+      await window.ourCompanion.developer.setUploadSetting(enabled);
+      const updated = await window.ourCompanion.developer.getUploadStatus();
+      setStatus(updated);
+    } catch {
+      setUploadEnabled(previous);
+    }
+  }
+
   if (loading) return <p className="debug-inspector-status">Loading upload status...</p>;
+
+  const canFlush = status?.isDevBuild && status.onlineModeEnabled && status.authenticated && status.uploadSettingEnabled && (status.pendingEvents ?? 0) > 0 && !flushing;
 
   return (
     <div className="debug-inspector-upload-status">
       <h3>Upload Status</h3>
       <dl className="debug-inspector-detail-grid">
-        <div><dt>Events in DB</dt><dd>{status?.pendingCount ?? 0}</dd></div>
-        {status?.lastAttemptAt && <div><dt>Last Flush</dt><dd>{new Date(status.lastAttemptAt).toLocaleString()}</dd></div>}
+        <div><dt>Dev Build</dt><dd>{status?.isDevBuild ? 'Yes' : 'No'}</dd></div>
+        <div><dt>Online Mode</dt><dd>{status?.onlineModeEnabled ? 'Enabled' : 'Disabled'}</dd></div>
+        <div><dt>Network State</dt><dd>{status?.networkState ?? 'unknown'}</dd></div>
+        <div><dt>Authenticated</dt><dd>{status?.authenticated ? 'Yes' : 'No'}</dd></div>
+        <div><dt>Pending Events</dt><dd>{status?.pendingEvents ?? 0}</dd></div>
+        {status?.lastUploadAt && <div><dt>Last Upload</dt><dd>{new Date(status.lastUploadAt).toLocaleString()}</dd></div>}
+        {status?.lastUploadError && <div><dt>Last Error</dt><dd>{status.lastUploadError}</dd></div>}
       </dl>
+      {status?.isDevBuild && (
+        <label className="checkbox-row">
+          <input type="checkbox" checked={uploadEnabled} onChange={(e) => void handleUploadToggle(e.target.checked)} />
+          <span>Enable debug event upload</span>
+        </label>
+      )}
       <div className="debug-inspector-actions">
-        <button onClick={() => void handleFlush()} disabled={flushing}>{flushing ? 'Flushing...' : 'Flush Events'}</button>
+        <button onClick={() => void handleFlush()} disabled={!canFlush}>{flushing ? 'Flushing...' : 'Flush Events'}</button>
       </div>
+      {flushResult && <p className="debug-inspector-status">{flushResult}</p>}
     </div>
   );
 }

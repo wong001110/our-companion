@@ -274,4 +274,46 @@ describe('NetworkConnectionService', () => {
     await service.sendPresenceActivity();
     expect(emit).toHaveBeenCalledTimes(1);
   });
+
+  it('postBatchDebugEvents calls POST /api/developer/debug-events/batch with events body', async () => {
+    const db = new TestDb();
+    db.setAppSetting('network.online-mode-enabled', true);
+    const fetch = vi.fn().mockResolvedValue(response({ accepted: 2 }));
+    const service = new NetworkConnectionService(db as never, undefined, { fetch, createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
+    (service as any).session = { serverOrigin: 'http://localhost:3001', accessToken: 'token-abc', refreshToken: 'refresh' };
+    (service as any).status = { state: 'online', onlineModeEnabled: true, serverUrl: 'http://localhost:3001' };
+
+    const batch = [
+      { clientEventId: 'e1', kind: 'ai_call', clientCreatedAt: '2026-01-01T00:00:00.000Z' },
+      { clientEventId: 'e2', kind: 'pipeline_failure', clientCreatedAt: '2026-01-01T00:00:01.000Z' },
+    ];
+    const result = await service.postBatchDebugEvents(batch);
+
+    expect(result).toEqual({ accepted: 2 });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0][0]).toBe('http://localhost:3001/api/developer/debug-events/batch');
+    const options = fetch.mock.calls[0][1] as RequestInit;
+    expect(options.method).toBe('POST');
+    const body = JSON.parse(options.body as string);
+    expect(body).toEqual({ events: batch });
+    expect((options.headers as Record<string, string>).authorization).toBe('Bearer token-abc');
+  });
+
+  it('postBatchDebugEvents refreshes and retries on TOKEN_EXPIRED', async () => {
+    const db = new TestDb();
+    db.setAppSetting('network.online-mode-enabled', true);
+    db.setAppSetting('network.device-id', 'test-device-id');
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(response(null, false, 'TOKEN_EXPIRED'))
+      .mockResolvedValueOnce(response({ accessToken: 'new-token', refreshToken: 'new-refresh' }))
+      .mockResolvedValueOnce(response({ accepted: 1 }));
+    const service = new NetworkConnectionService(db as never, undefined, { fetch, createSocket: vi.fn(), secureStorage: { isEncryptionAvailable: () => true, encryptString: (value) => Buffer.from(value), decryptString: (value) => value.toString() }, setTimeout, clearTimeout });
+    (service as any).session = { serverOrigin: 'http://localhost:3001', accessToken: 'old-token', refreshToken: 'refresh' };
+    (service as any).status = { state: 'online', onlineModeEnabled: true, serverUrl: 'http://localhost:3001' };
+
+    const result = await service.postBatchDebugEvents([{ clientEventId: 'e1', kind: 'ai_call', clientCreatedAt: '2026-01-01T00:00:00.000Z' }]);
+    expect(result).toEqual({ accepted: 1 });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect((fetch.mock.calls[2][1] as RequestInit).headers).toMatchObject({ authorization: 'Bearer new-token' });
+  });
 });

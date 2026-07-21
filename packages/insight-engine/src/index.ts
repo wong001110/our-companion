@@ -135,6 +135,8 @@ const MAX_UNCERTAINTIES = 5;
 const MAX_TITLE_CHARS = 200;
 const MAX_SUMMARY_CHARS = 2000;
 const MAX_WHY_RELEVANT_CHARS = 1000;
+const MAX_KEY_FACT_STATEMENT_CHARS = 500;
+const MAX_UNCERTAINTY_CHARS = 500;
 
 export function buildEvidenceSynthesisPrompt(evidence: EvidenceInput[]): string {
   const bounded = evidence.slice(0, MAX_EVIDENCE_RECORDS);
@@ -194,9 +196,15 @@ export function validateSynthesisResult(
     if (!fact || typeof fact !== 'object') return { valid: false, reason: 'keyFact_invalid' };
     const f = fact as Record<string, unknown>;
     if (typeof f.statement !== 'string' || !f.statement.trim()) return { valid: false, reason: 'keyFact_missing_statement' };
+    if (f.statement.trim().length > MAX_KEY_FACT_STATEMENT_CHARS) return { valid: false, reason: 'keyFact_statement_too_long' };
     if (!Array.isArray(f.evidenceIds) || f.evidenceIds.length === 0) return { valid: false, reason: 'keyFact_missing_evidence' };
+    const seenFactEids = new Set<string>();
     for (const eid of f.evidenceIds) {
-      if (!validSet.has(eid as string)) return { valid: false, reason: `keyFact_unknown_evidence:${eid}` };
+      if (typeof eid !== 'string') return { valid: false, reason: 'keyFact_invalid_evidence_id' };
+      if (!eid.trim()) return { valid: false, reason: 'keyFact_empty_evidence_id' };
+      if (!validSet.has(eid)) return { valid: false, reason: `keyFact_unknown_evidence:${eid}` };
+      if (seenFactEids.has(eid)) return { valid: false, reason: `keyFact_duplicate_evidence:${eid}` };
+      seenFactEids.add(eid);
     }
   }
 
@@ -205,13 +213,20 @@ export function validateSynthesisResult(
 
   if (!Array.isArray(obj.uncertainties)) return { valid: false, reason: 'uncertainties_not_array' };
   if (obj.uncertainties.length > MAX_UNCERTAINTIES) return { valid: false, reason: 'uncertainties_too_many' };
+  for (const u of obj.uncertainties) {
+    if (typeof u !== 'string') return { valid: false, reason: 'uncertainty_not_string' };
+    if (!u.trim()) return { valid: false, reason: 'uncertainty_empty' };
+    if (u.trim().length > MAX_UNCERTAINTY_CHARS) return { valid: false, reason: 'uncertainty_too_long' };
+  }
 
   if (!Array.isArray(obj.supportingEvidenceIds)) return { valid: false, reason: 'supportingEvidenceIds_not_array' };
   const seenIds = new Set<string>();
   for (const eid of obj.supportingEvidenceIds) {
-    if (!validSet.has(eid as string)) return { valid: false, reason: `unknown_supporting_evidence:${eid}` };
-    if (seenIds.has(eid as string)) return { valid: false, reason: `duplicate_supporting_evidence:${eid}` };
-    seenIds.add(eid as string);
+    if (typeof eid !== 'string') return { valid: false, reason: 'supporting_invalid_evidence_id' };
+    if (!eid.trim()) return { valid: false, reason: 'supporting_empty_evidence_id' };
+    if (!validSet.has(eid)) return { valid: false, reason: `unknown_supporting_evidence:${eid}` };
+    if (seenIds.has(eid)) return { valid: false, reason: `duplicate_supporting_evidence:${eid}` };
+    seenIds.add(eid);
   }
   if (seenIds.size === 0) return { valid: false, reason: 'no_supporting_evidence' };
 
@@ -220,11 +235,11 @@ export function validateSynthesisResult(
     summary: (obj.summary as string).trim(),
     keyFacts: (obj.keyFacts as Array<{ statement: string; evidenceIds: string[] }>).map((f) => ({
       statement: f.statement.trim(),
-      evidenceIds: f.evidenceIds,
+      evidenceIds: f.evidenceIds.map((e) => e.trim()),
     })),
     whyRelevant: (obj.whyRelevant as string).trim(),
     uncertainties: (obj.uncertainties as string[]).map((u) => u.trim()),
-    supportingEvidenceIds: obj.supportingEvidenceIds as string[],
+    supportingEvidenceIds: (obj.supportingEvidenceIds as string[]).map((e) => e.trim()),
   };
   return { valid: true, data };
 }

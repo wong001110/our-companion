@@ -371,8 +371,8 @@ const api: OurCompanionApi = {
     readAsset: (input: { companionId: string; subfolder: string; fileName: string }) => invoke<{ dataUrl: string } | null>('companionNew:readAsset', input)
   },
   debugEvents: {
-    listEvents: (options?: { kind?: string; limit?: number; offset?: number }) => invoke<import('@our-companion/shared').DeveloperDebugEvent[]>('debugEvents:listEvents', options),
-    countEvents: (options?: { kind?: string }) => invoke<number>('debugEvents:countEvents', options),
+    listEvents: (options?: import('@our-companion/shared').DeveloperDebugEventQuery) => invoke<import('@our-companion/shared').DeveloperDebugEvent[]>('debugEvents:listEvents', options),
+    countEvents: (options?: import('@our-companion/shared').DeveloperDebugEventQuery) => invoke<number>('debugEvents:countEvents', options),
   },
   developer: {
     getUploadSetting: () => invoke<boolean>('developer:getUploadSetting'),

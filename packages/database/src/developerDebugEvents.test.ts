@@ -23,7 +23,7 @@ describe('Developer Debug Events', () => {
     const event = makeEvent('ai_call', { operation: 'chat', summary: 'AI chat call' });
     db.insertDeveloperDebugEvent(event);
 
-    const events = db.listDeveloperDebugEvents({ kind: 'ai_call' });
+    const events = db.listDeveloperDebugEvents({ kinds: ['ai_call'] });
     expect(events).toHaveLength(1);
     expect(events[0].id).toBe(event.id);
     expect(events[0].kind).toBe('ai_call');
@@ -39,15 +39,191 @@ describe('Developer Debug Events', () => {
     db.insertDeveloperDebugEvent(makeEvent('research_search'));
     db.insertDeveloperDebugEvent(makeEvent('research_page_fetch'));
 
-    const aiEvents = db.listDeveloperDebugEvents({ kind: 'ai_call' });
+    const aiEvents = db.listDeveloperDebugEvents({ kinds: ['ai_call'] });
     expect(aiEvents).toHaveLength(1);
     expect(aiEvents[0].kind).toBe('ai_call');
 
-    const searchEvents = db.listDeveloperDebugEvents({ kind: 'research_search' });
+    const searchEvents = db.listDeveloperDebugEvents({ kinds: ['research_search'] });
     expect(searchEvents).toHaveLength(1);
 
     const allEvents = db.listDeveloperDebugEvents();
     expect(allEvents).toHaveLength(3);
+  });
+
+  it('filters by multiple kinds (IN query)', () => {
+    const db = new DatabaseService();
+    db.insertDeveloperDebugEvent(makeEvent('ai_call'));
+    db.insertDeveloperDebugEvent(makeEvent('research_search'));
+    db.insertDeveloperDebugEvent(makeEvent('research_page_fetch'));
+    db.insertDeveloperDebugEvent(makeEvent('research_evidence'));
+    db.insertDeveloperDebugEvent(makeEvent('evidence_synthesis'));
+    db.insertDeveloperDebugEvent(makeEvent('pipeline_failure'));
+
+    const researchKinds = db.listDeveloperDebugEvents({ kinds: ['research_search', 'research_page_fetch', 'research_evidence', 'evidence_synthesis'] });
+    expect(researchKinds).toHaveLength(4);
+
+    const mixedKinds = db.listDeveloperDebugEvents({ kinds: ['ai_call', 'pipeline_failure'] });
+    expect(mixedKinds).toHaveLength(2);
+
+    const aiAndResearch = db.listDeveloperDebugEvents({ kinds: ['ai_call', 'research_search'] });
+    expect(aiAndResearch).toHaveLength(2);
+  });
+
+  it('filters by operation (case-insensitive LIKE)', () => {
+    const db = new DatabaseService();
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { operation: 'ChatCompletion' }));
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { operation: 'ResearchPlan' }));
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { operation: 'chat-turn' }));
+
+    const chatOps = db.listDeveloperDebugEvents({ operation: 'chat' });
+    expect(chatOps).toHaveLength(2);
+
+    const researchOps = db.listDeveloperDebugEvents({ operation: 'research' });
+    expect(researchOps).toHaveLength(1);
+  });
+
+  it('filters by status (exact match)', () => {
+    const db = new DatabaseService();
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { status: 'completed' }));
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { status: 'error' }));
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { status: 'completed' }));
+
+    const completed = db.listDeveloperDebugEvents({ status: 'completed' });
+    expect(completed).toHaveLength(2);
+
+    const errors = db.listDeveloperDebugEvents({ status: 'error' });
+    expect(errors).toHaveLength(1);
+  });
+
+  it('filters by provider (case-insensitive LIKE)', () => {
+    const db = new DatabaseService();
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { provider: 'deepseek-v4' }));
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { provider: 'openai-gpt4' }));
+    db.insertDeveloperDebugEvent(makeEvent('research_search', { provider: 'deepseek-search' }));
+
+    const deepseekEvents = db.listDeveloperDebugEvents({ provider: 'deepseek' });
+    expect(deepseekEvents).toHaveLength(2);
+
+    const openaiEvents = db.listDeveloperDebugEvents({ provider: 'openai' });
+    expect(openaiEvents).toHaveLength(1);
+  });
+
+  it('filters by cycleId (LIKE contains)', () => {
+    const db = new DatabaseService();
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { cycleId: 'cycle_abc123' }));
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { cycleId: 'cycle_def456' }));
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { cycleId: 'other_cycle' }));
+
+    const abcEvents = db.listDeveloperDebugEvents({ cycleId: 'abc123' });
+    expect(abcEvents).toHaveLength(1);
+
+    const cycleEvents = db.listDeveloperDebugEvents({ cycleId: 'cycle' });
+    expect(cycleEvents).toHaveLength(3);
+  });
+
+  it('filters by correlationId (LIKE contains)', () => {
+    const db = new DatabaseService();
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { correlationId: 'corr_xyz789' }));
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { correlationId: 'corr_abc123' }));
+
+    const xyzEvents = db.listDeveloperDebugEvents({ correlationId: 'xyz789' });
+    expect(xyzEvents).toHaveLength(1);
+
+    const corrEvents = db.listDeveloperDebugEvents({ correlationId: 'corr' });
+    expect(corrEvents).toHaveLength(2);
+  });
+
+  it('filters by turnId (LIKE contains)', () => {
+    const db = new DatabaseService();
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { turnId: 'turn_111' }));
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { turnId: 'turn_222' }));
+
+    const t1 = db.listDeveloperDebugEvents({ turnId: 'turn_111' });
+    expect(t1).toHaveLength(1);
+
+    const allTurns = db.listDeveloperDebugEvents({ turnId: 'turn' });
+    expect(allTurns).toHaveLength(2);
+  });
+
+  it('filters by syncStatus (exact match)', () => {
+    const db = new DatabaseService();
+    const e1 = makeEvent('ai_call');
+    const e2 = makeEvent('ai_call');
+    const e3 = makeEvent('ai_call');
+    db.insertDeveloperDebugEvent(e1);
+    db.insertDeveloperDebugEvent(e2);
+    db.insertDeveloperDebugEvent(e3);
+
+    db.markDeveloperDebugEventsUploading([e1.id]);
+    db.markDeveloperDebugEventsUploaded([e2.id]);
+
+    const pendingEvents = db.listDeveloperDebugEvents({ syncStatus: 'pending' });
+    expect(pendingEvents).toHaveLength(1);
+
+    const uploadingEvents = db.listDeveloperDebugEvents({ syncStatus: 'uploading' });
+    expect(uploadingEvents).toHaveLength(1);
+
+    const uploadedEvents = db.listDeveloperDebugEvents({ syncStatus: 'uploaded' });
+    expect(uploadedEvents).toHaveLength(1);
+  });
+
+  it('applies combined filters', () => {
+    const db = new DatabaseService();
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { operation: 'chat', provider: 'deepseek', status: 'completed' }));
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { operation: 'chat', provider: 'openai', status: 'error' }));
+    db.insertDeveloperDebugEvent(makeEvent('research_search', { operation: 'search', provider: 'deepseek', status: 'completed' }));
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { operation: 'plan', provider: 'deepseek', status: 'completed' }));
+
+    const filtered = db.listDeveloperDebugEvents({
+      kinds: ['ai_call'],
+      provider: 'deepseek',
+      status: 'completed',
+    });
+    expect(filtered).toHaveLength(2);
+    expect(filtered.every((e) => e.kind === 'ai_call' && e.status === 'completed')).toBe(true);
+  });
+
+  it('countEvents uses same filters as listEvents', () => {
+    const db = new DatabaseService();
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { provider: 'deepseek' }));
+    db.insertDeveloperDebugEvent(makeEvent('ai_call', { provider: 'openai' }));
+    db.insertDeveloperDebugEvent(makeEvent('research_search', { provider: 'deepseek' }));
+
+    const query = { kinds: ['ai_call'] as DeveloperDebugEventKind[], provider: 'deepseek' };
+    const count = db.countDeveloperDebugEvents(query);
+    const list = db.listDeveloperDebugEvents(query);
+    expect(count).toBe(list.length);
+    expect(count).toBe(1);
+  });
+
+  it('filtered pagination returns correct results', () => {
+    const db = new DatabaseService();
+    for (let i = 0; i < 15; i++) {
+      db.insertDeveloperDebugEvent(makeEvent('ai_call', { summary: `ai-${i}`, operation: i < 10 ? 'chat' : 'plan' }));
+    }
+    db.insertDeveloperDebugEvent(makeEvent('research_search', { summary: 'research-1', operation: 'search' }));
+
+    const query = { kinds: ['ai_call'] as DeveloperDebugEventKind[], operation: 'chat' };
+    const total = db.countDeveloperDebugEvents(query);
+    expect(total).toBe(10);
+
+    const page1 = db.listDeveloperDebugEvents({ ...query, limit: 5, offset: 0 });
+    expect(page1).toHaveLength(5);
+
+    const page2 = db.listDeveloperDebugEvents({ ...query, limit: 5, offset: 5 });
+    expect(page2).toHaveLength(5);
+
+    const page3 = db.listDeveloperDebugEvents({ ...query, limit: 5, offset: 10 });
+    expect(page3).toHaveLength(0);
+  });
+
+  it('no results returns count=0', () => {
+    const db = new DatabaseService();
+    db.insertDeveloperDebugEvent(makeEvent('ai_call'));
+
+    expect(db.countDeveloperDebugEvents({ kinds: ['pipeline_failure'] })).toBe(0);
+    expect(db.countDeveloperDebugEvents({ operation: 'nonexistent' })).toBe(0);
+    expect(db.countDeveloperDebugEvents({ provider: 'unknown' })).toBe(0);
   });
 
   it('respects limit and offset', () => {
@@ -72,18 +248,6 @@ describe('Developer Debug Events', () => {
     db.insertDeveloperDebugEvent(makeEvent('ai_call'));
     const events = db.listDeveloperDebugEvents({ limit: 999 });
     expect(events).toHaveLength(1);
-  });
-
-  it('counts events by kind', () => {
-    const db = new DatabaseService();
-    db.insertDeveloperDebugEvent(makeEvent('ai_call'));
-    db.insertDeveloperDebugEvent(makeEvent('ai_call'));
-    db.insertDeveloperDebugEvent(makeEvent('research_search'));
-
-    expect(db.countDeveloperDebugEvents()).toBe(3);
-    expect(db.countDeveloperDebugEvents({ kind: 'ai_call' })).toBe(2);
-    expect(db.countDeveloperDebugEvents({ kind: 'research_search' })).toBe(1);
-    expect(db.countDeveloperDebugEvents({ kind: 'research_page_fetch' })).toBe(0);
   });
 
   it('gets a single event by id', () => {
@@ -203,7 +367,7 @@ describe('Developer Debug Events', () => {
 
     expect(db.countDeveloperDebugEvents()).toBe(6);
     for (const kind of kinds) {
-      expect(db.countDeveloperDebugEvents({ kind })).toBe(1);
+      expect(db.countDeveloperDebugEvents({ kinds: [kind] })).toBe(1);
     }
   });
 });

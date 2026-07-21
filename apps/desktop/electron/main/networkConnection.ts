@@ -3,7 +3,7 @@ import { safeStorage } from 'electron';
 import { io, type Socket } from 'socket.io-client';
 import type { DatabaseService } from '@our-companion/database';
 import { assertSmokeTestRuntime, hashSmokeDeviceId, isSmokeTestRuntime } from './platform/smokeRuntime';
-import type { BlockedUserSummary, CompanionAssetManifest, CompleteAssetPackResult, FriendLookupRelationship, FriendLookupResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile, VisitInvitationStatus, VisitInvitationSummary, VisitRuntimeConfig, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
+import type { BlockedUserSummary, CompanionAssetManifest, CompleteAssetPackResult, DeveloperDebugUploadEvent, FriendLookupRelationship, FriendLookupResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile, VisitInvitationStatus, VisitInvitationSummary, VisitRuntimeConfig, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
 
 export const NETWORK_PROTOCOL_VERSION = '0.4';
 export const NETWORK_CLIENT_VERSION = '0.4.0';
@@ -252,7 +252,7 @@ export class NetworkConnectionService {
   setTransferLifecycleHandler(handler: (reason: string) => void) { this.transferLifecycleHandler = handler; }
   dispose(): void { this.transferLifecycleHandler?.('app_shutdown'); this.stopSocket(); }
 
-  postBatchDebugEvents = async (batch: unknown[]): Promise<{ accepted: number }> => this.socialRequest<{ accepted: number }>('/api/debug-events/batch', { events: batch });
+  postBatchDebugEvents = async (batch: DeveloperDebugUploadEvent[]): Promise<{ accepted: number }> => this.socialRequest<{ accepted: number }>('/api/developer/debug-events/batch', { events: batch });
 
   private get enabled(): boolean { return this.db.getAppSetting<boolean>(MODE_KEY) ?? false; }
   private get serverUrl(): string {

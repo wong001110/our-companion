@@ -28,7 +28,7 @@ import {
   validateAiResearchPlan
 } from '@our-companion/discovery-engine';
 import { getDiscoveryPlatformPreset, isDiscoveryPlatformId } from '@our-companion/discovery-engine';
-import type { WebPageFetcher, WebSearchProvider } from './researchAdapters';
+import { ResearchAdapterError, type WebPageFetcher, type WebSearchProvider } from './researchAdapters';
 
 class ResearchCycleTimeoutError extends Error {
   constructor() {
@@ -354,19 +354,48 @@ async function fetchSelectedPages(input: {
       batch.push(item);
     }
     const fetched = await Promise.all(batch.map(async ({ selection, result }) => {
+      const fetchStart = Date.now();
       try {
         const page = await withCycleDeadline(input.fetcher.fetchPage({
           searchResult: result, userId: input.owner.userId, companionId: input.owner.companionId,
           cycleId: input.owner.cycleId, researchIntentId: input.owner.id, researchPlanId: input.plan.id,
           sourceType: selection.expectedEvidenceType
         }), input.remainingMs());
-        input.onDebugEvent?.({ kind: 'research_page_fetch', operation: 'web-page:fetch', status: 'completed', provider: input.fetcher.id, summary: `url=${result.url}`, payload: { url: result.url, domain: result.domain, contentHash: page.contentHash, contentType: page.contentType, textLength: page.extractedText.length } });
+        input.onDebugEvent?.({
+          kind: 'research_page_fetch', operation: 'web-page:fetch', status: 'completed',
+          summary: `Fetched ${page.title}`,
+          payload: {
+            searchResultId: result.id,
+            requestedUrl: result.url,
+            finalUrl: page.url,
+            canonicalUrl: page.canonicalUrl,
+            title: page.title,
+            publishedAt: page.publishedAt,
+            excerpt: page.excerpt.slice(0, 700),
+            extractedText: page.extractedText.slice(0, 4000),
+            characterCount: page.extractedText.length,
+            truncated: page.extractedText.length > 4000,
+            contentHash: page.contentHash,
+            contentType: page.contentType,
+            durationMs: Date.now() - fetchStart,
+          },
+        });
         input.onTrace?.({ operation: 'web-page:fetch', status: 'completed', providerMode: input.fetcher.mode, inputRefs: [input.plan.id], outputRefs: [page.id] });
         input.onTrace?.({ operation: 'web-page:extract', status: 'completed', providerMode: input.fetcher.mode, inputRefs: [page.id], outputRefs: [page.contentHash] });
         return page;
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        input.onDebugEvent?.({ kind: 'research_page_fetch', operation: 'web-page:fetch', status: 'failed', provider: input.fetcher.id, summary: `url=${result.url} error=${reason}`, errorMessage: reason });
+        input.onDebugEvent?.({
+          kind: 'research_page_fetch', operation: 'web-page:fetch', status: 'failed',
+          summary: `Failed to fetch ${result.url}`,
+          errorCode: error instanceof ResearchAdapterError ? error.code : 'fetch_failed',
+          errorMessage: reason,
+          payload: {
+            searchResultId: result.id,
+            requestedUrl: result.url,
+            durationMs: Date.now() - fetchStart,
+          },
+        });
         input.onTrace?.({ operation: 'web-page:fetch', status: 'skipped', providerMode: input.fetcher.mode, inputRefs: [input.plan.id], skipReason: reason });
         return undefined;
       }
@@ -630,6 +659,7 @@ export class ResearchOrchestrator {
       const queryBaseIds = baseIdsByQuery.get(query) ?? [];
       const requiredDomains = dynamicTaskRequiredDomains.get(query) ?? [];
       for (const baseId of queryBaseIds) usedBaseIds.add(baseId);
+      const searchStart = Date.now();
       try {
         const found = await withCycleDeadline(
           this.deps.searchProvider.search({ query, limit: plan.limits.maxSearchResultsPerQuery, freshnessDays: intent.freshnessDays, domainHints: intent.domainHints, excludedDomains: intent.excludedDomains, requiredDomains }),
@@ -650,7 +680,12 @@ export class ResearchOrchestrator {
         providerOutcomes.push({ id: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: uniqueResults.length ? 'completed' : 'empty', itemCount: uniqueResults.length });
         const searchRecord = { id: createId('research_search'), query, provider: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: uniqueResults.length ? 'completed' as const : 'empty' as const, resultCount: uniqueResults.length };
         searchRecords.push(searchRecord);
-        input.onDebugEvent?.({ kind: 'research_search', operation: `web-search:${this.deps.searchProvider.id}`, status: searchRecord.status, provider: this.deps.searchProvider.id, summary: `query="${query}" results=${uniqueResults.length}`, payload: { query, resultCount: uniqueResults.length, providerMode: this.deps.searchProvider.mode } });
+        input.onDebugEvent?.({
+          kind: 'research_search', operation: `web-search:${this.deps.searchProvider.id}`,
+          status: searchRecord.status, provider: this.deps.searchProvider.id,
+          summary: `Search: ${query} -> ${uniqueResults.length} results`,
+          payload: { query, resultCount: uniqueResults.length, freshnessDays: intent.freshnessDays, durationMs: Date.now() - searchStart },
+        });
         // Provider result IDs are transient handles. Engine Trace references only
         // the persisted operational record, never a provider result or selection.
         input.onTrace?.({ operation: `web-search:${this.deps.searchProvider.id}`, status: searchRecord.status, providerMode: this.deps.searchProvider.mode, inputRefs: [plan.id], outputRefs: [searchRecord.id], skipReason: uniqueResults.length ? undefined : 'no_search_results' });

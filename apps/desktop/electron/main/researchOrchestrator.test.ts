@@ -535,4 +535,198 @@ describe('ResearchOrchestrator', () => {
       vi.useRealTimers();
     }
   });
+
+  it('emits research_page_fetch debug event with bounded fields on success', async () => {
+    const search = vi.fn<WebSearchProvider['search']>(async ({ query }) => [
+      result('page-test', 'page.example', 'Test Page', query),
+    ]);
+    const provider: WebSearchProvider = { id: 'fixture-search', mode: 'fixture', search };
+    const longFetcher: WebPageFetcher = {
+      ...fetcher,
+      fetchPage: vi.fn(async (input) => ({
+        ...await fetcher.fetchPage(input),
+        url: 'https://page.example/redirected',
+        canonicalUrl: 'https://page.example/canonical',
+        title: 'Test Page Title',
+        publishedAt: '2026-07-20T00:00:00.000Z',
+        extractedText: 'A'.repeat(5000),
+        excerpt: 'B'.repeat(800),
+        contentHash: 'abc123',
+        contentType: 'text/html',
+      })),
+    };
+    const orchestrator = new ResearchOrchestrator({
+      searchProvider: provider, pageFetcher: longFetcher, structuredConnectors: [],
+    });
+    const debugEvents: Array<import('@our-companion/shared').DeveloperDebugEventInput> = [];
+
+    await orchestrator.run({
+      userId: 'user', companionId: 'owner', cycleId: 'cycle',
+      curiosityTarget: target,
+      onDebugEvent: (event) => debugEvents.push(event),
+    });
+
+    const fetchEvent = debugEvents.find(
+      (e) => e.kind === 'research_page_fetch' && e.status === 'completed'
+    );
+    expect(fetchEvent).toBeDefined();
+    expect(fetchEvent!.summary).toBe('Fetched Test Page Title');
+    const payload = fetchEvent!.payload!;
+    expect(payload.searchResultId).toBe('page-test');
+    expect(payload.requestedUrl).toBe('https://page.example/page-test');
+    expect(payload.finalUrl).toBe('https://page.example/redirected');
+    expect(payload.canonicalUrl).toBe('https://page.example/canonical');
+    expect(payload.title).toBe('Test Page Title');
+    expect(payload.publishedAt).toBe('2026-07-20T00:00:00.000Z');
+    expect(payload.excerpt).toBe('B'.repeat(700));
+    expect(payload.extractedText).toBe('A'.repeat(4000));
+    expect(payload.characterCount).toBe(5000);
+    expect(payload.truncated).toBe(true);
+    expect(payload.contentHash).toBe('abc123');
+    expect(payload.contentType).toBe('text/html');
+    expect(typeof payload.durationMs).toBe('number');
+    expect(String(payload.durationMs)).not.toMatch(/[<>]/);
+  });
+
+  it('emits research_page_fetch debug event with error fields on failure', async () => {
+    const search = vi.fn<WebSearchProvider['search']>(async ({ query }) => [
+      result('fail-test', 'fail.example', 'Fail Page', query),
+    ]);
+    const provider: WebSearchProvider = { id: 'fixture-search', mode: 'fixture', search };
+    const failingFetcher: WebPageFetcher = {
+      id: 'fixture-page-fetcher', mode: 'fixture',
+      fetchPage: vi.fn(async () => { throw new ResearchAdapterError('rate_limited', 'Too many requests'); }),
+    };
+    const orchestrator = new ResearchOrchestrator({
+      searchProvider: provider, pageFetcher: failingFetcher, structuredConnectors: [],
+    });
+    const debugEvents: Array<import('@our-companion/shared').DeveloperDebugEventInput> = [];
+
+    await orchestrator.run({
+      userId: 'user', companionId: 'owner', cycleId: 'cycle',
+      curiosityTarget: target,
+      onDebugEvent: (event) => debugEvents.push(event),
+    });
+
+    const failEvent = debugEvents.find(
+      (e) => e.kind === 'research_page_fetch' && e.status === 'failed'
+    );
+    expect(failEvent).toBeDefined();
+    expect(failEvent!.summary).toBe('Failed to fetch https://fail.example/fail-test');
+    expect(failEvent!.errorCode).toBe('rate_limited');
+    expect(failEvent!.errorMessage).toBe('Too many requests');
+    const payload = failEvent!.payload!;
+    expect(payload.searchResultId).toBe('fail-test');
+    expect(payload.requestedUrl).toBe('https://fail.example/fail-test');
+    expect(typeof payload.durationMs).toBe('number');
+  });
+
+  it('truncates extractedText to 4000 chars and excerpt to 700 chars in debug event', async () => {
+    const search = vi.fn<WebSearchProvider['search']>(async ({ query }) => [
+      result('truncate', 'truncate.example', 'Truncate Page', query),
+    ]);
+    const provider: WebSearchProvider = { id: 'fixture-search', mode: 'fixture', search };
+    const longTextFetcher: WebPageFetcher = {
+      ...fetcher,
+      fetchPage: vi.fn(async (input) => ({
+        ...await fetcher.fetchPage(input),
+        extractedText: 'X'.repeat(6000),
+        excerpt: 'Y'.repeat(900),
+        contentHash: 'truncate-hash',
+        contentType: 'text/html',
+      })),
+    };
+    const orchestrator = new ResearchOrchestrator({
+      searchProvider: provider, pageFetcher: longTextFetcher, structuredConnectors: [],
+    });
+    const debugEvents: Array<import('@our-companion/shared').DeveloperDebugEventInput> = [];
+
+    await orchestrator.run({
+      userId: 'user', companionId: 'owner', cycleId: 'cycle',
+      curiosityTarget: target,
+      onDebugEvent: (event) => debugEvents.push(event),
+    });
+
+    const fetchEvent = debugEvents.find(
+      (e) => e.kind === 'research_page_fetch' && e.status === 'completed'
+    );
+    expect(fetchEvent).toBeDefined();
+    expect((fetchEvent!.payload!.extractedText as string).length).toBe(4000);
+    expect((fetchEvent!.payload!.excerpt as string).length).toBe(700);
+    expect(fetchEvent!.payload!.characterCount).toBe(6000);
+    expect(fetchEvent!.payload!.truncated).toBe(true);
+  });
+
+  it('captures requestedUrl vs finalUrl for redirected pages', async () => {
+    const search = vi.fn<WebSearchProvider['search']>(async ({ query }) => [
+      result('redirect', 'redirect.example', 'Redirect Page', query),
+    ]);
+    const provider: WebSearchProvider = { id: 'fixture-search', mode: 'fixture', search };
+    const redirectFetcher: WebPageFetcher = {
+      ...fetcher,
+      fetchPage: vi.fn(async (input) => ({
+        ...await fetcher.fetchPage(input),
+        url: 'https://redirect.example/final-destination',
+        canonicalUrl: 'https://redirect.example/canonical',
+        extractedText: 'Redirected content.',
+        excerpt: 'Redirected excerpt.',
+        contentHash: 'redirect-hash',
+        contentType: 'text/html',
+      })),
+    };
+    const orchestrator = new ResearchOrchestrator({
+      searchProvider: provider, pageFetcher: redirectFetcher, structuredConnectors: [],
+    });
+    const debugEvents: Array<import('@our-companion/shared').DeveloperDebugEventInput> = [];
+
+    await orchestrator.run({
+      userId: 'user', companionId: 'owner', cycleId: 'cycle',
+      curiosityTarget: target,
+      onDebugEvent: (event) => debugEvents.push(event),
+    });
+
+    const fetchEvent = debugEvents.find(
+      (e) => e.kind === 'research_page_fetch' && e.status === 'completed'
+    );
+    expect(fetchEvent).toBeDefined();
+    expect(fetchEvent!.payload!.requestedUrl).toBe('https://redirect.example/redirect');
+    expect(fetchEvent!.payload!.finalUrl).toBe('https://redirect.example/final-destination');
+    expect(fetchEvent!.payload!.canonicalUrl).toBe('https://redirect.example/canonical');
+  });
+
+  it('does not include raw HTML in debug event payload', async () => {
+    const search = vi.fn<WebSearchProvider['search']>(async ({ query }) => [
+      result('html', 'html.example', 'HTML Page', query),
+    ]);
+    const provider: WebSearchProvider = { id: 'fixture-search', mode: 'fixture', search };
+    const htmlFetcher: WebPageFetcher = {
+      ...fetcher,
+      fetchPage: vi.fn(async (input) => ({
+        ...await fetcher.fetchPage(input),
+        extractedText: 'Extracted text only',
+        excerpt: 'Short excerpt',
+        contentHash: 'html-hash',
+        contentType: 'text/html',
+      })),
+    };
+    const orchestrator = new ResearchOrchestrator({
+      searchProvider: provider, pageFetcher: htmlFetcher, structuredConnectors: [],
+    });
+    const debugEvents: Array<import('@our-companion/shared').DeveloperDebugEventInput> = [];
+
+    await orchestrator.run({
+      userId: 'user', companionId: 'owner', cycleId: 'cycle',
+      curiosityTarget: target,
+      onDebugEvent: (event) => debugEvents.push(event),
+    });
+
+    const fetchEvent = debugEvents.find(
+      (e) => e.kind === 'research_page_fetch' && e.status === 'completed'
+    );
+    expect(fetchEvent).toBeDefined();
+    const payloadJson = JSON.stringify(fetchEvent!.payload);
+    expect(payloadJson).not.toMatch(/<html/i);
+    expect(payloadJson).not.toMatch(/<body/i);
+    expect(payloadJson).not.toMatch(/<div/i);
+  });
 });
