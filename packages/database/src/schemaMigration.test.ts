@@ -346,4 +346,60 @@ describe('schema compatibility migrations', () => {
     reopened.close();
     fs.rmSync(directory, { recursive: true, force: true });
   });
+
+  it('removes the legacy companion_messages foreign key on character_id', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'our-companion-companion-messages-fk-db-'));
+    const dbPath = path.join(directory, 'legacy.sqlite');
+    const legacy = new DatabaseSync(dbPath);
+    legacy.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE companions (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        package_id TEXT NOT NULL,
+        is_primary INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        is_builtin INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE companion_messages (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL,
+        session_id TEXT,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'ok',
+        metadata_json TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(character_id) REFERENCES companions(id)
+      );
+      INSERT INTO companions
+        (id, name, package_id, is_primary, is_active, created_at, updated_at)
+      VALUES
+        ('legacy-companion', 'Legacy', 'legacy', 1, 1, '2026-07-18T00:00:00.000Z', '2026-07-18T00:00:00.000Z');
+      INSERT INTO companion_messages
+        (character_id, role, content, source, created_at)
+      VALUES
+        ('legacy-companion', 'user', 'Hello', 'panel', '2026-07-18T00:00:00.000Z');
+    `);
+    legacy.close();
+
+    const db = new DatabaseService({ path: dbPath });
+    const raw = (db as unknown as { db: DatabaseSync }).db;
+    expect(raw.prepare('PRAGMA foreign_key_list(companion_messages)').all()).toEqual([]);
+
+    const msg = raw.prepare('SELECT character_id, role, content FROM companion_messages').get();
+    expect(msg).toEqual({ character_id: 'legacy-companion', role: 'user', content: 'Hello' });
+
+    raw.prepare(
+      `INSERT INTO companion_messages (character_id, role, content, source, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run('non-existent-companion', 'user', 'Test', 'panel', '2026-07-18T00:00:00.000Z');
+    expect(raw.prepare('SELECT COUNT(*) as cnt FROM companion_messages').get()).toEqual({ cnt: 2 });
+
+    db.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
 });

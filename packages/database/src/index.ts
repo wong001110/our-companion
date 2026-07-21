@@ -309,6 +309,7 @@ export class DatabaseService {
     this.migratePriorBuiltinAnn();
     this.backfillMemoryFingerprints();
     this.backfillCognitiveFingerprints();
+    this.removeCompanionMessagesForeignKey();
   }
 
   /**
@@ -346,6 +347,42 @@ export class DatabaseService {
         FROM character_state;
         DROP TABLE character_state;
         ALTER TABLE character_state_without_legacy_owner RENAME TO character_state;
+      `);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  private removeCompanionMessagesForeignKey(): void {
+    const foreignKeys = this.db
+      .prepare('PRAGMA foreign_key_list(companion_messages)')
+      .all() as Array<{ table: string }>;
+    if (foreignKeys.length === 0) return;
+
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.exec(`
+        CREATE TABLE companion_messages_without_fk (
+          id TEXT PRIMARY KEY,
+          character_id TEXT NOT NULL,
+          session_id TEXT,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL,
+          source TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'ok',
+          metadata_json TEXT,
+          created_at TEXT NOT NULL
+        );
+        INSERT INTO companion_messages_without_fk (
+          id, character_id, session_id, role, content, source, status, metadata_json, created_at
+        )
+        SELECT
+          id, character_id, session_id, role, content, source, status, metadata_json, created_at
+        FROM companion_messages;
+        DROP TABLE companion_messages;
+        ALTER TABLE companion_messages_without_fk RENAME TO companion_messages;
       `);
       this.db.exec('COMMIT');
     } catch (error) {
