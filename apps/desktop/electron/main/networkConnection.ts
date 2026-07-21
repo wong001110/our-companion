@@ -252,6 +252,8 @@ export class NetworkConnectionService {
   setTransferLifecycleHandler(handler: (reason: string) => void) { this.transferLifecycleHandler = handler; }
   dispose(): void { this.transferLifecycleHandler?.('app_shutdown'); this.stopSocket(); }
 
+  postBatchDebugEvents = async (batch: unknown[]): Promise<{ accepted: number }> => this.socialRequest<{ accepted: number }>('/api/debug-events/batch', { events: batch });
+
   private get enabled(): boolean { return this.db.getAppSetting<boolean>(MODE_KEY) ?? false; }
   private get serverUrl(): string {
     const stored = this.db.getAppSetting<string>(URL_KEY);
