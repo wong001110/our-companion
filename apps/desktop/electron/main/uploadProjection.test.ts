@@ -180,8 +180,8 @@ describe('upload projection helpers', () => {
         ],
       };
       const result = buildBoundedPayload(payload);
-      expect(result.requestMessages[0].content).toBe('Bearer [REDACTED]');
-      expect(result.requestMessages[1].content).toBe('[REDACTED_JWT]');
+      expect((result.requestMessages as Array<{ role: string; content: string }>)[0].content).toBe('Bearer [REDACTED]');
+      expect((result.requestMessages as Array<{ role: string; content: string }>)[1].content).toBe('[REDACTED_JWT]');
     });
 
     it('redacts secrets in summary field via buildDeveloperDebugUploadEvent', () => {

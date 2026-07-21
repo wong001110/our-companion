@@ -177,6 +177,7 @@ import {
   truncate,
   FIELD_LIMITS,
 } from './developerDebugUpload';
+import { DebugFlushWorker } from './debugFlushWorker';
 import { detectPatterns } from '@our-companion/pattern-engine';
 import { executeActionStep, executeTool, previewTool, type ToolAdapters } from '@our-companion/tool-engine';
 import { createElectronToolAdapters } from './platform/electronCommandAdapter';
@@ -336,9 +337,7 @@ export class AppServices {
   private activeCommand: ActiveCommandRecord | null = null;
   private foundationEventBroadcaster?: (event: BaseEvent) => void;
   private foundationEventLog: BaseEvent[] = [];
-  private debugFlushPromise?: Promise<{ uploaded: number; failed: number }>;
-  private debugFlushRequested = false;
-  private debugFlushTimer?: ReturnType<typeof setTimeout>;
+  private readonly debugFlushWorker: DebugFlushWorker;
   private lastSchedulerTick?: string;
   private runtimeStarted = false;
   private readonly personalityAnalyses = new Map<string, PersonalityAnalysisRecord>();
@@ -533,11 +532,12 @@ export class AppServices {
       if (status.state === 'online' && (!wasOnline || visitInvalidated)) {
         void visits?.reconcile();
         void visualVisits?.reconcile();
-        if (!wasOnline) void this.flushPendingDebugEvents();
+        if (!wasOnline) void this.debugFlushWorker.flushPendingDebugEvents();
       }
       wasOnline = status.state === 'online';
       this.networkStatusBroadcaster?.(status);
     });
+    this.debugFlushWorker = new DebugFlushWorker(this.db, this.network, { isPackaged: app.isPackaged });
     this.publicCompanions = new PublicCompanionService(this.db, this.network, userDataDir);
     this.visits = new VisitService(this.network, this.publicCompanions);
     visits = this.visits;
@@ -2079,7 +2079,7 @@ export class AppServices {
       syncAttemptCount: 0,
     };
     const inserted = this.db.insertDeveloperDebugEvent(event);
-    void this.flushPendingDebugEvents();
+    void this.debugFlushWorker.flushPendingDebugEvents();
     return inserted;
   }
 
@@ -2217,9 +2217,9 @@ export class AppServices {
       this.db.getAppSetting<boolean>('developer.debugUploadEnabled') ?? false,
     setUploadSetting: async (enabled: boolean): Promise<void> => {
       this.db.setAppSetting('developer.debugUploadEnabled', enabled);
-      if (enabled) void this.flushPendingDebugEvents();
+      if (enabled) void this.debugFlushWorker.flushPendingDebugEvents();
     },
-    flushDebugEvents: async (): Promise<{ uploaded: number; failed: number }> => this.flushPendingDebugEvents(),
+    flushDebugEvents: async (): Promise<{ uploaded: number; failed: number }> => this.debugFlushWorker.flushPendingDebugEvents(),
     getUploadStatus: async () => {
       const networkStatus = this.network.getStatusSnapshot();
       return {
@@ -2235,144 +2235,8 @@ export class AppServices {
     },
   };
 
-  private async flushPendingDebugEvents(): Promise<{ uploaded: number; failed: number }> {
-    if (app.isPackaged) return { uploaded: 0, failed: 0 };
-    if (this.debugFlushPromise) {
-      this.debugFlushRequested = true;
-      return this.debugFlushPromise;
-    }
-    this.debugFlushPromise = this.doFlushPendingDebugEvents();
-    try {
-      return await this.debugFlushPromise;
-    } finally {
-      this.debugFlushPromise = undefined;
-      if (this.debugFlushRequested) {
-        this.debugFlushRequested = false;
-        const remaining = this.db.countDeveloperDebugEvents({ syncStatus: 'pending' });
-        if (remaining > 0) this.scheduleFlushFollowUp();
-      }
-    }
-  }
-
-  private scheduleFlushFollowUp(): void {
-    if (this.debugFlushTimer) return;
-    this.debugFlushTimer = setTimeout(() => {
-      this.debugFlushTimer = undefined;
-      void this.flushPendingDebugEvents();
-    }, 1000);
-  }
-
   cleanupFlushTimer(): void {
-    if (this.debugFlushTimer) {
-      clearTimeout(this.debugFlushTimer);
-      this.debugFlushTimer = undefined;
-    }
-  }
-
-  private canUpload(): boolean {
-    if (app.isPackaged) return false;
-    const networkStatus = this.network.getStatusSnapshot();
-    if (!networkStatus.onlineModeEnabled || networkStatus.state !== 'online') return false;
-    if (!networkStatus.account) return false;
-    const uploadEnabled = this.db.getAppSetting<boolean>('developer.debugUploadEnabled') ?? false;
-    if (!uploadEnabled) return false;
-    return true;
-  }
-
-  private async doFlushPendingDebugEvents(): Promise<{ uploaded: number; failed: number }> {
-    const MAX_POSTS_PER_DRAIN = 5;
-    let postsThisDrain = 0;
-    let totalUploaded = 0;
-    let totalFailed = 0;
-
-    while (postsThisDrain < MAX_POSTS_PER_DRAIN) {
-      if (!this.canUpload()) break;
-
-      const pending = this.db.listDeveloperDebugEvents({ syncStatus: 'pending', limit: 50 });
-      if (pending.length === 0) break;
-
-      const batches = buildDeveloperDebugUploadBatch(pending);
-      if (batches.length === 0) break;
-
-      const batch = batches[0];
-      if (batch.length === 0) break;
-
-      const batchBody = JSON.stringify({ events: batch });
-      if (Buffer.byteLength(batchBody, 'utf8') > 64 * 1024) {
-        const fallback: DeveloperDebugUploadEvent[] = batch.slice(0, 1).map((e) => ({
-          clientEventId: e.clientEventId,
-          kind: e.kind,
-          operation: e.operation,
-          status: e.status,
-          errorMessage: e.errorMessage,
-          clientCreatedAt: e.clientCreatedAt,
-          payload: { uploadTruncated: true, originalPayloadBytes: Buffer.byteLength(JSON.stringify(e.payload), 'utf8') },
-        }));
-        const fallbackIds = pending.slice(0, 1).map((e) => e.id);
-        try {
-          this.db.markDeveloperDebugEventsUploading(fallbackIds);
-          const result = await this.network.postBatchDebugEvents(fallback);
-          postsThisDrain++;
-          if (result.accepted !== fallback.length) {
-            this.db.markDeveloperDebugEventsPending(fallbackIds);
-            const msg = `Batch accepted ${result.accepted}/${fallback.length}`;
-            this.db.setAppSetting('developer.lastUploadError', msg);
-            totalFailed += fallback.length;
-            break;
-          }
-          this.db.markDeveloperDebugEventsUploaded(fallbackIds);
-          totalUploaded += fallback.length;
-          if (!this.canUpload()) break;
-          continue;
-        } catch (error) {
-          this.db.markDeveloperDebugEventsPending(fallbackIds);
-          const msg = error instanceof Error ? error.message : String(error);
-          this.db.setAppSetting('developer.lastUploadError', msg);
-          totalFailed += fallback.length;
-          break;
-        }
-      }
-
-      if (!this.canUpload()) break;
-
-      const batchIds = batch.map((e) => e.clientEventId);
-      const dbIds = pending.filter((e) => batchIds.includes(e.id)).map((e) => e.id);
-
-      try {
-        this.db.markDeveloperDebugEventsUploading(dbIds);
-        const result = await this.network.postBatchDebugEvents(batch);
-        postsThisDrain++;
-
-        if (result.accepted !== batch.length) {
-          this.db.markDeveloperDebugEventsPending(dbIds);
-          const msg = `Batch accepted ${result.accepted}/${batch.length}`;
-          this.db.setAppSetting('developer.lastUploadError', msg);
-          totalFailed += batch.length;
-          break;
-        }
-
-        this.db.markDeveloperDebugEventsUploaded(dbIds);
-        totalUploaded += batch.length;
-        if (!this.canUpload()) break;
-      } catch (error) {
-        this.db.markDeveloperDebugEventsPending(dbIds);
-        const msg = error instanceof Error ? error.message : String(error);
-        this.db.setAppSetting('developer.lastUploadError', msg);
-        totalFailed += batch.length;
-        break;
-      }
-    }
-
-    if (totalUploaded > 0) {
-      this.db.setAppSetting('developer.lastUploadAt', nowIso());
-    }
-
-    if (postsThisDrain >= MAX_POSTS_PER_DRAIN) {
-      const remaining = this.db.countDeveloperDebugEvents({ syncStatus: 'pending' });
-      if (remaining > 0) this.scheduleFlushFollowUp();
-    }
-
-    return { uploaded: totalUploaded, failed: totalFailed };
+    this.debugFlushWorker.cleanupFlushTimer();
   }
 
   speech = {

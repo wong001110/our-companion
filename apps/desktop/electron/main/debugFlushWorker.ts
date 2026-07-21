@@ -3,8 +3,8 @@ import { nowIso } from '@our-companion/shared';
 import { buildDeveloperDebugUploadBatch, batchBodyByteSize } from './developerDebugUpload';
 
 export interface FlushDb {
-  listDeveloperDebugEvents(opts: { syncStatus: string; limit: number }): DeveloperDebugEvent[];
-  countDeveloperDebugEvents(opts: { syncStatus: string }): number;
+  listDeveloperDebugEvents(opts: { syncStatus?: 'pending' | 'uploading' | 'uploaded'; limit?: number }): DeveloperDebugEvent[];
+  countDeveloperDebugEvents(opts: { syncStatus?: 'pending' | 'uploading' | 'uploaded' }): number;
   markDeveloperDebugEventsUploading(ids: string[]): void;
   markDeveloperDebugEventsUploaded(ids: string[]): void;
   markDeveloperDebugEventsPending(ids: string[]): void;
@@ -14,7 +14,7 @@ export interface FlushDb {
 
 export interface FlushNetwork {
   postBatchDebugEvents(batch: DeveloperDebugUploadEvent[]): Promise<{ accepted: number }>;
-  getStatusSnapshot(): { state: string; onlineModeEnabled: boolean; account: { id: string } | null };
+  getStatusSnapshot(): { state: string; onlineModeEnabled: boolean; account?: { id: string } | null };
 }
 
 export interface FlushConfig {
