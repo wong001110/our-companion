@@ -1,68 +1,16 @@
 import { describe, expect, it } from 'vitest';
-
-const FIELD_LIMITS = {
-  clientEventId: 128,
-  kind: 64,
-  operation: 128,
-  status: 64,
-  provider: 128,
-  model: 128,
-  companionId: 128,
-  correlationId: 128,
-  cycleId: 128,
-  turnId: 128,
-  summary: 512,
-  errorCode: 128,
-  errorMessage: 1000,
-} as const;
-
-const MAX_EVENT_PAYLOAD_BYTES = 48 * 1024;
-
-function truncate(value: string | undefined, max: number): string | undefined {
-  if (!value) return undefined;
-  return value.length > max ? value.slice(0, max) : value;
-}
-
-function sanitizeErrorMessage(message: string | undefined): string | undefined {
-  if (!message) return undefined;
-  let result = message;
-  result = result.replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]');
-  result = result.replace(/Authorization:\s*\S+/gi, 'Authorization: [REDACTED]');
-  result = result.replace(/Cookie:\s*[^;\s]+/gi, 'Cookie: [REDACTED]');
-  result = result.replace(/refreshToken\s*[=:]\s*\S+/gi, 'refreshToken=[REDACTED]');
-  result = result.replace(/apiKey\s*[=:]\s*\S+/gi, 'apiKey=[REDACTED]');
-  return truncate(result, FIELD_LIMITS.errorMessage);
-}
-
-function buildBoundedPayload(payload: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  if (!payload) return undefined;
-  const redacted = payload;
-  const serialized = JSON.stringify(redacted);
-  const byteSize = Buffer.byteLength(serialized, 'utf8');
-  if (byteSize <= MAX_EVENT_PAYLOAD_BYTES) return redacted;
-
-  const priorityKeys = ['channel', 'source', 'durationMs', 'requestMessages', 'requestBody', 'rawResponse', 'extractedText', 'synthesisResult'];
-  const bounded: Record<string, unknown> = { uploadTruncated: true, originalPayloadBytes: byteSize };
-
-  for (const key of priorityKeys) {
-    if (key in redacted) {
-      const value = redacted[key];
-      if (typeof value === 'string') {
-        bounded[key] = value.slice(0, 2000);
-      } else if (Array.isArray(value)) {
-        bounded[key] = value.slice(0, 10);
-      } else {
-        bounded[key] = value;
-      }
-    }
-  }
-
-  const finalSerialized = JSON.stringify(bounded);
-  if (Buffer.byteLength(finalSerialized, 'utf8') > MAX_EVENT_PAYLOAD_BYTES) {
-    return { uploadTruncated: true, originalPayloadBytes: byteSize, error: 'Payload too large after truncation' };
-  }
-  return bounded;
-}
+import {
+  FIELD_LIMITS,
+  MAX_EVENT_PAYLOAD_BYTES,
+  truncate,
+  sanitizeDeveloperDebugText,
+  sanitizeErrorMessage,
+  buildBoundedPayload,
+  buildDeveloperDebugUploadEvent,
+  buildDeveloperDebugUploadBatch,
+  batchBodyByteSize,
+} from './developerDebugUpload';
+import type { DeveloperDebugEvent, DeveloperDebugUploadEvent } from '@our-companion/shared';
 
 describe('upload projection helpers', () => {
   describe('truncate', () => {
@@ -83,33 +31,75 @@ describe('upload projection helpers', () => {
     });
   });
 
-  describe('sanitizeErrorMessage', () => {
-    it('returns undefined for undefined input', () => {
-      expect(sanitizeErrorMessage(undefined)).toBeUndefined();
-    });
-
+  describe('sanitizeDeveloperDebugText', () => {
     it('redacts Bearer tokens', () => {
-      expect(sanitizeErrorMessage('Error with Bearer abc123secret')).toBe('Error with Bearer [REDACTED]');
+      expect(sanitizeDeveloperDebugText('Error with Bearer abc123secret')).toBe('Error with Bearer [REDACTED]');
     });
 
-    it('redacts Authorization headers', () => {
-      expect(sanitizeErrorMessage('Authorization: Bearer token123')).toBe('Authorization: [REDACTED] [REDACTED]');
+    it('redacts Authorization: Bearer headers', () => {
+      expect(sanitizeDeveloperDebugText('Authorization: Bearer token123')).toBe('Authorization: Bearer [REDACTED]');
     });
 
-    it('redacts Cookie values', () => {
-      expect(sanitizeErrorMessage('Cookie: session=abc123; path=/')).toBe('Cookie: [REDACTED]; path=/');
+    it('redacts Authorization: Basic headers', () => {
+      expect(sanitizeDeveloperDebugText('Authorization: Basic dXNlcjpwYXNz')).toBe('Authorization: Basic [REDACTED]');
+    });
+
+    it('redacts Cookie values including multiple cookies', () => {
+      expect(sanitizeDeveloperDebugText('Cookie: session=abc123; other=xyz')).toBe('Cookie: [REDACTED]');
+    });
+
+    it('redacts Set-Cookie headers', () => {
+      expect(sanitizeDeveloperDebugText('Set-Cookie: session=abc123; path=/')).toBe('Set-Cookie: [REDACTED]');
     });
 
     it('redacts refreshToken assignments', () => {
-      expect(sanitizeErrorMessage('refreshToken=secret123 failed')).toBe('refreshToken=[REDACTED] failed');
-      expect(sanitizeErrorMessage('refreshToken: secret123 failed')).toBe('refreshToken=[REDACTED] failed');
-      expect(sanitizeErrorMessage('refreshToken = secret123 failed')).toBe('refreshToken=[REDACTED] failed');
+      expect(sanitizeDeveloperDebugText('refreshToken=secret123 failed')).toBe('refreshToken=[REDACTED] failed');
+      expect(sanitizeDeveloperDebugText('refreshToken: secret123 failed')).toBe('refreshToken=[REDACTED] failed');
+      expect(sanitizeDeveloperDebugText('refreshToken = secret123 failed')).toBe('refreshToken=[REDACTED] failed');
+    });
+
+    it('redacts refresh_token assignments', () => {
+      expect(sanitizeDeveloperDebugText('refresh_token=secret123')).toBe('refresh_token=[REDACTED]');
+    });
+
+    it('redacts accessToken assignments', () => {
+      expect(sanitizeDeveloperDebugText('accessToken=secret123')).toBe('accessToken=[REDACTED]');
+    });
+
+    it('redacts access_token assignments', () => {
+      expect(sanitizeDeveloperDebugText('access_token=secret123')).toBe('access_token=[REDACTED]');
     });
 
     it('redacts apiKey assignments', () => {
-      expect(sanitizeErrorMessage('apiKey=secret123 invalid')).toBe('apiKey=[REDACTED] invalid');
-      expect(sanitizeErrorMessage('apiKey: secret123 invalid')).toBe('apiKey=[REDACTED] invalid');
-      expect(sanitizeErrorMessage('apiKey = secret123 invalid')).toBe('apiKey=[REDACTED] invalid');
+      expect(sanitizeDeveloperDebugText('apiKey=secret123 invalid')).toBe('apiKey=[REDACTED] invalid');
+      expect(sanitizeDeveloperDebugText('apiKey: secret123 invalid')).toBe('apiKey=[REDACTED] invalid');
+    });
+
+    it('redacts api_key assignments', () => {
+      expect(sanitizeDeveloperDebugText('api_key=secret123')).toBe('api_key=[REDACTED]');
+    });
+
+    it('redacts clientSecret assignments', () => {
+      expect(sanitizeDeveloperDebugText('clientSecret=secret123')).toBe('clientSecret=[REDACTED]');
+    });
+
+    it('redacts client_secret assignments', () => {
+      expect(sanitizeDeveloperDebugText('client_secret=secret123')).toBe('client_secret=[REDACTED]');
+    });
+
+    it('redacts password assignments', () => {
+      expect(sanitizeDeveloperDebugText('password=secret123')).toBe('password=[REDACTED]');
+    });
+
+    it('redacts bare JWT tokens', () => {
+      const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
+      expect(sanitizeDeveloperDebugText(`Token: ${jwt}`)).toBe('Token: [REDACTED_JWT]');
+    });
+  });
+
+  describe('sanitizeErrorMessage', () => {
+    it('returns undefined for undefined input', () => {
+      expect(sanitizeErrorMessage(undefined)).toBeUndefined();
     });
 
     it('truncates to FIELD_LIMITS.errorMessage', () => {
@@ -120,13 +110,24 @@ describe('upload projection helpers', () => {
   });
 
   describe('buildBoundedPayload', () => {
-    it('returns undefined for undefined input', () => {
-      expect(buildBoundedPayload(undefined)).toBeUndefined();
+    it('returns empty object for undefined input', () => {
+      expect(buildBoundedPayload(undefined)).toEqual({});
+    });
+
+    it('returns empty object for null input', () => {
+      expect(buildBoundedPayload(null as unknown as undefined)).toEqual({});
     });
 
     it('returns payload unchanged when under byte limit', () => {
       const small = { channel: 'chat', source: 'test' };
       expect(buildBoundedPayload(small)).toEqual(small);
+    });
+
+    it('redacts secrets in payload', () => {
+      const payload = { authorization: 'Bearer secret-token', safe: 'ok' };
+      const result = buildBoundedPayload(payload);
+      expect(result.authorization).toBe('Bearer [REDACTED]');
+      expect(result.safe).toBe('ok');
     });
 
     it('preserves priority fields when payload exceeds limit', () => {
@@ -137,11 +138,11 @@ describe('upload projection helpers', () => {
       };
       const result = buildBoundedPayload(large);
       expect(result).toBeDefined();
-      expect(result!.uploadTruncated).toBe(true);
-      expect(result!.channel).toBe('chat');
-      expect(result!.source).toBe('test');
-      expect(Array.isArray(result!.requestMessages)).toBe(true);
-      expect((result!.requestMessages as unknown[]).length).toBe(10);
+      expect(result.uploadTruncated).toBe(true);
+      expect(result.channel).toBe('chat');
+      expect(result.source).toBe('test');
+      expect(Array.isArray(result.requestMessages)).toBe(true);
+      expect((result.requestMessages as unknown[]).length).toBe(10);
     });
 
     it('truncates string priority fields to 2000 chars when payload exceeds limit', () => {
@@ -151,9 +152,9 @@ describe('upload projection helpers', () => {
       };
       const result = buildBoundedPayload(large);
       expect(result).toBeDefined();
-      expect(result!.uploadTruncated).toBe(true);
-      expect(typeof result!.extractedText).toBe('string');
-      expect((result!.extractedText as string).length).toBe(2000);
+      expect(result.uploadTruncated).toBe(true);
+      expect(typeof result.extractedText).toBe('string');
+      expect((result.extractedText as string).length).toBe(2000);
     });
 
     it('returns error fallback when truncated payload is still too large', () => {
@@ -169,8 +170,124 @@ describe('upload projection helpers', () => {
       }
       const result = buildBoundedPayload(huge);
       expect(result).toBeDefined();
-      expect(result!.uploadTruncated).toBe(true);
-      expect(result!.error).toBe('Payload too large after truncation');
+      expect(result.uploadTruncated).toBe(true);
+      expect(result.error).toBe('Payload too large after truncation');
+    });
+  });
+
+  describe('buildDeveloperDebugUploadEvent', () => {
+    it('always includes payload object', () => {
+      const event: DeveloperDebugEvent = {
+        id: 'evt-1',
+        kind: 'ai_call',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        syncStatus: 'pending',
+        syncAttemptCount: 0,
+      };
+      const uploadEvent = buildDeveloperDebugUploadEvent(event);
+      expect(uploadEvent.payload).toBeDefined();
+      expect(typeof uploadEvent.payload).toBe('object');
+    });
+
+    it('returns empty payload when event has no payload', () => {
+      const event: DeveloperDebugEvent = {
+        id: 'evt-1',
+        kind: 'ai_call',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        syncStatus: 'pending',
+        syncAttemptCount: 0,
+      };
+      const uploadEvent = buildDeveloperDebugUploadEvent(event);
+      expect(uploadEvent.payload).toEqual({});
+    });
+
+    it('redacts secrets in summary', () => {
+      const event: DeveloperDebugEvent = {
+        id: 'evt-1',
+        kind: 'ai_call',
+        summary: 'Bearer secret-token',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        syncStatus: 'pending',
+        syncAttemptCount: 0,
+      };
+      const uploadEvent = buildDeveloperDebugUploadEvent(event);
+      expect(uploadEvent.summary).toBe('Bearer [REDACTED]');
+    });
+
+    it('redacts secrets in errorMessage', () => {
+      const event: DeveloperDebugEvent = {
+        id: 'evt-1',
+        kind: 'ai_call',
+        errorMessage: 'Bearer secret-token',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        syncStatus: 'pending',
+        syncAttemptCount: 0,
+      };
+      const uploadEvent = buildDeveloperDebugUploadEvent(event);
+      expect(uploadEvent.errorMessage).toBe('Bearer [REDACTED]');
+    });
+
+    it('redacts secrets in payload', () => {
+      const event: DeveloperDebugEvent = {
+        id: 'evt-1',
+        kind: 'ai_call',
+        payload: { authorization: 'Bearer secret-token', safe: 'ok' },
+        createdAt: '2026-01-01T00:00:00.000Z',
+        syncStatus: 'pending',
+        syncAttemptCount: 0,
+      };
+      const uploadEvent = buildDeveloperDebugUploadEvent(event);
+      expect(uploadEvent.payload.authorization).toBe('Bearer [REDACTED]');
+      expect(uploadEvent.payload.safe).toBe('ok');
+    });
+  });
+
+  describe('buildDeveloperDebugUploadBatch', () => {
+    it('splits events into batches of max 50', () => {
+      const events: DeveloperDebugEvent[] = Array.from({ length: 120 }, (_, i) => ({
+        id: `evt-${i}`,
+        kind: 'ai_call',
+        payload: { data: `test-${i}` },
+        createdAt: '2026-01-01T00:00:00.000Z',
+        syncStatus: 'pending' as const,
+        syncAttemptCount: 0,
+      }));
+      const batches = buildDeveloperDebugUploadBatch(events);
+      expect(batches.length).toBeGreaterThanOrEqual(3);
+      expect(batches[0].length).toBeLessThanOrEqual(50);
+    });
+
+    it('all batches contain events with payload', () => {
+      const events: DeveloperDebugEvent[] = Array.from({ length: 10 }, (_, i) => ({
+        id: `evt-${i}`,
+        kind: 'ai_call',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        syncStatus: 'pending' as const,
+        syncAttemptCount: 0,
+      }));
+      const batches = buildDeveloperDebugUploadBatch(events);
+      for (const batch of batches) {
+        for (const event of batch) {
+          expect(event.payload).toBeDefined();
+          expect(typeof event.payload).toBe('object');
+        }
+      }
+    });
+
+    it('each batch body is under 64 KiB', () => {
+      const events: DeveloperDebugEvent[] = Array.from({ length: 50 }, (_, i) => ({
+        id: `evt-${i}`,
+        kind: 'ai_call',
+        payload: { data: 'x'.repeat(500) },
+        createdAt: '2026-01-01T00:00:00.000Z',
+        syncStatus: 'pending' as const,
+        syncAttemptCount: 0,
+      }));
+      const batches = buildDeveloperDebugUploadBatch(events);
+      for (const batch of batches) {
+        const size = batchBodyByteSize(batch);
+        expect(size).toBeLessThanOrEqual(64 * 1024);
+      }
     });
   });
 

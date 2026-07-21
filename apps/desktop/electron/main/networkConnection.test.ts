@@ -284,8 +284,8 @@ describe('NetworkConnectionService', () => {
     (service as any).status = { state: 'online', onlineModeEnabled: true, serverUrl: 'http://localhost:3001' };
 
     const batch = [
-      { clientEventId: 'e1', kind: 'ai_call', clientCreatedAt: '2026-01-01T00:00:00.000Z' },
-      { clientEventId: 'e2', kind: 'pipeline_failure', clientCreatedAt: '2026-01-01T00:00:01.000Z' },
+      { clientEventId: 'e1', kind: 'ai_call', clientCreatedAt: '2026-01-01T00:00:00.000Z', payload: {} },
+      { clientEventId: 'e2', kind: 'pipeline_failure', clientCreatedAt: '2026-01-01T00:00:01.000Z', payload: {} },
     ];
     const result = await service.postBatchDebugEvents(batch);
 
@@ -311,7 +311,7 @@ describe('NetworkConnectionService', () => {
     (service as any).session = { serverOrigin: 'http://localhost:3001', accessToken: 'old-token', refreshToken: 'refresh' };
     (service as any).status = { state: 'online', onlineModeEnabled: true, serverUrl: 'http://localhost:3001' };
 
-    const result = await service.postBatchDebugEvents([{ clientEventId: 'e1', kind: 'ai_call', clientCreatedAt: '2026-01-01T00:00:00.000Z' }]);
+    const result = await service.postBatchDebugEvents([{ clientEventId: 'e1', kind: 'ai_call', clientCreatedAt: '2026-01-01T00:00:00.000Z', payload: {} }]);
     expect(result).toEqual({ accepted: 1 });
     expect(fetch).toHaveBeenCalledTimes(3);
     expect((fetch.mock.calls[2][1] as RequestInit).headers).toMatchObject({ authorization: 'Bearer new-token' });

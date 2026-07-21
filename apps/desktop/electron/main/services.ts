@@ -162,12 +162,21 @@ import {
   normalizeActionUrl,
   createSemanticFingerprint,
   clampScore,
-  redactSecrets,
   createTimer,
   type BaseEvent,
   type CompanionAnimationManifestEntry,
   type RuntimeClock,
 } from '@our-companion/shared';
+import {
+  buildDeveloperDebugUploadBatch,
+  buildDeveloperDebugUploadEvent,
+  buildBoundedPayload,
+  sanitizeDeveloperDebugText,
+  sanitizeDeveloperDebugValue,
+  sanitizeErrorMessage,
+  truncate,
+  FIELD_LIMITS,
+} from './developerDebugUpload';
 import { detectPatterns } from '@our-companion/pattern-engine';
 import { executeActionStep, executeTool, previewTool, type ToolAdapters } from '@our-companion/tool-engine';
 import { createElectronToolAdapters } from './platform/electronCommandAdapter';
@@ -215,92 +224,6 @@ const DISCOVERY_REEVALUATION_MAX_MS = 30 * 60 * 1000;
 const AUTO_MANAGE_DEFAULT_PLATFORMS_KEY = 'discovery.autoManageDefaultPlatforms';
 export const MAX_COMPANION_ASSET_BYTES = 20 * 1024 * 1024;
 export const MAX_COMPANION_TOTAL_ASSET_BYTES = 200 * 1024 * 1024;
-
-const FIELD_LIMITS = {
-  clientEventId: 128,
-  kind: 64,
-  operation: 128,
-  status: 64,
-  provider: 128,
-  model: 128,
-  companionId: 128,
-  correlationId: 128,
-  cycleId: 128,
-  turnId: 128,
-  summary: 512,
-  errorCode: 128,
-  errorMessage: 1000,
-} as const;
-
-const MAX_EVENT_PAYLOAD_BYTES = 48 * 1024;
-const MAX_BATCH_TARGET_BYTES = 60 * 1024;
-const ABSOLUTE_BATCH_LIMIT = 64 * 1024;
-
-function truncate(value: string | undefined, max: number): string | undefined {
-  if (!value) return undefined;
-  return value.length > max ? value.slice(0, max) : value;
-}
-
-function sanitizeErrorMessage(message: string | undefined): string | undefined {
-  if (!message) return undefined;
-  let result = message;
-  result = result.replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]');
-  result = result.replace(/Authorization:\s*\S+/gi, 'Authorization: [REDACTED]');
-  result = result.replace(/Cookie:\s*[^;\s]+/gi, 'Cookie: [REDACTED]');
-  result = result.replace(/refreshToken\s*[=:]\s*\S+/gi, 'refreshToken=[REDACTED]');
-  result = result.replace(/apiKey\s*[=:]\s*\S+/gi, 'apiKey=[REDACTED]');
-  return truncate(result, FIELD_LIMITS.errorMessage);
-}
-
-function buildBoundedPayload(payload: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  if (!payload) return undefined;
-  const redacted = redactSecrets(payload) as Record<string, unknown>;
-  const serialized = JSON.stringify(redacted);
-  const byteSize = Buffer.byteLength(serialized, 'utf8');
-  if (byteSize <= MAX_EVENT_PAYLOAD_BYTES) return redacted;
-
-  const priorityKeys = ['channel', 'source', 'durationMs', 'requestMessages', 'requestBody', 'rawResponse', 'extractedText', 'synthesisResult'];
-  const bounded: Record<string, unknown> = { uploadTruncated: true, originalPayloadBytes: byteSize };
-
-  for (const key of priorityKeys) {
-    if (key in redacted) {
-      const value = redacted[key];
-      if (typeof value === 'string') {
-        bounded[key] = value.slice(0, 2000);
-      } else if (Array.isArray(value)) {
-        bounded[key] = value.slice(0, 10);
-      } else {
-        bounded[key] = value;
-      }
-    }
-  }
-
-  const finalSerialized = JSON.stringify(bounded);
-  if (Buffer.byteLength(finalSerialized, 'utf8') > MAX_EVENT_PAYLOAD_BYTES) {
-    return { uploadTruncated: true, originalPayloadBytes: byteSize, error: 'Payload too large after truncation' };
-  }
-  return bounded;
-}
-
-function buildDeveloperDebugUploadEvent(event: DeveloperDebugEvent): DeveloperDebugUploadEvent {
-  return {
-    clientEventId: truncate(event.id, FIELD_LIMITS.clientEventId) ?? event.id,
-    kind: truncate(event.kind, FIELD_LIMITS.kind) ?? event.kind,
-    operation: truncate(event.operation, FIELD_LIMITS.operation),
-    status: truncate(event.status, FIELD_LIMITS.status),
-    provider: truncate(event.provider, FIELD_LIMITS.provider),
-    model: truncate(event.model, FIELD_LIMITS.model),
-    companionId: truncate(event.companionId, FIELD_LIMITS.companionId),
-    correlationId: truncate(event.correlationId, FIELD_LIMITS.correlationId),
-    cycleId: truncate(event.cycleId, FIELD_LIMITS.cycleId),
-    turnId: truncate(event.turnId, FIELD_LIMITS.turnId),
-    summary: truncate(redactSecrets(event.summary ?? '') as string, FIELD_LIMITS.summary),
-    payload: buildBoundedPayload(event.payload),
-    errorCode: truncate(event.errorCode, FIELD_LIMITS.errorCode),
-    errorMessage: sanitizeErrorMessage(event.errorMessage),
-    clientCreatedAt: event.createdAt,
-  };
-}
 
 type PersonalityAnalysisRecord = {
   personality: CompanionPersonality;
@@ -414,6 +337,8 @@ export class AppServices {
   private foundationEventBroadcaster?: (event: BaseEvent) => void;
   private foundationEventLog: BaseEvent[] = [];
   private debugFlushPromise?: Promise<{ uploaded: number; failed: number }>;
+  private debugFlushRequested = false;
+  private debugFlushTimer?: ReturnType<typeof setTimeout>;
   private lastSchedulerTick?: string;
   private runtimeStarted = false;
   private readonly personalityAnalyses = new Map<string, PersonalityAnalysisRecord>();
@@ -2134,7 +2059,7 @@ export class AppServices {
       turnId: input.turnId,
       summary: input.content || input.error || '',
       errorMessage: input.error,
-      payload: redactSecrets({
+      payload: sanitizeDeveloperDebugValue({
         channel: input.channel,
         source: input.source,
         requestMessages: input.requestMessages,
@@ -2312,109 +2237,139 @@ export class AppServices {
 
   private async flushPendingDebugEvents(): Promise<{ uploaded: number; failed: number }> {
     if (app.isPackaged) return { uploaded: 0, failed: 0 };
-    if (this.debugFlushPromise) return this.debugFlushPromise;
+    if (this.debugFlushPromise) {
+      this.debugFlushRequested = true;
+      return this.debugFlushPromise;
+    }
     this.debugFlushPromise = this.doFlushPendingDebugEvents();
-    try { return await this.debugFlushPromise; } finally { this.debugFlushPromise = undefined; }
+    try {
+      return await this.debugFlushPromise;
+    } finally {
+      this.debugFlushPromise = undefined;
+      if (this.debugFlushRequested) {
+        this.debugFlushRequested = false;
+        const remaining = this.db.countDeveloperDebugEvents({ syncStatus: 'pending' });
+        if (remaining > 0) this.scheduleFlushFollowUp();
+      }
+    }
   }
 
-  private buildUploadBatch(pending: DeveloperDebugEvent[]): DeveloperDebugUploadEvent[][] {
-    const batches: DeveloperDebugUploadEvent[][] = [];
-    let currentBatch: DeveloperDebugUploadEvent[] = [];
-    let currentBatchBytes = 0;
+  private scheduleFlushFollowUp(): void {
+    if (this.debugFlushTimer) return;
+    this.debugFlushTimer = setTimeout(() => {
+      this.debugFlushTimer = undefined;
+      void this.flushPendingDebugEvents();
+    }, 1000);
+  }
 
-    for (const event of pending) {
-      const uploadEvent = buildDeveloperDebugUploadEvent(event);
-      const serialized = JSON.stringify(uploadEvent);
-      const eventBytes = Buffer.byteLength(serialized, 'utf8');
-
-      if (currentBatch.length > 0 && (
-        currentBatch.length >= 50 ||
-        currentBatchBytes + eventBytes > MAX_BATCH_TARGET_BYTES
-      )) {
-        batches.push(currentBatch);
-        currentBatch = [];
-        currentBatchBytes = 0;
-      }
-
-      if (eventBytes > ABSOLUTE_BATCH_LIMIT) {
-        const fallback: DeveloperDebugUploadEvent = {
-          clientEventId: uploadEvent.clientEventId,
-          kind: uploadEvent.kind,
-          operation: uploadEvent.operation,
-          status: uploadEvent.status,
-          errorMessage: uploadEvent.errorMessage,
-          clientCreatedAt: uploadEvent.clientCreatedAt,
-          payload: { uploadTruncated: true, originalPayloadBytes: eventBytes },
-        };
-        currentBatch.push(fallback);
-        currentBatchBytes += Buffer.byteLength(JSON.stringify(fallback), 'utf8');
-        continue;
-      }
-
-      currentBatch.push(uploadEvent);
-      currentBatchBytes += eventBytes;
+  cleanupFlushTimer(): void {
+    if (this.debugFlushTimer) {
+      clearTimeout(this.debugFlushTimer);
+      this.debugFlushTimer = undefined;
     }
+  }
 
-    if (currentBatch.length > 0) batches.push(currentBatch);
-    return batches;
+  private canUpload(): boolean {
+    if (app.isPackaged) return false;
+    const networkStatus = this.network.getStatusSnapshot();
+    if (!networkStatus.onlineModeEnabled || networkStatus.state !== 'online') return false;
+    if (!networkStatus.account) return false;
+    const uploadEnabled = this.db.getAppSetting<boolean>('developer.debugUploadEnabled') ?? false;
+    if (!uploadEnabled) return false;
+    return true;
   }
 
   private async doFlushPendingDebugEvents(): Promise<{ uploaded: number; failed: number }> {
-    const MAX_BATCHES_PER_DRAIN = 5;
+    const MAX_POSTS_PER_DRAIN = 5;
+    let postsThisDrain = 0;
     let totalUploaded = 0;
     let totalFailed = 0;
 
-    for (let batchIndex = 0; batchIndex < MAX_BATCHES_PER_DRAIN; batchIndex++) {
-      if (app.isPackaged) break;
-      const networkStatus = this.network.getStatusSnapshot();
-      if (!networkStatus.onlineModeEnabled || networkStatus.state !== 'online') break;
-      if (!networkStatus.account) break;
-      const uploadEnabled = this.db.getAppSetting<boolean>('developer.debugUploadEnabled') ?? false;
-      if (!uploadEnabled) break;
+    while (postsThisDrain < MAX_POSTS_PER_DRAIN) {
+      if (!this.canUpload()) break;
 
       const pending = this.db.listDeveloperDebugEvents({ syncStatus: 'pending', limit: 50 });
       if (pending.length === 0) break;
 
-      const batches = this.buildUploadBatch(pending);
+      const batches = buildDeveloperDebugUploadBatch(pending);
       if (batches.length === 0) break;
 
-      for (const batch of batches) {
-        if (batch.length === 0) continue;
-        const batchIds = batch.map((e) => e.clientEventId);
-        const dbIds = pending.filter((e) => batchIds.includes(e.id)).map((e) => e.id);
+      const batch = batches[0];
+      if (batch.length === 0) break;
 
+      const batchBody = JSON.stringify({ events: batch });
+      if (Buffer.byteLength(batchBody, 'utf8') > 64 * 1024) {
+        const fallback: DeveloperDebugUploadEvent[] = batch.slice(0, 1).map((e) => ({
+          clientEventId: e.clientEventId,
+          kind: e.kind,
+          operation: e.operation,
+          status: e.status,
+          errorMessage: e.errorMessage,
+          clientCreatedAt: e.clientCreatedAt,
+          payload: { uploadTruncated: true, originalPayloadBytes: Buffer.byteLength(JSON.stringify(e.payload), 'utf8') },
+        }));
+        const fallbackIds = pending.slice(0, 1).map((e) => e.id);
         try {
-          this.db.markDeveloperDebugEventsUploading(dbIds);
-          const result = await this.network.postBatchDebugEvents(batch);
-
-          if (result.accepted !== batch.length) {
-            this.db.markDeveloperDebugEventsPending(dbIds);
-            const msg = `Batch accepted ${result.accepted}/${batch.length}`;
+          this.db.markDeveloperDebugEventsUploading(fallbackIds);
+          const result = await this.network.postBatchDebugEvents(fallback);
+          postsThisDrain++;
+          if (result.accepted !== fallback.length) {
+            this.db.markDeveloperDebugEventsPending(fallbackIds);
+            const msg = `Batch accepted ${result.accepted}/${fallback.length}`;
             this.db.setAppSetting('developer.lastUploadError', msg);
-            totalFailed += batch.length;
-            return { uploaded: totalUploaded, failed: totalFailed };
+            totalFailed += fallback.length;
+            break;
           }
-
-          this.db.markDeveloperDebugEventsUploaded(dbIds);
-          totalUploaded += batch.length;
+          this.db.markDeveloperDebugEventsUploaded(fallbackIds);
+          totalUploaded += fallback.length;
+          if (!this.canUpload()) break;
+          continue;
         } catch (error) {
-          this.db.markDeveloperDebugEventsPending(dbIds);
+          this.db.markDeveloperDebugEventsPending(fallbackIds);
           const msg = error instanceof Error ? error.message : String(error);
           this.db.setAppSetting('developer.lastUploadError', msg);
-          totalFailed += batch.length;
-          return { uploaded: totalUploaded, failed: totalFailed };
+          totalFailed += fallback.length;
+          break;
         }
+      }
+
+      if (!this.canUpload()) break;
+
+      const batchIds = batch.map((e) => e.clientEventId);
+      const dbIds = pending.filter((e) => batchIds.includes(e.id)).map((e) => e.id);
+
+      try {
+        this.db.markDeveloperDebugEventsUploading(dbIds);
+        const result = await this.network.postBatchDebugEvents(batch);
+        postsThisDrain++;
+
+        if (result.accepted !== batch.length) {
+          this.db.markDeveloperDebugEventsPending(dbIds);
+          const msg = `Batch accepted ${result.accepted}/${batch.length}`;
+          this.db.setAppSetting('developer.lastUploadError', msg);
+          totalFailed += batch.length;
+          break;
+        }
+
+        this.db.markDeveloperDebugEventsUploaded(dbIds);
+        totalUploaded += batch.length;
+        if (!this.canUpload()) break;
+      } catch (error) {
+        this.db.markDeveloperDebugEventsPending(dbIds);
+        const msg = error instanceof Error ? error.message : String(error);
+        this.db.setAppSetting('developer.lastUploadError', msg);
+        totalFailed += batch.length;
+        break;
       }
     }
 
     if (totalUploaded > 0) {
       this.db.setAppSetting('developer.lastUploadAt', nowIso());
-      this.db.setAppSetting('developer.lastUploadError', undefined);
     }
 
-    const remaining = this.db.countDeveloperDebugEvents({ syncStatus: 'pending' });
-    if (remaining > 0) {
-      setTimeout(() => void this.flushPendingDebugEvents(), 1000);
+    if (postsThisDrain >= MAX_POSTS_PER_DRAIN) {
+      const remaining = this.db.countDeveloperDebugEvents({ syncStatus: 'pending' });
+      if (remaining > 0) this.scheduleFlushFollowUp();
     }
 
     return { uploaded: totalUploaded, failed: totalFailed };

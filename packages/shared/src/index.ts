@@ -1831,7 +1831,7 @@ export interface DeveloperDebugUploadEvent {
   cycleId?: string;
   turnId?: string;
   summary?: string;
-  payload?: Record<string, unknown>;
+  payload: Record<string, unknown>;
   errorCode?: string;
   errorMessage?: string;
   clientCreatedAt: string;
