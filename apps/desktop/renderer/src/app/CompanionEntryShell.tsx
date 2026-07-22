@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {
   ActionPermissionState,
   ActionPlan,
@@ -234,6 +234,17 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   }, []);
 
   const interactive = useInteractiveRegion();
+
+  // A Discovery card can be removed while the pointer is inside it, in which
+  // case React never receives mouseleave. Release only this region whenever
+  // the popup lifecycle says the card no longer exists.
+  useLayoutEffect(() => {
+    if (!discovery.popup) interactive.removeImmediately('discovery-card');
+  }, [discovery.popup, interactive.removeImmediately]);
+
+  useEffect(() => () => {
+    interactive.removeImmediately('discovery-card');
+  }, [interactive.removeImmediately]);
 
   useEffect(() => {
     if (!quickActions.visible) {
@@ -976,7 +987,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
           onClose={() => {
             behavior.cancelActiveCommand('user_dismissed');
             discovery.dismiss();
-            interactive.clearAll();
+            interactive.removeImmediately('discovery-card');
           }}
         />
       )}
