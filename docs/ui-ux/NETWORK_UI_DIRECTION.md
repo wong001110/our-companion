@@ -10,7 +10,7 @@ The Network is a consent and coordination service, not a remote Companion runtim
 - **Existing and correct · Fact:** the renderer does not receive storage credentials, object keys, access tokens, presigned URLs, local file paths, or remote control commands.
 - **Required · Recommendation:** Network UI must describe what is shared, who can receive it, and what happens next using direct language before any metaphor.
 
-The Network root README still summarizes an older `/api/visits` inbox/outbox flow and colon-style socket events. The verified current implementation and `docs/social` contracts use `/api/visit-invitations`, `/api/visit-sessions`, dot-style invalidation events, and the S4/S5 lifecycle described below. **Required:** product/UI work must follow current controllers, shared types, and social contracts; the README discrepancy should be repaired as a separate documentation task, not encoded into UI.
+The verified current implementation, Network root README and `docs/social` contracts use `/api/visit-invitations`, `/api/visit-sessions`, dot-style invalidation events, and the S4/S5 lifecycle described below. **Required:** product/UI work must continue to follow current controllers, shared types, and social contracts rather than encoding stale route or event names into UI.
 
 The correspondence metaphor is limited to section identity: address book for friends, letter/invitation for a Visit request, arrival/departure for active visual presence. Controls remain conventional.
 
