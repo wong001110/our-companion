@@ -1,4 +1,4 @@
-import type { CharacterContract, CompanionPersonality, GenerationContextMetadata, OocValidationResult, OocViolation } from '@our-companion/shared';
+import type { CharacterContract, CompanionPersonality, CompanionTurnProposal, GenerationContextMetadata, OocValidationResult, OocViolation } from '@our-companion/shared';
 
 export function defaultCharacterContract(name: string, personalityDescription: string, personality?: CompanionPersonality): CharacterContract {
   const traits = personality ? Object.entries(personality).filter(([, value]) => value >= 60).map(([trait]) => trait) : [];
@@ -53,6 +53,27 @@ export class OocGuardService {
     const highest = violations.reduce<number>((current, violation) => Math.max(current, severityRank(violation.severity)), 0);
     return { passed: violations.length === 0, violations, recommendedAction: highest >= 3 ? 'fallback' : highest >= 2 ? 'repair' : 'pass' };
   }
+
+  /** Validate all externalizable proposal fields before actions or Memory persist. */
+  validateProposal(input: { proposal: CompanionTurnProposal; contract: CharacterContract; metadata: GenerationContextMetadata; currentUserMessage: string }): OocValidationResult {
+    const reply = this.validate({ response: input.proposal.reply, contract: input.contract, metadata: input.metadata });
+    const violations = [...reply.violations];
+    const sensitiveFacts = input.metadata.activeMemoryFacts.filter((fact) => fact.sensitivity === 'sensitive' || fact.sensitivity === 'private');
+    const actionText = input.proposal.actions.flatMap((action) => [action.toolName, action.reason, ...stringValues(action.args)]).join('\n');
+    if (sensitiveFacts.some((fact) => sensitiveLeak(actionText, fact.content))) {
+      violations.push({ type: 'privacy_violation', severity: 'critical', evidence: 'Action payload contains a protected descriptor.', ruleId: 'privacy.action_payload' });
+    }
+    for (const candidate of input.proposal.memoryCandidates) {
+      const candidateText = [candidate.summary, candidate.evidence].join('\n');
+      if (sensitiveFacts.some((fact) => sensitiveLeak(candidateText, fact.content))) {
+        violations.push({ type: 'privacy_violation', severity: 'critical', evidence: 'Memory candidate contains a protected descriptor.', ruleId: 'privacy.memory_candidate' });
+      } else if (!input.currentUserMessage.includes(candidate.evidence)) {
+        violations.push({ type: 'unsupported_memory_claim', severity: 'high', evidence: 'Memory candidate evidence is not in the current user message.', ruleId: 'memory.candidate_evidence' });
+      }
+    }
+    const highest = violations.reduce<number>((current, violation) => Math.max(current, severityRank(violation.severity)), 0);
+    return { passed: violations.length === 0, violations, recommendedAction: highest >= 3 ? 'fallback' : highest >= 2 ? 'repair' : 'pass' };
+  }
 }
 
 function severityRank(value: OocViolation['severity']): number {
@@ -80,17 +101,30 @@ function cjkNgramOverlap(left: string, right: string): number {
   return grams.filter((gram) => target.has(gram)).length / grams.length;
 }
 function sensitiveLeak(response: string, sensitive: string): boolean {
+  const raw = sensitive.trim();
   const normalResponse = normalise(response);
-  const normalSensitive = normalise(sensitive);
+  const normalSensitive = normalise(raw);
   if (!normalSensitive) return false;
-  if (normalResponse.includes(normalSensitive)) return true;
-  // A word-like secret (canary, email, phone, ID) must never be partially echoed.
-  const fragments = normalSensitive.split(' ').filter((part) => part.length >= 5);
-  if (fragments.some((fragment) => normalResponse.includes(fragment))) return true;
-  return groundingOverlap(normalResponse, normalSensitive) >= 0.6;
+  const descriptors = [
+    ...raw.match(/[A-Z][A-Z0-9_]{7,}/g) ?? [], // deliberate canaries / IDs
+    ...raw.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g) ?? [],
+    ...raw.match(/(?:\+?\d[\d\s().-]{5,}\d)/g) ?? [],
+    ...raw.match(/\b(?:[A-Za-z0-9]{12,})\b/g) ?? [], // account/token-like values
+  ].map(normalise).filter((value) => value.length >= 6);
+  if (descriptors.some((descriptor) => normalResponse.includes(descriptor))) return true;
+  // Only compare a whole long phrase. Never elevate generic words such as
+  // "private", "medical", "history", or "address" into protected secrets.
+  const compact = normalSensitive.replace(/\s/g, '');
+  return compact.length >= 24 && groundingOverlap(normalResponse, normalSensitive) >= 0.72;
 }
 function stableRevision(value: string): number {
   let hash = 2166136261;
   for (const character of value) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
   return hash >>> 0;
+}
+function stringValues(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(stringValues);
+  if (value && typeof value === 'object') return Object.values(value as Record<string, unknown>).flatMap(stringValues);
+  return [];
 }

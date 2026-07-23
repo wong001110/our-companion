@@ -42,4 +42,19 @@ describe('OocGuardService', () => {
     expect(defaultCharacterContract('Mira', 'calm', { warmth: 80, curiosity: 20 } as never).sourceRevision)
       .not.toBe(defaultCharacterContract('Mira', 'calm', { warmth: 20, curiosity: 80 } as never).sourceRevision);
   });
+
+  it('blocks protected values in action payloads and memory candidates without blocking ordinary words', () => {
+    const privateMetadata: GenerationContextMetadata = {
+      ...metadata,
+      activeMemoryFacts: [{ memoryId: 'private', type: 'user_fact', content: 'contact user-private@example.test at 012-3456789', confidence: 1, status: 'active', sensitivity: 'private' }],
+    };
+    expect(guard.validateProposal({
+      proposal: { reply: 'Okay.', intent: 'action', actions: [{ toolName: 'search_web', args: { query: 'user-private@example.test' }, reason: 'search' }], memoryCandidates: [] },
+      contract, metadata: privateMetadata, currentUserMessage: 'please search',
+    }).passed).toBe(false);
+    expect(guard.validateProposal({
+      proposal: { reply: 'This is private.', intent: 'conversation', actions: [], memoryCandidates: [] },
+      contract, metadata: privateMetadata, currentUserMessage: 'this is private',
+    }).passed).toBe(true);
+  });
 });

@@ -489,7 +489,7 @@ export class AppServices {
     this.turnMemoryPolicy = new MemoryPolicy(this.db, { now: () => this.now().getTime() });
     this.turnOrchestrator = new CompanionTurnOrchestrator({
       db: this.db,
-      memoryContext: new SqliteMemoryContextProvider(this.db, this.now, { embeddings: this.localEmbeddings, vectors: this.vectorIndex }),
+      memoryContext: new SqliteMemoryContextProvider(this.db, this.now, { embeddings: this.localEmbeddings, vectors: this.vectorIndex, availability: this.vectorMaintenance }),
       memoryPolicy: this.turnMemoryPolicy,
       now: this.now,
       getReplyLanguage: () => this.getAiSettings().replyLanguage,
@@ -2258,7 +2258,12 @@ export class AppServices {
   async dispose(): Promise<void> {
     this.disposePromise ??= (async () => {
       this.cleanupFlushTimer();
-      await this.embeddingJobRunner.stop();
+      const timeoutMs = 8_000;
+      const settled = await Promise.race([
+        this.embeddingJobRunner.stop().then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+      ]);
+      if (!settled) this.embeddingJobRunner.preventFurtherWrites();
       await this.localEmbeddings.dispose();
       this.db.close();
     })();

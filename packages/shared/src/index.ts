@@ -1663,6 +1663,7 @@ export type MemorySensitivity = 'normal' | 'sensitive';
 export interface MemoryRetrievalTrace {
   query: string;
   vectorAvailable: boolean;
+  vectorUnavailableReason?: 'maintenance' | 'extension_unavailable' | 'model_unavailable';
   candidates: Array<{
     memoryId: string;
     sources?: Array<'structured' | 'pinned' | 'open_loop' | 'fts' | 'vector'>;

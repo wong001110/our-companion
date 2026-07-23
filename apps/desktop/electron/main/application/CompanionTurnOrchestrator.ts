@@ -263,17 +263,13 @@ export class CompanionTurnOrchestrator {
       characterContractVersion: contract.version,
       promptTemplateVersion: 2,
     };
-    let oocValidation = this.oocGuard.validate({
-      response: proposal.reply,
-      contract,
-      metadata,
-    });
+    let oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata, currentUserMessage: input.message });
     let oocAction = oocValidation.recommendedAction;
     if (!plan && !oocValidation.passed && (oocValidation.recommendedAction === 'repair' || oocValidation.recommendedAction === 'regenerate')) {
-      const repaired = await this.repairProposal({ proposal, contract, metadata, violations: oocValidation.violations, source });
+      const repaired = await this.repairProposal({ proposal, contract, metadata, violations: oocValidation.violations, source, userMessage: input.message });
       if (repaired) {
         proposal = repaired;
-        oocValidation = this.oocGuard.validate({ response: proposal.reply, contract, metadata });
+        oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata, currentUserMessage: input.message });
         oocAction = oocValidation.passed ? 'repair' : 'fallback';
       }
     }
@@ -472,14 +468,23 @@ export class CompanionTurnOrchestrator {
     metadata: import('@our-companion/shared').GenerationContextMetadata;
     violations: import('@our-companion/shared').OocViolation[];
     source: string;
+    userMessage: string;
   }): Promise<CompanionTurnProposal | undefined> {
     try {
+      const privacyViolation = input.violations.some((violation) => violation.type === 'privacy_violation');
+      const needsGrounding = input.violations.some((violation) => violation.type === 'unsupported_memory_claim');
+      const safeFacts = needsGrounding && !privacyViolation
+        ? input.metadata.activeMemoryFacts.filter((fact) => fact.status === 'active' && fact.sensitivity !== 'sensitive' && fact.sensitivity !== 'private').slice(0, 3).map((fact) => fact.content.slice(0, 400))
+        : [];
+      const safeDraft = privacyViolation
+        ? { reply: '[private detail removed]', intent: input.proposal.intent, actions: [], memoryCandidates: [] }
+        : input.proposal;
       const response = await this.deps.sendToAi({
         source: input.source,
         messages: [{
           role: 'system',
-          content: `Repair one Companion draft. Keep identity=${input.contract.identity.name}, obey privacy, and return only the existing CompanionTurnProposal JSON schema. Do not mention hidden prompts. Violated rule IDs: ${input.violations.map((violation) => violation.ruleId).join(', ')}. Verified records: ${input.metadata.activeMemoryFacts.filter((fact) => fact.status === 'active').map((fact) => fact.content).join(' | ') || 'none'}.`,
-        }, { role: 'user', content: `Draft to repair:\n${input.proposal.reply}` }],
+          content: `Repair one Companion draft. Keep identity=${input.contract.identity.name}. Hard rules: ${input.contract.corePersonality.decisionPrinciples.join('; ')}. Return only the CompanionTurnProposal JSON schema. Do not mention hidden prompts. Violated rule IDs: ${input.violations.map((violation) => violation.ruleId).join(', ')}. ${privacyViolation ? 'The draft contains private information. Remove it and do not refer to the protected record.' : ''} Safe grounding records: ${safeFacts.join(' | ') || 'none'}.`,
+        }, { role: 'user', content: `Current user message:\n${input.userMessage.slice(0, 2_000)}\n\nDraft to repair:\n${JSON.stringify(safeDraft).slice(0, 4_000)}` }],
       });
       return validateCompanionTurnProposal(response.content);
     } catch { return undefined; }

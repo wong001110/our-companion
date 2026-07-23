@@ -72,7 +72,7 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
   constructor(
     private readonly db: DatabaseService,
     private readonly now: () => Date,
-    private readonly semantic?: { embeddings: EmbeddingProvider; vectors: VectorIndex },
+    private readonly semantic?: { embeddings: EmbeddingProvider; vectors: VectorIndex; availability?: { isSearchAvailable(): boolean } },
   ) {}
 
   async buildContext(input: MemoryContextBuildInput): Promise<CompanionMemoryContext> {
@@ -88,10 +88,15 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
       traceCandidates.set(node.id, { selected: false, reason: 'structured_candidate', sources: [node.isPinned ? 'pinned' : 'structured'] });
     }
     let vectorAvailable = false;
+    let vectorUnavailableReason: 'maintenance' | 'extension_unavailable' | 'model_unavailable' | undefined;
     if (this.semantic) {
       try {
+        if (this.semantic.availability && !this.semantic.availability.isSearchAvailable()) {
+          vectorUnavailableReason = 'maintenance';
+        }
         const health = await this.semantic.vectors.healthCheck();
-        vectorAvailable = health.available;
+        vectorAvailable = health.available && !vectorUnavailableReason;
+        if (!health.available) vectorUnavailableReason = 'extension_unavailable';
         if (vectorAvailable) {
           const queryEmbedding = await this.semantic.embeddings.embedQuery(input.message);
           for (const match of await this.semantic.vectors.search({
@@ -103,6 +108,7 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
         }
       } catch {
         vectorAvailable = false;
+        vectorUnavailableReason = 'model_unavailable';
       }
     }
     for (const result of this.db.searchMemoryFts({ query: input.message, companionId: input.companionId, userId: 'local', limit: 16 })) {
@@ -188,6 +194,7 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
       retrievalTrace: {
         query: input.message.slice(0, 500),
         vectorAvailable,
+        vectorUnavailableReason,
         candidates: [...traceCandidates.entries()].map(([memoryId, value]) => ({ memoryId, ...value })),
         rejected: [...traceCandidates.keys()].filter((id) => !candidates.some((node) => node.id === id)).map((memoryId) => ({ memoryId, reason: 'inactive_or_sensitive_or_missing' }))
           .concat(candidates.filter((node) => !selectedMemoryIds.includes(node.id)).map((node) => ({ memoryId: node.id, reason: 'budget_or_rank' }))),

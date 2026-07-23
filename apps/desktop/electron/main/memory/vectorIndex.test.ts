@@ -47,4 +47,20 @@ describe('SqliteVecIndex in Electron', () => {
     expect((await index.healthCheck()).filterableMetadataFields).toContain('memory_status');
     db.close();
   });
+
+  it('replaces an existing vec0 row instead of mutating immutable partition keys', async () => {
+    const db = new DatabaseService();
+    const node = createMemoryNode({ companionId: 'ann', type: 'topic', title: 'updated memory' });
+    db.insertMemoryNode({ ...node, id: 'replace-me', companionId: 'ann', userId: 'local', memoryType: 'user_fact', metadata: { sourceType: 'user_explicit', confidence: 1, sensitivity: 'normal', scope: 'companion', createdAt: node.createdAt } });
+    const index = new SqliteVecIndex(db.getExtensionDatabase(), 3);
+    await index.upsert({ memoryId: 'replace-me', embedding: new Float32Array([1, 0, 0]), modelId: 'test', modelVersion: 1, userId: 'local', companionId: 'ann', memoryType: 'user_fact', memoryStatus: 'active' });
+    const first = db.getExtensionDatabase().prepare('SELECT vector_row_id FROM memory_embeddings WHERE memory_id = ?').get('replace-me') as { vector_row_id: number };
+    await index.upsert({ memoryId: 'replace-me', embedding: new Float32Array([0, 1, 0]), modelId: 'test', modelVersion: 2, userId: 'local', companionId: 'ann', memoryType: 'goal', memoryStatus: 'active' });
+    const second = db.getExtensionDatabase().prepare('SELECT vector_row_id FROM memory_embeddings WHERE memory_id = ?').get('replace-me') as { vector_row_id: number };
+    expect(second.vector_row_id).not.toBe(first.vector_row_id);
+    expect((db.getExtensionDatabase().prepare('SELECT COUNT(*) AS count FROM memory_vec_index WHERE memory_id = ?').get('replace-me') as { count: number }).count).toBe(1);
+    expect((await index.search({ queryEmbedding: new Float32Array([0, 1, 0]), filter: { userId: 'local', companionId: 'ann', memoryTypes: ['goal'] }, limit: 3 })).map((result) => result.memoryId)).toEqual(['replace-me']);
+    expect((await index.healthCheck()).orphanCount).toBe(0);
+    db.close();
+  });
 });

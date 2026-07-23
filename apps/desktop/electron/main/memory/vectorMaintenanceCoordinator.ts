@@ -22,6 +22,7 @@ export class VectorMaintenanceCoordinator {
   }
 
   waitUntilAvailable(): Promise<void> { return this.tail; }
+  isSearchAvailable(): boolean { return !this.activeOperation; }
   getStatus(): VectorMaintenanceStatus {
     return { active: Boolean(this.activeOperation), operation: this.activeOperation };
   }

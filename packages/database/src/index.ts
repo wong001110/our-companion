@@ -1386,13 +1386,24 @@ export class DatabaseService {
   private markMemoryDirty(node: MemoryNode, deleted = false): void {
     if (!node.companionId) return;
     const contentHash = createSemanticFingerprint('memory_content', [
+      // Canonical embedding-source snapshot: any change that affects scope,
+      // eligibility, vec0 metadata, or pipeline interpretation requeues work.
+      node.userId ?? 'local',
+      node.companionId ?? '',
       node.type,
       node.memoryType ?? '',
+      node.status ?? (node.isMarkedWrong ? 'superseded' : 'active'),
+      String(node.metadata?.sensitivity ?? 'normal'),
+      String(node.metadata?.scope ?? 'companion'),
       normalizeSemanticText(node.title),
       normalizeSemanticText(node.summary ?? ''),
       normalizeSemanticText(node.content ?? ''),
       String(Boolean(node.isPinned)),
       String(Boolean(node.isMarkedWrong)),
+      'Xenova/multilingual-e5-small',
+      'embedding-pipeline-v2',
+      'dimensions:384',
+      'query:|passage:|mean|normalize|tokens:512',
     ]);
     const existing = this.getMemoryProcessingState(node.id);
     const changed = !existing || existing.contentHash !== contentHash || Boolean(existing.deletedAt) !== deleted;
@@ -1481,6 +1492,11 @@ export class DatabaseService {
   supersedeEmbeddingJob(id: string): void {
     this.db.prepare("UPDATE embedding_jobs SET status = 'superseded', updated_at = ? WHERE id = ? AND status IN ('pending', 'processing')")
       .run(nowIso(), id);
+  }
+
+  ensureLatestEmbeddingJob(memoryId: string): void {
+    const node = this.getMemoryNode(memoryId);
+    if (node) this.queueEmbeddingForMemory(node);
   }
 
   getEmbeddingJobCounts(): Record<string, number> {

@@ -14,7 +14,7 @@ describe('EmbeddingJobRunner', () => {
       removeForDeletion: () => undefined,
       search: async () => [], rebuild: async () => undefined,
       repairDerivedState: async () => undefined,
-      healthCheck: async () => ({ available: true, dimensions: 384, indexedCount: indexed.length, actualVectorCount: indexed.length, readyMappingCount: indexed.length, staleMappingCount: 0, deletedMappingCount: 0, mappingWithoutVectorCount: 0, vectorWithoutMappingCount: 0, schemaVersion: 3, filterableMetadataFields: [], orphanCount: 0, distanceMetric: 'cosine' }),
+      healthCheck: async () => ({ available: true, dimensions: 384, indexedCount: indexed.length, validIndexedCount: indexed.length, actualVectorCount: indexed.length, activeAuthoritativeMemoryCount: indexed.length, eligibleAuthoritativeMemoryCount: indexed.length, readyMappingCount: indexed.length, staleMappingCount: 0, deletedMappingCount: 0, mappingWithoutVectorCount: 0, vectorWithoutMappingCount: 0, schemaVersion: 3, filterableMetadataFields: [], orphanCount: 0, distanceMetric: 'cosine' }),
     };
     const provider = { modelId: 'test', version: 1, dimensions: 384, initialize: async () => undefined, dispose: async () => undefined, embedQuery: async () => new Float32Array(384), embedDocuments: async (texts: string[]) => texts.map(() => new Float32Array(384)) };
     const runner = new EmbeddingJobRunner(db, provider, vectors, 3);

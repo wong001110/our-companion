@@ -13,6 +13,7 @@ export interface VectorIndexHealth {
   readyMappingCount: number; staleMappingCount: number; orphanCount: number; distanceMetric: 'cosine'; reason?: string;
   actualVectorCount: number; mappingWithoutVectorCount: number; vectorWithoutMappingCount: number;
   deletedMappingCount: number; schemaVersion: number; filterableMetadataFields: string[];
+  validIndexedCount: number; activeAuthoritativeMemoryCount: number; eligibleAuthoritativeMemoryCount: number;
 }
 export interface VectorIndex {
   initialize(): Promise<void>;
@@ -96,20 +97,15 @@ export class SqliteVecIndex implements VectorIndex {
           if (!current) throw new Error('MEMORY_REVISION_STALE');
         }
         const mapping = this.db.prepare('SELECT vector_row_id FROM memory_embeddings WHERE memory_id = ?').get(input.memoryId) as { vector_row_id?: number | null } | undefined;
-        const rowId = Number(mapping?.vector_row_id ?? 0);
-        let storedRowId = rowId;
-        if (rowId) {
-          const updated = this.db.prepare(`UPDATE memory_vec_index SET embedding = ?, user_id = ?, companion_id = ?, memory_id = ?, memory_type = ?, memory_status = ? WHERE rowid = ?`)
-            .run(asVectorBlob(input.embedding), input.userId ?? 'local', input.companionId ?? '', input.memoryId, input.memoryType ?? '', input.memoryStatus ?? 'active', rowId) as { changes?: number | bigint };
-          if (Number(updated.changes ?? 0) === 0) storedRowId = 0;
-        }
-        if (!storedRowId) {
-          const inserted = this.db.prepare(`INSERT INTO memory_vec_index (embedding, user_id, companion_id, memory_id, memory_type, memory_status)
-            VALUES (?, ?, ?, ?, ?, ?)`)
-            .run(asVectorBlob(input.embedding), input.userId ?? 'local', input.companionId ?? '', input.memoryId, input.memoryType ?? '', input.memoryStatus ?? 'active') as { lastInsertRowid?: number | bigint };
-          storedRowId = Number(inserted.lastInsertRowid);
-          if (!storedRowId) throw new Error('VECTOR_ROW_INSERT_FAILED');
-        }
+        // sqlite-vec partition keys are immutable. Replacing the row works for
+        // both ordinary re-embeds and a user/Companion scope transition, and
+        // remains atomic with the authoritative mapping update.
+        if (mapping?.vector_row_id) this.db.prepare('DELETE FROM memory_vec_index WHERE rowid = ?').run(mapping.vector_row_id);
+        const inserted = this.db.prepare(`INSERT INTO memory_vec_index (embedding, user_id, companion_id, memory_id, memory_type, memory_status)
+          VALUES (?, ?, ?, ?, ?, ?)`)
+          .run(asVectorBlob(input.embedding), input.userId ?? 'local', input.companionId ?? '', input.memoryId, input.memoryType ?? '', input.memoryStatus ?? 'active') as { lastInsertRowid?: number | bigint };
+        const storedRowId = Number(inserted.lastInsertRowid);
+        if (!storedRowId) throw new Error('VECTOR_ROW_INSERT_FAILED');
         const confirmed = this.db.prepare('SELECT rowid FROM memory_vec_index WHERE rowid = ?').get(storedRowId) as { rowid?: unknown } | undefined;
         if (!confirmed?.rowid) throw new Error('VECTOR_ROW_CONFIRMATION_FAILED');
         this.db.prepare(`INSERT INTO memory_embeddings (memory_id, vector_row_id, embedding_model, embedding_version, dimensions, content_hash, status, created_at, updated_at)
@@ -156,11 +152,19 @@ export class SqliteVecIndex implements VectorIndex {
     await this.initialize();
     const mappings = this.db.prepare("SELECT COUNT(*) AS count FROM memory_embeddings WHERE status = 'ready' AND vector_row_id IS NOT NULL").get() as { count?: unknown } | undefined;
     const actual: { count?: unknown } = this.available ? (this.db.prepare('SELECT COUNT(*) AS count FROM memory_vec_index').get() as { count?: unknown } | undefined) ?? {} : { count: 0 };
+    const valid = this.available ? (this.db.prepare(`SELECT COUNT(*) AS count FROM memory_embeddings e
+      JOIN memory_vec_index v ON v.rowid = e.vector_row_id
+      JOIN memory_nodes n ON n.id = e.memory_id
+      WHERE e.status = 'ready' AND n.memory_status = 'active' AND n.is_marked_wrong = 0
+        AND n.user_id = v.user_id AND n.companion_id = v.companion_id
+        AND COALESCE(n.memory_type, '') = v.memory_type AND COALESCE(n.memory_status, 'active') = v.memory_status`).get() as { count?: unknown } | undefined) ?? {} : { count: 0 };
     const missing = this.available ? (this.db.prepare(`SELECT COUNT(*) AS count FROM memory_embeddings e LEFT JOIN memory_vec_index v ON v.rowid = e.vector_row_id WHERE e.status = 'ready' AND (e.vector_row_id IS NULL OR v.rowid IS NULL)`).get() as { count?: unknown } | undefined) : { count: 0 };
     const vectorOnly = this.available ? (this.db.prepare(`SELECT COUNT(*) AS count FROM memory_vec_index v LEFT JOIN memory_embeddings e ON e.vector_row_id = v.rowid WHERE e.memory_id IS NULL`).get() as { count?: unknown } | undefined) : { count: 0 };
     const stale = this.db.prepare("SELECT COUNT(*) AS count FROM memory_embeddings WHERE status <> 'ready' OR vector_row_id IS NULL").get() as { count?: unknown } | undefined;
     const deleted = this.db.prepare("SELECT COUNT(*) AS count FROM memory_embeddings WHERE status = 'deleted'").get() as { count?: unknown } | undefined;
-    return { available: this.available, extensionVersion: this.extensionVersion, dimensions: this.dimensions, distanceMetric: 'cosine', indexedCount: Number(actual.count ?? 0), actualVectorCount: Number(actual.count ?? 0), readyMappingCount: Number(mappings?.count ?? 0), staleMappingCount: Number(stale?.count ?? 0), deletedMappingCount: Number(deleted?.count ?? 0), mappingWithoutVectorCount: Number(missing?.count ?? 0), vectorWithoutMappingCount: Number(vectorOnly?.count ?? 0), orphanCount: Number(missing?.count ?? 0) + Number(vectorOnly?.count ?? 0), schemaVersion: SqliteVecIndex.schemaVersion, filterableMetadataFields: ['user_id', 'companion_id', 'memory_type', 'memory_status'], reason: this.failure };
+    const active = this.db.prepare("SELECT COUNT(*) AS count FROM memory_nodes WHERE memory_status = 'active' AND is_marked_wrong = 0").get() as { count?: unknown } | undefined;
+    const eligible = this.db.prepare("SELECT COUNT(*) AS count FROM memory_nodes WHERE memory_status = 'active' AND is_marked_wrong = 0 AND memory_type IN ('user_preference', 'user_fact', 'user_boundary', 'goal', 'shared_experience', 'relationship_memory', 'conversation_episode')").get() as { count?: unknown } | undefined;
+    return { available: this.available, extensionVersion: this.extensionVersion, dimensions: this.dimensions, distanceMetric: 'cosine', indexedCount: Number(valid.count ?? 0), validIndexedCount: Number(valid.count ?? 0), actualVectorCount: Number(actual.count ?? 0), activeAuthoritativeMemoryCount: Number(active?.count ?? 0), eligibleAuthoritativeMemoryCount: Number(eligible?.count ?? 0), readyMappingCount: Number(mappings?.count ?? 0), staleMappingCount: Number(stale?.count ?? 0), deletedMappingCount: Number(deleted?.count ?? 0), mappingWithoutVectorCount: Number(missing?.count ?? 0), vectorWithoutMappingCount: Number(vectorOnly?.count ?? 0), orphanCount: Number(missing?.count ?? 0) + Number(vectorOnly?.count ?? 0), schemaVersion: SqliteVecIndex.schemaVersion, filterableMetadataFields: ['user_id', 'companion_id', 'memory_type', 'memory_status'], reason: this.failure };
   }
 
   async repairDerivedState(): Promise<void> {
