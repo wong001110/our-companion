@@ -215,6 +215,7 @@ import {
 import { getWebSearchProviderDiagnostics, resolveWebSearchProvider } from './browserSearch/resolveWebSearchProvider';
 import { ResearchOrchestrator } from './researchOrchestrator';
 import { CompanionTurnOrchestrator } from './application/CompanionTurnOrchestrator';
+import { GroundingValidator } from './application/GroundingValidator';
 import { SqliteMemoryContextProvider } from './application/MemoryContextProvider';
 import { MemoryPolicy } from './runtime/MemoryPolicy';
 import { LocalMultilingualEmbeddingProvider } from './memory/localEmbeddingProvider';
@@ -493,6 +494,7 @@ export class AppServices {
       db: this.db,
       memoryContext: new SqliteMemoryContextProvider(this.db, this.now, { embeddings: this.localEmbeddings, vectors: this.vectorIndex, availability: this.vectorMaintenance }),
       memoryPolicy: this.turnMemoryPolicy,
+      groundingValidator: new GroundingValidator(this.localEmbeddings),
       now: this.now,
       getReplyLanguage: () => this.getAiSettings().replyLanguage,
       getSessionId: () => this.companionRuntime?.getActiveSessionId() ?? undefined,
@@ -2510,32 +2512,34 @@ export class AppServices {
       return { completed: this.embeddingJobRunner.getStatus().processedInCurrentRun, failed: this.embeddingJobRunner.getStatus().failedCount };
     },
     rebuildMemoryVectors: async () => {
+      const healthBefore = await this.vectorIndex.healthCheck();
+      let vectorsDeleted = 0;
+      let mappingsReset = 0;
+      let jobsQueued = 0;
       await this.vectorMaintenance.runExclusive('rebuild', async () => {
         await this.embeddingJobRunner.pauseAndWait();
         try {
-          await this.vectorIndex.rebuild();
+          const reset = await this.vectorIndex.rebuildDerivedState();
+          vectorsDeleted = reset.vectorsDeleted;
+          mappingsReset = reset.mappingsReset;
           this.db.retryFailedEmbeddingJobs();
-          this.db.queueAllEligibleEmbeddings(true);
+          jobsQueued = this.db.queueAllEligibleEmbeddings(true);
         } finally {
           this.embeddingJobRunner.resume();
         }
         await this.embeddingJobRunner.drain();
       });
-      return { completed: this.embeddingJobRunner.getStatus().processedInCurrentRun, failed: this.embeddingJobRunner.getStatus().failedCount };
+      return {
+        mode: 'full_rebuild' as const,
+        vectorsDeleted,
+        mappingsReset,
+        jobsQueued,
+        completed: this.embeddingJobRunner.getStatus().processedInCurrentRun,
+        failed: this.embeddingJobRunner.getStatus().failedCount,
+        healthBefore,
+        healthAfter: await this.vectorIndex.healthCheck(),
+      };
     },
-    repairMemoryVectors: async () => this.vectorMaintenance.runExclusive('derived_state_repair', async () => {
-      await this.embeddingJobRunner.pauseAndWait();
-      try {
-        const repair = await this.vectorIndex.repairDerivedState();
-        const jobsQueued = this.db.queueAllEligibleEmbeddings();
-        this.embeddingJobRunner.resume();
-        await this.embeddingJobRunner.drain();
-        return { ...repair, jobsQueued, completed: this.embeddingJobRunner.getStatus().processedInCurrentRun, failed: this.embeddingJobRunner.getStatus().failedCount };
-      } catch (error) {
-        this.embeddingJobRunner.resume();
-        throw error;
-      }
-    }),
   };
 
   workspace = {

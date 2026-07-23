@@ -65,7 +65,7 @@ describe('ai engine', () => {
 
   it('strictly validates a structured Companion turn and safely extracts wrapper JSON', () => {
     const proposal = validateCompanionTurnProposal(
-      'Result:\n{"reply":"I can help.","intent":"conversation_and_action","actions":[{"toolName":"search_web","args":{"query":"PixiJS"},"reason":"The user asked."}],"memoryCandidates":[{"type":"goal","summary":"build Our Companion","evidence":"My goal is build Our Companion","confidence":0.9}]}'
+      'Result:\n{"reply":"I can help.","intent":"conversation_and_action","groundedClaims":[],"actions":[{"toolName":"search_web","args":{"query":"PixiJS"},"reason":"The user asked."}],"memoryCandidates":[{"type":"goal","summary":"build Our Companion","evidence":"My goal is build Our Companion","confidence":0.9}]}'
     );
     expect(proposal?.actions[0].toolName).toBe('search_web');
     expect(proposal?.memoryCandidates[0].type).toBe('goal');
@@ -74,10 +74,10 @@ describe('ai engine', () => {
   it('rejects malformed, over-permissive, or internally inconsistent turn proposals', () => {
     expect(validateCompanionTurnProposal('not json')).toBeUndefined();
     expect(validateCompanionTurnProposal(
-      '{"reply":"x","intent":"conversation","actions":[{"toolName":"open_url","args":{"url":"example.com"},"reason":"x"}],"memoryCandidates":[]}'
+      '{"reply":"x","intent":"conversation","groundedClaims":[],"actions":[{"toolName":"open_url","args":{"url":"example.com"},"reason":"x"}],"memoryCandidates":[]}'
     )).toBeUndefined();
     expect(validateCompanionTurnProposal(
-      '{"reply":"x","intent":"conversation","actions":[],"memoryCandidates":[],"internalEvent":"arbitrary"}'
+      '{"reply":"x","intent":"conversation","groundedClaims":[],"actions":[],"memoryCandidates":[],"internalEvent":"arbitrary"}'
     )).toBeUndefined();
   });
 

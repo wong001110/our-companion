@@ -100,6 +100,14 @@ export const actionPlanSchema = z.object({
 export const companionTurnProposalSchema = z.object({
   reply: z.string().max(4_000),
   intent: z.enum(['conversation', 'action', 'conversation_and_action', 'cannot_complete']),
+  groundedClaims: z.array(z.object({
+    claimId: z.string().min(1).max(100),
+    text: z.string().min(1).max(1_000),
+    type: z.enum(['user_fact', 'user_preference', 'user_boundary', 'goal', 'shared_experience', 'relationship_memory']),
+    supportingMemoryIds: z.array(z.string().min(1).max(200)).min(1).max(6)
+      .refine((ids) => new Set(ids).size === ids.length, 'Grounded claim citations must be unique.'),
+  }).strict()).max(12)
+    .refine((claims) => new Set(claims.map((claim) => claim.claimId)).size === claims.length, 'Grounded claim IDs must be unique.'),
   actions: z.array(z.object({
     toolName: z.string().min(1).max(80),
     args: z.record(z.unknown()),

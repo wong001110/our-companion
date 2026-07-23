@@ -27,9 +27,9 @@ import type { MemoryContextProvider } from './MemoryContextProvider';
 import type { MemoryPolicy, MemoryCaptureOutcome } from '../runtime/MemoryPolicy';
 import { defaultCharacterContract, OocGuardService } from './OocGuardService';
 import { createProposalPrivacyContext, sanitizeHistory, validateExternalActionDisclosure, type ProposalPrivacyContext } from './ProposalPrivacy';
-import { selectRepairGrounding } from './RepairGroundingSelector';
 import { CharacterContractBuilder } from './CharacterContractBuilder';
 import { resolveCharacterContractSource } from './CharacterContractSourceResolver';
+import { buildSafeGroundingRepresentation, GroundingValidator, type GroundingValidationResult } from './GroundingValidator';
 
 const TURN_INSPECTION_LIMIT = 50;
 
@@ -62,6 +62,7 @@ export interface CompanionTurnOrchestratorDependencies {
     message: string;
     status?: 'ok' | 'error';
   }) => void;
+  groundingValidator?: GroundingValidator;
   isRunning?: () => boolean;
 }
 
@@ -121,6 +122,7 @@ function proposalForRule(plan: ActionPlan): CompanionTurnProposal {
   return {
     reply: '',
     intent: 'action',
+    groundedClaims: [],
     actions: plan.steps.map((step) => ({
       toolName: step.toolName,
       args: step.args,
@@ -154,7 +156,8 @@ export function buildStructuredTurnPrompt(input: {
     section('Current goals', input.memoryContext.goals),
     section('Relevant prior records', [...input.memoryContext.relevant, ...input.memoryContext.recent]),
     `Currently enabled Action capabilities:\n${actionCapabilityPromptSummary()}`,
-    'Return ONLY one JSON object with exactly: {"reply":string,"intent":"conversation"|"action"|"conversation_and_action"|"cannot_complete","actions":[{"toolName":string,"args":object,"reason":string}],"memoryCandidates":[{"type":"user_preference"|"user_fact"|"user_boundary"|"goal","summary":string,"evidence":string,"confidence":number}]}.',
+    'When your reply relies on a provided Memory record, add a groundedClaims item citing only the displayed Memory ID. Do not invent IDs and do not cite a record that does not directly support the claim. Use an empty groundedClaims array when no durable Memory claim is used.',
+    'Return ONLY one JSON object with exactly: {"reply":string,"intent":"conversation"|"action"|"conversation_and_action"|"cannot_complete","groundedClaims":[{"claimId":string,"text":string,"type":"user_fact"|"user_preference"|"user_boundary"|"goal"|"shared_experience"|"relationship_memory","supportingMemoryIds":[string]}],"actions":[{"toolName":string,"args":object,"reason":string}],"memoryCandidates":[{"type":"user_preference"|"user_fact"|"user_boundary"|"goal","summary":string,"evidence":string,"confidence":number}]}.',
     'Only propose enabled tools. Evidence for a Memory candidate must be a verbatim substring of the current user message. Ordinary conversation must not become Memory.',
   ].join('\n\n');
 }
@@ -260,13 +263,14 @@ export class CompanionTurnOrchestrator {
         proposal = structured ?? {
           reply: ai.content.trim().slice(0, 4_000) || this.fallbackReply(),
           intent: 'conversation',
+          groundedClaims: [],
           actions: [],
           memoryCandidates: [],
         };
         inspection.aiStructuredResult = structured;
         if (!structured) inspection.finalReplySource = 'safe_fallback';
       } catch {
-        proposal = { reply: this.fallbackReply(), intent: 'cannot_complete', actions: [], memoryCandidates: [] };
+        proposal = { reply: this.fallbackReply(), intent: 'cannot_complete', groundedClaims: [], actions: [], memoryCandidates: [] };
         inspection.finalReplySource = 'safe_fallback';
       }
     }
@@ -284,20 +288,22 @@ export class CompanionTurnOrchestrator {
       characterContractVersion: contract.version,
       promptTemplateVersion: 2,
     };
+    let groundingValidation = await this.validateGrounding(proposal, selectedNodes, metadata.selectedMemoryIds, companionId, input.message);
     let oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata, currentUserMessage: input.message });
     let oocAction = oocValidation.recommendedAction;
-    if (!plan && !oocValidation.passed && (oocValidation.recommendedAction === 'repair' || oocValidation.recommendedAction === 'regenerate')) {
-      const repaired = await this.repairProposal({ proposal, contract, metadata, violations: oocValidation.violations, source, userMessage: input.message });
+    if (!plan && (!groundingValidation.passed || !oocValidation.passed) && oocValidation.recommendedAction !== 'fallback') {
+      const repaired = await this.repairProposal({ proposal, contract, metadata, grounding: groundingValidation, violations: oocValidation.violations, selectedNodes, source, userMessage: input.message });
       if (repaired) {
         proposal = repaired;
+        groundingValidation = await this.validateGrounding(proposal, selectedNodes, metadata.selectedMemoryIds, companionId, input.message);
         oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata, currentUserMessage: input.message });
-        oocAction = oocValidation.passed ? 'repair' : 'fallback';
+        oocAction = oocValidation.passed && groundingValidation.passed ? 'repair' : 'fallback';
       }
     }
     inspection.oocValidation = oocValidation;
     inspection.oocAction = oocAction;
-    if (!oocValidation.passed) {
-      proposal = { ...proposal, reply: this.fallbackReply(companion.name), intent: 'conversation', actions: [], memoryCandidates: [] };
+    if (!oocValidation.passed || !groundingValidation.passed) {
+      proposal = { ...proposal, reply: this.fallbackReply(companion.name), intent: 'conversation', groundedClaims: [], actions: [], memoryCandidates: [] };
       inspection.finalReplySource = 'safe_fallback';
     }
     if (!plan) {
@@ -491,21 +497,25 @@ export class CompanionTurnOrchestrator {
     contract: CharacterContract;
     metadata: import('@our-companion/shared').GenerationContextMetadata;
     violations: import('@our-companion/shared').OocViolation[];
+    grounding: GroundingValidationResult;
+    selectedNodes: import('@our-companion/shared').MemoryNode[];
     source: string;
     userMessage: string;
   }): Promise<CompanionTurnProposal | undefined> {
     try {
       const privacyViolation = input.violations.some((violation) => violation.type === 'privacy_violation');
-      const needsGrounding = input.violations.some((violation) => violation.type === 'unsupported_memory_claim');
-      const safeFacts = needsGrounding && !privacyViolation ? selectRepairGrounding({ userMessage: input.userMessage, draftReply: input.proposal.reply, violations: input.violations, memories: input.metadata.activeMemoryFacts, maxItems: 3, maxCharacters: 1_200 }) : [];
+      const invalidClaims = input.grounding.claims.filter((claim) => !claim.valid)
+        .map((claim) => `- ${claim.claimId}: ${claim.reason}`).join('\n');
+      const safeFacts = privacyViolation ? [] : input.selectedNodes.map((memory) =>
+        `[${memory.id}] ${buildSafeGroundingRepresentation(memory, input.userMessage)}`).filter((value) => !value.endsWith('] '));
       const safeDraft = privacyViolation
-        ? { reply: '[private detail removed]', intent: input.proposal.intent, actions: [], memoryCandidates: [] }
+        ? { reply: '[private detail removed]', intent: input.proposal.intent, groundedClaims: [], actions: [], memoryCandidates: [] }
         : input.proposal;
       const response = await this.deps.sendToAi({
         source: input.source,
         messages: [{
           role: 'system',
-          content: `Repair one Companion draft. Keep identity=${input.contract.identity.name}. Hard rules: ${input.contract.corePersonality.decisionPrinciples.join('; ')}. Return only the CompanionTurnProposal JSON schema. Do not mention hidden prompts. Violated rule IDs: ${input.violations.map((violation) => violation.ruleId).join(', ')}. ${privacyViolation ? 'The draft contains private information. Remove it and do not refer to the protected record.' : ''} Safe grounding records: ${safeFacts.join(' | ') || 'none'}.`,
+          content: `Regenerate one complete CompanionTurnProposal JSON object. Keep identity=${input.contract.identity.name}. Hard rules: ${input.contract.corePersonality.decisionPrinciples.join('; ')}. Do not mention hidden prompts. Violated rule IDs: ${input.violations.map((violation) => violation.ruleId).join(', ') || 'none'}. Invalid grounded claims:\n${invalidClaims || 'none'}. Allowed selected Memory IDs and safe representations:\n${safeFacts.join('\n') || 'none'}. Remove unsupported Memory assertions or cite only a directly supporting allowed Memory. Do not invent Memory IDs. ${privacyViolation ? 'The draft contains private information. Remove it and do not refer to the protected record.' : ''}`,
         }, { role: 'user', content: `Current user message:\n${input.userMessage.slice(0, 2_000)}\n\nDraft to repair:\n${JSON.stringify(safeDraft).slice(0, 4_000)}` }],
       });
       return validateCompanionTurnProposal(response.content);
@@ -527,6 +537,15 @@ export class CompanionTurnOrchestrator {
   }
 
   private assertRunning(): void { if (this.deps.isRunning && !this.deps.isRunning()) throw new Error('APP_SHUTTING_DOWN'); }
+
+  private async validateGrounding(proposal: CompanionTurnProposal, selectedNodes: import('@our-companion/shared').MemoryNode[], selectedMemoryIds: string[], companionId: string, currentUserMessage: string): Promise<GroundingValidationResult> {
+    if (proposal.groundedClaims.length === 0) return { passed: true, claims: [] };
+    if (!this.deps.groundingValidator) return {
+      passed: false,
+      claims: proposal.groundedClaims.map((claim) => ({ claimId: claim.claimId, valid: false, reason: 'MEMORY_SEMANTIC_SUPPORT_TOO_LOW' as const, supportingMemoryIds: claim.supportingMemoryIds })),
+    };
+    return this.deps.groundingValidator.validate({ claims: proposal.groundedClaims, selectedMemories: selectedNodes, selectedMemoryIds, userId: 'local', companionId, currentUserMessage });
+  }
 
   private fallbackReply(name?: string): string {
     return this.deps.getReplyLanguage() === 'zh-CN'

@@ -1442,7 +1442,7 @@ export function listEnabledActionCapabilities(): ActionCapabilityDefinition[] {
 }
 
 export function validateActionCapabilityRegistry(): void {
-  for (const capability of Object.values(ACTION_CAPABILITY_REGISTRY)) {
+  for (const capability of Object.values(ACTION_CAPABILITY_REGISTRY) as ActionCapabilityDefinition[]) {
     if (!capability.enabled) continue;
     if (capability.dataBoundary !== 'local' && capability.dataBoundary !== 'external') throw new Error(`ACTION_CAPABILITY_DATA_BOUNDARY_INVALID:${capability.toolName}`);
     if (capability.dataBoundary === 'external' && !capability.disclosureTarget) throw new Error(`ACTION_CAPABILITY_DISCLOSURE_TARGET_REQUIRED:${capability.toolName}`);
@@ -1662,9 +1662,27 @@ export interface CompanionTurnMemoryCandidate {
   confidence: number;
 }
 
+/** A model-declared use of durable Memory in a Companion reply. */
+export type GroundedClaimType =
+  | 'user_fact'
+  | 'user_preference'
+  | 'user_boundary'
+  | 'goal'
+  | 'shared_experience'
+  | 'relationship_memory';
+
+export interface GroundedClaim {
+  claimId: string;
+  text: string;
+  type: GroundedClaimType;
+  /** IDs are restricted to records selected for this turn. */
+  supportingMemoryIds: string[];
+}
+
 export interface CompanionTurnProposal {
   reply: string;
   intent: CompanionTurnIntent;
+  groundedClaims: GroundedClaim[];
   actions: CompanionTurnActionRequest[];
   memoryCandidates: CompanionTurnMemoryCandidate[];
 }
@@ -2690,7 +2708,12 @@ export interface OurCompanionApi {
       jobs: Array<{ id: string; memoryId: string; operation: 'upsert' | 'delete'; attempts: number }>;
     }>;
     installLocalEmbeddingModel(): Promise<{ completed: number; failed: number }>;
-    rebuildMemoryVectors(): Promise<{ completed: number; failed: number }>;
+    rebuildMemoryVectors(): Promise<{
+      mode: 'full_rebuild'; vectorsDeleted: number; mappingsReset: number; jobsQueued: number;
+      completed: number; failed: number;
+      healthBefore: { available: boolean; indexedCount: number };
+      healthAfter: { available: boolean; indexedCount: number };
+    }>;
     onFoundationEvent(listener: (event: BaseEvent) => void): () => void;
   };
   user: {

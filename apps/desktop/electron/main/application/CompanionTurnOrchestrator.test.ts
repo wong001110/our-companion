@@ -68,6 +68,7 @@ function proposal(input: Partial<CompanionTurnProposal> = {}): string {
   return JSON.stringify({
     reply: 'Understood.',
     intent: 'conversation',
+    groundedClaims: [],
     actions: [],
     memoryCandidates: [],
     ...input,
@@ -80,7 +81,7 @@ describe('CompanionTurnOrchestrator', () => {
     const harness = createHarness(() => {
       calls += 1;
       return calls === 1
-        ? proposal({ reply: 'I remember you promised to delete everything.', memoryCandidates: [{ type: 'user_fact', summary: 'False promise', evidence: 'hello', confidence: 1 }] })
+        ? proposal({ reply: 'I remember you promised to delete everything.', groundedClaims: [{ claimId: 'unsupported', text: 'The user promised to delete everything.', type: 'user_fact', supportingMemoryIds: ['invented-memory'] }], memoryCandidates: [{ type: 'user_fact', summary: 'False promise', evidence: 'hello', confidence: 1 }] })
         : proposal({ reply: 'I do not have a reliable record of that promise.' });
     });
     const result = await harness.orchestrator.handle({ message: 'hello', source: 'panel_text', characterId: harness.companion.id });

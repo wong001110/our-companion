@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseService } from '@our-companion/database';
 import type { CompanionMessage } from '@our-companion/shared';
-import { getActionCapability, resolveActionDisclosureTarget, type DisclosureTarget } from '@our-companion/shared';
+import { getActionCapability, resolveActionDisclosureTarget } from '@our-companion/shared';
 
 export type SensitiveDescriptorKind = 'email' | 'phone' | 'account' | 'credential' | 'identifier' | 'private_canary' | 'medical' | 'financial' | 'address';
 export interface SensitiveDescriptor { kind: SensitiveDescriptorKind; valueHash: string; value: string; }
@@ -46,7 +46,8 @@ function targetForTool(toolName: string, payload: unknown): DisclosureAuthorizat
   const capability = getActionCapability(toolName);
   if (!capability) return 'unknown';
   const args = (payload && typeof payload === 'object' && 'args' in payload ? (payload as { args?: unknown }).args : payload) as Record<string, unknown>;
-  return resolveActionDisclosureTarget(toolName, args ?? {}) as DisclosureTarget | undefined;
+  const target = resolveActionDisclosureTarget(toolName, args ?? {});
+  return target === 'search_web' || target === 'open_url' || target === 'http_request' || target === 'specific_tool' ? target : undefined;
 }
 
 function explicitlyRequestsDisclosure(message: string, value: string, target: DisclosureAuthorization['target']): boolean {

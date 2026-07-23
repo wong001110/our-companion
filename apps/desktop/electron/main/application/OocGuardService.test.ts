@@ -18,10 +18,8 @@ describe('OocGuardService', () => {
     expect(guard.validate({ response: 'ChatGPT is one possible AI assistant, but I am here with you as Mira.', contract, metadata }).passed).toBe(true);
   });
 
-  it('requires grounding for first-person memory claims and blocks non-active context', () => {
-    expect(guard.validate({ response: 'I remember you promised to delete everything.', contract, metadata })).toMatchObject({
-      passed: false, recommendedAction: 'repair', violations: [expect.objectContaining({ type: 'unsupported_memory_claim' })],
-    });
+  it('leaves structured Memory citation checks to GroundingValidator and blocks non-active context', () => {
+    expect(guard.validate({ response: 'I remember you promised to delete everything.', contract, metadata }).passed).toBe(true);
     expect(guard.validate({ response: 'Here is the active record.', contract, metadata: {
       ...metadata,
       activeMemoryFacts: [{ memoryId: 'old', type: 'user_fact', content: 'old', confidence: 1, status: 'superseded' }],
@@ -49,11 +47,11 @@ describe('OocGuardService', () => {
       activeMemoryFacts: [{ memoryId: 'private', type: 'user_fact', content: 'contact user-private@example.test at 012-3456789', confidence: 1, status: 'active', sensitivity: 'private' }],
     };
     expect(guard.validateProposal({
-      proposal: { reply: 'Okay.', intent: 'action', actions: [{ toolName: 'search_web', args: { query: 'user-private@example.test' }, reason: 'search' }], memoryCandidates: [] },
+      proposal: { reply: 'Okay.', intent: 'action', groundedClaims: [], actions: [{ toolName: 'search_web', args: { query: 'user-private@example.test' }, reason: 'search' }], memoryCandidates: [] },
       contract, metadata: privateMetadata, currentUserMessage: 'please search',
     }).passed).toBe(false);
     expect(guard.validateProposal({
-      proposal: { reply: 'This is private.', intent: 'conversation', actions: [], memoryCandidates: [] },
+      proposal: { reply: 'This is private.', intent: 'conversation', groundedClaims: [], actions: [], memoryCandidates: [] },
       contract, metadata: privateMetadata, currentUserMessage: 'this is private',
     }).passed).toBe(true);
   });
