@@ -122,6 +122,8 @@ export class DatabaseService {
   private readonly db: SqliteDatabase;
   private readonly adaptiveDiscovery: AdaptiveDiscoveryPersistence;
   private readonly priorAnnHasCustomAssets: () => boolean;
+  private embeddingJobNotifier?: () => void;
+  private vectorDeletionHandler?: (memoryId: string) => void;
 
   constructor(options: DatabaseServiceOptions = {}) {
     this.priorAnnHasCustomAssets = options.priorAnnHasCustomAssets ?? (() => false);
@@ -760,6 +762,10 @@ export class DatabaseService {
     return this.db;
   }
 
+  /** Main-process services register these hooks; database code remains renderer-agnostic. */
+  setEmbeddingJobNotifier(notifier: (() => void) | undefined): void { this.embeddingJobNotifier = notifier; }
+  setVectorDeletionHandler(handler: ((memoryId: string) => void) | undefined): void { this.vectorDeletionHandler = handler; }
+
   // ─── Developer Debug Events ────────────────────────────────────────────────
 
   insertDeveloperDebugEvent(event: import('@our-companion/shared').DeveloperDebugEvent): import('@our-companion/shared').DeveloperDebugEvent {
@@ -1177,14 +1183,21 @@ export class DatabaseService {
   }
 
   deleteMemoryNode(id: string): void {
-    const existing = this.getMemoryNode(id);
-    this.db.prepare('DELETE FROM memory_edges WHERE from_node_id = ? OR to_node_id = ?').run(id, id);
-    this.db.prepare('DELETE FROM memory_nodes WHERE id = ?').run(id);
-    if (existing?.companionId) {
-      this.markMemoryDirty(existing, true);
+    if (!this.getMemoryNode(id)) return;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      // The handler removes the vec0 row synchronously while the authoritative
+      // mapping still exists. The relational derived records then disappear in
+      // the same transaction, so no delete job can outlive its parent memory.
+      this.vectorDeletionHandler?.(id);
+      this.db.prepare('DELETE FROM memory_embeddings WHERE memory_id = ?').run(id);
+      this.db.prepare('DELETE FROM embedding_jobs WHERE memory_id = ?').run(id);
       this.db.prepare('DELETE FROM memory_fts WHERE memory_id = ?').run(id);
-      this.enqueueEmbeddingJob(id, 'delete');
-    }
+      this.db.prepare('DELETE FROM memory_edges WHERE from_node_id = ? OR to_node_id = ?').run(id, id);
+      this.db.prepare('DELETE FROM memory_processing_state WHERE memory_id = ?').run(id);
+      this.db.prepare('DELETE FROM memory_nodes WHERE id = ?').run(id);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
 
   getMemoryNode(id: string, companionId?: string): MemoryNode | undefined {
@@ -1212,21 +1225,34 @@ export class DatabaseService {
     ).all(companionId, userId, Math.max(1, limit)) as Array<Record<string, unknown>>).map(mapMemoryNode);
   }
 
-  searchMemoryFts(input: { query: string; companionId: string; userId: string; limit?: number }): MemoryNode[] {
+  searchMemoryFts(input: { query: string; companionId: string; userId: string; limit?: number }): Array<{ memory: MemoryNode; rank: number; keywordScore: number }> {
     const tokens = input.query.match(/[\p{L}\p{N}_]+/gu)?.slice(0, 12) ?? [];
     if (tokens.length === 0) return [];
     const expression = tokens.map((token) => `"${token.replace(/"/g, '')}"`).join(' OR ');
     try {
-      const rows = this.db.prepare(`SELECT memories.* FROM memory_fts fts
+      const rows = this.db.prepare(`SELECT memories.*, bm25(memory_fts) AS fts_rank FROM memory_fts fts
         JOIN memory_nodes memories ON memories.id = fts.memory_id
         WHERE memory_fts MATCH ? AND fts.companion_id = ? AND fts.user_id = ?
           AND COALESCE(memories.memory_status, 'active') = 'active' AND memories.is_marked_wrong = 0
         ORDER BY bm25(memory_fts) LIMIT ?`)
         .all(expression, input.companionId, input.userId, Math.max(1, input.limit ?? 12)) as Array<Record<string, unknown>>;
-      return rows.map(mapMemoryNode);
+      return rows.map((row) => {
+        const rank = Number(row.fts_rank);
+        // sqlite FTS5 BM25 is lower (normally more negative) for a stronger
+        // hit. Preserve the gradient instead of flattening every hit to 1.
+        return { memory: mapMemoryNode(row), rank, keywordScore: Math.abs(rank) / (1 + Math.abs(rank)) };
+      });
     } catch {
       return [];
     }
+  }
+
+  getMemoryNodesByIds(input: { memoryIds: string[]; userId: string; companionId: string }): MemoryNode[] {
+    const ids = [...new Set(input.memoryIds)].filter(Boolean);
+    if (!ids.length) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    return (this.db.prepare(`SELECT * FROM memory_nodes WHERE id IN (${placeholders}) AND user_id = ? AND companion_id = ?`)
+      .all(...ids, input.userId, input.companionId) as Array<Record<string, unknown>>).map(mapMemoryNode);
   }
 
   listCognitionMemoryCandidates(companionId: string, focusMemoryId?: string, limit = 30): MemoryNode[] {
@@ -1421,11 +1447,13 @@ export class DatabaseService {
     if (existing?.id) {
       this.db.prepare("UPDATE embedding_jobs SET operation = ?, status = 'pending', updated_at = ? WHERE id = ?")
         .run(operation, now, String(existing.id));
+      this.embeddingJobNotifier?.();
       return;
     }
     this.db.prepare(`INSERT INTO embedding_jobs (id, memory_id, operation, status, attempts, embedding_model, embedding_version, created_at, updated_at)
       VALUES (?, ?, ?, 'pending', 0, ?, ?, ?, ?)`)
       .run(createId('embedding_job'), memoryId, operation, 'Xenova/multilingual-e5-small', 1, now, now);
+    this.embeddingJobNotifier?.();
   }
 
   listPendingEmbeddingJobs(limit = 8): Array<{ id: string; memoryId: string; operation: 'upsert' | 'delete'; attempts: number }> {
@@ -1433,6 +1461,30 @@ export class DatabaseService {
       .all(Math.max(1, limit)) as Array<Record<string, unknown>>).map((row) => ({
       id: String(row.id), memoryId: String(row.memory_id), operation: row.operation as 'upsert' | 'delete', attempts: Number(row.attempts),
     }));
+  }
+
+  getEmbeddingJobCounts(): Record<string, number> {
+    const rows = this.db.prepare('SELECT status, COUNT(*) AS count FROM embedding_jobs GROUP BY status').all() as Array<{ status: string; count: number }>;
+    return Object.fromEntries(rows.map((row) => [row.status, Number(row.count)]));
+  }
+
+  blockEmbeddingJob(id: string, error: string): void {
+    this.db.prepare("UPDATE embedding_jobs SET status = 'blocked', last_error = ?, updated_at = ? WHERE id = ?")
+      .run(error, nowIso(), id);
+  }
+
+  requeueEmbeddingJob(id: string, error: string): void {
+    this.db.prepare("UPDATE embedding_jobs SET status = 'pending', last_error = ?, updated_at = ? WHERE id = ?")
+      .run(error, nowIso(), id);
+    this.embeddingJobNotifier?.();
+  }
+
+  unblockEmbeddingJobs(): number {
+    const result = this.db.prepare("UPDATE embedding_jobs SET status = 'pending', last_error = NULL, updated_at = ? WHERE status = 'blocked'")
+      .run(nowIso()) as { changes?: number | bigint };
+    const changed = Number(result.changes ?? 0);
+    if (changed) this.embeddingJobNotifier?.();
+    return changed;
   }
 
   claimEmbeddingJob(id: string): boolean {
@@ -1453,13 +1505,18 @@ export class DatabaseService {
   retryFailedEmbeddingJobs(): number {
     const result = this.db.prepare("UPDATE embedding_jobs SET status = 'pending', last_error = NULL, updated_at = ? WHERE status = 'failed'")
       .run(nowIso()) as { changes?: number | bigint };
-    return Number(result.changes ?? 0);
+    const changed = Number(result.changes ?? 0);
+    if (changed) this.embeddingJobNotifier?.();
+    return changed;
   }
 
-  queueAllEligibleEmbeddings(): number {
+  queueAllEligibleEmbeddings(force = false): number {
     const nodes = this.listMemoryNodes().filter((node) => this.isEmbeddingEligible(node));
-    for (const node of nodes) this.queueEmbeddingForMemory(node);
-    return nodes.length;
+    let queued = 0;
+    for (const node of nodes) {
+      if (force || this.memoryNeedsEmbedding(node)) { this.queueEmbeddingForMemory(node); queued += 1; }
+    }
+    return queued;
   }
 
   recordMemoryAccess(memoryIds: string[]): void {
@@ -1473,9 +1530,23 @@ export class DatabaseService {
     const rows = this.db.prepare('SELECT * FROM memory_nodes').all() as Array<Record<string, unknown>>;
     for (const row of rows) {
       const node = mapMemoryNode(row);
-      this.syncMemoryFts(node);
-      if (this.isEmbeddingEligible(node)) this.enqueueEmbeddingJob(node.id, 'upsert');
+      const ftsExists = this.db.prepare('SELECT 1 FROM memory_fts WHERE memory_id = ? LIMIT 1').get(node.id);
+      if (!ftsExists) this.syncMemoryFts(node);
+      if (this.isEmbeddingEligible(node) && this.memoryNeedsEmbedding(node)) this.enqueueEmbeddingJob(node.id, 'upsert');
     }
+  }
+
+  private memoryNeedsEmbedding(node: MemoryNode): boolean {
+    const state = this.getMemoryProcessingState(node.id);
+    const embedding = this.db.prepare('SELECT content_hash, embedding_model, embedding_version, dimensions, status, vector_row_id FROM memory_embeddings WHERE memory_id = ?')
+      .get(node.id) as Record<string, unknown> | undefined;
+    return !embedding
+      || String(embedding.status) !== 'ready'
+      || !embedding.vector_row_id
+      || String(embedding.content_hash) !== String(state?.contentHash ?? '')
+      || String(embedding.embedding_model) !== 'Xenova/multilingual-e5-small'
+      || Number(embedding.embedding_version) !== 1
+      || Number(embedding.dimensions) !== 384;
   }
 
   insertMemoryEdge(edge: MemoryEdge): MemoryEdge {

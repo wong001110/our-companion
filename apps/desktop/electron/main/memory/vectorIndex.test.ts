@@ -15,9 +15,9 @@ describe('SqliteVecIndex in Electron', () => {
     }
     const index = new SqliteVecIndex(db.getExtensionDatabase(), 3);
     await index.initialize();
-    await index.upsert({ memoryId: 'owned', embedding: new Float32Array([1, 0, 0]), modelId: 'test', modelVersion: 1 });
-    await index.upsert({ memoryId: 'other-companion', embedding: new Float32Array([1, 0, 0]), modelId: 'test', modelVersion: 1 });
-    await index.upsert({ memoryId: 'other-user', embedding: new Float32Array([1, 0, 0]), modelId: 'test', modelVersion: 1 });
+    await index.upsert({ memoryId: 'owned', embedding: new Float32Array([1, 0, 0]), modelId: 'test', modelVersion: 1, userId: 'local', companionId: 'ann', memoryType: 'user_fact' });
+    await index.upsert({ memoryId: 'other-companion', embedding: new Float32Array([1, 0, 0]), modelId: 'test', modelVersion: 1, userId: 'local', companionId: 'other', memoryType: 'user_fact' });
+    await index.upsert({ memoryId: 'other-user', embedding: new Float32Array([1, 0, 0]), modelId: 'test', modelVersion: 1, userId: 'other', companionId: 'ann', memoryType: 'user_fact' });
     const results = await index.search({ queryEmbedding: new Float32Array([1, 0, 0]), filter: { userId: 'local', companionId: 'ann' }, limit: 10 });
     expect(results.map((result) => result.memoryId)).toEqual(['owned']);
     expect((await index.healthCheck()).available).toBe(true);

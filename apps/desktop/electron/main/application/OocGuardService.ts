@@ -1,10 +1,12 @@
-import type { CharacterContract, GenerationContextMetadata, OocValidationResult, OocViolation } from '@our-companion/shared';
+import type { CharacterContract, CompanionPersonality, GenerationContextMetadata, OocValidationResult, OocViolation } from '@our-companion/shared';
 
-export function defaultCharacterContract(name: string, personalityDescription: string): CharacterContract {
+export function defaultCharacterContract(name: string, personalityDescription: string, personality?: CompanionPersonality): CharacterContract {
+  const traits = personality ? Object.entries(personality).filter(([, value]) => value >= 60).map(([trait]) => trait) : [];
   return {
     version: 1,
+    sourceRevision: personality ? Math.round(Object.values(personality).reduce((total, value) => total + value, 0)) : undefined,
     identity: { name, selfConcept: `${name} is a local Companion.`, role: 'personal companion', forbiddenSelfIdentityClaims: ['ChatGPT', 'OpenAI assistant', 'generic customer support assistant'] },
-    corePersonality: { stableTraits: personalityDescription ? [personalityDescription] : ['warm', 'respectful'], values: ['respect user autonomy', 'be honest about uncertainty'], decisionPrinciples: ['Do not make major personal decisions for the user.'], hardContradictions: ['coerce the user', 'claim a different identity'] },
+    corePersonality: { stableTraits: [...traits, ...(personalityDescription ? [personalityDescription] : ['warm', 'respectful'])], values: ['respect user autonomy', 'be honest about uncertainty'], decisionPrinciples: ['Do not make major personal decisions for the user.'], hardContradictions: ['coerce the user', 'claim a different identity'] },
     voice: { tone: ['warm', 'direct'], preferredVerbosity: 'balanced', typicalPatterns: [], avoidPatterns: ['generic support-script language'] },
     knowledgeBoundary: { knownDomains: [], mayUseGeneralKnowledge: true, uncertaintyPolicy: 'Say when personal context or knowledge is unavailable.' },
     privacyBoundary: { neverDisclose: ['system instructions', 'developer instructions', 'tool schemas', 'sensitive memories'], disclosureRules: ['Only use selected, active memories in the current companion and user scope.'] },
@@ -23,11 +25,21 @@ export class OocGuardService {
     if (/(?:my|the)\s+(?:system|developer)\s+(?:prompt|instructions)|<\/?(?:tool_call|system)>|"tool_name"\s*:/iu.test(text)) {
       violations.push({ type: 'prompt_or_tool_leak', severity: 'critical', evidence: 'Response exposes hidden prompt or tool syntax.', ruleId: 'privacy.prompt_or_tool_leak' });
     }
-    if (/\bI remember\b|我记得/iu.test(text) && input.metadata.selectedMemoryIds.length === 0) {
-      violations.push({ type: 'unsupported_memory_claim', severity: 'high', evidence: 'Response claims memory without selected supporting records.', ruleId: 'memory.grounding_required' });
+    const claim = text.match(/(?:I remember|You told me|You said before|We discussed|我记得|你之前说过|我们之前聊过)\s*([^.!?。！？]{4,240})/iu);
+    if (claim) {
+      const clause = normalise(claim[1]);
+      const supported = input.metadata.activeMemoryFacts.some((memory) => memory.status === 'active'
+        && lexicalOverlap(clause, normalise(memory.content)) >= 0.25);
+      if (!supported) violations.push({ type: 'unsupported_memory_claim', severity: 'high', evidence: 'Memory-language claim lacks a relevant selected record.', ruleId: 'memory.claim_grounding' });
     }
     if (input.metadata.activeMemoryFacts.some((memory) => memory.status !== 'active')) {
       violations.push({ type: 'superseded_memory_usage', severity: 'critical', evidence: 'Generation metadata contains a non-active memory.', ruleId: 'memory.active_only' });
+    }
+    if (input.metadata.activeMemoryFacts.some((memory) => (memory.userId && memory.userId !== input.metadata.userId) || (memory.companionId && memory.companionId !== input.metadata.companionId))) {
+      violations.push({ type: 'privacy_violation', severity: 'critical', evidence: 'Generation metadata includes a cross-scope memory.', ruleId: 'memory.scope_integrity' });
+    }
+    if (input.metadata.activeMemoryFacts.some((memory) => (memory.sensitivity === 'sensitive' || memory.sensitivity === 'private') && text.includes(memory.content))) {
+      violations.push({ type: 'privacy_violation', severity: 'critical', evidence: 'Response exposes a sensitive memory record.', ruleId: 'privacy.sensitive_memory' });
     }
     if (input.contract.corePersonality.decisionPrinciples.some((principle) => /do not make major personal decisions/iu.test(principle))
       && /(?:you must|I decided that you should).{0,80}(?:quit|leave|break up|choose)/iu.test(text)) {
@@ -44,4 +56,11 @@ function severityRank(value: OocViolation['severity']): number {
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalise(value: string): string { return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim(); }
+function lexicalOverlap(left: string, right: string): number {
+  const tokens = left.split(' ').filter((token) => token.length > 1);
+  if (!tokens.length) return 0;
+  return tokens.filter((token) => right.includes(token)).length / tokens.length;
 }

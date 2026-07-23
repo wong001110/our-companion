@@ -8,7 +8,7 @@ export interface EmbeddingProvider {
   dispose(): Promise<void>;
 }
 
-export type EmbeddingModelState = 'not-installed' | 'loading' | 'ready' | 'error';
+export type EmbeddingModelState = 'not-installed' | 'installing' | 'loading' | 'ready' | 'error';
 type FeatureExtractor = (text: string | string[], options?: Record<string, unknown>) => Promise<unknown>;
 
 /**
@@ -23,6 +23,7 @@ export class LocalMultilingualEmbeddingProvider implements EmbeddingProvider {
   private extractor: FeatureExtractor | undefined;
   private state: EmbeddingModelState = 'not-installed';
   private error?: string;
+  private initializePromise?: Promise<void>;
 
   constructor(private readonly cacheDir: string) {}
 
@@ -31,21 +32,24 @@ export class LocalMultilingualEmbeddingProvider implements EmbeddingProvider {
   }
 
   async initialize(): Promise<void> {
-    await this.load(false);
+    if (this.extractor) return;
+    this.initializePromise ??= this.loadInternal(false).finally(() => { this.initializePromise = undefined; });
+    return this.initializePromise;
   }
 
   /** Explicit, user-triggered installation path. Never called during chat. */
   async install(): Promise<void> {
-    await this.load(true);
+    if (this.extractor) return;
+    this.initializePromise ??= this.loadInternal(true).finally(() => { this.initializePromise = undefined; });
+    return this.initializePromise;
   }
 
-  private async load(allowRemoteModels: boolean): Promise<void> {
+  private async loadInternal(allowRemoteModels: boolean): Promise<void> {
     if (this.extractor) return;
-    if (this.state === 'loading') return;
-    this.state = 'loading';
+    this.state = allowRemoteModels ? 'installing' : 'loading';
     try {
       const transformers = await import('@huggingface/transformers') as unknown as {
-        env: { cacheDir?: string; localModelPath?: string; allowRemoteModels?: boolean; allowLocalModels?: boolean };
+        env: { cacheDir?: string; localModelPath?: string; allowRemoteModels?: boolean; allowLocalModels?: boolean; backends?: { onnx?: { wasm?: { wasmPaths?: string } } } };
         pipeline: (task: string, model: string, options: Record<string, unknown>) => Promise<FeatureExtractor>;
       };
       transformers.env.cacheDir = this.cacheDir;
@@ -56,8 +60,14 @@ export class LocalMultilingualEmbeddingProvider implements EmbeddingProvider {
       this.state = 'ready';
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
-      this.state = 'not-installed';
+      this.state = allowRemoteModels ? 'error' : 'not-installed';
       throw new Error(`${allowRemoteModels ? 'LOCAL_EMBEDDING_MODEL_INSTALL_FAILED' : 'LOCAL_EMBEDDING_MODEL_NOT_INSTALLED'}:${this.error}`);
+    } finally {
+      // A deliberate install must not leave ordinary chat able to contact the network.
+      try {
+        const transformers = await import('@huggingface/transformers') as unknown as { env: { allowRemoteModels?: boolean } };
+        transformers.env.allowRemoteModels = false;
+      } catch { /* the original load error is more useful */ }
     }
   }
 

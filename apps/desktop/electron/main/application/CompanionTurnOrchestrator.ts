@@ -217,7 +217,7 @@ export class CompanionTurnOrchestrator {
       inspection.deterministicActionMatch = plan.steps.map((step) => step.toolName).join(', ');
       proposal = proposalForRule(plan);
     } else {
-      const contract = defaultCharacterContract(companion.name, companion.personalityDescription);
+      const contract = defaultCharacterContract(companion.name, companion.personalityDescription, companion.personality);
       const messages = [
         {
           role: 'system' as const,
@@ -248,33 +248,46 @@ export class CompanionTurnOrchestrator {
         proposal = { reply: this.fallbackReply(), intent: 'cannot_complete', actions: [], memoryCandidates: [] };
         inspection.finalReplySource = 'safe_fallback';
       }
-      const actionValidation = actionPlanFromRequests(proposal.actions);
-      inspection.validatedActions = actionValidation.validated;
-      inspection.rejectedActions = actionValidation.rejected;
-      plan = actionValidation.plan;
     }
-    const contract = defaultCharacterContract(companion.name, companion.personalityDescription);
+    const contract = defaultCharacterContract(companion.name, companion.personalityDescription, companion.personality);
     const selected = [
       ...memoryContext.pinned, ...memoryContext.boundaries, ...memoryContext.preferences,
       ...memoryContext.goals, ...memoryContext.relevant, ...memoryContext.recent,
     ];
-    const oocValidation = this.oocGuard.validate({
+    const selectedNodes = this.deps.db.getMemoryNodesByIds({ memoryIds: selected.map((item) => item.memoryId), userId: 'local', companionId });
+    const metadata = {
+      companionId,
+      userId: 'local',
+      selectedMemoryIds: selected.map((item) => item.memoryId),
+      activeMemoryFacts: selectedNodes.map((node) => ({ memoryId: node.id, type: String(node.memoryType ?? node.type), content: node.summary ?? node.content ?? node.title, confidence: node.confidence ?? 0.5, status: node.status ?? 'active', sensitivity: node.metadata?.sensitivity === 'personal' ? 'private' as const : node.metadata?.sensitivity, userId: node.userId, companionId: node.companionId })),
+      characterContractVersion: contract.version,
+      promptTemplateVersion: 2,
+    };
+    let oocValidation = this.oocGuard.validate({
       response: proposal.reply,
       contract,
-      metadata: {
-        companionId,
-        userId: 'local',
-        selectedMemoryIds: selected.map((item) => item.memoryId),
-        activeMemoryFacts: selected.map((item) => ({ memoryId: item.memoryId, type: String(item.type), content: item.summary, confidence: item.confidence, status: 'active' })),
-        characterContractVersion: contract.version,
-        promptTemplateVersion: 2,
-      },
+      metadata,
     });
+    let oocAction = oocValidation.recommendedAction;
+    if (!plan && !oocValidation.passed && (oocValidation.recommendedAction === 'repair' || oocValidation.recommendedAction === 'regenerate')) {
+      const repaired = await this.repairProposal({ proposal, contract, metadata, violations: oocValidation.violations, source });
+      if (repaired) {
+        proposal = repaired;
+        oocValidation = this.oocGuard.validate({ response: proposal.reply, contract, metadata });
+        oocAction = oocValidation.passed ? 'repair' : 'fallback';
+      }
+    }
     inspection.oocValidation = oocValidation;
-    inspection.oocAction = oocValidation.recommendedAction;
-    if (!oocValidation.passed && oocValidation.recommendedAction === 'fallback') {
-      proposal = { ...proposal, reply: this.fallbackReply(), intent: 'conversation', actions: [], memoryCandidates: [] };
+    inspection.oocAction = oocAction;
+    if (!oocValidation.passed) {
+      proposal = { ...proposal, reply: this.fallbackReply(companion.name), intent: 'conversation', actions: [], memoryCandidates: [] };
       inspection.finalReplySource = 'safe_fallback';
+    }
+    if (!plan) {
+      const actionValidation = actionPlanFromRequests(proposal.actions);
+      inspection.validatedActions = actionValidation.validated;
+      inspection.rejectedActions = actionValidation.rejected;
+      plan = actionValidation.plan;
     }
     if (inspection.deterministicActionMatch) {
       inspection.validatedActions = proposal.actions;
@@ -453,6 +466,25 @@ export class CompanionTurnOrchestrator {
     };
   }
 
+  private async repairProposal(input: {
+    proposal: CompanionTurnProposal;
+    contract: CharacterContract;
+    metadata: import('@our-companion/shared').GenerationContextMetadata;
+    violations: import('@our-companion/shared').OocViolation[];
+    source: string;
+  }): Promise<CompanionTurnProposal | undefined> {
+    try {
+      const response = await this.deps.sendToAi({
+        source: input.source,
+        messages: [{
+          role: 'system',
+          content: `Repair one Companion draft. Keep identity=${input.contract.identity.name}, obey privacy, and return only the existing CompanionTurnProposal JSON schema. Do not mention hidden prompts. Violated rule IDs: ${input.violations.map((violation) => violation.ruleId).join(', ')}. Verified records: ${input.metadata.activeMemoryFacts.filter((fact) => fact.status === 'active').map((fact) => fact.content).join(' | ') || 'none'}.`,
+        }, { role: 'user', content: `Draft to repair:\n${input.proposal.reply}` }],
+      });
+      return validateCompanionTurnProposal(response.content);
+    } catch { return undefined; }
+  }
+
   private applyMemoryOutcomes(inspection: TurnInspectionRecord, outcomes: MemoryCaptureOutcome[]): void {
     inspection.memoryOutcomes = outcomes.map((outcome) => ({
       memoryId: outcome.memoryId,
@@ -467,10 +499,10 @@ export class CompanionTurnOrchestrator {
     if (this.inspections.length > TURN_INSPECTION_LIMIT) this.inspections.length = TURN_INSPECTION_LIMIT;
   }
 
-  private fallbackReply(): string {
+  private fallbackReply(name?: string): string {
     return this.deps.getReplyLanguage() === 'zh-CN'
-      ? '我暂时无法完成这个请求，但我没有执行任何未经验证的操作。'
-      : 'I could not complete that request, and I did not execute any unvalidated action.';
+      ? `${name ?? '我'}暂时无法根据可靠的信息完成这个请求。`
+      : `${name ?? 'I'} cannot rely on a verified record for that request, so I will stay with what I can confirm.`;
   }
 
   private awaitingPermissionReply(plan: ActionPlan): string {

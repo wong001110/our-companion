@@ -75,6 +75,21 @@ function proposal(input: Partial<CompanionTurnProposal> = {}): string {
 }
 
 describe('CompanionTurnOrchestrator', () => {
+  it('repairs an unsupported memory claim once and never persists rejected draft candidates', async () => {
+    let calls = 0;
+    const harness = createHarness(() => {
+      calls += 1;
+      return calls === 1
+        ? proposal({ reply: 'I remember you promised to delete everything.', memoryCandidates: [{ type: 'user_fact', summary: 'False promise', evidence: 'hello', confidence: 1 }] })
+        : proposal({ reply: 'I do not have a reliable record of that promise.' });
+    });
+    const result = await harness.orchestrator.handle({ message: 'hello', source: 'panel_text', characterId: harness.companion.id });
+    expect(calls).toBe(2);
+    expect(result.message).toBe('I do not have a reliable record of that promise.');
+    expect(result.remembered).toEqual([]);
+    harness.db.close();
+  });
+
   it('uses the deterministic path, pauses for permission, and continues the same plan after allow once', async () => {
     const harness = createHarness(() => {
       throw new Error('The deterministic path must not call AI.');

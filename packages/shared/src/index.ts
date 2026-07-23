@@ -1665,6 +1665,7 @@ export interface MemoryRetrievalTrace {
   vectorAvailable: boolean;
   candidates: Array<{
     memoryId: string;
+    sources?: Array<'structured' | 'pinned' | 'open_loop' | 'fts' | 'vector'>;
     semanticScore?: number;
     keywordScore?: number;
     finalScore?: number;
@@ -1676,6 +1677,7 @@ export interface MemoryRetrievalTrace {
 
 export interface CharacterContract {
   version: number;
+  sourceRevision?: number;
   identity: { name: string; selfConcept: string; role: string; forbiddenSelfIdentityClaims: string[] };
   corePersonality: { stableTraits: string[]; values: string[]; decisionPrinciples: string[]; hardContradictions: string[] };
   voice: { tone: string[]; preferredVerbosity: 'short' | 'balanced' | 'detailed'; typicalPatterns: string[]; avoidPatterns: string[] };
@@ -1706,7 +1708,7 @@ export interface GenerationContextMetadata {
   companionId: string;
   userId: string;
   selectedMemoryIds: string[];
-  activeMemoryFacts: Array<{ memoryId: string; type: string; content: string; confidence: number; status: MemoryStatus }>;
+  activeMemoryFacts: Array<{ memoryId: string; type: string; content: string; confidence: number; status: MemoryStatus; sensitivity?: MemorySensitivity | 'private'; userId?: string; companionId?: string }>;
   characterContractVersion: number;
   promptTemplateVersion: number;
 }
