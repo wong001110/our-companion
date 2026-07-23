@@ -128,6 +128,11 @@ export interface MemoryCandidate {
 export interface CommittedMemoryEvidence {
   userEvidence?: string;
   assistantInterpretation?: string;
+  userBoundary?: {
+    action: 'do_not_mention' | 'do_not_recommend' | 'do_not_discuss' | 'avoid_topic' | 'do_not_take_action';
+    target: string;
+    sourceLanguage?: 'en' | 'zh';
+  };
   sourceMessageIds?: string[];
 }
 

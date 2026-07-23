@@ -26,7 +26,10 @@ import { validateCompanionTurnProposal } from '@our-companion/ai-engine';
 import type { MemoryContextProvider } from './MemoryContextProvider';
 import type { MemoryPolicy, MemoryCaptureOutcome } from '../runtime/MemoryPolicy';
 import { defaultCharacterContract, OocGuardService } from './OocGuardService';
-import { createProposalPrivacyContext, validateExternalActionDisclosure, type ProposalPrivacyContext } from './ProposalPrivacy';
+import { createProposalPrivacyContext, sanitizeHistory, validateExternalActionDisclosure, type ProposalPrivacyContext } from './ProposalPrivacy';
+import { selectRepairGrounding } from './RepairGroundingSelector';
+import { CharacterContractBuilder } from './CharacterContractBuilder';
+import { resolveCharacterContractSource } from './CharacterContractSourceResolver';
 
 const TURN_INSPECTION_LIMIT = 50;
 
@@ -59,6 +62,7 @@ export interface CompanionTurnOrchestratorDependencies {
     message: string;
     status?: 'ok' | 'error';
   }) => void;
+  isRunning?: () => boolean;
 }
 
 function sourceFor(input: CompanionTurnInput['source']): CompanionMessageSource {
@@ -168,6 +172,7 @@ export class CompanionTurnOrchestrator {
   }
 
   async handle(input: CompanionTurnInput): Promise<CompanionTurnResult> {
+    this.assertRunning();
     const companionId = this.deps.db.resolveActiveCompanionId(input.characterId);
     const companion = this.deps.db.getCompanion(companionId);
     if (!companion) throw new Error(`Companion not found: ${companionId}`);
@@ -227,7 +232,7 @@ export class CompanionTurnOrchestrator {
         inspection.deterministicActionMatch = plan.steps.map((step) => step.toolName).join(', ');
       }
     } else {
-      const contract = defaultCharacterContract(companion.name, companion.personalityDescription, companion.personality);
+      const contract = new CharacterContractBuilder().build(resolveCharacterContractSource(this.deps.db, companionId));
       const messages = [
         {
           role: 'system' as const,
@@ -239,12 +244,13 @@ export class CompanionTurnOrchestrator {
             contract,
           }),
         },
-        ...priorHistory
+        ...sanitizeHistory(priorHistory)
           .map((message) => ({ role: message.role as 'user' | 'assistant', content: message.content })),
         { role: 'user' as const, content: input.message },
       ];
       try {
         const ai = await this.deps.sendToAi({ messages, source });
+        this.assertRunning();
         const structured = validateCompanionTurnProposal(ai.content);
         proposal = structured ?? {
           reply: ai.content.trim().slice(0, 4_000) || this.fallbackReply(),
@@ -259,7 +265,7 @@ export class CompanionTurnOrchestrator {
         inspection.finalReplySource = 'safe_fallback';
       }
     }
-    const contract = defaultCharacterContract(companion.name, companion.personalityDescription, companion.personality);
+    const contract = new CharacterContractBuilder().build(resolveCharacterContractSource(this.deps.db, companionId));
     const selected = [
       ...memoryContext.pinned, ...memoryContext.boundaries, ...memoryContext.preferences,
       ...memoryContext.goals, ...memoryContext.relevant, ...memoryContext.recent,
@@ -299,6 +305,7 @@ export class CompanionTurnOrchestrator {
       inspection.validatedActions = proposal.actions;
     }
     inspection.memoryCandidates = proposal.memoryCandidates;
+    this.assertRunning();
     const captured = this.deps.memoryPolicy.captureTurn({
       userId: 'local',
       companionId,
@@ -379,6 +386,7 @@ export class CompanionTurnOrchestrator {
   }
 
   async resolvePermission(input: ResolveCompanionTurnPermissionInput): Promise<CompanionTurnResult> {
+    this.assertRunning();
     const pending = this.pending.get(input.turnId);
     if (!pending) throw new Error('PENDING_COMPANION_TURN_NOT_FOUND');
     const activeCompanionId = this.deps.db.resolveActiveCompanionId();
@@ -444,6 +452,7 @@ export class CompanionTurnOrchestrator {
     actionStatus?: CompanionTurnActionStatus;
     remembered?: CompanionTurnResult['remembered'];
   }): CompanionTurnResult {
+    this.assertRunning();
     this.deps.db.insertCompanionMessage({
       role: 'assistant',
       content: input.message,
@@ -483,9 +492,7 @@ export class CompanionTurnOrchestrator {
     try {
       const privacyViolation = input.violations.some((violation) => violation.type === 'privacy_violation');
       const needsGrounding = input.violations.some((violation) => violation.type === 'unsupported_memory_claim');
-      const safeFacts = needsGrounding && !privacyViolation
-        ? input.metadata.activeMemoryFacts.filter((fact) => fact.status === 'active' && fact.sensitivity !== 'sensitive' && fact.sensitivity !== 'private').slice(0, 3).map((fact) => fact.content.slice(0, 400))
-        : [];
+      const safeFacts = needsGrounding && !privacyViolation ? selectRepairGrounding({ userMessage: input.userMessage, draftReply: input.proposal.reply, violations: input.violations, memories: input.metadata.activeMemoryFacts, maxItems: 3, maxCharacters: 1_200 }) : [];
       const safeDraft = privacyViolation
         ? { reply: '[private detail removed]', intent: input.proposal.intent, actions: [], memoryCandidates: [] }
         : input.proposal;
@@ -513,6 +520,8 @@ export class CompanionTurnOrchestrator {
     this.inspections.unshift(record);
     if (this.inspections.length > TURN_INSPECTION_LIMIT) this.inspections.length = TURN_INSPECTION_LIMIT;
   }
+
+  private assertRunning(): void { if (this.deps.isRunning && !this.deps.isRunning()) throw new Error('APP_SHUTTING_DOWN'); }
 
   private fallbackReply(name?: string): string {
     return this.deps.getReplyLanguage() === 'zh-CN'

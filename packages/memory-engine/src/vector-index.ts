@@ -54,11 +54,18 @@ export class SqliteVecIndex implements VectorIndex {
   private extensionVersion?: string;
   private failure?: string;
   private mutationTail: Promise<void> = Promise.resolve();
+  private initializationPromise?: Promise<void>;
   private lifecycle: VectorIndexLifecycle = 'active';
 
   constructor(private readonly db: ExtensionDatabase, readonly dimensions: number) {}
 
   async initialize(): Promise<void> {
+    if (this.initializationPromise) return this.initializationPromise;
+    const operation = this.initializeInternal();
+    this.initializationPromise = operation.finally(() => { this.initializationPromise = undefined; });
+    return this.initializationPromise;
+  }
+  private async initializeInternal(): Promise<void> {
     this.assertActive();
     if (this.available || this.failure) return;
     try {
@@ -205,7 +212,10 @@ export class SqliteVecIndex implements VectorIndex {
   async stopAndWait(timeoutMs: number): Promise<{ settled: boolean }> {
     this.beginShutdown();
     const settled = await Promise.race([
-      this.mutationTail.then(() => true, () => true),
+      Promise.all([
+        this.mutationTail.then(() => undefined, () => undefined),
+        this.initializationPromise?.then(() => undefined, () => undefined) ?? Promise.resolve(),
+      ]).then(() => true),
       new Promise<boolean>((resolve) => setTimeout(() => resolve(false), Math.max(0, timeoutMs))),
     ]);
     if (settled && this.lifecycle === 'stopping') this.lifecycle = 'stopped';

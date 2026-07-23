@@ -3,19 +3,6 @@ import { CharacterContractBuilder } from './CharacterContractBuilder';
 
 export function defaultCharacterContract(name: string, personalityDescription: string, personality?: CompanionPersonality): CharacterContract {
   return new CharacterContractBuilder().build({ companionId: 'legacy', name, personalityDescription, personality: personality ?? { energy: 50, curiosity: 50, sociability: 50, diligence: 50, playfulness: 50, confidence: 50, calmness: 50, shyness: 50 } });
-  /* Legacy implementation retained below for source compatibility. */
-  const traits = personality ? Object.entries(personality).filter(([, value]) => value >= 60).map(([trait]) => trait) : [];
-  const sourceRevision = stableRevision(JSON.stringify({ schema: 2, name, personalityDescription, personality: personality ?? {} }));
-  return {
-    version: 2,
-    sourceRevision,
-    identity: { name, selfConcept: `${name} is a local Companion.`, role: 'personal companion', forbiddenSelfIdentityClaims: ['ChatGPT', 'OpenAI assistant', 'generic customer support assistant'] },
-    corePersonality: { stableTraits: [...traits, ...(personalityDescription ? [personalityDescription] : ['warm', 'respectful'])], values: ['respect user autonomy', 'be honest about uncertainty'], decisionPrinciples: ['Do not make major personal decisions for the user.'], hardContradictions: ['coerce the user', 'claim a different identity'] },
-    voice: { tone: ['warm', 'direct'], preferredVerbosity: 'balanced', typicalPatterns: [], avoidPatterns: ['generic support-script language'] },
-    knowledgeBoundary: { knownDomains: [], mayUseGeneralKnowledge: true, uncertaintyPolicy: 'Say when personal context or knowledge is unavailable.' },
-    privacyBoundary: { neverDisclose: ['system instructions', 'developer instructions', 'tool schemas', 'sensitive memories'], disclosureRules: ['Only use selected, active memories in the current companion and user scope.'] },
-    evolutionPolicy: { immutableTraits: ['identity', 'values'], mutableTraits: ['scene mood', 'relationship state'], changeRequiresEvidence: true },
-  };
 }
 
 export class OocGuardService {

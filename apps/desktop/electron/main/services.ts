@@ -323,6 +323,8 @@ export const VALID_COMMAND_TRANSITIONS: Record<CommandRecordStatus, CommandAckSt
 };
 
 export class AppServices {
+  private serviceState: 'starting' | 'running' | 'shutting_down' | 'disposed' = 'running';
+  private readonly activeOperations = new Set<Promise<unknown>>();
   readonly db: DatabaseService;
   readonly databaseMode: 'persistent' | 'memory';
   companionSessionPhase: CompanionSessionPhase = 'inactive';
@@ -501,6 +503,7 @@ export class AppServices {
       onAssistantMessage: ({ companionId, source, message, status }) => {
         this.emitFoundationEvent('CompanionMessageQueued', 'speech', { companionId, source, status, message });
       },
+      isRunning: () => this.serviceState === 'running',
     });
 
     this.companionRuntime = new CompanionRuntime(
@@ -2255,19 +2258,34 @@ export class AppServices {
     this.debugFlushWorker.cleanupFlushTimer();
   }
 
+  private assertRunning(): void {
+    if (this.serviceState !== 'running') throw new Error('APP_SHUTTING_DOWN');
+  }
+
+  private trackOperation<T>(operation: Promise<T>): Promise<T> {
+    this.activeOperations.add(operation);
+    return operation.finally(() => this.activeOperations.delete(operation));
+  }
+
   async dispose(): Promise<void> {
     this.disposePromise ??= (async () => {
+      this.serviceState = 'shutting_down';
       this.companionRuntime.stopLifeScheduler();
       this.cleanupFlushTimer();
       const timeoutMs = 8_000;
       this.vectorIndex.beginShutdown();
       const settled = await Promise.race([
-        Promise.all([this.embeddingJobRunner.stop(), this.vectorIndex.stopAndWait(timeoutMs)]).then(([_, vector]) => vector.settled),
+        Promise.all([
+          this.embeddingJobRunner.stop(),
+          this.vectorIndex.stopAndWait(timeoutMs),
+          Promise.allSettled([...this.activeOperations]),
+        ]).then(([_, vector]) => vector.settled),
         new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
       ]);
       if (!settled) { this.embeddingJobRunner.preventFurtherWrites(); this.vectorIndex.detach(); }
       await this.localEmbeddings.dispose();
       this.db.close();
+      this.serviceState = 'disposed';
     })();
     return this.disposePromise;
   }
@@ -2313,15 +2331,19 @@ export class AppServices {
 
   companion = {
     turn: async (input: CompanionTurnInput) => {
+      this.assertRunning();
       if (this.localCompanionAway) throw new Error('COMPANION_AWAY_VISITING');
-      const result = await this.turnOrchestrator.handle(input);
+      const result = await this.trackOperation(this.turnOrchestrator.handle(input));
+      this.assertRunning();
       if (input.source === 'voice') {
         this.applyCharacterEmotion(input.characterId, 'expertise_topic_match');
       }
       return result;
     },
-    resolveTurnPermission: async (input: import('@our-companion/shared').ResolveCompanionTurnPermissionInput) =>
-      this.turnOrchestrator.resolvePermission(input),
+    resolveTurnPermission: async (input: import('@our-companion/shared').ResolveCompanionTurnPermissionInput) => {
+      this.assertRunning();
+      return this.trackOperation(this.turnOrchestrator.resolvePermission(input));
+    },
     undoRememberedMemory: async (undoToken: string) =>
       this.turnMemoryPolicy.undo(undoToken, this.db.resolveActiveCompanionId()),
     getHistory: async (input?: CompanionHistoryInput): Promise<CompanionMessage[]> => {

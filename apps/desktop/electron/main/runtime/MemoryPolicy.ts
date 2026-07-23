@@ -12,6 +12,7 @@ import {
   createSemanticFingerprint,
   normalizeSemanticText,
 } from '@our-companion/shared';
+import { deriveUserBoundary } from '../application/MemoryDisclosurePolicy';
 
 const SENSITIVE_PATTERNS = [
   /\b(sk-[a-zA-Z0-9]{10,})\b/i,
@@ -197,6 +198,7 @@ export class MemoryPolicy {
         createdAt: timestamp,
         userEvidence: input.userMessage.slice(0, 500),
         assistantInterpretation: input.assistantReply.slice(0, 300),
+        ...(candidate.type === 'user_boundary' ? { userBoundary: deriveUserBoundary(evidence) } : {}),
       },
     };
     const result = this.db.upsertCapturedMemory(captured);
@@ -233,6 +235,7 @@ export class MemoryPolicy {
     // durable Memory. The structured turn path may still propose a grounded
     // candidate when it can express that target unambiguously.
     if (AMBIGUOUS_CORRECTION_PATTERNS.some((pattern) => pattern.test(text))) return [];
+    const structuredBoundary = deriveUserBoundary(text);
     const rules: Array<{
       type: CompanionTurnMemoryCandidate['type'];
       confidence: number;
@@ -272,7 +275,9 @@ export class MemoryPolicy {
         ],
       },
     ];
-    const results: CompanionTurnMemoryCandidate[] = [];
+    const results: CompanionTurnMemoryCandidate[] = structuredBoundary ? [{
+      type: 'user_boundary', summary: structuredBoundary.target, evidence: text, confidence: 0.92,
+    }] : [];
     for (const rule of rules) {
       for (const pattern of rule.patterns) {
         const match = text.match(pattern);

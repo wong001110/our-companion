@@ -21,6 +21,8 @@ export interface MemoryDisclosureDecision {
   representation: 'full' | 'minimal_constraint' | 'redacted' | 'none';
   reason: MemoryDisclosureReason;
 }
+export type UserBoundaryAction = 'do_not_mention' | 'do_not_recommend' | 'do_not_discuss' | 'avoid_topic' | 'do_not_take_action';
+export interface UserBoundaryMetadata { action: UserBoundaryAction; target: string; sourceLanguage?: 'en' | 'zh'; }
 
 const PERSONAL_RELEVANCE_THRESHOLD = 0.2;
 
@@ -74,11 +76,33 @@ export function decideMemoryDisclosure(input: MemoryDisclosureInput): MemoryDisc
 
 /** Removes causal/personal explanation while retaining an actionable limit. */
 export function minimalBoundaryConstraint(memory: MemoryNode): string {
-  const source = (memory.summary || memory.title).trim();
+  const boundary = memory.metadata?.userBoundary ?? deriveUserBoundary(memory.content ?? memory.metadata?.userEvidence ?? memory.summary ?? memory.title);
+  if (boundary) {
+    const verbs: Record<UserBoundaryAction, string> = { do_not_mention: 'Do not mention', do_not_recommend: 'Do not recommend', do_not_discuss: 'Do not discuss', avoid_topic: 'Avoid the topic of', do_not_take_action: 'Do not take action about' };
+    return `User boundary: ${verbs[boundary.action]} ${boundary.target}.`;
+  }
+  const source = (memory.content || memory.metadata?.userEvidence || memory.summary || memory.title).trim();
   const withoutExplanation = source
     .replace(/\s+(?:because|since|as)\b[\s\S]*$/i, '')
     .replace(/(?:因为|由于|以免|这会让我)[\s\S]*$/, '')
     .trim()
     .replace(/[,:;，：；]\s*$/, '');
   return `User boundary: ${withoutExplanation || 'Respect the user\'s stated boundary.'}`;
+}
+
+export function deriveUserBoundary(source: string): UserBoundaryMetadata | undefined {
+  const text = source.trim().replace(/(?:\bbecause\b|\bsince\b|\bas\b|\u56e0\u4e3a|\u7531\u4e8e)[\s\S]*$/iu, '').trim();
+  const patterns: Array<[UserBoundaryAction, RegExp, 'en' | 'zh']> = [
+    ['do_not_recommend', /(?:do not|don't|never|please don't)\s+(?:recommend|suggest)\s+(.+)/iu, 'en'],
+    ['do_not_mention', /(?:do not|don't|never|please don't)\s+(?:mention|bring up)\s+(.+)/iu, 'en'],
+    ['do_not_discuss', /(?:do not|don't|never|please don't)\s+(?:discuss|talk about)\s+(.+)/iu, 'en'],
+    ['do_not_recommend', /\u4e0d\u8981\u63a8\u8350\s*(.+)/u, 'zh'],
+    ['do_not_mention', /(?:\u4e0d\u8981\u518d?\u63d0|\u522b\u518d?\u63d0)\s*(.+)/u, 'zh'],
+    ['do_not_discuss', /\u4e0d\u8981\u8ba8\u8bba\s*(.+)/u, 'zh'],
+  ];
+  for (const [action, pattern, sourceLanguage] of patterns) {
+    const target = text.match(pattern)?.[1]?.trim().replace(/[.!?\u3002\uff01\uff1f]+$/, '');
+    if (target) return { action, target, sourceLanguage };
+  }
+  return undefined;
 }
