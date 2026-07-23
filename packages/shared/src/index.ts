@@ -392,6 +392,13 @@ export interface MemoryNode {
   createdAt: string;
   updatedAt: string;
   compressedAt?: string;
+  /** Long-term memory lifecycle. `isMarkedWrong` is mapped to `superseded` for legacy records. */
+  status?: MemoryStatus;
+  canonicalKey?: string;
+  sourceMessageIds?: string[];
+  emotionalWeight?: UnitScore;
+  accessCount?: number;
+  lastAccessedAt?: string;
 }
 
 export interface MemoryEdge {
@@ -1646,6 +1653,62 @@ export interface CompanionMemoryContext {
   characterCount: number;
   maxItems: number;
   maxCharacters: number;
+  /** Development-only explanation of the hybrid retrieval decision. */
+  retrievalTrace?: MemoryRetrievalTrace;
+}
+
+export type MemoryStatus = 'candidate' | 'active' | 'superseded' | 'archived';
+export type MemorySensitivity = 'normal' | 'sensitive';
+
+export interface MemoryRetrievalTrace {
+  query: string;
+  vectorAvailable: boolean;
+  candidates: Array<{
+    memoryId: string;
+    semanticScore?: number;
+    keywordScore?: number;
+    finalScore?: number;
+    selected: boolean;
+    reason: string;
+  }>;
+  rejected: Array<{ memoryId: string; reason: string }>;
+}
+
+export interface CharacterContract {
+  version: number;
+  identity: { name: string; selfConcept: string; role: string; forbiddenSelfIdentityClaims: string[] };
+  corePersonality: { stableTraits: string[]; values: string[]; decisionPrinciples: string[]; hardContradictions: string[] };
+  voice: { tone: string[]; preferredVerbosity: 'short' | 'balanced' | 'detailed'; typicalPatterns: string[]; avoidPatterns: string[] };
+  knowledgeBoundary: { knownDomains: string[]; mayUseGeneralKnowledge: boolean; uncertaintyPolicy: string };
+  privacyBoundary: { neverDisclose: string[]; disclosureRules: string[] };
+  evolutionPolicy: { immutableTraits: string[]; mutableTraits: string[]; changeRequiresEvidence: boolean };
+}
+
+export type OocViolationType =
+  | 'identity_break' | 'prompt_or_tool_leak' | 'persona_contradiction'
+  | 'knowledge_boundary_violation' | 'privacy_violation' | 'unsupported_memory_claim'
+  | 'superseded_memory_usage' | 'style_drift';
+
+export interface OocViolation {
+  type: OocViolationType;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  evidence: string;
+  ruleId: string;
+}
+
+export interface OocValidationResult {
+  passed: boolean;
+  violations: OocViolation[];
+  recommendedAction: 'pass' | 'repair' | 'regenerate' | 'fallback';
+}
+
+export interface GenerationContextMetadata {
+  companionId: string;
+  userId: string;
+  selectedMemoryIds: string[];
+  activeMemoryFacts: Array<{ memoryId: string; type: string; content: string; confidence: number; status: MemoryStatus }>;
+  characterContractVersion: number;
+  promptTemplateVersion: number;
 }
 
 export interface RememberedMemoryMutation {
@@ -1699,6 +1762,9 @@ export interface TurnInspectionRecord {
   finalReply?: string;
   createdAt: string;
   completedAt?: string;
+  retrievalTrace?: MemoryRetrievalTrace;
+  oocValidation?: OocValidationResult;
+  oocAction?: 'pass' | 'repair' | 'regenerate' | 'fallback';
 }
 
 export interface MemoryProcessingState {
@@ -2578,6 +2644,13 @@ export interface OurCompanionApi {
     runScheduledTick(): Promise<RuntimeSchedulerReport>;
     runFixtureResearch(input: { topic: string }): Promise<ResearchDeveloperReport>;
     researchFromUrl(input: { url: string }): Promise<ResearchDeveloperReport>;
+    getMemoryDiagnostics(): Promise<{
+      vector: { available: boolean; extensionVersion?: string; dimensions: number; indexedCount: number; reason?: string };
+      embedding: { state: string; modelId: string; dimensions: number; error?: string };
+      jobs: Array<{ id: string; memoryId: string; operation: 'upsert' | 'delete'; attempts: number }>;
+    }>;
+    installLocalEmbeddingModel(): Promise<{ completed: number; failed: number }>;
+    rebuildMemoryVectors(): Promise<{ completed: number; failed: number }>;
     onFoundationEvent(listener: (event: BaseEvent) => void): () => void;
   };
   user: {
@@ -3082,6 +3155,7 @@ export interface CompanionProfile {
   isBuiltIn: boolean;
   createdAt: string;
   updatedAt: string;
+  characterContract?: CharacterContract;
 }
 
 export type DiscoveryPlatformId =

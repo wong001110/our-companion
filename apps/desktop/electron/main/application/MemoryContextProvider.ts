@@ -6,6 +6,8 @@ import type {
   TypedMemoryType,
 } from '@our-companion/shared';
 import { normalizeSemanticText } from '@our-companion/shared';
+import type { EmbeddingProvider } from '../memory/localEmbeddingProvider';
+import type { VectorIndex } from '@our-companion/memory-engine';
 
 const DEFAULT_MAX_ITEMS = 18;
 const DEFAULT_MAX_CHARACTERS = 4_800;
@@ -70,6 +72,7 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
   constructor(
     private readonly db: DatabaseService,
     private readonly now: () => Date,
+    private readonly semantic?: { embeddings: EmbeddingProvider; vectors: VectorIndex },
   ) {}
 
   async buildContext(input: MemoryContextBuildInput): Promise<CompanionMemoryContext> {
@@ -79,8 +82,30 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
       Math.min(ABSOLUTE_MAX_CHARACTERS, input.maxCharacters ?? DEFAULT_MAX_CHARACTERS),
     );
     const query = keywords(input.message);
-    const candidates = this.db.listMemoryContextCandidates(input.companionId, CANDIDATE_LIMIT)
+    const candidates = this.db.listMemoryContextCandidates(input.companionId, CANDIDATE_LIMIT, 'local')
       .filter((node) => !node.isMarkedWrong && !isExpired(node, this.now().getTime()));
+    const traceCandidates = new Map<string, { semanticScore?: number; keywordScore?: number; finalScore?: number; selected: boolean; reason: string }>();
+    let vectorAvailable = false;
+    if (this.semantic) {
+      try {
+        const health = await this.semantic.vectors.healthCheck();
+        vectorAvailable = health.available;
+        if (vectorAvailable) {
+          const queryEmbedding = await this.semantic.embeddings.embedQuery(input.message);
+          for (const match of await this.semantic.vectors.search({
+            queryEmbedding, filter: { userId: 'local', companionId: input.companionId, statuses: ['active'] }, limit: 16,
+          })) {
+            traceCandidates.set(match.memoryId, { semanticScore: match.semanticScore, selected: false, reason: `vector_distance:${match.distance.toFixed(3)}` });
+          }
+        }
+      } catch {
+        vectorAvailable = false;
+      }
+    }
+    for (const node of this.db.searchMemoryFts({ query: input.message, companionId: input.companionId, userId: 'local', limit: 16 })) {
+      const current = traceCandidates.get(node.id);
+      traceCandidates.set(node.id, { ...current, keywordScore: 1, selected: false, reason: current?.reason ?? 'fts_match' });
+    }
 
     const pinnedNodes = candidates.filter((node) => node.isPinned).slice(0, 5);
     const pinnedIds = new Set(pinnedNodes.map((node) => node.id));
@@ -102,7 +127,15 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
     ]);
     const rankedRelevant = available
       .filter((node) => !selectedIds.has(node.id))
-      .map((node) => ({ node, score: overlapScore(node, query) }))
+      .map((node) => {
+        const traced = traceCandidates.get(node.id);
+        const keywordScore = Math.max(overlapScore(node, query), traced?.keywordScore ?? 0);
+        const semanticScore = traced?.semanticScore ?? 0;
+        const recency = Math.max(0, 1 - ((this.now().getTime() - Date.parse(node.updatedAt)) / (365 * 24 * 60 * 60 * 1_000)));
+        const score = (semanticScore * 0.5) + (keywordScore * 0.25) + (node.importance * 0.15) + ((node.confidence ?? 0.5) * 0.05) + (recency * 0.05);
+        traceCandidates.set(node.id, { semanticScore: traced?.semanticScore, keywordScore, finalScore: score, selected: false, reason: traced?.reason ?? 'keyword_overlap' });
+        return { node, score };
+      })
       .filter(({ score }) => score > 0)
       .sort((left, right) => right.score - left.score
         || right.node.importance - left.node.importance
@@ -131,12 +164,26 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
       });
     }
 
+    const selectedMemoryIds = Object.values(groups).flatMap((items) => Array.isArray(items) ? items.map((item) => item.memoryId) : []);
+    for (const id of selectedMemoryIds) {
+      const trace = traceCandidates.get(id);
+      if (trace) trace.selected = true;
+      else traceCandidates.set(id, { selected: true, reason: 'structured_memory' });
+    }
+    this.db.recordMemoryAccess(selectedMemoryIds);
+
     return {
       ...groups,
       selectedCount: itemCount,
       characterCount,
       maxItems,
       maxCharacters,
+      retrievalTrace: {
+        query: input.message.slice(0, 500),
+        vectorAvailable,
+        candidates: [...traceCandidates.entries()].map(([memoryId, value]) => ({ memoryId, ...value })),
+        rejected: candidates.filter((node) => !selectedMemoryIds.includes(node.id)).map((node) => ({ memoryId: node.id, reason: 'budget_or_rank' })),
+      },
     };
   }
 }

@@ -4,6 +4,7 @@
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
-    "@our-companion/shared": "0.1.0"
+    "@our-companion/shared": "0.1.0",
+    "sqlite-vec": "0.1.9"
   }
 }

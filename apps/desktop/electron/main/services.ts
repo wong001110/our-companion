@@ -70,6 +70,7 @@ import {
   createMemoryNode,
   graphFromMemory,
   searchMemory,
+  SqliteVecIndex,
   updateMemoryNode as updateMemoryNodePure
 } from '@our-companion/memory-engine';
 import type {
@@ -216,6 +217,8 @@ import { ResearchOrchestrator } from './researchOrchestrator';
 import { CompanionTurnOrchestrator } from './application/CompanionTurnOrchestrator';
 import { SqliteMemoryContextProvider } from './application/MemoryContextProvider';
 import { MemoryPolicy } from './runtime/MemoryPolicy';
+import { LocalMultilingualEmbeddingProvider } from './memory/localEmbeddingProvider';
+import { EmbeddingJobRunner } from './memory/embeddingJobRunner';
 
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
@@ -362,6 +365,9 @@ export class AppServices {
   private readonly toolAdapters: ToolAdapters;
   private readonly turnMemoryPolicy: MemoryPolicy;
   private readonly turnOrchestrator: CompanionTurnOrchestrator;
+  private readonly localEmbeddings: LocalMultilingualEmbeddingProvider;
+  private readonly vectorIndex: SqliteVecIndex;
+  private readonly embeddingJobRunner: EmbeddingJobRunner;
 
   get runtime(): CompanionRuntime {
     return this.companionRuntime;
@@ -447,6 +453,11 @@ export class AppServices {
     }
 
     this.db.resetUploadingDeveloperDebugEventsToPending();
+    this.db.recoverEmbeddingJobs();
+    this.localEmbeddings = new LocalMultilingualEmbeddingProvider(path.join(userDataDir, 'models'));
+    this.vectorIndex = new SqliteVecIndex(this.db.getExtensionDatabase(), this.localEmbeddings.dimensions);
+    this.embeddingJobRunner = new EmbeddingJobRunner(this.db, this.localEmbeddings, this.vectorIndex);
+    void this.vectorIndex.initialize().then(() => this.embeddingJobRunner.runPending()).catch(() => undefined);
 
     if (this.eventBus instanceof InProcessEventBus) {
       this.eventBus.setErrorReporter((error, event) => {
@@ -473,7 +484,7 @@ export class AppServices {
     this.turnMemoryPolicy = new MemoryPolicy(this.db, { now: () => this.now().getTime() });
     this.turnOrchestrator = new CompanionTurnOrchestrator({
       db: this.db,
-      memoryContext: new SqliteMemoryContextProvider(this.db, this.now),
+      memoryContext: new SqliteMemoryContextProvider(this.db, this.now, { embeddings: this.localEmbeddings, vectors: this.vectorIndex }),
       memoryPolicy: this.turnMemoryPolicy,
       now: this.now,
       getReplyLanguage: () => this.getAiSettings().replyLanguage,
@@ -2437,6 +2448,23 @@ export class AppServices {
     runScheduledTick: async () => this.runRuntimeScheduledTick(),
     runFixtureResearch: async (input: { topic: string }) => this.runFixtureResearch(input.topic),
     researchFromUrl: async (input: { url: string }) => this.researchFromUrl(input.url),
+    getMemoryDiagnostics: async () => ({
+      vector: await this.vectorIndex.healthCheck(),
+      embedding: this.localEmbeddings.getStatus(),
+      jobs: this.db.listPendingEmbeddingJobs(100),
+    }),
+    installLocalEmbeddingModel: async () => {
+      await this.localEmbeddings.install();
+      this.db.retryFailedEmbeddingJobs();
+      this.db.queueAllEligibleEmbeddings();
+      return this.embeddingJobRunner.runPending(100);
+    },
+    rebuildMemoryVectors: async () => {
+      await this.vectorIndex.rebuild();
+      this.db.retryFailedEmbeddingJobs();
+      this.db.queueAllEligibleEmbeddings();
+      return this.embeddingJobRunner.runPending(100);
+    },
   };
 
   workspace = {

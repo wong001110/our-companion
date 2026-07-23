@@ -215,6 +215,9 @@ const api: OurCompanionApi = {
     runScheduledTick: () => invoke('debug:runScheduledTick'),
     runFixtureResearch: (input: { topic: string }) => invoke('debug:runFixtureResearch', input),
     researchFromUrl: (input: { url: string }) => invoke('debug:researchFromUrl', input),
+    getMemoryDiagnostics: () => invoke('debug:getMemoryDiagnostics'),
+    installLocalEmbeddingModel: () => invoke('debug:installLocalEmbeddingModel'),
+    rebuildMemoryVectors: () => invoke('debug:rebuildMemoryVectors'),
     onFoundationEvent: (listener: (event: BaseEvent) => void) => {
       const channel = 'debug:foundationEvent';
       const handler = (_event: Electron.IpcRendererEvent, payload: BaseEvent) => listener(payload);

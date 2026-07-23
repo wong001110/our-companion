@@ -77,9 +77,51 @@ CREATE TABLE IF NOT EXISTS memory_nodes (
   confidence REAL NOT NULL DEFAULT 0.5,
   observation_count INTEGER NOT NULL DEFAULT 1,
   last_observed_at TEXT,
+  memory_status TEXT NOT NULL DEFAULT 'active',
+  canonical_key TEXT,
+  source_message_ids_json TEXT NOT NULL DEFAULT '[]',
+  emotional_weight REAL,
+  access_count INTEGER NOT NULL DEFAULT 0,
+  last_accessed_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   compressed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS memory_embeddings (
+  memory_id TEXT PRIMARY KEY,
+  vector_row_id INTEGER UNIQUE,
+  embedding_model TEXT NOT NULL,
+  embedding_version INTEGER NOT NULL,
+  dimensions INTEGER NOT NULL,
+  content_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(memory_id) REFERENCES memory_nodes(id)
+);
+
+CREATE TABLE IF NOT EXISTS embedding_jobs (
+  id TEXT PRIMARY KEY,
+  memory_id TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  embedding_model TEXT NOT NULL,
+  embedding_version INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(memory_id) REFERENCES memory_nodes(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_embedding_jobs_status ON embedding_jobs(status, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_embedding_active_per_memory_model
+  ON memory_embeddings(memory_id, embedding_model, embedding_version);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+  memory_id UNINDEXED, companion_id UNINDEXED, user_id UNINDEXED, content,
+  tokenize = 'unicode61'
 );
 
 CREATE TABLE IF NOT EXISTS memory_processing_state (

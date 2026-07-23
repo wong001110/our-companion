@@ -215,12 +215,45 @@ export function TurnInspector({ snapshot }: { snapshot?: EngineSnapshot }) {
                 <div><dt>Memory candidates</dt><dd>{record.memoryCandidates.map((candidate) => `${candidate.type}:${candidate.summary}`).join(' · ') || 'none'}</dd></div>
                 <div><dt>Memory outcomes</dt><dd>{record.memoryOutcomes.map((outcome) => `${outcome.outcome}:${outcome.summary}`).join(' · ') || 'none'}</dd></div>
                 <div><dt>Final reply source</dt><dd>{record.finalReplySource ?? 'pending'}</dd></div>
+                <div><dt>OOC action</dt><dd>{record.oocAction ?? 'not evaluated'}</dd></div>
               </dl>
+              {record.retrievalTrace && <pre className="debug-ai-log-raw">{formatJson(record.retrievalTrace)}</pre>}
+              {record.oocValidation && <pre className="debug-ai-log-raw">{formatJson(record.oocValidation)}</pre>}
               {record.aiStructuredResult && <pre className="debug-ai-log-raw">{formatJson(record.aiStructuredResult)}</pre>}
             </details>
           ))}
         </div>
       )}
+    </section>
+  );
+}
+
+function MemoryDiagnosticsPanel() {
+  const [diagnostics, setDiagnostics] = useState<Awaited<ReturnType<typeof window.ourCompanion.debug.getMemoryDiagnostics>>>();
+  const [running, setRunning] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const refresh = useCallback(async () => setDiagnostics(await window.ourCompanion.debug.getMemoryDiagnostics()), []);
+  useEffect(() => { void refresh(); }, [refresh]);
+  async function rebuild() {
+    setRunning(true);
+    try { await window.ourCompanion.debug.rebuildMemoryVectors(); await refresh(); }
+    finally { setRunning(false); }
+  }
+  async function install() {
+    setInstalling(true);
+    try { await window.ourCompanion.debug.installLocalEmbeddingModel(); await refresh(); }
+    finally { setInstalling(false); }
+  }
+  return (
+    <section className="engine-research-observatory" aria-label="Local memory diagnostics">
+      <h3>Local memory diagnostics</h3>
+      <p>Derived local index status only; no model reasoning is shown.</p>
+      <div className="debug-ai-log-actions">
+        <button onClick={() => void refresh()}>Refresh</button>
+        <button onClick={() => void install()} disabled={installing}>{installing ? 'Installing…' : 'Install local model'}</button>
+        <button onClick={() => void rebuild()} disabled={running}>{running ? 'Rebuilding…' : 'Rebuild vector index'}</button>
+      </div>
+      {diagnostics && <pre className="debug-ai-log-raw">{formatJson(diagnostics)}</pre>}
     </section>
   );
 }
@@ -480,6 +513,7 @@ export function EngineObservatory() {
       <ExplorationVisualStatus snapshot={snapshot} />
       <AvailableActionsPanel />
       <TurnInspector snapshot={snapshot} />
+      <MemoryDiagnosticsPanel />
 
       <section className="debug-ai-log engine-event-timeline">
         <div className="debug-ai-log-header">

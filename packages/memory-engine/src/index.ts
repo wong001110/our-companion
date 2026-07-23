@@ -15,6 +15,8 @@ import type {
 } from '@our-companion/shared';
 import { clamp01, createId, createSemanticFingerprint, nowIso } from '@our-companion/shared';
 
+export * from './vector-index';
+
 export function createMemoryNode(input: CreateMemoryNodeInput): MemoryNode {
   const timestamp = nowIso();
   return {

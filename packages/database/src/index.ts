@@ -125,7 +125,9 @@ export class DatabaseService {
 
   constructor(options: DatabaseServiceOptions = {}) {
     this.priorAnnHasCustomAssets = options.priorAnnHasCustomAssets ?? (() => false);
-    this.db = new DatabaseSync(options.path ?? ':memory:');
+    // Extension loading is enabled only long enough for the pinned sqlite-vec
+    // binary in the Electron main process; VectorIndex disables it again.
+    this.db = new DatabaseSync(options.path ?? ':memory:', { allowExtension: true });
     this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec(sqliteSchema);
     this.runMigrations();
@@ -237,6 +239,12 @@ export class DatabaseService {
       { column: 'confidence', sql: 'ALTER TABLE memory_nodes ADD COLUMN confidence REAL NOT NULL DEFAULT 0.5' },
       { column: 'observation_count', sql: 'ALTER TABLE memory_nodes ADD COLUMN observation_count INTEGER NOT NULL DEFAULT 1' },
       { column: 'last_observed_at', sql: 'ALTER TABLE memory_nodes ADD COLUMN last_observed_at TEXT' },
+      { column: 'memory_status', sql: "ALTER TABLE memory_nodes ADD COLUMN memory_status TEXT NOT NULL DEFAULT 'active'" },
+      { column: 'canonical_key', sql: 'ALTER TABLE memory_nodes ADD COLUMN canonical_key TEXT' },
+      { column: 'source_message_ids_json', sql: "ALTER TABLE memory_nodes ADD COLUMN source_message_ids_json TEXT NOT NULL DEFAULT '[]'" },
+      { column: 'emotional_weight', sql: 'ALTER TABLE memory_nodes ADD COLUMN emotional_weight REAL' },
+      { column: 'access_count', sql: "ALTER TABLE memory_nodes ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0" },
+      { column: 'last_accessed_at', sql: 'ALTER TABLE memory_nodes ADD COLUMN last_accessed_at TEXT' },
       { column: 'session_id', sql: 'ALTER TABLE companion_messages ADD COLUMN session_id TEXT' },
       { column: 'is_builtin', sql: 'ALTER TABLE companions ADD COLUMN is_builtin INTEGER NOT NULL DEFAULT 0' },
       { column: 'close_reason', sql: 'ALTER TABLE conversation_sessions ADD COLUMN close_reason TEXT' },
@@ -310,6 +318,7 @@ export class DatabaseService {
     this.backfillMemoryFingerprints();
     this.backfillCognitiveFingerprints();
     this.removeCompanionMessagesForeignKey();
+    this.backfillMemoryRetrievalData();
   }
 
   /**
@@ -746,6 +755,11 @@ export class DatabaseService {
     this.db.close();
   }
 
+  /** Main-process-only escape hatch used by the VectorIndex abstraction. */
+  getExtensionDatabase(): SqliteDatabase {
+    return this.db;
+  }
+
   // ─── Developer Debug Events ────────────────────────────────────────────────
 
   insertDeveloperDebugEvent(event: import('@our-companion/shared').DeveloperDebugEvent): import('@our-companion/shared').DeveloperDebugEvent {
@@ -809,13 +823,13 @@ export class DatabaseService {
       `UPDATE developer_debug_events SET sync_status = 'pending', sync_attempt_count = 0 WHERE sync_status = 'uploading'`
     );
     const result = stmt.run();
-    return result.changes;
+    return Number(result.changes);
   }
 
   pruneDeveloperDebugEvents(olderThanDays = 14): number {
     const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
     const result = this.db.prepare('DELETE FROM developer_debug_events WHERE created_at < ?').run(cutoff);
-    return result.changes;
+    return Number(result.changes);
   }
 
   countDeveloperDebugEvents(options?: DeveloperDebugEventQuery): number {
@@ -1075,8 +1089,9 @@ export class DatabaseService {
         `INSERT INTO memory_nodes
          (id, type, title, summary, content, importance_score, source, source_url, is_pinned, is_marked_wrong,
           companion_id, user_id, memory_type, metadata_json, memory_fingerprint, confidence, observation_count,
-          last_observed_at, created_at, updated_at, compressed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          last_observed_at, memory_status, canonical_key, source_message_ids_json, emotional_weight, access_count,
+          last_accessed_at, created_at, updated_at, compressed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         node.id,
@@ -1097,11 +1112,19 @@ export class DatabaseService {
         node.confidence ?? node.metadata?.confidence ?? 0.5,
         node.observationCount ?? 1,
         node.lastObservedAt ?? node.updatedAt,
+        node.status ?? (node.isMarkedWrong ? 'superseded' : 'active'),
+        node.canonicalKey ?? null,
+        JSON.stringify(node.sourceMessageIds ?? node.metadata?.sourceMessageIds ?? []),
+        node.emotionalWeight ?? null,
+        node.accessCount ?? 0,
+        node.lastAccessedAt ?? null,
         node.createdAt,
         node.updatedAt,
         node.compressedAt ?? null
-      );
+    );
     this.markMemoryDirty(node);
+    this.syncMemoryFts(node);
+    this.queueEmbeddingForMemory(node);
     return node;
   }
 
@@ -1115,7 +1138,8 @@ export class DatabaseService {
           type = ?, title = ?, summary = ?, content = ?, importance_score = ?, source = ?, source_url = ?,
           is_pinned = ?, is_marked_wrong = ?, companion_id = ?, user_id = ?, memory_type = ?, metadata_json = ?,
           memory_fingerprint = ?, confidence = ?, observation_count = ?, last_observed_at = ?,
-          updated_at = ?, compressed_at = ?
+          memory_status = ?, canonical_key = ?, source_message_ids_json = ?, emotional_weight = ?, access_count = ?,
+          last_accessed_at = ?, updated_at = ?, compressed_at = ?
          WHERE id = ?`
       )
       .run(
@@ -1136,11 +1160,19 @@ export class DatabaseService {
         node.confidence ?? node.metadata?.confidence ?? 0.5,
         node.observationCount ?? 1,
         node.lastObservedAt ?? node.updatedAt,
+        node.status ?? (node.isMarkedWrong ? 'superseded' : 'active'),
+        node.canonicalKey ?? null,
+        JSON.stringify(node.sourceMessageIds ?? node.metadata?.sourceMessageIds ?? []),
+        node.emotionalWeight ?? null,
+        node.accessCount ?? 0,
+        node.lastAccessedAt ?? null,
         node.updatedAt,
         node.compressedAt ?? null,
         node.id
-      );
+    );
     this.markMemoryDirty(node);
+    this.syncMemoryFts(node);
+    this.queueEmbeddingForMemory(node);
     return node;
   }
 
@@ -1148,7 +1180,11 @@ export class DatabaseService {
     const existing = this.getMemoryNode(id);
     this.db.prepare('DELETE FROM memory_edges WHERE from_node_id = ? OR to_node_id = ?').run(id, id);
     this.db.prepare('DELETE FROM memory_nodes WHERE id = ?').run(id);
-    if (existing?.companionId) this.markMemoryDirty(existing, true);
+    if (existing?.companionId) {
+      this.markMemoryDirty(existing, true);
+      this.db.prepare('DELETE FROM memory_fts WHERE memory_id = ?').run(id);
+      this.enqueueEmbeddingJob(id, 'delete');
+    }
   }
 
   getMemoryNode(id: string, companionId?: string): MemoryNode | undefined {
@@ -1167,13 +1203,30 @@ export class DatabaseService {
     );
   }
 
-  listMemoryContextCandidates(companionId: string, limit = 80): MemoryNode[] {
+  listMemoryContextCandidates(companionId: string, limit = 80, userId = 'local'): MemoryNode[] {
     return (this.db.prepare(
       `SELECT * FROM memory_nodes
-       WHERE companion_id = ?
+       WHERE companion_id = ? AND user_id = ? AND COALESCE(memory_status, 'active') = 'active' AND is_marked_wrong = 0
        ORDER BY is_pinned DESC, is_marked_wrong ASC, importance_score DESC, updated_at DESC
        LIMIT ?`
-    ).all(companionId, Math.max(1, limit)) as Array<Record<string, unknown>>).map(mapMemoryNode);
+    ).all(companionId, userId, Math.max(1, limit)) as Array<Record<string, unknown>>).map(mapMemoryNode);
+  }
+
+  searchMemoryFts(input: { query: string; companionId: string; userId: string; limit?: number }): MemoryNode[] {
+    const tokens = input.query.match(/[\p{L}\p{N}_]+/gu)?.slice(0, 12) ?? [];
+    if (tokens.length === 0) return [];
+    const expression = tokens.map((token) => `"${token.replace(/"/g, '')}"`).join(' OR ');
+    try {
+      const rows = this.db.prepare(`SELECT memories.* FROM memory_fts fts
+        JOIN memory_nodes memories ON memories.id = fts.memory_id
+        WHERE memory_fts MATCH ? AND fts.companion_id = ? AND fts.user_id = ?
+          AND COALESCE(memories.memory_status, 'active') = 'active' AND memories.is_marked_wrong = 0
+        ORDER BY bm25(memory_fts) LIMIT ?`)
+        .all(expression, input.companionId, input.userId, Math.max(1, input.limit ?? 12)) as Array<Record<string, unknown>>;
+      return rows.map(mapMemoryNode);
+    } catch {
+      return [];
+    }
   }
 
   listCognitionMemoryCandidates(companionId: string, focusMemoryId?: string, limit = 30): MemoryNode[] {
@@ -1333,6 +1386,96 @@ export class DatabaseService {
       existing?.processedAt ?? null,
       deleted ? nowIso() : null,
     );
+  }
+
+  private isEmbeddingEligible(node: MemoryNode): boolean {
+    if (node.isMarkedWrong || node.status === 'archived' || node.status === 'superseded') return false;
+    if (node.metadata?.sourceType === 'system' || node.memoryType === 'temporary_context') return false;
+    return ['user_preference', 'user_fact', 'user_boundary', 'goal', 'shared_experience', 'relationship_memory', 'conversation_episode']
+      .includes(node.memoryType ?? '');
+  }
+
+  private syncMemoryFts(node: MemoryNode): void {
+    this.db.prepare('DELETE FROM memory_fts WHERE memory_id = ?').run(node.id);
+    if (node.status === 'archived' || node.status === 'superseded' || node.isMarkedWrong) return;
+    const content = [node.title, node.summary, node.content].filter(Boolean).join('\n').slice(0, 8_000);
+    if (!content) return;
+    this.db.prepare('INSERT INTO memory_fts (memory_id, companion_id, user_id, content) VALUES (?, ?, ?, ?)')
+      .run(node.id, node.companionId ?? '', node.userId ?? 'local', content);
+  }
+
+  private queueEmbeddingForMemory(node: MemoryNode): void {
+    if (!this.isEmbeddingEligible(node)) {
+      this.enqueueEmbeddingJob(node.id, 'delete');
+      return;
+    }
+    this.db.prepare("UPDATE memory_embeddings SET status = 'stale', updated_at = ? WHERE memory_id = ?")
+      .run(nowIso(), node.id);
+    this.enqueueEmbeddingJob(node.id, 'upsert');
+  }
+
+  private enqueueEmbeddingJob(memoryId: string, operation: 'upsert' | 'delete'): void {
+    const now = nowIso();
+    const existing = this.db.prepare("SELECT id FROM embedding_jobs WHERE memory_id = ? AND status IN ('pending', 'processing') ORDER BY created_at DESC LIMIT 1")
+      .get(memoryId) as { id?: unknown } | undefined;
+    if (existing?.id) {
+      this.db.prepare("UPDATE embedding_jobs SET operation = ?, status = 'pending', updated_at = ? WHERE id = ?")
+        .run(operation, now, String(existing.id));
+      return;
+    }
+    this.db.prepare(`INSERT INTO embedding_jobs (id, memory_id, operation, status, attempts, embedding_model, embedding_version, created_at, updated_at)
+      VALUES (?, ?, ?, 'pending', 0, ?, ?, ?, ?)`)
+      .run(createId('embedding_job'), memoryId, operation, 'Xenova/multilingual-e5-small', 1, now, now);
+  }
+
+  listPendingEmbeddingJobs(limit = 8): Array<{ id: string; memoryId: string; operation: 'upsert' | 'delete'; attempts: number }> {
+    return (this.db.prepare("SELECT id, memory_id, operation, attempts FROM embedding_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?")
+      .all(Math.max(1, limit)) as Array<Record<string, unknown>>).map((row) => ({
+      id: String(row.id), memoryId: String(row.memory_id), operation: row.operation as 'upsert' | 'delete', attempts: Number(row.attempts),
+    }));
+  }
+
+  claimEmbeddingJob(id: string): boolean {
+    const result = this.db.prepare("UPDATE embedding_jobs SET status = 'processing', attempts = attempts + 1, updated_at = ? WHERE id = ? AND status = 'pending'")
+      .run(nowIso(), id) as { changes?: number };
+    return Number(result.changes ?? 0) === 1;
+  }
+
+  finishEmbeddingJob(id: string, error?: string): void {
+    this.db.prepare('UPDATE embedding_jobs SET status = ?, last_error = ?, updated_at = ? WHERE id = ?')
+      .run(error ? 'failed' : 'completed', error ?? null, nowIso(), id);
+  }
+
+  recoverEmbeddingJobs(): void {
+    this.db.prepare("UPDATE embedding_jobs SET status = 'pending', updated_at = ? WHERE status = 'processing'").run(nowIso());
+  }
+
+  retryFailedEmbeddingJobs(): number {
+    const result = this.db.prepare("UPDATE embedding_jobs SET status = 'pending', last_error = NULL, updated_at = ? WHERE status = 'failed'")
+      .run(nowIso()) as { changes?: number | bigint };
+    return Number(result.changes ?? 0);
+  }
+
+  queueAllEligibleEmbeddings(): number {
+    const nodes = this.listMemoryNodes().filter((node) => this.isEmbeddingEligible(node));
+    for (const node of nodes) this.queueEmbeddingForMemory(node);
+    return nodes.length;
+  }
+
+  recordMemoryAccess(memoryIds: string[]): void {
+    const statement = this.db.prepare('UPDATE memory_nodes SET access_count = access_count + 1, last_accessed_at = ? WHERE id = ? AND memory_status = \'active\'');
+    const now = nowIso();
+    for (const id of new Set(memoryIds)) statement.run(now, id);
+  }
+
+  private backfillMemoryRetrievalData(): void {
+    this.db.exec("UPDATE memory_nodes SET memory_status = CASE WHEN is_marked_wrong = 1 THEN 'superseded' ELSE COALESCE(NULLIF(memory_status, ''), 'active') END");
+    const rows = this.db.prepare('SELECT * FROM memory_nodes').all() as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      const node = mapMemoryNode(row);
+      this.syncMemoryFts(node);
+      if (this.isEmbeddingEligible(node)) this.enqueueEmbeddingJob(node.id, 'upsert');
+    }
   }
 
   insertMemoryEdge(edge: MemoryEdge): MemoryEdge {
@@ -2991,6 +3134,12 @@ function mapMemoryNode(row: Record<string, unknown>): MemoryNode {
     confidence: row.confidence === undefined ? undefined : Number(row.confidence),
     observationCount: row.observation_count === undefined ? undefined : Number(row.observation_count),
     lastObservedAt: row.last_observed_at ? String(row.last_observed_at) : undefined,
+    status: (row.memory_status ? String(row.memory_status) : (Number(row.is_marked_wrong) === 1 ? 'superseded' : 'active')) as MemoryNode['status'],
+    canonicalKey: row.canonical_key ? String(row.canonical_key) : undefined,
+    sourceMessageIds: JSON.parse(String(row.source_message_ids_json ?? '[]')) as string[],
+    emotionalWeight: row.emotional_weight === null || row.emotional_weight === undefined ? undefined : Number(row.emotional_weight),
+    accessCount: row.access_count === undefined ? 0 : Number(row.access_count),
+    lastAccessedAt: row.last_accessed_at ? String(row.last_accessed_at) : undefined,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     compressedAt: row.compressed_at ? String(row.compressed_at) : undefined
