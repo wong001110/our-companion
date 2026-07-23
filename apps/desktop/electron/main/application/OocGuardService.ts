@@ -65,9 +65,10 @@ export class OocGuardService {
     }
     for (const candidate of input.proposal.memoryCandidates) {
       const candidateText = [candidate.summary, candidate.evidence].join('\n');
+      const evidence = candidate.evidence.trim();
       if (sensitiveFacts.some((fact) => sensitiveLeak(candidateText, fact.content))) {
         violations.push({ type: 'privacy_violation', severity: 'critical', evidence: 'Memory candidate contains a protected descriptor.', ruleId: 'privacy.memory_candidate' });
-      } else if (!input.currentUserMessage.includes(candidate.evidence)) {
+      } else if (Array.from(normalise(evidence)).length < 3 || evidence.length > input.currentUserMessage.length || !input.currentUserMessage.includes(evidence)) {
         violations.push({ type: 'unsupported_memory_claim', severity: 'high', evidence: 'Memory candidate evidence is not in the current user message.', ruleId: 'memory.candidate_evidence' });
       }
     }

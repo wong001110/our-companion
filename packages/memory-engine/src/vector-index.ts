@@ -8,6 +8,7 @@ export interface VectorSearchFilter {
 }
 
 export interface VectorSearchResult { memoryId: string; distance: number; semanticScore: number; }
+export interface VectorRepairResult { vectorOnlyDeleted: number; mappingOnlyMarkedStale: number; invalidMappingsMarkedStale: number; }
 export interface VectorIndexHealth {
   available: boolean; extensionVersion?: string; dimensions: number; indexedCount: number;
   readyMappingCount: number; staleMappingCount: number; orphanCount: number; distanceMetric: 'cosine'; reason?: string;
@@ -23,7 +24,7 @@ export interface VectorIndex {
   search(input: { queryEmbedding: Float32Array; filter: VectorSearchFilter; limit: number }): Promise<VectorSearchResult[]>;
   rebuild(): Promise<void>;
   healthCheck(): Promise<VectorIndexHealth>;
-  repairDerivedState(): Promise<void>;
+  repairDerivedState(): Promise<VectorRepairResult>;
 }
 export interface VectorUpsertInput {
   memoryId: string; embedding: Float32Array; modelId: string; modelVersion: number; contentHash?: string;
@@ -167,15 +168,17 @@ export class SqliteVecIndex implements VectorIndex {
     return { available: this.available, extensionVersion: this.extensionVersion, dimensions: this.dimensions, distanceMetric: 'cosine', indexedCount: Number(valid.count ?? 0), validIndexedCount: Number(valid.count ?? 0), actualVectorCount: Number(actual.count ?? 0), activeAuthoritativeMemoryCount: Number(active?.count ?? 0), eligibleAuthoritativeMemoryCount: Number(eligible?.count ?? 0), readyMappingCount: Number(mappings?.count ?? 0), staleMappingCount: Number(stale?.count ?? 0), deletedMappingCount: Number(deleted?.count ?? 0), mappingWithoutVectorCount: Number(missing?.count ?? 0), vectorWithoutMappingCount: Number(vectorOnly?.count ?? 0), orphanCount: Number(missing?.count ?? 0) + Number(vectorOnly?.count ?? 0), schemaVersion: SqliteVecIndex.schemaVersion, filterableMetadataFields: ['user_id', 'companion_id', 'memory_type', 'memory_status'], reason: this.failure };
   }
 
-  async repairDerivedState(): Promise<void> {
+  async repairDerivedState(): Promise<VectorRepairResult> {
     await this.initialize();
-    if (!this.available) return;
-    await this.serializeMutation(() => {
+    if (!this.available) return { vectorOnlyDeleted: 0, mappingOnlyMarkedStale: 0, invalidMappingsMarkedStale: 0 };
+    return this.serializeMutation(() => {
       this.db.exec('BEGIN IMMEDIATE');
       try {
-        this.db.exec('DELETE FROM memory_vec_index WHERE rowid IN (SELECT v.rowid FROM memory_vec_index v LEFT JOIN memory_embeddings e ON e.vector_row_id = v.rowid WHERE e.memory_id IS NULL)');
-        this.db.exec("UPDATE memory_embeddings SET status = 'stale', vector_row_id = NULL, updated_at = datetime('now') WHERE status = 'ready' AND vector_row_id NOT IN (SELECT rowid FROM memory_vec_index)");
+        const vectorOnly = this.db.prepare('DELETE FROM memory_vec_index WHERE rowid IN (SELECT v.rowid FROM memory_vec_index v LEFT JOIN memory_embeddings e ON e.vector_row_id = v.rowid WHERE e.memory_id IS NULL)').run() as { changes?: number | bigint };
+        const invalid = this.db.prepare(`UPDATE memory_embeddings SET status = 'stale', vector_row_id = NULL, updated_at = datetime('now')
+          WHERE status = 'ready' AND (vector_row_id IS NULL OR NOT EXISTS (SELECT 1 FROM memory_vec_index v WHERE v.rowid = memory_embeddings.vector_row_id))`).run() as { changes?: number | bigint };
         this.db.exec('COMMIT');
+        return { vectorOnlyDeleted: Number(vectorOnly.changes ?? 0), mappingOnlyMarkedStale: Number(invalid.changes ?? 0), invalidMappingsMarkedStale: Number(invalid.changes ?? 0) };
       } catch (error) { try { this.db.exec('ROLLBACK'); } catch {} throw error; }
     });
   }

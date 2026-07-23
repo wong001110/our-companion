@@ -63,6 +63,13 @@ function isExpired(node: MemoryNode, nowMs: number): boolean {
   const expiresAt = node.metadata?.expiresAt;
   return Boolean(expiresAt && Date.parse(expiresAt) <= nowMs);
 }
+function disclosureReason(node: MemoryNode): string | undefined {
+  const sensitivity = (node.metadata?.sensitivity ?? 'normal') as string;
+  if (sensitivity === 'sensitive') return 'sensitive_not_disclosable';
+  if (sensitivity === 'private') return 'private_not_allowed_in_remote_prompt';
+  if (sensitivity === 'personal') return 'personal_not_relevant';
+  return undefined;
+}
 
 function typeOf(node: MemoryNode): TypedMemoryType | undefined {
   return node.memoryType;
@@ -72,7 +79,7 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
   constructor(
     private readonly db: DatabaseService,
     private readonly now: () => Date,
-    private readonly semantic?: { embeddings: EmbeddingProvider; vectors: VectorIndex; availability?: { isSearchAvailable(): boolean } },
+    private readonly semantic?: { embeddings: EmbeddingProvider; vectors: VectorIndex; availability?: { isSearchAvailable(): boolean; tryRunSearch?<T>(task: () => Promise<T>): Promise<{ available: true; result: T } | { available: false; reason: 'maintenance' }> } },
   ) {}
 
   async buildContext(input: MemoryContextBuildInput): Promise<CompanionMemoryContext> {
@@ -91,17 +98,26 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
     let vectorUnavailableReason: 'maintenance' | 'extension_unavailable' | 'model_unavailable' | undefined;
     if (this.semantic) {
       try {
-        if (this.semantic.availability && !this.semantic.availability.isSearchAvailable()) {
-          vectorUnavailableReason = 'maintenance';
-        }
-        const health = await this.semantic.vectors.healthCheck();
-        vectorAvailable = health.available && !vectorUnavailableReason;
-        if (!health.available) vectorUnavailableReason = 'extension_unavailable';
-        if (vectorAvailable) {
-          const queryEmbedding = await this.semantic.embeddings.embedQuery(input.message);
-          for (const match of await this.semantic.vectors.search({
+        const semantic = this.semantic;
+        const vectorTask = async () => {
+          const health = await semantic.vectors.healthCheck();
+          if (!health.available) return { healthAvailable: false, matches: [] as Awaited<ReturnType<VectorIndex['search']>> };
+          const queryEmbedding = await semantic.embeddings.embedQuery(input.message);
+          const matches = await semantic.vectors.search({
             queryEmbedding, filter: { userId: 'local', companionId: input.companionId, statuses: ['active'] }, limit: 16,
-          })) {
+          });
+          return { healthAvailable: true, matches };
+        };
+        const admitted = semantic.availability?.tryRunSearch
+          ? await semantic.availability.tryRunSearch(vectorTask)
+          : { available: true as const, result: await vectorTask() };
+        if (!admitted.available) {
+          vectorUnavailableReason = 'maintenance';
+        } else if (!admitted.result.healthAvailable) {
+          vectorUnavailableReason = 'extension_unavailable';
+        } else {
+          vectorAvailable = true;
+          for (const match of admitted.result.matches) {
             const current = traceCandidates.get(match.memoryId);
             traceCandidates.set(match.memoryId, { ...current, semanticScore: match.semanticScore, selected: false, reason: `vector_distance:${match.distance.toFixed(3)}`, sources: [...new Set([...(current?.sources ?? []), 'vector'])] as Array<'structured' | 'pinned' | 'open_loop' | 'fts' | 'vector'> });
           }
@@ -117,8 +133,9 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
     }
     // Vector/FTS hits may sit outside the structured top 80. Load the union in
     // one authoritative, scoped query before filtering and ranking.
-    const candidates = this.db.getMemoryNodesByIds({ memoryIds: [...traceCandidates.keys()], userId: 'local', companionId: input.companionId })
-      .filter((node) => !node.isMarkedWrong && node.status === 'active' && !isExpired(node, this.now().getTime()) && node.metadata?.sensitivity !== 'sensitive');
+    const candidateRows = this.db.getMemoryNodesByIds({ memoryIds: [...traceCandidates.keys()], userId: 'local', companionId: input.companionId });
+    const candidates = candidateRows
+      .filter((node) => !node.isMarkedWrong && node.status === 'active' && !isExpired(node, this.now().getTime()) && !disclosureReason(node));
 
     const pinnedNodes = candidates.filter((node) => node.isPinned).slice(0, 5);
     const pinnedIds = new Set(pinnedNodes.map((node) => node.id));
@@ -196,7 +213,10 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
         vectorAvailable,
         vectorUnavailableReason,
         candidates: [...traceCandidates.entries()].map(([memoryId, value]) => ({ memoryId, ...value })),
-        rejected: [...traceCandidates.keys()].filter((id) => !candidates.some((node) => node.id === id)).map((memoryId) => ({ memoryId, reason: 'inactive_or_sensitive_or_missing' }))
+        rejected: [...traceCandidates.keys()].filter((id) => !candidates.some((node) => node.id === id)).map((memoryId) => {
+          const node = candidateRows.find((candidate) => candidate.id === memoryId);
+          return { memoryId, reason: node ? disclosureReason(node) ?? 'inactive_or_missing' : 'missing' };
+        })
           .concat(candidates.filter((node) => !selectedMemoryIds.includes(node.id)).map((node) => ({ memoryId: node.id, reason: 'budget_or_rank' }))),
       },
     };

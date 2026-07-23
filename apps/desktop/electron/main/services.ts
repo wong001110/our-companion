@@ -2498,6 +2498,19 @@ export class AppServices {
       });
       return { completed: this.embeddingJobRunner.getStatus().processedInCurrentRun, failed: this.embeddingJobRunner.getStatus().failedCount };
     },
+    repairMemoryVectors: async () => this.vectorMaintenance.runExclusive('derived_state_repair', async () => {
+      await this.embeddingJobRunner.pauseAndWait();
+      try {
+        const repair = await this.vectorIndex.repairDerivedState();
+        const jobsQueued = this.db.queueAllEligibleEmbeddings();
+        this.embeddingJobRunner.resume();
+        await this.embeddingJobRunner.drain();
+        return { ...repair, jobsQueued, completed: this.embeddingJobRunner.getStatus().processedInCurrentRun, failed: this.embeddingJobRunner.getStatus().failedCount };
+      } catch (error) {
+        this.embeddingJobRunner.resume();
+        throw error;
+      }
+    }),
   };
 
   workspace = {

@@ -139,6 +139,13 @@ export class MemoryPolicy {
     input: MemoryTurnInput,
   ): MemoryCaptureOutcome {
     const evidence = candidate.evidence.trim();
+    if (Array.from(normalizeSemanticText(evidence)).length < 3
+      || evidence.length > input.userMessage.length
+      || !Number.isFinite(candidate.confidence)
+      || candidate.confidence < 0
+      || candidate.confidence > 1) {
+      return { candidate, outcome: 'discarded', reason: 'invalid_candidate_evidence' };
+    }
     if (!this.isSafe(`${candidate.summary}\n${evidence}`)) {
       return { candidate, outcome: 'discarded', reason: 'memory_safety_policy' };
     }
