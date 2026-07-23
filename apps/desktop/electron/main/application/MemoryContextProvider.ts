@@ -8,6 +8,7 @@ import type {
 import { normalizeSemanticText } from '@our-companion/shared';
 import type { EmbeddingProvider } from '../memory/localEmbeddingProvider';
 import type { VectorIndex } from '@our-companion/memory-engine';
+import { decideMemoryDisclosure, minimalBoundaryConstraint } from './MemoryDisclosurePolicy';
 
 const DEFAULT_MAX_ITEMS = 18;
 const DEFAULT_MAX_CHARACTERS = 4_800;
@@ -29,11 +30,11 @@ function textFor(node: MemoryNode): string {
   return (node.summary || node.content || node.title).trim();
 }
 
-function contextItem(node: MemoryNode, selectedBecause: string): MemoryContextItem {
+function contextItem(node: MemoryNode, selectedBecause: string, summary?: string): MemoryContextItem {
   return {
     memoryId: node.id,
     type: node.memoryType ?? node.type,
-    summary: textFor(node).slice(0, 500),
+    summary: (summary ?? textFor(node)).slice(0, 500),
     confidence: node.confidence ?? node.metadata?.confidence ?? 0.5,
     importance: node.importance,
     pinned: Boolean(node.isPinned),
@@ -134,8 +135,11 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
     // Vector/FTS hits may sit outside the structured top 80. Load the union in
     // one authoritative, scoped query before filtering and ranking.
     const candidateRows = this.db.getMemoryNodesByIds({ memoryIds: [...traceCandidates.keys()], userId: 'local', companionId: input.companionId });
+    const disclosure = new Map(candidateRows.map((node) => [node.id, decideMemoryDisclosure({ memory: node, target: 'main_prompt', currentUserMessage: input.message })]));
     const candidates = candidateRows
-      .filter((node) => !node.isMarkedWrong && node.status === 'active' && !isExpired(node, this.now().getTime()) && !disclosureReason(node));
+      .filter((node) => !node.isMarkedWrong && node.status === 'active' && !isExpired(node, this.now().getTime()) && disclosure.get(node.id)?.allowed);
+    const safeSummary = (node: MemoryNode) => disclosure.get(node.id)?.representation === 'minimal_constraint'
+      ? minimalBoundaryConstraint(node) : textFor(node);
 
     const pinnedNodes = candidates.filter((node) => node.isPinned).slice(0, 5);
     const pinnedIds = new Set(pinnedNodes.map((node) => node.id));
@@ -175,12 +179,12 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
     const recentNodes = available.filter((node) => !selectedIds.has(node.id)).slice(0, 5);
 
     const groups = {
-      pinned: pinnedNodes.map((node) => contextItem(node, 'pinned')),
-      boundaries: boundaryNodes.map((node) => contextItem(node, 'user_boundary')),
-      preferences: preferenceNodes.map((node) => contextItem(node, 'user_preference')),
-      goals: goalNodes.map((node) => contextItem(node, 'goal')),
-      relevant: rankedRelevant.map(({ node, score }) => contextItem(node, `keyword_overlap:${score.toFixed(3)}`)),
-      recent: recentNodes.map((node) => contextItem(node, 'recent')),
+      pinned: pinnedNodes.map((node) => contextItem(node, `pinned:${disclosure.get(node.id)?.reason ?? 'normal_allowed'}`, safeSummary(node))),
+      boundaries: boundaryNodes.map((node) => contextItem(node, `user_boundary:${disclosure.get(node.id)?.reason ?? 'normal_allowed'}`, safeSummary(node))),
+      preferences: preferenceNodes.map((node) => contextItem(node, `user_preference:${disclosure.get(node.id)?.reason ?? 'normal_allowed'}`, safeSummary(node))),
+      goals: goalNodes.map((node) => contextItem(node, `goal:${disclosure.get(node.id)?.reason ?? 'normal_allowed'}`, safeSummary(node))),
+      relevant: rankedRelevant.map(({ node, score }) => contextItem(node, `keyword_overlap:${score.toFixed(3)}:${disclosure.get(node.id)?.reason ?? 'normal_allowed'}`, safeSummary(node))),
+      recent: recentNodes.map((node) => contextItem(node, `recent:${disclosure.get(node.id)?.reason ?? 'normal_allowed'}`, safeSummary(node))),
     };
 
     let itemCount = 0;
@@ -215,7 +219,7 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
         candidates: [...traceCandidates.entries()].map(([memoryId, value]) => ({ memoryId, ...value })),
         rejected: [...traceCandidates.keys()].filter((id) => !candidates.some((node) => node.id === id)).map((memoryId) => {
           const node = candidateRows.find((candidate) => candidate.id === memoryId);
-          return { memoryId, reason: node ? disclosureReason(node) ?? 'inactive_or_missing' : 'missing' };
+          return { memoryId, reason: node ? disclosure.get(node.id)?.reason ?? disclosureReason(node) ?? 'inactive_or_missing' : 'missing' };
         })
           .concat(candidates.filter((node) => !selectedMemoryIds.includes(node.id)).map((node) => ({ memoryId: node.id, reason: 'budget_or_rank' }))),
       },

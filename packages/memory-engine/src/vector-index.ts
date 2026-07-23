@@ -25,7 +25,11 @@ export interface VectorIndex {
   rebuild(): Promise<void>;
   healthCheck(): Promise<VectorIndexHealth>;
   repairDerivedState(): Promise<VectorRepairResult>;
+  beginShutdown(): void;
+  stopAndWait(timeoutMs: number): Promise<{ settled: boolean }>;
+  detach(): void;
 }
+export type VectorIndexLifecycle = 'active' | 'stopping' | 'stopped' | 'detached';
 export interface VectorUpsertInput {
   memoryId: string; embedding: Float32Array; modelId: string; modelVersion: number; contentHash?: string;
   userId?: string; companionId?: string; memoryType?: string; memoryStatus?: string;
@@ -50,10 +54,12 @@ export class SqliteVecIndex implements VectorIndex {
   private extensionVersion?: string;
   private failure?: string;
   private mutationTail: Promise<void> = Promise.resolve();
+  private lifecycle: VectorIndexLifecycle = 'active';
 
   constructor(private readonly db: ExtensionDatabase, readonly dimensions: number) {}
 
   async initialize(): Promise<void> {
+    this.assertActive();
     if (this.available || this.failure) return;
     try {
       this.db.enableLoadExtension(true);
@@ -84,6 +90,7 @@ export class SqliteVecIndex implements VectorIndex {
   }
 
   async upsert(input: VectorUpsertInput): Promise<void> {
+    this.assertActive();
     await this.initialize();
     if (!this.available) throw new Error(this.failure ?? 'VECTOR_INDEX_UNAVAILABLE');
     if (input.embedding.length !== this.dimensions) throw new Error(`VECTOR_DIMENSION_MISMATCH:${input.embedding.length}`);
@@ -121,8 +128,8 @@ export class SqliteVecIndex implements VectorIndex {
     });
   }
 
-  async remove(memoryId: string): Promise<void> { await this.initialize(); return this.serializeMutation(() => this.removeInternal(memoryId, false)); }
-  removeForDeletion(memoryId: string): void { if (this.available) this.removeInternal(memoryId, true); }
+  async remove(memoryId: string): Promise<void> { this.assertActive(); await this.initialize(); return this.serializeMutation(() => this.removeInternal(memoryId, false)); }
+  removeForDeletion(memoryId: string): void { if (this.lifecycle === 'active' && this.available) this.removeInternal(memoryId, true); }
   private removeInternal(memoryId: string, deleting: boolean): void {
     const row = this.db.prepare('SELECT vector_row_id FROM memory_embeddings WHERE memory_id = ?').get(memoryId) as { vector_row_id?: number | null } | undefined;
     if (row?.vector_row_id) this.db.prepare('DELETE FROM memory_vec_index WHERE rowid = ?').run(row.vector_row_id);
@@ -131,6 +138,7 @@ export class SqliteVecIndex implements VectorIndex {
   }
 
   async search(input: { queryEmbedding: Float32Array; filter: VectorSearchFilter; limit: number }): Promise<VectorSearchResult[]> {
+    if (this.lifecycle !== 'active') return [];
     await this.initialize();
     if (!this.available || input.queryEmbedding.length !== this.dimensions) return [];
     const types = input.filter.memoryTypes ?? [];
@@ -148,8 +156,9 @@ export class SqliteVecIndex implements VectorIndex {
     return rows.map((row) => ({ memoryId: String(row.memory_id), distance: Number(row.distance), semanticScore: cosineDistanceToSimilarity(Number(row.distance)) }));
   }
 
-  async rebuild(): Promise<void> { await this.initialize(); if (!this.available) return; return this.serializeMutation(() => { this.db.exec('BEGIN IMMEDIATE'); try { this.db.exec('DELETE FROM memory_vec_index'); this.db.exec("UPDATE memory_embeddings SET status = 'stale', vector_row_id = NULL, updated_at = datetime('now')"); this.db.exec('COMMIT'); } catch (error) { try { this.db.exec('ROLLBACK'); } catch {} throw error; } }); }
+  async rebuild(): Promise<void> { this.assertActive(); await this.initialize(); if (!this.available) return; return this.serializeMutation(() => { this.db.exec('BEGIN IMMEDIATE'); try { this.db.exec('DELETE FROM memory_vec_index'); this.db.exec("UPDATE memory_embeddings SET status = 'stale', vector_row_id = NULL, updated_at = datetime('now')"); this.db.exec('COMMIT'); } catch (error) { try { this.db.exec('ROLLBACK'); } catch {} throw error; } }); }
   async healthCheck(): Promise<VectorIndexHealth> {
+    if (this.lifecycle === 'detached') return this.detachedHealth();
     await this.initialize();
     const mappings = this.db.prepare("SELECT COUNT(*) AS count FROM memory_embeddings WHERE status = 'ready' AND vector_row_id IS NOT NULL").get() as { count?: unknown } | undefined;
     const actual: { count?: unknown } = this.available ? (this.db.prepare('SELECT COUNT(*) AS count FROM memory_vec_index').get() as { count?: unknown } | undefined) ?? {} : { count: 0 };
@@ -169,6 +178,7 @@ export class SqliteVecIndex implements VectorIndex {
   }
 
   async repairDerivedState(): Promise<VectorRepairResult> {
+    this.assertActive();
     await this.initialize();
     if (!this.available) return { vectorOnlyDeleted: 0, mappingOnlyMarkedStale: 0, invalidMappingsMarkedStale: 0 };
     return this.serializeMutation(() => {
@@ -184,8 +194,26 @@ export class SqliteVecIndex implements VectorIndex {
   }
 
   private serializeMutation<T>(work: () => T): Promise<T> {
-    const next = this.mutationTail.then(work, work);
+    this.assertActive();
+    const guarded = () => { this.assertActive(); return work(); };
+    const next = this.mutationTail.then(guarded, guarded);
     this.mutationTail = next.then(() => undefined, () => undefined);
     return next;
+  }
+
+  beginShutdown(): void { if (this.lifecycle === 'active') this.lifecycle = 'stopping'; }
+  async stopAndWait(timeoutMs: number): Promise<{ settled: boolean }> {
+    this.beginShutdown();
+    const settled = await Promise.race([
+      this.mutationTail.then(() => true, () => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), Math.max(0, timeoutMs))),
+    ]);
+    if (settled && this.lifecycle === 'stopping') this.lifecycle = 'stopped';
+    return { settled };
+  }
+  detach(): void { this.lifecycle = 'detached'; }
+  private assertActive(): void { if (this.lifecycle !== 'active') throw new Error('VECTOR_INDEX_STOPPING'); }
+  private detachedHealth(): VectorIndexHealth {
+    return { available: false, dimensions: this.dimensions, indexedCount: 0, readyMappingCount: 0, staleMappingCount: 0, orphanCount: 0, distanceMetric: 'cosine', actualVectorCount: 0, mappingWithoutVectorCount: 0, vectorWithoutMappingCount: 0, deletedMappingCount: 0, schemaVersion: SqliteVecIndex.schemaVersion, filterableMetadataFields: ['user_id', 'companion_id', 'memory_type', 'memory_status'], validIndexedCount: 0, activeAuthoritativeMemoryCount: 0, eligibleAuthoritativeMemoryCount: 0, reason: 'VECTOR_INDEX_DETACHED' };
   }
 }

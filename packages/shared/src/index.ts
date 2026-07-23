@@ -119,7 +119,7 @@ export interface MemoryCandidate {
   sourceText?: string;
   summary: string;
   confidence: UnitScore;
-  sensitivity: 'normal' | 'personal' | 'sensitive';
+  sensitivity: 'normal' | 'personal' | 'private' | 'sensitive';
   retention: MemoryRetention;
   reason: string;
   createdAt: string;
@@ -1679,6 +1679,7 @@ export interface MemoryRetrievalTrace {
 export interface CharacterContract {
   version: number;
   sourceRevision?: number;
+  sourceHash?: string;
   identity: { name: string; selfConcept: string; role: string; forbiddenSelfIdentityClaims: string[] };
   corePersonality: { stableTraits: string[]; values: string[]; decisionPrinciples: string[]; hardContradictions: string[] };
   voice: { tone: string[]; preferredVerbosity: 'short' | 'balanced' | 'detailed'; typicalPatterns: string[]; avoidPatterns: string[] };

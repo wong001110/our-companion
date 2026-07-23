@@ -26,6 +26,7 @@ import { validateCompanionTurnProposal } from '@our-companion/ai-engine';
 import type { MemoryContextProvider } from './MemoryContextProvider';
 import type { MemoryPolicy, MemoryCaptureOutcome } from '../runtime/MemoryPolicy';
 import { defaultCharacterContract, OocGuardService } from './OocGuardService';
+import { createProposalPrivacyContext, validateExternalActionDisclosure, type ProposalPrivacyContext } from './ProposalPrivacy';
 
 const TURN_INSPECTION_LIMIT = 50;
 
@@ -74,6 +75,7 @@ function highestRisk(actions: CompanionTurnActionRequest[]): ActionPlan['riskLev
 
 function actionPlanFromRequests(
   actions: CompanionTurnActionRequest[],
+  privacy?: ProposalPrivacyContext,
 ): { plan?: ActionPlan; validated: CompanionTurnActionRequest[]; rejected: TurnInspectionRecord['rejectedActions'] } {
   const validated: CompanionTurnActionRequest[] = [];
   const rejected: TurnInspectionRecord['rejectedActions'] = [];
@@ -81,8 +83,9 @@ function actionPlanFromRequests(
   for (const action of actions) {
     const capability = getActionCapability(action.toolName);
     const args = validateActionCapabilityArgs(action.toolName, action.args);
-    if (!capability?.enabled || !args.ok) {
-      rejected.push({ ...action, reason: capability ? (args.ok ? 'ACTION_CAPABILITY_NOT_AVAILABLE' : args.reason) : 'UNSUPPORTED_TOOL' });
+    const disclosure = args.ok && privacy ? validateExternalActionDisclosure(action.toolName, { args: action.args, reason: action.reason }, privacy) : { ok: true } as const;
+    if (!capability?.enabled || !args.ok || !disclosure.ok) {
+      rejected.push({ ...action, reason: !disclosure.ok ? disclosure.reason : capability ? (args.ok ? 'ACTION_CAPABILITY_NOT_AVAILABLE' : args.reason) : 'UNSUPPORTED_TOOL' });
       continue;
     }
     const normalized = { ...action, toolName: capability.toolName, args: args.args };
@@ -172,6 +175,7 @@ export class CompanionTurnOrchestrator {
     const turnId = createId('turn');
     const sessionId = this.deps.getSessionId?.();
     const priorHistory = this.deps.db.listCompanionContext(companionId, 12);
+    const privacyContext = createProposalPrivacyContext(this.deps.db, companionId, input.message, priorHistory);
     this.deps.db.insertCompanionMessage({
       role: 'user',
       content: input.message,
@@ -214,8 +218,14 @@ export class CompanionTurnOrchestrator {
     let proposal: CompanionTurnProposal;
     let plan = planActionFromRules(input.message);
     if (plan) {
-      inspection.deterministicActionMatch = plan.steps.map((step) => step.toolName).join(', ');
       proposal = proposalForRule(plan);
+      const blocked = plan.steps.find((step) => !validateExternalActionDisclosure(step.toolName, step.args, privacyContext).ok);
+      if (blocked) {
+        inspection.rejectedActions = proposal.actions.map((action) => ({ ...action, reason: 'PRIVATE_DATA_DISCLOSURE_BLOCKED' }));
+        plan = undefined;
+      } else {
+        inspection.deterministicActionMatch = plan.steps.map((step) => step.toolName).join(', ');
+      }
     } else {
       const contract = defaultCharacterContract(companion.name, companion.personalityDescription, companion.personality);
       const messages = [
@@ -280,7 +290,7 @@ export class CompanionTurnOrchestrator {
       inspection.finalReplySource = 'safe_fallback';
     }
     if (!plan) {
-      const actionValidation = actionPlanFromRequests(proposal.actions);
+      const actionValidation = actionPlanFromRequests(proposal.actions, privacyContext);
       inspection.validatedActions = actionValidation.validated;
       inspection.rejectedActions = actionValidation.rejected;
       plan = actionValidation.plan;

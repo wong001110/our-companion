@@ -1,6 +1,9 @@
 import type { CharacterContract, CompanionPersonality, CompanionTurnProposal, GenerationContextMetadata, OocValidationResult, OocViolation } from '@our-companion/shared';
+import { CharacterContractBuilder } from './CharacterContractBuilder';
 
 export function defaultCharacterContract(name: string, personalityDescription: string, personality?: CompanionPersonality): CharacterContract {
+  return new CharacterContractBuilder().build({ companionId: 'legacy', name, personalityDescription, personality: personality ?? { energy: 50, curiosity: 50, sociability: 50, diligence: 50, playfulness: 50, confidence: 50, calmness: 50, shyness: 50 } });
+  /* Legacy implementation retained below for source compatibility. */
   const traits = personality ? Object.entries(personality).filter(([, value]) => value >= 60).map(([trait]) => trait) : [];
   const sourceRevision = stableRevision(JSON.stringify({ schema: 2, name, personalityDescription, personality: personality ?? {} }));
   return {

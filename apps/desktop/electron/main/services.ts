@@ -2257,13 +2257,15 @@ export class AppServices {
 
   async dispose(): Promise<void> {
     this.disposePromise ??= (async () => {
+      this.companionRuntime.stopLifeScheduler();
       this.cleanupFlushTimer();
       const timeoutMs = 8_000;
+      this.vectorIndex.beginShutdown();
       const settled = await Promise.race([
-        this.embeddingJobRunner.stop().then(() => true),
+        Promise.all([this.embeddingJobRunner.stop(), this.vectorIndex.stopAndWait(timeoutMs)]).then(([_, vector]) => vector.settled),
         new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
       ]);
-      if (!settled) this.embeddingJobRunner.preventFurtherWrites();
+      if (!settled) { this.embeddingJobRunner.preventFurtherWrites(); this.vectorIndex.detach(); }
       await this.localEmbeddings.dispose();
       this.db.close();
     })();
