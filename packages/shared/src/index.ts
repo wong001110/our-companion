@@ -1441,6 +1441,22 @@ export function listEnabledActionCapabilities(): ActionCapabilityDefinition[] {
   return Object.values(ACTION_CAPABILITY_REGISTRY).filter((capability) => capability.enabled);
 }
 
+export function validateActionCapabilityRegistry(): void {
+  for (const capability of Object.values(ACTION_CAPABILITY_REGISTRY)) {
+    if (!capability.enabled) continue;
+    if (capability.dataBoundary !== 'local' && capability.dataBoundary !== 'external') throw new Error(`ACTION_CAPABILITY_DATA_BOUNDARY_INVALID:${capability.toolName}`);
+    if (capability.dataBoundary === 'external' && !capability.disclosureTarget) throw new Error(`ACTION_CAPABILITY_DISCLOSURE_TARGET_REQUIRED:${capability.toolName}`);
+    if (capability.dataBoundary === 'local' && capability.disclosureTarget) throw new Error(`ACTION_CAPABILITY_LOCAL_DISCLOSURE_TARGET_FORBIDDEN:${capability.toolName}`);
+  }
+}
+
+export function resolveActionDisclosureTarget(toolName: unknown, args: Record<string, unknown>): DisclosureTarget | undefined {
+  const capability = getActionCapability(toolName);
+  if (!capability || !capability.enabled) return undefined;
+  if (capability.toolName === 'browser_navigation') return args.action === 'open_tab' && typeof args.url === 'string' ? 'open_url' : undefined;
+  return capability.dataBoundary === 'external' ? capability.disclosureTarget : undefined;
+}
+
 export function actionCapabilityPromptSummary(): string {
   const enabled = listEnabledActionCapabilities().map((capability) => [
     `Tool: ${capability.toolName}`,

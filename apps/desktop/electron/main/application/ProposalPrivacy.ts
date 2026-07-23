@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseService } from '@our-companion/database';
 import type { CompanionMessage } from '@our-companion/shared';
-import { getActionCapability, type DisclosureTarget } from '@our-companion/shared';
+import { getActionCapability, resolveActionDisclosureTarget, type DisclosureTarget } from '@our-companion/shared';
 
 export type SensitiveDescriptorKind = 'email' | 'phone' | 'account' | 'credential' | 'identifier' | 'private_canary' | 'medical' | 'financial' | 'address';
 export interface SensitiveDescriptor { kind: SensitiveDescriptorKind; valueHash: string; value: string; }
@@ -45,8 +45,8 @@ export function sensitiveDescriptors(value: string, options: { source?: 'private
 function targetForTool(toolName: string, payload: unknown): DisclosureAuthorization['target'] | 'unknown' | undefined {
   const capability = getActionCapability(toolName);
   if (!capability) return 'unknown';
-  if (toolName === 'browser_navigation' && typeof (payload as { args?: { url?: unknown } })?.args?.url === 'string') return 'open_url';
-  return capability.dataBoundary === 'external' ? capability.disclosureTarget as DisclosureTarget : undefined;
+  const args = (payload && typeof payload === 'object' && 'args' in payload ? (payload as { args?: unknown }).args : payload) as Record<string, unknown>;
+  return resolveActionDisclosureTarget(toolName, args ?? {}) as DisclosureTarget | undefined;
 }
 
 function explicitlyRequestsDisclosure(message: string, value: string, target: DisclosureAuthorization['target']): boolean {
