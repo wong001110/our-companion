@@ -2066,6 +2066,7 @@ export class AppServices {
     cycleId?: string;
     turnId?: string;
   }): void {
+    if (this.serviceState !== 'running') return;
     this.pushDeveloperDebugEvent({
       kind: 'ai_call',
       operation: input.channel,

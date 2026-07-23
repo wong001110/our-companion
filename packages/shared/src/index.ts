@@ -110,6 +110,13 @@ export type MemoryRetention =
   | 'long_term'
   | 'requires_confirmation';
 
+export type MemorySensitivity = 'normal' | 'personal' | 'private' | 'sensitive';
+export interface UserBoundaryMetadata {
+  action: 'do_not_mention' | 'do_not_recommend' | 'do_not_discuss' | 'avoid_topic' | 'do_not_take_action';
+  target: string;
+  sourceLanguage?: 'en' | 'zh';
+}
+
 export interface MemoryCandidate {
   id: string;
   userId: string;
@@ -119,7 +126,7 @@ export interface MemoryCandidate {
   sourceText?: string;
   summary: string;
   confidence: UnitScore;
-  sensitivity: 'normal' | 'personal' | 'private' | 'sensitive';
+  sensitivity: MemorySensitivity;
   retention: MemoryRetention;
   reason: string;
   createdAt: string;
@@ -292,7 +299,7 @@ export interface MemoryMetadata {
     | 'discovery'
     | 'imported';
   confidence: number;
-  sensitivity: 'normal' | 'personal' | 'sensitive';
+  sensitivity: MemorySensitivity;
   scope: 'session' | 'companion' | 'user' | 'shared';
   createdAt: string;
   lastConfirmedAt?: string;
@@ -301,6 +308,7 @@ export interface MemoryMetadata {
   correctedByMemoryId?: string;
   userEvidence?: string;
   assistantInterpretation?: string;
+  userBoundary?: UserBoundaryMetadata;
   sourceMessageIds?: string[];
 }
 
@@ -1334,9 +1342,13 @@ export interface DiaryEntry {
 }
 
 export type ToolName = 'open_url' | 'open_app' | 'search_web' | 'browser_navigation';
+export type ToolDataBoundary = 'local' | 'external';
+export type DisclosureTarget = 'search_web' | 'open_url' | 'http_request' | 'email' | 'file_upload' | 'specific_tool';
 
 export interface ActionCapabilityDefinition {
   toolName: ToolName;
+  dataBoundary: ToolDataBoundary;
+  disclosureTarget?: DisclosureTarget;
   description: string;
   argumentSchema: readonly ActionCapabilityArgument[];
   examples: { en: readonly string[]; zhCN: readonly string[] };
@@ -1357,6 +1369,7 @@ export interface ActionCapabilityArgument {
 export const ACTION_CAPABILITY_REGISTRY = {
   open_url: {
     toolName: 'open_url',
+    dataBoundary: 'external', disclosureTarget: 'open_url',
     description: 'Open a safe HTTP or HTTPS URL in the browser.',
     argumentSchema: [
       { name: 'url', type: 'string', required: true, description: 'Safe public HTTP or HTTPS URL.' },
@@ -1372,6 +1385,7 @@ export const ACTION_CAPABILITY_REGISTRY = {
   },
   search_web: {
     toolName: 'search_web',
+    dataBoundary: 'external', disclosureTarget: 'search_web',
     description: 'Search the public web for a user-provided query.',
     argumentSchema: [
       { name: 'query', type: 'string', required: true, description: 'Non-empty search query.' },
@@ -1385,6 +1399,7 @@ export const ACTION_CAPABILITY_REGISTRY = {
   },
   open_app: {
     toolName: 'open_app',
+    dataBoundary: 'local',
     description: 'Open an installed desktop application by name.',
     argumentSchema: [
       { name: 'appName', type: 'string', required: true, description: 'Non-empty installed application name.' },
@@ -1397,6 +1412,7 @@ export const ACTION_CAPABILITY_REGISTRY = {
   },
   browser_navigation: {
     toolName: 'browser_navigation',
+    dataBoundary: 'local',
     description: 'Navigate an existing browser session using a supported navigation action.',
     argumentSchema: [
       {
@@ -1663,7 +1679,6 @@ export interface CompanionMemoryContext {
 }
 
 export type MemoryStatus = 'candidate' | 'active' | 'superseded' | 'archived';
-export type MemorySensitivity = 'normal' | 'sensitive';
 
 export interface MemoryRetrievalTrace {
   query: string;
@@ -1715,7 +1730,7 @@ export interface GenerationContextMetadata {
   companionId: string;
   userId: string;
   selectedMemoryIds: string[];
-  activeMemoryFacts: Array<{ memoryId: string; type: string; content: string; confidence: number; status: MemoryStatus; sensitivity?: MemorySensitivity | 'private'; userId?: string; companionId?: string }>;
+  activeMemoryFacts: Array<{ memoryId: string; type: string; content: string; confidence: number; status: MemoryStatus; sensitivity?: MemorySensitivity; userId?: string; companionId?: string }>;
   characterContractVersion: number;
   promptTemplateVersion: number;
 }

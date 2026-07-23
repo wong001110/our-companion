@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseService } from '@our-companion/database';
 import type { CompanionMessage } from '@our-companion/shared';
+import { getActionCapability, type DisclosureTarget } from '@our-companion/shared';
 
 export type SensitiveDescriptorKind = 'email' | 'phone' | 'account' | 'credential' | 'identifier' | 'private_canary' | 'medical' | 'financial' | 'address';
 export interface SensitiveDescriptor { kind: SensitiveDescriptorKind; valueHash: string; value: string; }
@@ -27,22 +28,25 @@ const DESCRIPTORS: Array<[SensitiveDescriptor['kind'], RegExp]> = [
 const PROHIBITED = new Set<SensitiveDescriptor['kind']>(['credential']);
 
 function hash(value: string): string { return createHash('sha256').update(value).digest('hex'); }
-export function sensitiveDescriptors(value: string): SensitiveDescriptor[] {
+export function sensitiveDescriptors(value: string, options: { source?: 'private_memory' | 'history' | 'current_message' | 'action_payload' } = {}): SensitiveDescriptor[] {
   const found = new Map<string, SensitiveDescriptor>();
   for (const [kind, pattern] of DESCRIPTORS) {
     pattern.lastIndex = 0;
     for (const match of value.matchAll(pattern)) {
       const item = match[0].trim();
-      if (item) found.set(`${kind}:${item.toLowerCase()}`, { kind, value: item, valueHash: hash(item) });
+      const genericCanary = kind === 'private_canary';
+      const strongCanary = /^(?:PRIVATE_|SECRET_|INTERNAL_ONLY_|CONFIDENTIAL_|USER_PRIVATE_|MEMORY_CANARY_)/.test(item);
+      if (item && (!genericCanary || options.source === 'private_memory' || strongCanary)) found.set(`${kind}:${item.toLowerCase()}`, { kind, value: item, valueHash: hash(item) });
     }
   }
   return [...found.values()];
 }
 
-function targetForTool(toolName: string): DisclosureAuthorization['target'] | undefined {
-  if (toolName === 'search_web') return 'search_web';
-  if (toolName === 'open_url' || toolName === 'browser_navigation') return 'open_url';
-  return undefined;
+function targetForTool(toolName: string, payload: unknown): DisclosureAuthorization['target'] | 'unknown' | undefined {
+  const capability = getActionCapability(toolName);
+  if (!capability) return 'unknown';
+  if (toolName === 'browser_navigation' && typeof (payload as { args?: { url?: unknown } })?.args?.url === 'string') return 'open_url';
+  return capability.dataBoundary === 'external' ? capability.disclosureTarget as DisclosureTarget : undefined;
 }
 
 function explicitlyRequestsDisclosure(message: string, value: string, target: DisclosureAuthorization['target']): boolean {
@@ -57,7 +61,7 @@ export function sanitizeHistory(messages: CompanionMessage[]): SanitizedHistoryM
   return messages.map(({ role, content }) => {
     let sanitized = content;
     const redactions: SensitiveDescriptorKind[] = [];
-    for (const descriptor of sensitiveDescriptors(content)) {
+    for (const descriptor of sensitiveDescriptors(content, { source: 'history' })) {
       const label = descriptor.kind === 'credential' ? '[credential removed]' : `[${descriptor.kind.replace(/_/g, ' ')} removed]`;
       sanitized = sanitized.split(descriptor.value).join(label);
       redactions.push(descriptor.kind);
@@ -72,9 +76,9 @@ export function createProposalPrivacyContext(db: DatabaseService, companionId: s
     .map((memory) => ({
       memoryId: memory.id,
       sensitivity: memory.metadata!.sensitivity as 'private' | 'sensitive',
-      descriptors: sensitiveDescriptors(`${memory.title}\n${memory.summary ?? ''}\n${memory.content ?? ''}`),
+      descriptors: sensitiveDescriptors(`${memory.title}\n${memory.summary ?? ''}\n${memory.content ?? ''}`, { source: 'private_memory' }),
     }));
-  const current = sensitiveDescriptors(currentUserMessage);
+  const current = sensitiveDescriptors(currentUserMessage, { source: 'current_message' });
   const explicitAuthorizations: DisclosureAuthorization[] = [];
   for (const descriptor of current) {
     if (PROHIBITED.has(descriptor.kind)) continue;
@@ -93,14 +97,15 @@ export function createProposalPrivacyContext(db: DatabaseService, companionId: s
 }
 
 export function validateExternalActionDisclosure(toolName: string, payload: unknown, context: ProposalPrivacyContext): { ok: true } | { ok: false; reason: 'PRIVATE_DATA_DISCLOSURE_BLOCKED' } {
-  const target = targetForTool(toolName);
+  const target = targetForTool(toolName, payload);
+  if (target === 'unknown') return { ok: false, reason: 'PRIVATE_DATA_DISCLOSURE_BLOCKED' };
   if (!target) return { ok: true };
   const text = JSON.stringify(payload);
   const descriptors = [
     ...context.protectedMemories.flatMap((memory) => memory.descriptors),
-    ...sensitiveDescriptors(context.currentUserMessage),
-    ...context.recentMessages.flatMap((message) => sensitiveDescriptors(message.content)),
-    ...sensitiveDescriptors(text),
+    ...sensitiveDescriptors(context.currentUserMessage, { source: 'current_message' }),
+    ...context.recentMessages.flatMap((message) => sensitiveDescriptors(message.content, { source: 'history' })),
+    ...sensitiveDescriptors(text, { source: 'action_payload' }),
   ];
   for (const descriptor of descriptors) {
     if (!text.includes(descriptor.value)) continue;
