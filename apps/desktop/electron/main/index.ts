@@ -1141,48 +1141,50 @@ function escapeHtml(value: string): string {
 
 let isQuitting = false;
 let didCleanup = false;
+let cleanupPromise: Promise<void> | undefined;
 
-function forceCleanup(): void {
-  if (didCleanup) return;
+async function gracefulCleanup(): Promise<void> {
+  if (cleanupPromise) return cleanupPromise;
   didCleanup = true;
-  isQuitting = true;
-  unregisterCompanionHotkey();
-  stopDiscoveryAutomation();
-  for (const win of [companionWindow, panelWindow, creationWindow]) {
-    if (win && !win.isDestroyed()) {
-      win.destroy();
+  cleanupPromise = (async () => {
+    isQuitting = true;
+    unregisterCompanionHotkey();
+    stopDiscoveryAutomation();
+    for (const win of [companionWindow, panelWindow, creationWindow]) {
+      if (win && !win.isDestroyed()) {
+        win.destroy();
+      }
     }
-  }
-  try { services?.cleanupFlushTimer(); } catch { /* ignore */ }
-  try { services?.network.dispose(); } catch { /* ignore */ }
-  try { services?.db.close(); } catch { /* ignore */ }
+    try { services?.network.dispose(); } catch { /* ignore */ }
+    try { await services?.dispose(); } catch { /* bounded shutdown must continue */ }
+  })();
+  return cleanupPromise;
 }
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (didCleanup) return;
+  event.preventDefault();
   isQuitting = true;
+  void gracefulCleanup().finally(() => app.quit());
 });
 
 app.on('window-all-closed', () => {
-  forceCleanup();
-  app.quit();
+  void gracefulCleanup().finally(() => app.quit());
 });
 
 app.on('will-quit', () => {
-  forceCleanup();
+  void gracefulCleanup();
 });
 
 process.on('uncaughtException', (err) => {
   console.error('[our-companion] Uncaught exception:', err);
-  forceCleanup();
-  process.exit(1);
+  void gracefulCleanup().finally(() => process.exit(1));
 });
 
 process.on('SIGTERM', () => {
-  forceCleanup();
-  process.exit(0);
+  void gracefulCleanup().finally(() => process.exit(0));
 });
 
 process.on('SIGINT', () => {
-  forceCleanup();
-  process.exit(0);
+  void gracefulCleanup().finally(() => process.exit(0));
 });

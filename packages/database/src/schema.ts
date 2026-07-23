@@ -110,6 +110,9 @@ CREATE TABLE IF NOT EXISTS embedding_jobs (
   last_error TEXT,
   embedding_model TEXT NOT NULL,
   embedding_version INTEGER NOT NULL,
+  source_revision INTEGER NOT NULL DEFAULT 0,
+  source_content_hash TEXT NOT NULL DEFAULT '',
+  dimensions INTEGER NOT NULL DEFAULT 384,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY(memory_id) REFERENCES memory_nodes(id)

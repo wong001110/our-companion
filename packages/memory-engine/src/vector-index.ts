@@ -11,6 +11,8 @@ export interface VectorSearchResult { memoryId: string; distance: number; semant
 export interface VectorIndexHealth {
   available: boolean; extensionVersion?: string; dimensions: number; indexedCount: number;
   readyMappingCount: number; staleMappingCount: number; orphanCount: number; distanceMetric: 'cosine'; reason?: string;
+  actualVectorCount: number; mappingWithoutVectorCount: number; vectorWithoutMappingCount: number;
+  deletedMappingCount: number; schemaVersion: number; filterableMetadataFields: string[];
 }
 export interface VectorIndex {
   initialize(): Promise<void>;
@@ -20,10 +22,12 @@ export interface VectorIndex {
   search(input: { queryEmbedding: Float32Array; filter: VectorSearchFilter; limit: number }): Promise<VectorSearchResult[]>;
   rebuild(): Promise<void>;
   healthCheck(): Promise<VectorIndexHealth>;
+  repairDerivedState(): Promise<void>;
 }
 export interface VectorUpsertInput {
   memoryId: string; embedding: Float32Array; modelId: string; modelVersion: number; contentHash?: string;
   userId?: string; companionId?: string; memoryType?: string; memoryStatus?: string;
+  sourceRevision?: number;
 }
 export interface ExtensionDatabase {
   exec(sql: string): void;
@@ -39,9 +43,11 @@ function asVectorBlob(vector: Float32Array): Uint8Array { return new Uint8Array(
 
 /** sqlite-vec SQL lives here; the vector table is disposable derived state. */
 export class SqliteVecIndex implements VectorIndex {
+  static readonly schemaVersion = 3;
   private available = false;
   private extensionVersion?: string;
   private failure?: string;
+  private mutationTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly db: ExtensionDatabase, readonly dimensions: number) {}
 
@@ -53,9 +59,10 @@ export class SqliteVecIndex implements VectorIndex {
       const version = this.db.prepare('SELECT vec_version() AS version').get() as { version?: unknown } | undefined;
       this.extensionVersion = typeof version?.version === 'string' ? version.version : undefined;
       const existing = this.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'memory_vec_index'").get() as { sql?: string } | undefined;
-      // v1 stored only a vector; v2 uses scoped partition keys so foreign nearest
-      // neighbours cannot starve the current companion's KNN result.
-      if (existing?.sql && !/partition key/i.test(String(existing.sql))) {
+      // v3 makes status/type real vec0 metadata (rather than auxiliary values)
+      // so KNN applies them before selecting its k nearest scoped candidates.
+      if (existing?.sql && (!/user_id\s+text\s+partition key/i.test(String(existing.sql))
+        || /\+memory_type|\+memory_status/i.test(String(existing.sql)))) {
         this.db.exec('DROP TABLE memory_vec_index');
         this.db.exec("UPDATE memory_embeddings SET status = 'stale', vector_row_id = NULL, updated_at = datetime('now')");
       }
@@ -64,9 +71,12 @@ export class SqliteVecIndex implements VectorIndex {
         user_id text partition key,
         companion_id text partition key,
         +memory_id text,
-        +memory_type text,
-        +memory_status text
+        memory_type text,
+        memory_status text
       )`);
+      this.db.prepare(`INSERT INTO app_settings (key, value_json, updated_at) VALUES ('memory.vector_index_schema_version', ?, datetime('now'))
+        ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`)
+        .run(JSON.stringify(SqliteVecIndex.schemaVersion));
       this.available = true;
     } catch (error) { this.failure = error instanceof Error ? error.message : String(error); }
   }
@@ -75,30 +85,46 @@ export class SqliteVecIndex implements VectorIndex {
     await this.initialize();
     if (!this.available) throw new Error(this.failure ?? 'VECTOR_INDEX_UNAVAILABLE');
     if (input.embedding.length !== this.dimensions) throw new Error(`VECTOR_DIMENSION_MISMATCH:${input.embedding.length}`);
-    const mapping = this.db.prepare('SELECT vector_row_id FROM memory_embeddings WHERE memory_id = ?').get(input.memoryId) as { vector_row_id?: number | null } | undefined;
-    const rowId = Number(mapping?.vector_row_id ?? 0);
-    let storedRowId = rowId;
-    if (rowId) {
-      const updated = this.db.prepare(`UPDATE memory_vec_index SET embedding = ?, user_id = ?, companion_id = ?, memory_id = ?, memory_type = ?, memory_status = ? WHERE rowid = ?`)
-        .run(asVectorBlob(input.embedding), input.userId ?? 'local', input.companionId ?? '', input.memoryId, input.memoryType ?? '', input.memoryStatus ?? 'active', rowId) as { changes?: number | bigint };
-      if (Number(updated.changes ?? 0) === 0) storedRowId = 0;
-    }
-    if (!storedRowId) {
-      const inserted = this.db.prepare(`INSERT INTO memory_vec_index (embedding, user_id, companion_id, memory_id, memory_type, memory_status)
-        VALUES (?, ?, ?, ?, ?, ?)`)
-        .run(asVectorBlob(input.embedding), input.userId ?? 'local', input.companionId ?? '', input.memoryId, input.memoryType ?? '', input.memoryStatus ?? 'active') as { lastInsertRowid?: number | bigint };
-      storedRowId = Number(inserted.lastInsertRowid);
-      if (!storedRowId) throw new Error('VECTOR_ROW_INSERT_FAILED');
-    }
-    const confirmed = this.db.prepare('SELECT rowid FROM memory_vec_index WHERE rowid = ?').get(storedRowId) as { rowid?: unknown } | undefined;
-    if (!confirmed?.rowid) throw new Error('VECTOR_ROW_CONFIRMATION_FAILED');
-    this.db.prepare(`INSERT INTO memory_embeddings (memory_id, vector_row_id, embedding_model, embedding_version, dimensions, content_hash, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'ready', datetime('now'), datetime('now'))
-      ON CONFLICT(memory_id) DO UPDATE SET vector_row_id = excluded.vector_row_id, embedding_model = excluded.embedding_model, embedding_version = excluded.embedding_version, dimensions = excluded.dimensions, content_hash = excluded.content_hash, status = 'ready', updated_at = excluded.updated_at`)
-      .run(input.memoryId, storedRowId, input.modelId, input.modelVersion, this.dimensions, input.contentHash ?? '');
+    return this.serializeMutation(() => {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        if (input.sourceRevision !== undefined) {
+          const current = this.db.prepare(`SELECT 1 FROM memory_nodes n JOIN memory_processing_state p ON p.memory_id = n.id
+            WHERE n.id = ? AND n.memory_status = 'active' AND n.is_marked_wrong = 0
+              AND p.deleted_at IS NULL AND p.revision = ? AND p.content_hash = ?`)
+            .get(input.memoryId, input.sourceRevision, input.contentHash ?? '');
+          if (!current) throw new Error('MEMORY_REVISION_STALE');
+        }
+        const mapping = this.db.prepare('SELECT vector_row_id FROM memory_embeddings WHERE memory_id = ?').get(input.memoryId) as { vector_row_id?: number | null } | undefined;
+        const rowId = Number(mapping?.vector_row_id ?? 0);
+        let storedRowId = rowId;
+        if (rowId) {
+          const updated = this.db.prepare(`UPDATE memory_vec_index SET embedding = ?, user_id = ?, companion_id = ?, memory_id = ?, memory_type = ?, memory_status = ? WHERE rowid = ?`)
+            .run(asVectorBlob(input.embedding), input.userId ?? 'local', input.companionId ?? '', input.memoryId, input.memoryType ?? '', input.memoryStatus ?? 'active', rowId) as { changes?: number | bigint };
+          if (Number(updated.changes ?? 0) === 0) storedRowId = 0;
+        }
+        if (!storedRowId) {
+          const inserted = this.db.prepare(`INSERT INTO memory_vec_index (embedding, user_id, companion_id, memory_id, memory_type, memory_status)
+            VALUES (?, ?, ?, ?, ?, ?)`)
+            .run(asVectorBlob(input.embedding), input.userId ?? 'local', input.companionId ?? '', input.memoryId, input.memoryType ?? '', input.memoryStatus ?? 'active') as { lastInsertRowid?: number | bigint };
+          storedRowId = Number(inserted.lastInsertRowid);
+          if (!storedRowId) throw new Error('VECTOR_ROW_INSERT_FAILED');
+        }
+        const confirmed = this.db.prepare('SELECT rowid FROM memory_vec_index WHERE rowid = ?').get(storedRowId) as { rowid?: unknown } | undefined;
+        if (!confirmed?.rowid) throw new Error('VECTOR_ROW_CONFIRMATION_FAILED');
+        this.db.prepare(`INSERT INTO memory_embeddings (memory_id, vector_row_id, embedding_model, embedding_version, dimensions, content_hash, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'ready', datetime('now'), datetime('now'))
+          ON CONFLICT(memory_id) DO UPDATE SET vector_row_id = excluded.vector_row_id, embedding_model = excluded.embedding_model, embedding_version = excluded.embedding_version, dimensions = excluded.dimensions, content_hash = excluded.content_hash, status = 'ready', updated_at = excluded.updated_at`)
+          .run(input.memoryId, storedRowId, input.modelId, input.modelVersion, this.dimensions, input.contentHash ?? '');
+        this.db.exec('COMMIT');
+      } catch (error) {
+        try { this.db.exec('ROLLBACK'); } catch { /* transaction was not opened */ }
+        throw error;
+      }
+    });
   }
 
-  async remove(memoryId: string): Promise<void> { await this.initialize(); this.removeInternal(memoryId, false); }
+  async remove(memoryId: string): Promise<void> { await this.initialize(); return this.serializeMutation(() => this.removeInternal(memoryId, false)); }
   removeForDeletion(memoryId: string): void { if (this.available) this.removeInternal(memoryId, true); }
   private removeInternal(memoryId: string, deleting: boolean): void {
     const row = this.db.prepare('SELECT vector_row_id FROM memory_embeddings WHERE memory_id = ?').get(memoryId) as { vector_row_id?: number | null } | undefined;
@@ -110,25 +136,49 @@ export class SqliteVecIndex implements VectorIndex {
   async search(input: { queryEmbedding: Float32Array; filter: VectorSearchFilter; limit: number }): Promise<VectorSearchResult[]> {
     await this.initialize();
     if (!this.available || input.queryEmbedding.length !== this.dimensions) return [];
-    const typeFilter = input.filter.memoryTypes?.length ? ` AND nearest.memory_type IN (${input.filter.memoryTypes.map(() => '?').join(',')})` : '';
-    const statusFilter = input.filter.statuses?.length ? ` AND nearest.memory_status IN (${input.filter.statuses.map(() => '?').join(',')})` : '';
+    const types = input.filter.memoryTypes ?? [];
+    const statuses = input.filter.statuses?.length ? input.filter.statuses : ['active'];
+    const typeFilter = types.length ? ` AND nearest.memory_type IN (${types.map(() => '?').join(',')})` : '';
+    const statusFilter = ` AND nearest.memory_status IN (${statuses.map(() => '?').join(',')})`;
     const rows = this.db.prepare(`SELECT embeddings.memory_id, nearest.distance
       FROM memory_vec_index nearest JOIN memory_embeddings embeddings ON embeddings.vector_row_id = nearest.rowid
       JOIN memory_nodes memories ON memories.id = embeddings.memory_id
       WHERE nearest.embedding MATCH ? AND k = ? AND nearest.user_id = ? AND nearest.companion_id = ?${typeFilter}${statusFilter}
         AND embeddings.status = 'ready' AND memories.user_id = ? AND memories.companion_id = ?
-        AND COALESCE(memories.memory_status, 'active') = 'active' AND memories.is_marked_wrong = 0`)
+        AND COALESCE(memories.memory_status, 'active') = nearest.memory_status AND memories.is_marked_wrong = 0`)
       .all(asVectorBlob(input.queryEmbedding), Math.max(1, input.limit), input.filter.userId, input.filter.companionId,
-        ...(input.filter.memoryTypes ?? []), ...(input.filter.statuses ?? []), input.filter.userId, input.filter.companionId) as Array<{ memory_id: unknown; distance: unknown }>;
+        ...types, ...statuses, input.filter.userId, input.filter.companionId) as Array<{ memory_id: unknown; distance: unknown }>;
     return rows.map((row) => ({ memoryId: String(row.memory_id), distance: Number(row.distance), semanticScore: cosineDistanceToSimilarity(Number(row.distance)) }));
   }
 
-  async rebuild(): Promise<void> { await this.initialize(); if (!this.available) return; this.db.exec('DELETE FROM memory_vec_index'); this.db.exec("UPDATE memory_embeddings SET status = 'stale', vector_row_id = NULL, updated_at = datetime('now')"); }
+  async rebuild(): Promise<void> { await this.initialize(); if (!this.available) return; return this.serializeMutation(() => { this.db.exec('BEGIN IMMEDIATE'); try { this.db.exec('DELETE FROM memory_vec_index'); this.db.exec("UPDATE memory_embeddings SET status = 'stale', vector_row_id = NULL, updated_at = datetime('now')"); this.db.exec('COMMIT'); } catch (error) { try { this.db.exec('ROLLBACK'); } catch {} throw error; } }); }
   async healthCheck(): Promise<VectorIndexHealth> {
     await this.initialize();
     const mappings = this.db.prepare("SELECT COUNT(*) AS count FROM memory_embeddings WHERE status = 'ready' AND vector_row_id IS NOT NULL").get() as { count?: unknown } | undefined;
-    const actual: { count?: unknown } = this.available ? (this.db.prepare(`SELECT COUNT(*) AS count FROM memory_embeddings e JOIN memory_vec_index v ON v.rowid = e.vector_row_id WHERE e.status = 'ready'`).get() as { count?: unknown } | undefined) ?? {} : { count: 0 };
+    const actual: { count?: unknown } = this.available ? (this.db.prepare('SELECT COUNT(*) AS count FROM memory_vec_index').get() as { count?: unknown } | undefined) ?? {} : { count: 0 };
+    const missing = this.available ? (this.db.prepare(`SELECT COUNT(*) AS count FROM memory_embeddings e LEFT JOIN memory_vec_index v ON v.rowid = e.vector_row_id WHERE e.status = 'ready' AND (e.vector_row_id IS NULL OR v.rowid IS NULL)`).get() as { count?: unknown } | undefined) : { count: 0 };
+    const vectorOnly = this.available ? (this.db.prepare(`SELECT COUNT(*) AS count FROM memory_vec_index v LEFT JOIN memory_embeddings e ON e.vector_row_id = v.rowid WHERE e.memory_id IS NULL`).get() as { count?: unknown } | undefined) : { count: 0 };
     const stale = this.db.prepare("SELECT COUNT(*) AS count FROM memory_embeddings WHERE status <> 'ready' OR vector_row_id IS NULL").get() as { count?: unknown } | undefined;
-    return { available: this.available, extensionVersion: this.extensionVersion, dimensions: this.dimensions, distanceMetric: 'cosine', indexedCount: Number(actual.count ?? 0), readyMappingCount: Number(mappings?.count ?? 0), staleMappingCount: Number(stale?.count ?? 0), orphanCount: Math.max(0, Number(mappings?.count ?? 0) - Number(actual.count ?? 0)), reason: this.failure };
+    const deleted = this.db.prepare("SELECT COUNT(*) AS count FROM memory_embeddings WHERE status = 'deleted'").get() as { count?: unknown } | undefined;
+    return { available: this.available, extensionVersion: this.extensionVersion, dimensions: this.dimensions, distanceMetric: 'cosine', indexedCount: Number(actual.count ?? 0), actualVectorCount: Number(actual.count ?? 0), readyMappingCount: Number(mappings?.count ?? 0), staleMappingCount: Number(stale?.count ?? 0), deletedMappingCount: Number(deleted?.count ?? 0), mappingWithoutVectorCount: Number(missing?.count ?? 0), vectorWithoutMappingCount: Number(vectorOnly?.count ?? 0), orphanCount: Number(missing?.count ?? 0) + Number(vectorOnly?.count ?? 0), schemaVersion: SqliteVecIndex.schemaVersion, filterableMetadataFields: ['user_id', 'companion_id', 'memory_type', 'memory_status'], reason: this.failure };
+  }
+
+  async repairDerivedState(): Promise<void> {
+    await this.initialize();
+    if (!this.available) return;
+    await this.serializeMutation(() => {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        this.db.exec('DELETE FROM memory_vec_index WHERE rowid IN (SELECT v.rowid FROM memory_vec_index v LEFT JOIN memory_embeddings e ON e.vector_row_id = v.rowid WHERE e.memory_id IS NULL)');
+        this.db.exec("UPDATE memory_embeddings SET status = 'stale', vector_row_id = NULL, updated_at = datetime('now') WHERE status = 'ready' AND vector_row_id NOT IN (SELECT rowid FROM memory_vec_index)");
+        this.db.exec('COMMIT');
+      } catch (error) { try { this.db.exec('ROLLBACK'); } catch {} throw error; }
+    });
+  }
+
+  private serializeMutation<T>(work: () => T): Promise<T> {
+    const next = this.mutationTail.then(work, work);
+    this.mutationTail = next.then(() => undefined, () => undefined);
+    return next;
   }
 }

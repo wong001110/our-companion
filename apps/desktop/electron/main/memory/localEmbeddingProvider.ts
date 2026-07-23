@@ -10,6 +10,13 @@ export interface EmbeddingProvider {
 
 export type EmbeddingModelState = 'not-installed' | 'installing' | 'loading' | 'ready' | 'error';
 type FeatureExtractor = (text: string | string[], options?: Record<string, unknown>) => Promise<unknown>;
+export const EMBEDDING_TEXT_POLICY = {
+  maxTokens: 512,
+  queryPrefix: 'query: ',
+  documentPrefix: 'passage: ',
+  pooling: 'mean' as const,
+  normalize: true,
+};
 
 /**
  * Local-only ONNX/WASM embedding runtime. It intentionally disables remote
@@ -18,7 +25,9 @@ type FeatureExtractor = (text: string | string[], options?: Record<string, unkno
  */
 export class LocalMultilingualEmbeddingProvider implements EmbeddingProvider {
   readonly modelId = 'Xenova/multilingual-e5-small';
-  readonly version = 1;
+  // Text policy is part of the pipeline interpretation; bumping this triggers
+  // a safe re-index by the database's model/version comparison.
+  readonly version = 2;
   readonly dimensions = 384;
   private extractor: FeatureExtractor | undefined;
   private state: EmbeddingModelState = 'not-installed';
@@ -27,8 +36,8 @@ export class LocalMultilingualEmbeddingProvider implements EmbeddingProvider {
 
   constructor(private readonly cacheDir: string) {}
 
-  getStatus(): { state: EmbeddingModelState; modelId: string; dimensions: number; error?: string } {
-    return { state: this.state, modelId: this.modelId, dimensions: this.dimensions, error: this.error };
+  getStatus(): { state: EmbeddingModelState; modelId: string; dimensions: number; textPolicy: typeof EMBEDDING_TEXT_POLICY; offlineReady: boolean; error?: string } {
+    return { state: this.state, modelId: this.modelId, dimensions: this.dimensions, textPolicy: EMBEDDING_TEXT_POLICY, offlineReady: this.state === 'ready', error: this.error };
   }
 
   async initialize(): Promise<void> {
@@ -72,11 +81,11 @@ export class LocalMultilingualEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embedQuery(text: string): Promise<Float32Array> {
-    return (await this.embed(['query: ' + this.limit(text)]))[0];
+    return (await this.embed([EMBEDDING_TEXT_POLICY.queryPrefix + this.limit(text)]))[0];
   }
 
   async embedDocuments(texts: string[]): Promise<Float32Array[]> {
-    return this.embed(texts.map((text) => `passage: ${this.limit(text)}`));
+    return this.embed(texts.map((text) => EMBEDDING_TEXT_POLICY.documentPrefix + this.limit(text)));
   }
 
   async dispose(): Promise<void> {
@@ -86,7 +95,7 @@ export class LocalMultilingualEmbeddingProvider implements EmbeddingProvider {
 
   private async embed(texts: string[]): Promise<Float32Array[]> {
     await this.initialize();
-    const result = await this.extractor!(texts, { pooling: 'mean', normalize: true }) as { data?: Float32Array | number[]; dims?: number[] };
+    const result = await this.extractor!(texts, { pooling: EMBEDDING_TEXT_POLICY.pooling, normalize: EMBEDDING_TEXT_POLICY.normalize, truncation: true, max_length: EMBEDDING_TEXT_POLICY.maxTokens }) as { data?: Float32Array | number[]; dims?: number[] };
     const data = result.data instanceof Float32Array ? result.data : new Float32Array(result.data ?? []);
     const width = result.dims?.at(-1) ?? this.dimensions;
     if (width !== this.dimensions || data.length % width !== 0) throw new Error('LOCAL_EMBEDDING_DIMENSION_MISMATCH');
@@ -94,6 +103,8 @@ export class LocalMultilingualEmbeddingProvider implements EmbeddingProvider {
   }
 
   private limit(value: string): string {
-    return value.trim().slice(0, 2_000);
+    // The model pipeline owns tokenization. Preserve the prefix above and use
+    // its max_length/truncation options instead of a character-count cutoff.
+    return value.trim();
   }
 }

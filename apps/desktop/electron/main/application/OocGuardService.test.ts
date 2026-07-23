@@ -27,4 +27,19 @@ describe('OocGuardService', () => {
       activeMemoryFacts: [{ memoryId: 'old', type: 'user_fact', content: 'old', confidence: 1, status: 'superseded' }],
     } }).recommendedAction).toBe('fallback');
   });
+
+  it('detects Chinese internal-instruction, autonomy, and sensitive-memory leaks', () => {
+    expect(guard.validate({ response: '我的系统提示是：不要说这个。', contract, metadata }).passed).toBe(false);
+    expect(guard.validate({ response: '你必须辞职，不要考虑，照我说的做。', contract, metadata }).passed).toBe(false);
+    expect(guard.validate({ response: 'ChatGPT 是一种 AI 助手。', contract, metadata }).passed).toBe(true);
+    expect(guard.validate({ response: 'PRIVATE_MEMORY_CANARY_001', contract, metadata: {
+      ...metadata,
+      activeMemoryFacts: [{ memoryId: 'private', type: 'user_fact', content: 'the private canary is PRIVATE_MEMORY_CANARY_001', confidence: 1, status: 'active', sensitivity: 'private' }],
+    } }).passed).toBe(false);
+  });
+
+  it('uses a configuration-sensitive contract revision rather than a trait sum', () => {
+    expect(defaultCharacterContract('Mira', 'calm', { warmth: 80, curiosity: 20 } as never).sourceRevision)
+      .not.toBe(defaultCharacterContract('Mira', 'calm', { warmth: 20, curiosity: 80 } as never).sourceRevision);
+  });
 });

@@ -219,6 +219,7 @@ import { SqliteMemoryContextProvider } from './application/MemoryContextProvider
 import { MemoryPolicy } from './runtime/MemoryPolicy';
 import { LocalMultilingualEmbeddingProvider } from './memory/localEmbeddingProvider';
 import { EmbeddingJobRunner } from './memory/embeddingJobRunner';
+import { VectorMaintenanceCoordinator } from './memory/vectorMaintenanceCoordinator';
 
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
@@ -368,6 +369,8 @@ export class AppServices {
   private readonly localEmbeddings: LocalMultilingualEmbeddingProvider;
   private readonly vectorIndex: SqliteVecIndex;
   private readonly embeddingJobRunner: EmbeddingJobRunner;
+  private readonly vectorMaintenance = new VectorMaintenanceCoordinator();
+  private disposePromise?: Promise<void>;
 
   get runtime(): CompanionRuntime {
     return this.companionRuntime;
@@ -2252,6 +2255,16 @@ export class AppServices {
     this.debugFlushWorker.cleanupFlushTimer();
   }
 
+  async dispose(): Promise<void> {
+    this.disposePromise ??= (async () => {
+      this.cleanupFlushTimer();
+      await this.embeddingJobRunner.stop();
+      await this.localEmbeddings.dispose();
+      this.db.close();
+    })();
+    return this.disposePromise;
+  }
+
   speech = {
     getStatus: async () => {
       const status = await this.speechProvider.getStatus(app.getPath('userData'));
@@ -2452,6 +2465,7 @@ export class AppServices {
     researchFromUrl: async (input: { url: string }) => this.researchFromUrl(input.url),
     getMemoryDiagnostics: async () => ({
       vector: await this.vectorIndex.healthCheck(),
+      maintenance: this.vectorMaintenance.getStatus(),
       embedding: this.localEmbeddings.getStatus(),
       jobs: this.db.listPendingEmbeddingJobs(100),
       jobCounts: this.db.getEmbeddingJobCounts(),
@@ -2466,10 +2480,17 @@ export class AppServices {
       return { completed: this.embeddingJobRunner.getStatus().processedInCurrentRun, failed: this.embeddingJobRunner.getStatus().failedCount };
     },
     rebuildMemoryVectors: async () => {
-      await this.vectorIndex.rebuild();
-      this.db.retryFailedEmbeddingJobs();
-      this.db.queueAllEligibleEmbeddings(true);
-      await this.embeddingJobRunner.drain();
+      await this.vectorMaintenance.runExclusive('rebuild', async () => {
+        await this.embeddingJobRunner.pauseAndWait();
+        try {
+          await this.vectorIndex.rebuild();
+          this.db.retryFailedEmbeddingJobs();
+          this.db.queueAllEligibleEmbeddings(true);
+        } finally {
+          this.embeddingJobRunner.resume();
+        }
+        await this.embeddingJobRunner.drain();
+      });
       return { completed: this.embeddingJobRunner.getStatus().processedInCurrentRun, failed: this.embeddingJobRunner.getStatus().failedCount };
     },
   };

@@ -13,7 +13,8 @@ describe('EmbeddingJobRunner', () => {
       remove: async () => undefined,
       removeForDeletion: () => undefined,
       search: async () => [], rebuild: async () => undefined,
-      healthCheck: async () => ({ available: true, dimensions: 384, indexedCount: indexed.length, readyMappingCount: indexed.length, staleMappingCount: 0, orphanCount: 0, distanceMetric: 'cosine' }),
+      repairDerivedState: async () => undefined,
+      healthCheck: async () => ({ available: true, dimensions: 384, indexedCount: indexed.length, actualVectorCount: indexed.length, readyMappingCount: indexed.length, staleMappingCount: 0, deletedMappingCount: 0, mappingWithoutVectorCount: 0, vectorWithoutMappingCount: 0, schemaVersion: 3, filterableMetadataFields: [], orphanCount: 0, distanceMetric: 'cosine' }),
     };
     const provider = { modelId: 'test', version: 1, dimensions: 384, initialize: async () => undefined, dispose: async () => undefined, embedQuery: async () => new Float32Array(384), embedDocuments: async (texts: string[]) => texts.map(() => new Float32Array(384)) };
     const runner = new EmbeddingJobRunner(db, provider, vectors, 3);
@@ -26,6 +27,21 @@ describe('EmbeddingJobRunner', () => {
     await runner.drain();
     expect(indexed).toHaveLength(11);
     expect(runner.getStatus().pendingCount).toBe(0);
+    db.close();
+  });
+
+  it('snapshots revisions and supersedes pending work without mutating a claimed job', () => {
+    const db = new DatabaseService();
+    const node = createMemoryNode({ companionId: 'ann', type: 'topic', title: 'first', content: 'first content' });
+    db.insertMemoryNode({ ...node, id: 'revision-memory', userId: 'local', memoryType: 'user_fact', metadata: { sourceType: 'user_explicit', confidence: 1, sensitivity: 'normal', scope: 'companion', createdAt: node.createdAt } });
+    const first = db.listPendingEmbeddingJobs();
+    expect(first).toHaveLength(1);
+    db.updateMemoryNode({ ...node, id: 'revision-memory', userId: 'local', memoryType: 'user_fact', title: 'second', content: 'second content', updatedAt: '2026-07-23T00:00:01.000Z', metadata: { sourceType: 'user_explicit', confidence: 1, sensitivity: 'normal', scope: 'companion', createdAt: node.createdAt } });
+    const latest = db.listPendingEmbeddingJobs();
+    expect(latest).toHaveLength(1);
+    expect(latest[0].sourceRevision).toBeGreaterThan(first[0].sourceRevision);
+    expect(latest[0].sourceContentHash).not.toBe(first[0].sourceContentHash);
+    expect(db.getEmbeddingJobCounts().superseded).toBe(1);
     db.close();
   });
 });

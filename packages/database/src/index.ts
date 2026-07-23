@@ -285,6 +285,9 @@ export class DatabaseService {
       ,{ column: 'generation_count', sql: 'ALTER TABLE curiosity_targets ADD COLUMN generation_count INTEGER NOT NULL DEFAULT 1' }
       ,{ column: 'ignore_count', sql: 'ALTER TABLE curiosity_targets ADD COLUMN ignore_count INTEGER NOT NULL DEFAULT 0' }
       ,{ column: 'updated_at', sql: "ALTER TABLE curiosity_targets ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''" }
+      ,{ column: 'source_revision', sql: 'ALTER TABLE embedding_jobs ADD COLUMN source_revision INTEGER NOT NULL DEFAULT 0' }
+      ,{ column: 'source_content_hash', sql: "ALTER TABLE embedding_jobs ADD COLUMN source_content_hash TEXT NOT NULL DEFAULT ''" }
+      ,{ column: 'dimensions', sql: 'ALTER TABLE embedding_jobs ADD COLUMN dimensions INTEGER NOT NULL DEFAULT 384' }
     ];
     for (const migration of migrations) {
       try {
@@ -1442,25 +1445,42 @@ export class DatabaseService {
 
   private enqueueEmbeddingJob(memoryId: string, operation: 'upsert' | 'delete'): void {
     const now = nowIso();
-    const existing = this.db.prepare("SELECT id FROM embedding_jobs WHERE memory_id = ? AND status IN ('pending', 'processing') ORDER BY created_at DESC LIMIT 1")
-      .get(memoryId) as { id?: unknown } | undefined;
+    const state = this.getMemoryProcessingState(memoryId);
+    if (!state) return;
+    // A claimed job represents immutable content.  Never mutate it back to
+    // pending: a newer revision gets its own job and stale completions are
+    // rejected by the worker and vector transaction.
+    const existing = this.db.prepare(
+      "SELECT id FROM embedding_jobs WHERE memory_id = ? AND status = 'pending' AND operation = ? AND source_revision = ? AND source_content_hash = ? LIMIT 1",
+    ).get(memoryId, operation, state.revision, state.contentHash) as { id?: unknown } | undefined;
     if (existing?.id) {
-      this.db.prepare("UPDATE embedding_jobs SET operation = ?, status = 'pending', updated_at = ? WHERE id = ?")
-        .run(operation, now, String(existing.id));
       this.embeddingJobNotifier?.();
       return;
     }
-    this.db.prepare(`INSERT INTO embedding_jobs (id, memory_id, operation, status, attempts, embedding_model, embedding_version, created_at, updated_at)
-      VALUES (?, ?, ?, 'pending', 0, ?, ?, ?, ?)`)
-      .run(createId('embedding_job'), memoryId, operation, 'Xenova/multilingual-e5-small', 1, now, now);
+    this.db.prepare("UPDATE embedding_jobs SET status = 'superseded', updated_at = ? WHERE memory_id = ? AND status = 'pending' AND (source_revision <> ? OR source_content_hash <> ? OR operation <> ?)")
+      .run(now, memoryId, state.revision, state.contentHash, operation);
+    this.db.prepare(`INSERT INTO embedding_jobs (id, memory_id, operation, status, attempts, embedding_model, embedding_version, source_revision, source_content_hash, dimensions, created_at, updated_at)
+      VALUES (?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(createId('embedding_job'), memoryId, operation, 'Xenova/multilingual-e5-small', 2, state.revision, state.contentHash, 384, now, now);
     this.embeddingJobNotifier?.();
   }
 
-  listPendingEmbeddingJobs(limit = 8): Array<{ id: string; memoryId: string; operation: 'upsert' | 'delete'; attempts: number }> {
-    return (this.db.prepare("SELECT id, memory_id, operation, attempts FROM embedding_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?")
+  listPendingEmbeddingJobs(limit = 8): Array<{ id: string; memoryId: string; operation: 'upsert' | 'delete'; attempts: number; sourceRevision: number; sourceContentHash: string; dimensions: number }> {
+    return (this.db.prepare("SELECT id, memory_id, operation, attempts, source_revision, source_content_hash, dimensions FROM embedding_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?")
       .all(Math.max(1, limit)) as Array<Record<string, unknown>>).map((row) => ({
       id: String(row.id), memoryId: String(row.memory_id), operation: row.operation as 'upsert' | 'delete', attempts: Number(row.attempts),
+      sourceRevision: Number(row.source_revision), sourceContentHash: String(row.source_content_hash), dimensions: Number(row.dimensions),
     }));
+  }
+
+  isEmbeddingJobCurrent(memoryId: string, revision: number, contentHash: string): boolean {
+    const state = this.getMemoryProcessingState(memoryId);
+    return Boolean(state && !state.deletedAt && state.revision === revision && state.contentHash === contentHash);
+  }
+
+  supersedeEmbeddingJob(id: string): void {
+    this.db.prepare("UPDATE embedding_jobs SET status = 'superseded', updated_at = ? WHERE id = ? AND status IN ('pending', 'processing')")
+      .run(nowIso(), id);
   }
 
   getEmbeddingJobCounts(): Record<string, number> {
@@ -1545,7 +1565,7 @@ export class DatabaseService {
       || !embedding.vector_row_id
       || String(embedding.content_hash) !== String(state?.contentHash ?? '')
       || String(embedding.embedding_model) !== 'Xenova/multilingual-e5-small'
-      || Number(embedding.embedding_version) !== 1
+      || Number(embedding.embedding_version) !== 2
       || Number(embedding.dimensions) !== 384;
   }
 

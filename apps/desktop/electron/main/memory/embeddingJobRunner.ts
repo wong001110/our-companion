@@ -3,7 +3,7 @@ import type { VectorIndex } from '@our-companion/memory-engine';
 import type { EmbeddingProvider } from './localEmbeddingProvider';
 
 export interface EmbeddingQueueStatus {
-  running: boolean; scheduled: boolean; processedInCurrentRun: number; pendingCount: number; processingCount: number; failedCount: number;
+  running: boolean; scheduled: boolean; drainRequested: boolean; paused: boolean; processedInCurrentRun: number; pendingCount: number; processingCount: number; failedCount: number;
   lastRunAt?: string; lastError?: string;
 }
 
@@ -11,6 +11,8 @@ export interface EmbeddingQueueStatus {
 export class EmbeddingJobRunner {
   private running = false;
   private scheduled = false;
+  private drainRequested = false;
+  private paused = false;
   private stopped = false;
   private processedInCurrentRun = 0;
   private lastRunAt?: string;
@@ -20,14 +22,18 @@ export class EmbeddingJobRunner {
 
   start(): void { this.stopped = false; this.scheduleDrain(); }
   scheduleDrain(): void {
-    if (this.stopped || this.scheduled || this.running) return;
+    if (this.stopped) return;
+    this.drainRequested = true;
+    if (this.paused || this.scheduled || this.running) return;
     this.scheduled = true;
     queueMicrotask(() => { this.scheduled = false; void this.drain(); });
   }
   async stop(): Promise<void> { this.stopped = true; await this.drainPromise; }
+  async pauseAndWait(): Promise<void> { this.paused = true; await this.drainPromise; }
+  resume(): void { this.paused = false; this.scheduleDrain(); }
   getStatus(): EmbeddingQueueStatus {
     const counts = this.db.getEmbeddingJobCounts();
-    return { running: this.running, scheduled: this.scheduled, processedInCurrentRun: this.processedInCurrentRun, pendingCount: counts.pending ?? 0, processingCount: counts.processing ?? 0, failedCount: counts.failed ?? 0, lastRunAt: this.lastRunAt, lastError: this.lastError };
+    return { running: this.running, scheduled: this.scheduled, drainRequested: this.drainRequested, paused: this.paused, processedInCurrentRun: this.processedInCurrentRun, pendingCount: counts.pending ?? 0, processingCount: counts.processing ?? 0, failedCount: counts.failed ?? 0, lastRunAt: this.lastRunAt, lastError: this.lastError };
   }
   async drain(): Promise<void> {
     if (this.running) return this.drainPromise;
@@ -37,13 +43,18 @@ export class EmbeddingJobRunner {
   private async drainInternal(): Promise<void> {
     this.running = true; this.processedInCurrentRun = 0; this.lastError = undefined;
     try {
-      while (!this.stopped) {
+      while (!this.stopped && !this.paused) {
         const jobs = this.db.listPendingEmbeddingJobs(this.batchSize);
-        if (!jobs.length) break;
+        if (!jobs.length) { this.drainRequested = false; break; }
+        this.drainRequested = false;
         for (const job of jobs) {
-          if (this.stopped) break;
+          if (this.stopped || this.paused) break;
           if (!this.db.claimEmbeddingJob(job.id)) continue;
           try {
+            if (!this.db.isEmbeddingJobCurrent(job.memoryId, job.sourceRevision, job.sourceContentHash)) {
+              this.db.supersedeEmbeddingJob(job.id);
+              continue;
+            }
             if (job.operation === 'delete') {
               await this.vectors.remove(job.memoryId);
             } else {
@@ -51,7 +62,14 @@ export class EmbeddingJobRunner {
               if (!memory || memory.status !== 'active' || memory.isMarkedWrong) await this.vectors.remove(job.memoryId);
               else {
                 const [embedding] = await this.embeddings.embedDocuments([[memory.title, memory.summary, memory.content].filter(Boolean).join('\n')]);
-                await this.vectors.upsert({ memoryId: memory.id, embedding, modelId: this.embeddings.modelId, modelVersion: this.embeddings.version, contentHash: this.db.getMemoryProcessingState(memory.id)?.contentHash, userId: memory.userId, companionId: memory.companionId, memoryType: memory.memoryType, memoryStatus: memory.status });
+                // Inference is asynchronous.  Recheck the immutable source
+                // snapshot before committing; vector upsert repeats this check
+                // inside its SQLite transaction to close the delete/update race.
+                if (!this.db.isEmbeddingJobCurrent(job.memoryId, job.sourceRevision, job.sourceContentHash)) {
+                  this.db.supersedeEmbeddingJob(job.id);
+                  continue;
+                }
+                await this.vectors.upsert({ memoryId: memory.id, embedding, modelId: this.embeddings.modelId, modelVersion: this.embeddings.version, contentHash: job.sourceContentHash, sourceRevision: job.sourceRevision, userId: memory.userId, companionId: memory.companionId, memoryType: memory.memoryType, memoryStatus: memory.status });
               }
             }
             this.db.finishEmbeddingJob(job.id); this.processedInCurrentRun += 1;
@@ -65,6 +83,11 @@ export class EmbeddingJobRunner {
         }
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
-    } finally { this.running = false; this.lastRunAt = new Date().toISOString(); }
+    } finally {
+      this.running = false; this.lastRunAt = new Date().toISOString();
+      // A request arriving after the last empty poll is remembered rather than
+      // discarded while this cycle was still marked running.
+      if (!this.stopped && !this.paused && this.drainRequested) this.scheduleDrain();
+    }
   }
 }
