@@ -1,0 +1,52 @@
+name: Phase 0 PR finalizer
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  apply:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/phase0-finalize'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply deterministic final patch
+        shell: bash
+        run: |
+          if [ ! -f scripts/phase0-finalize.mjs ]; then
+            echo "Finalizer already applied."
+            exit 0
+          fi
+          node scripts/phase0-finalize.mjs
+          rm -f \
+            .github/workflows/phase0-finalize-direct.yml \
+            .github/workflows/phase0-finalize.yml \
+            .github/workflows/phase0-apply-only.yml \
+            .github/workflows/phase0-pr-finalizer.yml \
+            scripts/phase0-finalize.mjs \
+            .phase0-finalizer-trigger
+      - name: Commit patch to PR branch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "fix: close phase 0 lifecycle admission"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
