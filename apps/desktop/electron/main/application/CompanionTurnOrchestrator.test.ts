@@ -116,6 +116,21 @@ describe('CompanionTurnOrchestrator', () => {
     harness.db.close();
   });
 
+  it('redacts sensitive values from retained turn inspection without changing the runtime turn', async () => {
+    const phone = '+60 12-345 6789';
+    const userMessage = `Remember my phone number is ${phone}.`;
+    const harness = createHarness(() => proposal({
+      memoryCandidates: [{ type: 'user_fact', summary: `Phone ${phone}`, evidence: userMessage, confidence: 1 }],
+    }));
+    const result = await harness.orchestrator.handle({ message: userMessage, source: 'panel_text', characterId: harness.companion.id });
+    expect(result.message).toBe('Understood.');
+    const inspection = harness.orchestrator.getInspections()[0]!;
+    expect(JSON.stringify(inspection)).not.toContain(phone);
+    expect(inspection.memoryOutcomes[0]).toMatchObject({ outcome: 'discarded', summary: '[sensitive memory candidate]' });
+    expect(harness.db.listCompanionMessages({ characterId: harness.companion.id })[0]?.content).toBe(userMessage);
+    harness.db.close();
+  });
+
   it('does not execute actions from a proposal that fails grounding twice', async () => {
     const harness = createHarness(() => proposal({ intent: 'action', replySegments: [{ segmentId: 'bad', provenance: 'memory', supportingMemoryId: 'invented' }], actions: [{ toolName: 'open_url', args: { url: 'https://example.com' }, reason: 'memory said so' }] }));
     const result = await harness.orchestrator.handle({ message: 'open it', source: 'panel_text', characterId: harness.companion.id });

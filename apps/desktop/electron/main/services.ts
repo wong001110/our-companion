@@ -220,6 +220,7 @@ import { SqliteMemoryContextProvider } from './application/MemoryContextProvider
 import { MemoryPolicy } from './runtime/MemoryPolicy';
 import { LocalMultilingualEmbeddingProvider } from './memory/localEmbeddingProvider';
 import { EmbeddingJobRunner } from './memory/embeddingJobRunner';
+import { OperationTracker, type ApplicationLifecycleState, type OperationKind } from './application/OperationTracker';
 import { VectorMaintenanceCoordinator } from './memory/vectorMaintenanceCoordinator';
 
 const DEBUG_LOG_MAX = 100;
@@ -324,8 +325,8 @@ export const VALID_COMMAND_TRANSITIONS: Record<CommandRecordStatus, CommandAckSt
 };
 
 export class AppServices {
-  private serviceState: 'starting' | 'running' | 'shutting_down' | 'disposed' = 'running';
-  private readonly activeOperations = new Set<Promise<unknown>>();
+  private readonly operationTracker = new OperationTracker('running');
+  private get serviceState(): ApplicationLifecycleState { return this.operationTracker.state; }
   readonly db: DatabaseService;
   readonly databaseMode: 'persistent' | 'memory';
   companionSessionPhase: CompanionSessionPhase = 'inactive';
@@ -2271,14 +2272,15 @@ export class AppServices {
     if (this.serviceState !== 'running') throw new Error('APP_SHUTTING_DOWN');
   }
 
-  private trackOperation<T>(operation: Promise<T>): Promise<T> {
-    this.activeOperations.add(operation);
-    return operation.finally(() => this.activeOperations.delete(operation));
+  private async trackOperation<T>(kind: OperationKind, operation: () => Promise<T>): Promise<T> {
+    const token = this.operationTracker.begin(kind);
+    try { const result = await operation(); token.assertWritable(); return result; }
+    finally { token.finish(); }
   }
 
   async dispose(): Promise<void> {
     this.disposePromise ??= (async () => {
-      this.serviceState = 'shutting_down';
+      this.operationTracker.stopAccepting();
       this.companionRuntime.stopLifeScheduler();
       this.cleanupFlushTimer();
       const timeoutMs = 8_000;
@@ -2287,14 +2289,17 @@ export class AppServices {
         Promise.all([
           this.embeddingJobRunner.stop(),
           this.vectorIndex.stopAndWait(timeoutMs),
-          Promise.allSettled([...this.activeOperations]),
+          this.operationTracker.drain(timeoutMs),
         ]).then(([_, vector]) => vector.settled),
         new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
       ]);
       if (!settled) { this.embeddingJobRunner.preventFurtherWrites(); this.vectorIndex.detach(); }
+      this.operationTracker.abortAll();
+      this.operationTracker.beginShutdown();
+      this.network.dispose(); this.visits.stopAll(); this.visualVisits.stopAll('app_shutdown');
       await this.localEmbeddings.dispose();
       this.db.close();
-      this.serviceState = 'disposed';
+      this.operationTracker.dispose();
     })();
     return this.disposePromise;
   }
@@ -2342,7 +2347,7 @@ export class AppServices {
     turn: async (input: CompanionTurnInput) => {
       this.assertRunning();
       if (this.localCompanionAway) throw new Error('COMPANION_AWAY_VISITING');
-      const result = await this.trackOperation(this.turnOrchestrator.handle(input));
+      const result = await this.trackOperation('companion_turn', () => this.turnOrchestrator.handle(input));
       this.assertRunning();
       if (input.source === 'voice') {
         this.applyCharacterEmotion(input.characterId, 'expertise_topic_match');
@@ -2351,7 +2356,7 @@ export class AppServices {
     },
     resolveTurnPermission: async (input: import('@our-companion/shared').ResolveCompanionTurnPermissionInput) => {
       this.assertRunning();
-      return this.trackOperation(this.turnOrchestrator.resolvePermission(input));
+      return this.trackOperation('permission_resolution', () => this.turnOrchestrator.resolvePermission(input));
     },
     undoRememberedMemory: async (undoToken: string) =>
       this.turnMemoryPolicy.undo(undoToken, this.db.resolveActiveCompanionId()),

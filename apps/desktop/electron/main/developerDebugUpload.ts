@@ -1,4 +1,5 @@
 import type { DeveloperDebugEvent, DeveloperDebugUploadEvent } from '@our-companion/shared';
+import { redactSensitiveText, redactSensitiveValue } from '@our-companion/shared';
 
 const SENSITIVE_KEYS = new Set([
   'authorization', 'apikey', 'api_key', 'token', 'accesstoken',
@@ -50,7 +51,7 @@ export function sanitizeDeveloperDebugText(value: string): string {
   for (const [pattern, replacement] of REDACT_TEXT_PATTERNS) {
     result = result.replace(pattern, replacement);
   }
-  return result;
+  return redactSensitiveText(result).text;
 }
 
 export function sanitizeDeveloperDebugValue(value: unknown): unknown {
@@ -66,7 +67,7 @@ export function sanitizeDeveloperDebugValue(value: unknown): unknown {
       result[key] = sanitizeDeveloperDebugValue(val);
     }
   }
-  return result;
+  return redactSensitiveValue(result);
 }
 
 export function truncate(value: string | undefined, max: number): string | undefined {

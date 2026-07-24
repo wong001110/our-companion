@@ -23,6 +23,8 @@ import {
   createId,
   getActionCapability,
   MAX_RENDERED_REPLY_CHARACTERS,
+  redactSensitiveText,
+  redactSensitiveValue,
   validateActionCapabilityArgs,
 } from '@our-companion/shared';
 import { validateCompanionTurnProposal } from '@our-companion/ai-engine';
@@ -212,7 +214,7 @@ export class CompanionTurnOrchestrator {
       turnId,
       companionId,
       inputSource: input.source,
-      inputSummary: input.message.slice(0, 300),
+      inputSummary: redactSensitiveText(input.message.slice(0, 300)).text,
       memoryItemsSelected: [
         ...memoryContext.pinned.map((item) => ({ memoryId: item.memoryId, category: 'pinned', selectedBecause: item.selectedBecause })),
         ...memoryContext.boundaries.map((item) => ({ memoryId: item.memoryId, category: 'boundary', selectedBecause: item.selectedBecause })),
@@ -232,7 +234,7 @@ export class CompanionTurnOrchestrator {
       memoryCandidates: [],
       memoryOutcomes: [],
       createdAt: this.deps.now().toISOString(),
-      retrievalTrace: memoryContext.retrievalTrace,
+      retrievalTrace: redactSensitiveValue(memoryContext.retrievalTrace) as typeof memoryContext.retrievalTrace,
     };
     this.recordInspection(inspection);
 
@@ -274,7 +276,7 @@ export class CompanionTurnOrchestrator {
         this.assertRunning();
         const structured = validateCompanionTurnProposal(ai.content);
         proposal = structured ?? this.safeProposal(this.fallbackReply(), 'conversation');
-        inspection.aiStructuredResult = structured;
+        inspection.aiStructuredResult = redactSensitiveValue(structured) as CompanionTurnProposal;
         if (!structured) inspection.finalReplySource = 'safe_fallback';
       } catch {
         proposal = this.safeProposal(this.fallbackReply(), 'cannot_complete');
@@ -336,14 +338,14 @@ export class CompanionTurnOrchestrator {
     }
     if (!plan) {
       const actionValidation = actionPlanFromRequests(proposal.actions, privacyContext);
-      inspection.validatedActions = actionValidation.validated;
-      inspection.rejectedActions = actionValidation.rejected;
+      inspection.validatedActions = redactSensitiveValue(actionValidation.validated) as CompanionTurnActionRequest[];
+      inspection.rejectedActions = redactSensitiveValue(actionValidation.rejected) as TurnInspectionRecord['rejectedActions'];
       plan = actionValidation.plan;
     }
     if (inspection.deterministicActionMatch) {
-      inspection.validatedActions = proposal.actions;
+      inspection.validatedActions = redactSensitiveValue(proposal.actions) as CompanionTurnActionRequest[];
     }
-    inspection.memoryCandidates = proposal.memoryCandidates;
+    inspection.memoryCandidates = redactSensitiveValue(proposal.memoryCandidates) as CompanionTurnProposal['memoryCandidates'];
     this.assertRunning();
     let remembered: CompanionTurnResult['remembered'] = [];
     const memoryCapture = proposal.memoryCandidates.length > 0 ? {
@@ -515,7 +517,7 @@ export class CompanionTurnOrchestrator {
       characterId: input.companionId,
       metadata: { turnId: input.turnId, kind: input.kind, actionStatus: input.actionStatus },
     });
-    input.inspection.finalReply = input.message;
+    input.inspection.finalReply = redactSensitiveText(input.message).text;
     input.inspection.completedAt = this.deps.now().toISOString();
     input.inspection.executionResult ??= input.actionStatus;
     input.inspection.finalReplySource ??= input.kind === 'conversation' ? 'ai_conversation' : 'deterministic_action_result';
@@ -576,7 +578,7 @@ export class CompanionTurnOrchestrator {
       memoryId: outcome.memoryId,
       summary: outcome.reason === 'credential_memory_forbidden' || outcome.reason === 'sensitive_memory_candidate'
         ? '[sensitive memory candidate]'
-        : outcome.candidate.summary,
+        : redactSensitiveText(outcome.candidate.summary).text,
       outcome: outcome.outcome,
       reason: outcome.reason,
     }));

@@ -49,6 +49,8 @@ const DESCRIPTOR_PATTERNS: readonly DescriptorPattern[] = [
   ['identifier', /\b[a-f0-9]{24,}\b/gi],
   ['phone', /(?<![\p{L}\p{N}])(?:\+\d{1,3}[ .-]?)?(?:\(?\d{2,4}\)?[ .-]?){2,4}\d{2,4}(?![\p{L}\p{N}])/gu],
   ['address', /\b\d{1,5}\s+[A-Za-z][A-Za-z .'-]{2,}\s(?:Street|St|Road|Rd|Avenue|Ave|Lane|Ln|Drive|Dr|Boulevard|Blvd)\b/gi],
+  ['address', /\b(?:No\.\s*)?\d{1,5},?\s+Jalan\s+[A-Za-z][A-Za-z .'-]{1,}(?:,\s*[A-Za-z][A-Za-z .'-]{1,})?\b/gi],
+  ['address', /\b\d{1,5}\s+Lorong\s+\d{1,3}(?:,\s*Taman\s+[A-Za-z][A-Za-z .'-]{1,})?\b/gi],
   ['private_canary', /\b(?:PRIVATE_|SECRET_|INTERNAL_ONLY_|CONFIDENTIAL_|USER_PRIVATE_|MEMORY_CANARY_)[A-Z0-9_]{3,}\b/g],
 ];
 
@@ -73,6 +75,7 @@ export function detectSensitiveDescriptors(text: string, _options: DetectSensiti
     for (const match of source.matchAll(pattern)) {
       const value = match[0]?.trim();
       if (!value) continue;
+      if (kind === 'phone' && (/^\d{4}-\d{2}-\d{2}$/.test(value) || /^\d{1,2}\.\d{2}\.\d{2}$/.test(value))) continue;
       found.set(`${kind}:${value.toLowerCase()}`, { kind, value, valueHash: stableValueHash(value) });
     }
   }
@@ -81,6 +84,28 @@ export function detectSensitiveDescriptors(text: string, _options: DetectSensiti
 
 export function hasSensitiveDescriptor(text: string, options?: DetectSensitiveDescriptorOptions): boolean {
   return detectSensitiveDescriptors(text, options).length > 0;
+}
+
+/** Redacts values for diagnostics and exportable payloads without mutating runtime data. */
+export function redactSensitiveText(text: string): { text: string; redactions: SensitiveDescriptorKind[] } {
+  const descriptors = detectSensitiveDescriptors(text)
+    .filter((descriptor) => !descriptor.value.includes('[REDACTED'))
+    .sort((left, right) => right.value.length - left.value.length);
+  let redacted = text;
+  const redactions = new Set<SensitiveDescriptorKind>();
+  for (const descriptor of descriptors) {
+    redacted = redacted.split(descriptor.value).join(`[${descriptor.kind.replace(/_/g, ' ')} removed]`);
+    redactions.add(descriptor.kind);
+  }
+  return { text: redacted, redactions: [...redactions] };
+}
+
+/** Recursively creates a redacted diagnostic copy; never use for live action payloads. */
+export function redactSensitiveValue(value: unknown): unknown {
+  if (typeof value === 'string') return redactSensitiveText(value).text;
+  if (Array.isArray(value)) return value.map(redactSensitiveValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, redactSensitiveValue(item)]));
 }
 
 export function isCredentialDescriptor(kind: SensitiveDescriptorKind): boolean {
