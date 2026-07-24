@@ -11,5 +11,8 @@ export function getDefaultUserDataRoot(): string {
   if (process.platform === 'darwin') {
     return path.join(os.homedir(), 'Library', 'Application Support', ELECTRON_APP_NAME);
   }
-  throw new Error(`Unsupported platform: ${process.platform}. Only win32 and darwin are supported.`);
+  if (process.platform === 'linux') {
+    return path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), ELECTRON_APP_NAME);
+  }
+  throw new Error(`Unsupported platform: ${process.platform}.`);
 }

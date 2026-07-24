@@ -5,6 +5,7 @@ import type { IpcMainInvokeEvent } from 'electron';
 import { createId, isPanelTab, nowIso, type CompanionCommand, type DiscoveryAnnouncePayload } from '@our-companion/shared';
 import { loadEnv } from './env';
 import { AppServices } from './services';
+import { IpcOperationGate } from './application/IpcOperationGate';
 import { DiscoveryScheduler } from './discoveryScheduler';
 import { DiscoveryShareOrchestrator } from './discoveryShareOrchestrator';
 import { ElectronIpcBroadcaster } from './adapters/electronIpcBroadcaster';
@@ -42,6 +43,7 @@ let companionWindow: BrowserWindow | undefined;
 let panelWindow: BrowserWindow | undefined;
 let creationWindow: BrowserWindow | undefined;
 let services: AppServices;
+const ipcOperationGate = new IpcOperationGate();
 let onboardingCompletion: OnboardingCompletionCoordinator;
 let discoveryScheduler: DiscoveryScheduler | undefined;
 let discoveryShareOrchestrator: DiscoveryShareOrchestrator | undefined;
@@ -511,7 +513,7 @@ function registerIpc(): void {
   } as const;
 
   for (const [channel, handler] of Object.entries(routes)) {
-    ipcMain.handle(channel, async (_event, input) => {
+    ipcMain.handle(channel, async (_event, input) => ipcOperationGate.run(async () => {
       const uiBetaFixtureResult = resolveUiBetaSmokeRoute(channel, input);
       if (uiBetaFixtureResult.handled) return uiBetaFixtureResult.result;
       const onboardingAllowed = channel.startsWith('companionNew:') || channel === 'ai:getSettings' ||
@@ -524,7 +526,7 @@ function registerIpc(): void {
         scheduleOnboardingCompletion(result as { id: string; isPrimary?: boolean });
       }
       return result;
-    });
+    }));
   }
 
   ipcMain.handle('window:openPanel', (_event, input: unknown) => {
@@ -1148,15 +1150,19 @@ async function gracefulCleanup(): Promise<void> {
   didCleanup = true;
   cleanupPromise = (async () => {
     isQuitting = true;
+    ipcOperationGate.stopAccepting();
     unregisterCompanionHotkey();
     stopDiscoveryAutomation();
+    const ipcDrain = await ipcOperationGate.drain(8_000);
+    if (!ipcDrain.drained) {
+      console.error('[our-companion] IPC operations exceeded the shutdown drain window; SQLite close will be deferred to process exit.', ipcDrain);
+    }
     for (const win of [companionWindow, panelWindow, creationWindow]) {
       if (win && !win.isDestroyed()) {
         win.destroy();
       }
     }
-    try { services?.network.dispose(); } catch { /* ignore */ }
-    try { await services?.dispose(); } catch { /* bounded shutdown must continue */ }
+    try { await services?.dispose({ allowDatabaseClose: ipcDrain.drained }); } catch { /* bounded shutdown must continue */ }
   })();
   return cleanupPromise;
 }
