@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MemoryNode, TypedMemoryType } from '@our-companion/shared';
-import { renderMemoryPromptConstraint, renderUserFacingMemoryText, resolveCanonicalMemoryRepresentation } from './MemoryDisclosurePolicy';
+import { decideMemoryDisclosure, renderMemoryPromptConstraint, renderUserFacingMemoryText, resolveCanonicalMemoryRepresentation } from './MemoryDisclosurePolicy';
 
 function memory(memoryType: TypedMemoryType, canonical = 'I prefer quiet cafes.'): MemoryNode {
   return {
@@ -19,12 +19,19 @@ describe('canonical Memory rendering', () => {
     expect(value).not.toContain('internal-memory-id');
   });
 
-  it('keeps boundary targets in the prompt constraint but out of normal displayed text', () => {
+  it('localizes canonical framing but preserves original user-authored evidence', () => {
+    const fact = memory('user_fact', 'I prefer quiet cafes.');
+    expect(renderUserFacingMemoryText(fact, undefined, 'zh-CN')).toBe('你之前说过：“I prefer quiet cafes.”');
+  });
+
+  it('keeps boundary targets in prompt constraints but out of English and Chinese displayed text', () => {
     const boundary = memory('user_boundary');
     boundary.metadata = { ...boundary.metadata!, canonicalSource: 'deterministic_boundary', userBoundary: { action: 'do_not_mention', target: 'medical history' } };
     expect(renderMemoryPromptConstraint(boundary)).toContain('medical history');
     expect(renderUserFacingMemoryText(boundary)).toBe('I’ll respect that boundary.');
-    expect(renderUserFacingMemoryText(boundary)).not.toContain('medical history');
+    expect(renderUserFacingMemoryText(boundary, undefined, 'zh-CN')).toBe('我会尊重这个界限。');
+    expect(renderUserFacingMemoryText(boundary, undefined, 'en')).not.toContain('medical history');
+    expect(renderUserFacingMemoryText(boundary, undefined, 'zh-CN')).not.toContain('medical history');
   });
 
   it('rejects private, sensitive, missing-canonical, and unconfirmed relationship records', () => {
@@ -38,6 +45,21 @@ describe('canonical Memory rendering', () => {
     const relationship = memory('relationship_memory');
     relationship.metadata = { ...relationship.metadata!, canonicalSource: 'exact_user_evidence' };
     expect(renderUserFacingMemoryText(relationship)).toBeUndefined();
+  });
+
+  it.each([
+    'Call +60 12-345 6789',
+    'account number 123456789012',
+    'user@example.com',
+    '123 Example Road',
+    'medical record ID MR-88291',
+  ])('keeps legacy normal sensitive Memory local and non-renderable: %s', (sensitive) => {
+    const legacy = memory('user_fact', sensitive);
+    legacy.metadata = { ...legacy.metadata!, userEvidence: sensitive };
+    expect(decideMemoryDisclosure({ memory: legacy, target: 'main_prompt' })).toMatchObject({ allowed: false, reason: 'detected_sensitive_descriptor' });
+    expect(resolveCanonicalMemoryRepresentation(legacy)).toBeUndefined();
+    expect(renderMemoryPromptConstraint(legacy)).toBeUndefined();
+    expect(renderUserFacingMemoryText(legacy)).toBeUndefined();
   });
 
   it('lazily recognizes only legacy content proven within retained evidence', () => {

@@ -71,6 +71,58 @@ describe('MemoryPolicy', () => {
     db.close();
   });
 
+  it.each([
+    'Remember my phone number is +60 12-345 6789.',
+    'Remember my email is user@example.com.',
+    'Remember my bank account number is 123456789012.',
+    'Remember my medical record ID is MR-88291.',
+    'Remember my address is 123 Example Road.',
+    'Remember my API key is sk-abcdefghijklmnopqrstuvwxyz.',
+  ])('rejects sensitive canonical evidence without a Memory row or embedding job: %s', (userMessage) => {
+    const db = new DatabaseService();
+    const policy = new MemoryPolicy(db);
+    const outcomes = policy.captureTurn({
+      userId: 'local', companionId: 'ann', userMessage, assistantReply: 'Understood.',
+      candidates: [{ type: 'user_fact', summary: userMessage, evidence: userMessage, confidence: 1 }],
+    });
+    expect(outcomes[0]).toMatchObject({ outcome: 'discarded', reason: expect.stringMatching(/credential_memory_forbidden|sensitive_memory_candidate/) });
+    expect(db.listMemoryNodes('ann')).toEqual([]);
+    expect(db.listPendingEmbeddingJobs()).toEqual([]);
+    db.close();
+  });
+
+  it('never silently truncates canonical evidence', () => {
+    const db = new DatabaseService();
+    const policy = new MemoryPolicy(db);
+    for (const length of [999, 1_000]) {
+      const evidence = `Remember ${'z'.repeat(length - 9)}`;
+      const outcome = policy.captureTurn({
+        userId: 'local', companionId: `ann-${length}`, userMessage: evidence, assistantReply: 'Understood.',
+        candidates: [{ type: 'user_fact', summary: 'Long but permitted.', evidence, confidence: 1 }],
+      })[0];
+      expect(outcome.outcome).toBe('created');
+      expect(db.getMemoryNode(outcome.memoryId!, `ann-${length}`)?.metadata?.canonicalText).toBe(evidence);
+    }
+    const tooLong = `Remember ${'z'.repeat(992)}`;
+    const outcome = policy.captureTurn({
+      userId: 'local', companionId: 'ann-too-long', userMessage: tooLong, assistantReply: 'Understood.',
+      candidates: [{ type: 'user_fact', summary: 'Too long.', evidence: tooLong, confidence: 1 }],
+    })[0];
+    expect(outcome).toMatchObject({ outcome: 'discarded', reason: 'canonical_evidence_too_long' });
+    expect(db.listMemoryNodes('ann-too-long')).toEqual([]);
+    db.close();
+  });
+
+  it('rejects deterministic extraction over the canonical bound', () => {
+    const db = new DatabaseService();
+    const policy = new MemoryPolicy(db);
+    const userMessage = `Remember ${'z'.repeat(992)}`;
+    expect(policy.captureTurn({ userId: 'local', companionId: 'ann', userMessage, assistantReply: 'Understood.' }))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ outcome: 'discarded', reason: 'canonical_evidence_too_long' })]));
+    expect(db.listMemoryNodes('ann')).toEqual([]);
+    db.close();
+  });
+
   it('do not remember is rejected', () => {
     const db = new DatabaseService();
     const policy = new MemoryPolicy(db);

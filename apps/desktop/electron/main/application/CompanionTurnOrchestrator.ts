@@ -22,11 +22,12 @@ import {
   actionCapabilityPromptSummary,
   createId,
   getActionCapability,
+  MAX_RENDERED_REPLY_CHARACTERS,
   validateActionCapabilityArgs,
 } from '@our-companion/shared';
 import { validateCompanionTurnProposal } from '@our-companion/ai-engine';
 import type { MemoryContextProvider } from './MemoryContextProvider';
-import type { MemoryPolicy, MemoryCaptureOutcome } from '../runtime/MemoryPolicy';
+import type { MemoryPolicy, MemoryCaptureOutcome, MemoryTurnInput } from '../runtime/MemoryPolicy';
 import { defaultCharacterContract, OocGuardService } from './OocGuardService';
 import { createProposalPrivacyContext, sanitizeHistory, validateExternalActionDisclosure, type ProposalPrivacyContext } from './ProposalPrivacy';
 import { CharacterContractBuilder } from './CharacterContractBuilder';
@@ -43,6 +44,7 @@ interface PendingTurn {
   plan: ActionPlan;
   requiredScopes: PermissionScope[];
   remembered: CompanionTurnResult['remembered'];
+  memoryCapture?: Omit<MemoryTurnInput, 'assistantReply'>;
 }
 
 export interface CompanionTurnOrchestratorDependencies {
@@ -296,7 +298,7 @@ export class CompanionTurnOrchestrator {
     let validationNodes = selectedNodes;
     let validationMetadata = metadata;
     let groundingValidation = await this.validateGrounding(proposal, validationNodes, validationMetadata.selectedMemoryIds, companionId, input.message);
-    let reply = this.renderReply(proposal, validationNodes, input.message);
+    let reply = this.renderReply(proposal, validationNodes, input.message, this.deps.getReplyLanguage());
     groundingValidation = this.validateRenderedReplyLength(groundingValidation, reply);
     const initialGroundingSegments = groundingValidation.segments;
     let oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata: validationMetadata, currentUserMessage: input.message, renderedReply: reply });
@@ -317,7 +319,7 @@ export class CompanionTurnOrchestrator {
       if (repaired) {
         proposal = repaired;
         groundingValidation = await this.validateGrounding(proposal, validationNodes, validationMetadata.selectedMemoryIds, companionId, input.message);
-        reply = this.renderReply(proposal, validationNodes, input.message);
+        reply = this.renderReply(proposal, validationNodes, input.message, this.deps.getReplyLanguage());
         groundingValidation = this.validateRenderedReplyLength(groundingValidation, reply);
         oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata: validationMetadata, currentUserMessage: input.message, renderedReply: reply });
         oocAction = oocValidation.passed && groundingValidation.passed ? 'repair' : 'fallback';
@@ -344,6 +346,14 @@ export class CompanionTurnOrchestrator {
     inspection.memoryCandidates = proposal.memoryCandidates;
     this.assertRunning();
     let remembered: CompanionTurnResult['remembered'] = [];
+    const memoryCapture = proposal.memoryCandidates.length > 0 ? {
+      userId: 'local',
+      companionId,
+      userMessage: input.message,
+      sessionId,
+      candidates: proposal.memoryCandidates,
+      includeDeterministicCandidates: false,
+    } satisfies Omit<MemoryTurnInput, 'assistantReply'> : undefined;
 
     if (proposal.actions.length > 0 && !plan) {
       const status: CompanionTurnActionStatus = inspection.rejectedActions.some((action) => action.reason === 'UNSUPPORTED_TOOL')
@@ -400,7 +410,7 @@ export class CompanionTurnOrchestrator {
     }
     if (Array.isArray(permission)) {
       inspection.permissionState = 'awaiting_permission';
-      this.pending.set(turnId, { turnId, companionId, source, plan, requiredScopes: permission, remembered });
+      this.pending.set(turnId, { turnId, companionId, source, plan, requiredScopes: permission, remembered, memoryCapture });
       return {
         turnId,
         message: this.awaitingPermissionReply(plan),
@@ -419,6 +429,7 @@ export class CompanionTurnOrchestrator {
       requiredScopes: [],
       inspection,
       remembered,
+      memoryCapture,
       permissions: this.deps.getPermissions(),
     });
   }
@@ -462,6 +473,12 @@ export class CompanionTurnOrchestrator {
     const actionResult = await this.deps.executePlan(input.plan, input.permissions);
     const success = actionResult.status === 'success' || actionResult.status === 'partial';
     const actionStatus: CompanionTurnActionStatus = success ? 'executed' : 'adapter_failed';
+    const message = success ? this.actionSuccessReply(input.plan) : this.actionFailureReply(actionStatus);
+    const captured = success && input.memoryCapture
+      ? this.deps.memoryPolicy.captureTurn({ ...input.memoryCapture, assistantReply: message })
+      : [];
+    this.applyMemoryOutcomes(input.inspection, captured);
+    const remembered = [...(input.remembered ?? []), ...captured.flatMap((outcome) => outcome.mutation ? [outcome.mutation] : [])];
     input.inspection.executionResult = actionStatus;
     input.inspection.finalReplySource = 'deterministic_action_result';
     return this.finish({
@@ -469,12 +486,12 @@ export class CompanionTurnOrchestrator {
       companionId: input.companionId,
       source: input.source,
       inspection: input.inspection,
-      message: success ? this.actionSuccessReply(input.plan) : this.actionFailureReply(actionStatus),
+      message,
       kind: success ? 'action_completed' : 'action_failed',
       actionPlan: input.plan,
       actionResult,
       actionStatus,
-      remembered: input.remembered,
+      remembered,
     });
   }
 
@@ -557,7 +574,9 @@ export class CompanionTurnOrchestrator {
   private applyMemoryOutcomes(inspection: TurnInspectionRecord, outcomes: MemoryCaptureOutcome[]): void {
     inspection.memoryOutcomes = outcomes.map((outcome) => ({
       memoryId: outcome.memoryId,
-      summary: outcome.candidate.summary,
+      summary: outcome.reason === 'credential_memory_forbidden' || outcome.reason === 'sensitive_memory_candidate'
+        ? '[sensitive memory candidate]'
+        : outcome.candidate.summary,
       outcome: outcome.outcome,
       reason: outcome.reason,
     }));
@@ -570,16 +589,16 @@ export class CompanionTurnOrchestrator {
 
   private assertRunning(): void { if (this.deps.isRunning && !this.deps.isRunning()) throw new Error('APP_SHUTTING_DOWN'); }
 
-  private renderReply(proposal: CompanionTurnProposal, selectedNodes: MemoryNode[], currentUserMessage: string): string {
+  private renderReply(proposal: CompanionTurnProposal, selectedNodes: MemoryNode[], currentUserMessage: string, replyLanguage: CompanionReplyLanguage): string {
     const memories = new Map(selectedNodes.map((memory) => [memory.id, memory]));
     return assembleCompanionReply(proposal.replySegments, (segment) => {
       const memory = memories.get(segment.supportingMemoryId);
-      return memory ? renderSafeMemoryText(memory, currentUserMessage) : undefined;
+      return memory ? renderSafeMemoryText(memory, currentUserMessage, replyLanguage) : undefined;
     });
   }
 
   private validateRenderedReplyLength(validation: GroundingValidationResult, reply: string): GroundingValidationResult {
-    if (reply.length <= 4_000) return validation;
+    if (reply.length <= MAX_RENDERED_REPLY_CHARACTERS) return validation;
     return {
       ...validation,
       passed: false,

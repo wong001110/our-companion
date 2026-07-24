@@ -10,17 +10,12 @@ import type {
 import {
   createId,
   createSemanticFingerprint,
+  detectSensitiveDescriptors,
+  isCredentialDescriptor,
+  MAX_CANONICAL_MEMORY_CHARACTERS,
   normalizeSemanticText,
 } from '@our-companion/shared';
 import { deriveUserBoundary } from '../application/MemoryDisclosurePolicy';
-
-const SENSITIVE_PATTERNS = [
-  /\b(sk-[a-zA-Z0-9]{10,})\b/i,
-  /\b(api[_-]?key|apikey|password|passwd|pwd|access[_-]?token|token|credentials?)\s*[:=]\s*\S+/i,
-  /\b(bearer\s+[a-zA-Z0-9._-]+)/i,
-  /\b\d{3}-\d{2}-\d{4}\b/,
-  /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i,
-];
 
 const REJECT_PHRASES = [
   /do not remember/i,
@@ -55,6 +50,7 @@ export interface MemoryTurnInput {
   assistantReply: string;
   sessionId?: string;
   candidates?: CompanionTurnMemoryCandidate[];
+  includeDeterministicCandidates?: boolean;
 }
 
 export interface MemoryCaptureOutcome {
@@ -93,7 +89,7 @@ export class MemoryPolicy {
   captureTurn(input: MemoryTurnInput): MemoryCaptureOutcome[] {
     const proposed = [
       ...(input.candidates ?? []),
-      ...this.extractDeterministicCandidates(input),
+      ...(input.includeDeterministicCandidates === false ? [] : this.extractDeterministicCandidates(input)),
     ];
     const unique = new Map<string, CompanionTurnMemoryCandidate>();
     for (const candidate of proposed) {
@@ -160,6 +156,19 @@ export class MemoryPolicy {
     if (candidate.confidence < 0.7) {
       return { candidate, outcome: 'discarded', reason: 'confidence_below_threshold' };
     }
+    const descriptors = detectSensitiveDescriptors(`${evidence}\n${candidate.summary}`, { source: 'memory_candidate' });
+    if (descriptors.length > 0) {
+      return {
+        candidate,
+        outcome: 'discarded',
+        reason: descriptors.some((descriptor) => isCredentialDescriptor(descriptor.kind))
+          ? 'credential_memory_forbidden'
+          : 'sensitive_memory_candidate',
+      };
+    }
+    if (evidence.length > MAX_CANONICAL_MEMORY_CHARACTERS) {
+      return { candidate, outcome: 'discarded', reason: 'canonical_evidence_too_long' };
+    }
 
     const timestamp = this.timestamp();
     const boundary = candidate.type === 'user_boundary' ? deriveUserBoundary(evidence) : undefined;
@@ -177,7 +186,7 @@ export class MemoryPolicy {
       type: candidate.type === 'goal' ? 'outcome' : 'topic',
       title: canonicalText.slice(0, 80),
       summary: canonicalText.slice(0, 500),
-      content: canonicalText.slice(0, 1_000),
+      content: canonicalText,
       source: 'conversation',
       companionId: input.companionId,
     });
@@ -203,8 +212,8 @@ export class MemoryPolicy {
         sensitivity: candidate.type === 'user_boundary' ? 'personal' : 'normal',
         scope: 'companion',
         createdAt: timestamp,
-        userEvidence: canonicalText.slice(0, 1_000),
-        canonicalText: canonicalText.slice(0, 1_000),
+        userEvidence: canonicalText,
+        canonicalText,
         canonicalSource: candidate.type === 'user_boundary' ? 'deterministic_boundary' : 'exact_user_evidence',
         unverifiedInterpretation: candidate.summary.slice(0, 500),
         assistantInterpretation: input.assistantReply.slice(0, 300),
@@ -327,7 +336,6 @@ export class MemoryPolicy {
 
   private isSafe(text: string): boolean {
     if (!text.trim()) return false;
-    if (SENSITIVE_PATTERNS.some((pattern) => pattern.test(text))) return false;
     if (REJECT_PHRASES.some((pattern) => pattern.test(text))) return false;
     if (TEMPORARY_PATTERNS.some((pattern) => pattern.test(text))) return false;
     if (this.isPureCodeBlock(text)) return false;

@@ -15,6 +15,9 @@ import type {
 } from '@our-companion/shared';
 import {
   getActionCapability,
+  MAX_CANONICAL_MEMORY_CHARACTERS,
+  MAX_RENDERED_REPLY_CHARACTERS,
+  MAX_REPLY_SEGMENT_CHARACTERS,
   validateActionCapabilityArgs,
 } from '@our-companion/shared';
 
@@ -100,8 +103,8 @@ export const actionPlanSchema = z.object({
 export const companionTurnProposalSchema = z.object({
   intent: z.enum(['conversation', 'action', 'conversation_and_action', 'cannot_complete']),
   replySegments: z.array(z.discriminatedUnion('provenance', [
-    z.object({ segmentId: z.string().min(1).max(100), text: z.string().min(1).max(1_000), provenance: z.literal('current_turn') }).strict(),
-    z.object({ segmentId: z.string().min(1).max(100), text: z.string().min(1).max(1_000), provenance: z.literal('general_knowledge') }).strict(),
+    z.object({ segmentId: z.string().min(1).max(100), text: z.string().min(1).max(MAX_REPLY_SEGMENT_CHARACTERS), provenance: z.literal('current_turn') }).strict(),
+    z.object({ segmentId: z.string().min(1).max(100), text: z.string().min(1).max(MAX_REPLY_SEGMENT_CHARACTERS), provenance: z.literal('general_knowledge') }).strict(),
     z.object({
       segmentId: z.string().min(1).max(100),
       provenance: z.literal('memory'),
@@ -113,7 +116,7 @@ export const companionTurnProposalSchema = z.object({
       const references = segments.filter((segment) => segment.provenance === 'memory').map((segment) => segment.supportingMemoryId);
       return new Set(references).size === references.length;
     }, 'A Memory may be referenced at most once per reply.')
-    .refine((segments) => segments.reduce((total, segment) => total + ('text' in segment ? segment.text.length : 0), 0) <= 4_000, 'Assembled reply must not exceed 4,000 characters.'),
+    .refine((segments) => segments.reduce((total, segment) => total + ('text' in segment ? segment.text.length : 0), 0) <= MAX_RENDERED_REPLY_CHARACTERS, 'Assembled reply must not exceed 4,000 characters.'),
   actions: z.array(z.object({
     toolName: z.string().min(1).max(80),
     args: z.record(z.unknown()),
@@ -122,7 +125,7 @@ export const companionTurnProposalSchema = z.object({
   memoryCandidates: z.array(z.object({
     type: z.enum(['user_preference', 'user_fact', 'user_boundary', 'goal']),
     summary: z.string().min(1).max(500),
-    evidence: z.string().min(1).max(1_000),
+    evidence: z.string().min(1).max(MAX_CANONICAL_MEMORY_CHARACTERS),
     confidence: z.number().min(0).max(1),
   }).strict()).max(6),
 }).strict().superRefine((proposal, context) => {

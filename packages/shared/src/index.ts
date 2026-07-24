@@ -3480,3 +3480,4 @@ export interface DiscoveryPoolQuery {
   minPriority?: number;
   limit?: number;
 }
+export * from './sensitive-descriptors';

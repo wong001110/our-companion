@@ -20,7 +20,7 @@ const grounding = new GroundingValidator({
   getStatus: () => ({ state: 'ready', modelId: 'Xenova/multilingual-e5-small' }),
 });
 
-function createHarness(aiReply: (messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => string, validator = grounding) {
+function createHarness(aiReply: (messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => string, validator = grounding, executionStatus: ActionResult['status'] = 'success') {
   const db = new DatabaseService();
   const companion = db.createCompanion({ name: 'Ann', personalityDescription: 'Warm and concise.', personalityAnalysisId: 'test', assetRoot: 'test', personality: { energy: 50, curiosity: 50, sociability: 50, diligence: 50, playfulness: 50, confidence: 50, calmness: 50, shyness: 50 } });
   db.setPrimaryCompanion(companion.id);
@@ -32,7 +32,7 @@ function createHarness(aiReply: (messages: Array<{ role: 'system' | 'user' | 'as
     memoryPolicy: new MemoryPolicy(db, { now: () => Date.parse('2026-07-18T00:00:00.000Z') }), now: () => new Date('2026-07-18T00:00:00.000Z'), getReplyLanguage: () => 'en',
     sendToAi: async ({ messages }) => { aiMessages.push(messages); return { content: aiReply(messages) }; },
     getPermissions: () => permissions, setPermissions: (next) => { permissions = next; db.setActionPermissions(next); return next; },
-    executePlan: async (plan): Promise<ActionResult> => { executions.push(plan); return { id: `result-${executions.length}`, planId: plan.id, status: 'success', outputs: {}, completedAt: '2026-07-18T00:00:00.000Z' }; },
+    executePlan: async (plan): Promise<ActionResult> => { executions.push(plan); return { id: `result-${executions.length}`, planId: plan.id, status: executionStatus, outputs: {}, completedAt: '2026-07-18T00:00:00.000Z' }; },
   });
   return { db, companion, orchestrator, executions, aiMessages, getPermissions: () => permissions };
 }
@@ -62,6 +62,39 @@ describe('CompanionTurnOrchestrator', () => {
     expect(completed).toMatchObject({ kind: 'action_completed', actionStatus: 'executed' });
     expect(harness.executions).toHaveLength(1);
     expect(harness.getPermissions().browser).toBe('ask');
+    harness.db.close();
+  });
+
+  it.each(['allow_once', 'always_allow'] as const)('captures validated Memory only after a successful authorized action (%s)', async (decision) => {
+    const userMessage = 'Remember I prefer dark mode, then open Settings.';
+    const harness = createHarness(() => proposal({
+      intent: 'conversation_and_action',
+      actions: [{ toolName: 'open_app', args: { appName: 'Settings' }, reason: 'Open requested settings.' }],
+      memoryCandidates: [{ type: 'user_preference', summary: 'Prefers dark mode.', evidence: userMessage, confidence: 1 }],
+    }));
+    const pending = await harness.orchestrator.handle({ message: userMessage, source: 'panel_text', characterId: harness.companion.id });
+    expect(pending.kind).toBe('awaiting_permission');
+    expect(harness.db.listMemoryNodes(harness.companion.id)).toEqual([]);
+    const completed = await harness.orchestrator.resolvePermission({ turnId: pending.turnId, decision });
+    expect(completed.kind).toBe('action_completed');
+    expect(completed.remembered).toHaveLength(1);
+    expect(harness.db.listMemoryNodes(harness.companion.id)[0]?.metadata).toMatchObject({ canonicalText: userMessage });
+    harness.db.close();
+  });
+
+  it.each([
+    ['cancel', 'success'],
+    ['allow_once', 'failure'],
+  ] as const)('does not capture action-turn Memory after %s / %s', async (decision, executionStatus) => {
+    const userMessage = 'Remember I prefer dark mode, then open Settings.';
+    const harness = createHarness(() => proposal({
+      intent: 'conversation_and_action',
+      actions: [{ toolName: 'open_app', args: { appName: 'Settings' }, reason: 'Open requested settings.' }],
+      memoryCandidates: [{ type: 'user_preference', summary: 'Prefers dark mode.', evidence: userMessage, confidence: 1 }],
+    }), grounding, executionStatus);
+    const pending = await harness.orchestrator.handle({ message: userMessage, source: 'panel_text', characterId: harness.companion.id });
+    await harness.orchestrator.resolvePermission({ turnId: pending.turnId, decision });
+    expect(harness.db.listMemoryNodes(harness.companion.id)).toEqual([]);
     harness.db.close();
   });
 
@@ -97,12 +130,14 @@ describe('CompanionTurnOrchestrator', () => {
       ? proposal({ replySegments: [
         { segmentId: 'first', provenance: 'memory', supportingMemoryId: 'memory-a' },
         { segmentId: 'second', provenance: 'memory', supportingMemoryId: 'memory-b' },
+        { segmentId: 'third', provenance: 'memory', supportingMemoryId: 'memory-c' },
+        { segmentId: 'fourth', provenance: 'memory', supportingMemoryId: 'memory-d' },
         { segmentId: 'extra', provenance: 'current_turn', text: '!' },
       ] })
       : proposal({ replySegments: [{ segmentId: 'short', text: 'A shorter reply.', provenance: 'current_turn' }] })));
-    for (const id of ['memory-a', 'memory-b']) {
-      const node = createMemoryNode({ companionId: harness.companion.id, type: 'topic', title: id, summary: 'x'.repeat(1_990) });
-      harness.db.insertMemoryNode({ ...node, id, userId: 'local', memoryType: 'user_preference', metadata: { sourceType: 'user_explicit', confidence: 1, sensitivity: 'normal', scope: 'companion', createdAt: node.createdAt, canonicalText: 'x'.repeat(1_990), canonicalSource: 'exact_user_evidence' } });
+    for (const id of ['memory-a', 'memory-b', 'memory-c', 'memory-d']) {
+      const node = createMemoryNode({ companionId: harness.companion.id, type: 'topic', title: id, summary: 'x'.repeat(1_000) });
+      harness.db.insertMemoryNode({ ...node, id, userId: 'local', memoryType: 'user_preference', metadata: { sourceType: 'user_explicit', confidence: 1, sensitivity: 'normal', scope: 'companion', createdAt: node.createdAt, canonicalText: 'x'.repeat(1_000), canonicalSource: 'exact_user_evidence' } });
     }
     const result = await harness.orchestrator.handle({ message: 'What do I prefer?', source: 'panel_text', characterId: harness.companion.id });
     expect(calls).toBe(2);
