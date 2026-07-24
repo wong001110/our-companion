@@ -24,7 +24,7 @@ export interface BrowserSearchExtractedResult {
 }
 
 export class BrowserSearchError extends Error {
-  constructor(readonly code: BrowserSearchErrorCode, message = code) {
+  constructor(readonly code: BrowserSearchErrorCode, message: string = code) {
     super(message);
     this.name = 'BrowserSearchError';
   }

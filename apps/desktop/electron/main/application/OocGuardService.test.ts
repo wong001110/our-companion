@@ -47,11 +47,11 @@ describe('OocGuardService', () => {
       activeMemoryFacts: [{ memoryId: 'private', type: 'user_fact', content: 'contact user-private@example.test at 012-3456789', confidence: 1, status: 'active', sensitivity: 'private' }],
     };
     expect(guard.validateProposal({
-      proposal: { reply: 'Okay.', intent: 'action', groundedClaims: [], actions: [{ toolName: 'search_web', args: { query: 'user-private@example.test' }, reason: 'search' }], memoryCandidates: [] },
+      proposal: { replySegments: [{ segmentId: 'reply', text: 'Okay.', provenance: 'current_turn' }], intent: 'action', actions: [{ toolName: 'search_web', args: { query: 'user-private@example.test' }, reason: 'search' }], memoryCandidates: [] },
       contract, metadata: privateMetadata, currentUserMessage: 'please search',
     }).passed).toBe(false);
     expect(guard.validateProposal({
-      proposal: { reply: 'This is private.', intent: 'conversation', groundedClaims: [], actions: [], memoryCandidates: [] },
+      proposal: { replySegments: [{ segmentId: 'reply', text: 'This is private.', provenance: 'current_turn' }], intent: 'conversation', actions: [], memoryCandidates: [] },
       contract, metadata: privateMetadata, currentUserMessage: 'this is private',
     }).passed).toBe(true);
   });

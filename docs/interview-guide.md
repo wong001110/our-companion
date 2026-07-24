@@ -91,7 +91,7 @@ Do not claim that:
 
 ## 8. Current limitations
 
-- No embedding/vector retrieval yet.
+- Retrieval may combine structured, lexical, recency, pinned, and local Vector signals. SQLite remains authoritative; sqlite-vec is disposable derived state backed by 384-dimensional local multilingual-e5-small embeddings.
 - Canvas 2D is the active renderer and PixiJS is not the active path.
 - Main-process composition and IPC validation could be decomposed further.
 - In-process Socket.IO/presence/cleanup behavior needs shared infrastructure for horizontal scale.

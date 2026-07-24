@@ -1,4 +1,4 @@
-import type { CharacterContract, CompanionPersonality, CompanionTurnProposal, GenerationContextMetadata, OocValidationResult, OocViolation } from '@our-companion/shared';
+import { assembleCompanionReply, type CharacterContract, type CompanionPersonality, type CompanionTurnProposal, type GenerationContextMetadata, type OocValidationResult, type OocViolation } from '@our-companion/shared';
 import { CharacterContractBuilder } from './CharacterContractBuilder';
 
 export function defaultCharacterContract(name: string, personalityDescription: string, personality?: CompanionPersonality): CharacterContract {
@@ -35,7 +35,7 @@ export class OocGuardService {
 
   /** Validate all externalizable proposal fields before actions or Memory persist. */
   validateProposal(input: { proposal: CompanionTurnProposal; contract: CharacterContract; metadata: GenerationContextMetadata; currentUserMessage: string }): OocValidationResult {
-    const reply = this.validate({ response: input.proposal.reply, contract: input.contract, metadata: input.metadata });
+    const reply = this.validate({ response: assembleCompanionReply(input.proposal.replySegments), contract: input.contract, metadata: input.metadata });
     const violations = [...reply.violations];
     const sensitiveFacts = input.metadata.activeMemoryFacts.filter((fact) => fact.sensitivity === 'sensitive' || fact.sensitivity === 'private');
     const actionText = input.proposal.actions.flatMap((action) => [action.toolName, action.reason, ...stringValues(action.args)]).join('\n');

@@ -52,7 +52,7 @@ function targetForTool(toolName: string, payload: unknown): DisclosureAuthorizat
 
 function explicitlyRequestsDisclosure(message: string, value: string, target: DisclosureAuthorization['target']): boolean {
   if (!message.includes(value)) return false;
-  const action = target === 'search_web' ? /\b(search|look up|find)\b|\u641c\u7d22|\u641c\u4e00\u4e0b|\u67e5\u627e|\u5e2e\u6211\u67e5/u : /\b(open|visit|navigate)\b|\u6253\u5f00|\u8bbf\u95ee|\u8fdb\u5165/u;
+  const action = target === 'search_web' ? /\b(search|look up|find)\b|\u641c\u7d22|\u641c\u4e00\u4e0b|\u67e5\u627e|\u5e2e\u6211\u67e5/iu : /\b(open|visit|navigate)\b|\u6253\u5f00|\u8bbf\u95ee|\u8fdb\u5165/iu;
   return action.test(message);
 }
 

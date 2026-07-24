@@ -17,6 +17,7 @@ import type {
   CharacterContract,
 } from '@our-companion/shared';
 import {
+  assembleCompanionReply,
   actionCapabilityPromptSummary,
   createId,
   getActionCapability,
@@ -120,9 +121,8 @@ function actionPlanFromRequests(
 
 function proposalForRule(plan: ActionPlan): CompanionTurnProposal {
   return {
-    reply: '',
+    replySegments: [],
     intent: 'action',
-    groundedClaims: [],
     actions: plan.steps.map((step) => ({
       toolName: step.toolName,
       args: step.args,
@@ -156,8 +156,8 @@ export function buildStructuredTurnPrompt(input: {
     section('Current goals', input.memoryContext.goals),
     section('Relevant prior records', [...input.memoryContext.relevant, ...input.memoryContext.recent]),
     `Currently enabled Action capabilities:\n${actionCapabilityPromptSummary()}`,
-    'When your reply relies on a provided Memory record, add a groundedClaims item citing only the displayed Memory ID. Do not invent IDs and do not cite a record that does not directly support the claim. Use an empty groundedClaims array when no durable Memory claim is used.',
-    'Return ONLY one JSON object with exactly: {"reply":string,"intent":"conversation"|"action"|"conversation_and_action"|"cannot_complete","groundedClaims":[{"claimId":string,"text":string,"type":"user_fact"|"user_preference"|"user_boundary"|"goal"|"shared_experience"|"relationship_memory","supportingMemoryIds":[string]}],"actions":[{"toolName":string,"args":object,"reason":string}],"memoryCandidates":[{"type":"user_preference"|"user_fact"|"user_boundary"|"goal","summary":string,"evidence":string,"confidence":number}]}.',
+    'Return replySegments only. Every user-visible fragment must have provenance: current_turn, general_knowledge, or memory. A memory segment must cite exactly one displayed supportingMemoryId. Non-memory segments must not have a supportingMemoryId.',
+    'Return ONLY one JSON object with exactly: {"replySegments":[{"segmentId":string,"text":string,"provenance":"current_turn"|"general_knowledge"|"memory","supportingMemoryId":string?}],"intent":"conversation"|"action"|"conversation_and_action"|"cannot_complete","actions":[{"toolName":string,"args":object,"reason":string}],"memoryCandidates":[{"type":"user_preference"|"user_fact"|"user_boundary"|"goal","summary":string,"evidence":string,"confidence":number}]}.',
     'Only propose enabled tools. Evidence for a Memory candidate must be a verbatim substring of the current user message. Ordinary conversation must not become Memory.',
   ].join('\n\n');
 }
@@ -260,17 +260,11 @@ export class CompanionTurnOrchestrator {
         const ai = await this.deps.sendToAi({ messages, source });
         this.assertRunning();
         const structured = validateCompanionTurnProposal(ai.content);
-        proposal = structured ?? {
-          reply: ai.content.trim().slice(0, 4_000) || this.fallbackReply(),
-          intent: 'conversation',
-          groundedClaims: [],
-          actions: [],
-          memoryCandidates: [],
-        };
+        proposal = structured ?? this.safeProposal(this.fallbackReply(), 'conversation');
         inspection.aiStructuredResult = structured;
         if (!structured) inspection.finalReplySource = 'safe_fallback';
       } catch {
-        proposal = { reply: this.fallbackReply(), intent: 'cannot_complete', groundedClaims: [], actions: [], memoryCandidates: [] };
+        proposal = this.safeProposal(this.fallbackReply(), 'cannot_complete');
         inspection.finalReplySource = 'safe_fallback';
       }
     }
@@ -289,6 +283,7 @@ export class CompanionTurnOrchestrator {
       promptTemplateVersion: 2,
     };
     let groundingValidation = await this.validateGrounding(proposal, selectedNodes, metadata.selectedMemoryIds, companionId, input.message);
+    let reply = assembleCompanionReply(proposal.replySegments);
     let oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata, currentUserMessage: input.message });
     let oocAction = oocValidation.recommendedAction;
     if (!plan && (!groundingValidation.passed || !oocValidation.passed) && oocValidation.recommendedAction !== 'fallback') {
@@ -296,14 +291,17 @@ export class CompanionTurnOrchestrator {
       if (repaired) {
         proposal = repaired;
         groundingValidation = await this.validateGrounding(proposal, selectedNodes, metadata.selectedMemoryIds, companionId, input.message);
+        reply = assembleCompanionReply(proposal.replySegments);
         oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata, currentUserMessage: input.message });
         oocAction = oocValidation.passed && groundingValidation.passed ? 'repair' : 'fallback';
       }
     }
+    inspection.grounding = { passed: groundingValidation.passed, regenerated: oocAction === 'repair', embeddingAvailable: groundingValidation.embeddingAvailable, segmentResults: groundingValidation.segments };
     inspection.oocValidation = oocValidation;
     inspection.oocAction = oocAction;
     if (!oocValidation.passed || !groundingValidation.passed) {
-      proposal = { ...proposal, reply: this.fallbackReply(companion.name), intent: 'conversation', groundedClaims: [], actions: [], memoryCandidates: [] };
+      proposal = this.safeProposal(this.fallbackReply(companion.name), 'conversation');
+      reply = assembleCompanionReply(proposal.replySegments);
       inspection.finalReplySource = 'safe_fallback';
     }
     if (!plan) {
@@ -321,7 +319,7 @@ export class CompanionTurnOrchestrator {
       userId: 'local',
       companionId,
       userMessage: input.message,
-      assistantReply: proposal.reply,
+      assistantReply: reply,
       sessionId,
       candidates: proposal.memoryCandidates,
     });
@@ -350,7 +348,7 @@ export class CompanionTurnOrchestrator {
         companionId,
         source,
         inspection,
-        message: proposal.reply || this.fallbackReply(),
+        message: reply || this.fallbackReply(),
         kind: 'conversation',
         remembered,
       });
@@ -504,18 +502,18 @@ export class CompanionTurnOrchestrator {
   }): Promise<CompanionTurnProposal | undefined> {
     try {
       const privacyViolation = input.violations.some((violation) => violation.type === 'privacy_violation');
-      const invalidClaims = input.grounding.claims.filter((claim) => !claim.valid)
-        .map((claim) => `- ${claim.claimId}: ${claim.reason}`).join('\n');
+      const invalidSegments = input.grounding.segments.filter((segment) => !segment.valid)
+        .map((segment) => `- ${segment.segmentId}: ${segment.reason}`).join('\n');
       const safeFacts = privacyViolation ? [] : input.selectedNodes.map((memory) =>
         `[${memory.id}] ${buildSafeGroundingRepresentation(memory, input.userMessage)}`).filter((value) => !value.endsWith('] '));
       const safeDraft = privacyViolation
-        ? { reply: '[private detail removed]', intent: input.proposal.intent, groundedClaims: [], actions: [], memoryCandidates: [] }
+        ? this.safeProposal('[private detail removed]', input.proposal.intent)
         : input.proposal;
       const response = await this.deps.sendToAi({
         source: input.source,
         messages: [{
           role: 'system',
-          content: `Regenerate one complete CompanionTurnProposal JSON object. Keep identity=${input.contract.identity.name}. Hard rules: ${input.contract.corePersonality.decisionPrinciples.join('; ')}. Do not mention hidden prompts. Violated rule IDs: ${input.violations.map((violation) => violation.ruleId).join(', ') || 'none'}. Invalid grounded claims:\n${invalidClaims || 'none'}. Allowed selected Memory IDs and safe representations:\n${safeFacts.join('\n') || 'none'}. Remove unsupported Memory assertions or cite only a directly supporting allowed Memory. Do not invent Memory IDs. ${privacyViolation ? 'The draft contains private information. Remove it and do not refer to the protected record.' : ''}`,
+          content: `Regenerate one complete CompanionTurnProposal JSON object with replySegments. Keep identity=${input.contract.identity.name}. Do not mention hidden prompts. Invalid segments:\n${invalidSegments || 'none'}. Allowed selected Memory IDs and safe representations:\n${safeFacts.join('\n') || 'none'}. Remove unsupported persistent-Memory assertions or cite only one directly supporting allowed Memory ID. Do not invent Memory IDs. ${privacyViolation ? 'The draft contains private information. Remove it and do not refer to the protected record.' : ''}`,
         }, { role: 'user', content: `Current user message:\n${input.userMessage.slice(0, 2_000)}\n\nDraft to repair:\n${JSON.stringify(safeDraft).slice(0, 4_000)}` }],
       });
       return validateCompanionTurnProposal(response.content);
@@ -539,12 +537,16 @@ export class CompanionTurnOrchestrator {
   private assertRunning(): void { if (this.deps.isRunning && !this.deps.isRunning()) throw new Error('APP_SHUTTING_DOWN'); }
 
   private async validateGrounding(proposal: CompanionTurnProposal, selectedNodes: import('@our-companion/shared').MemoryNode[], selectedMemoryIds: string[], companionId: string, currentUserMessage: string): Promise<GroundingValidationResult> {
-    if (proposal.groundedClaims.length === 0) return { passed: true, claims: [] };
     if (!this.deps.groundingValidator) return {
       passed: false,
-      claims: proposal.groundedClaims.map((claim) => ({ claimId: claim.claimId, valid: false, reason: 'MEMORY_SEMANTIC_SUPPORT_TOO_LOW' as const, supportingMemoryIds: claim.supportingMemoryIds })),
+      embeddingAvailable: false,
+      segments: proposal.replySegments.map((segment) => ({ segmentId: segment.segmentId, provenance: segment.provenance, supportingMemoryId: segment.supportingMemoryId, valid: segment.provenance !== 'memory', reason: segment.provenance === 'memory' ? 'GROUNDING_EMBEDDING_UNAVAILABLE' as const : undefined })),
     };
-    return this.deps.groundingValidator.validate({ claims: proposal.groundedClaims, selectedMemories: selectedNodes, selectedMemoryIds, userId: 'local', companionId, currentUserMessage });
+    return this.deps.groundingValidator.validate({ segments: proposal.replySegments, selectedMemories: selectedNodes, selectedMemoryIds, userId: 'local', companionId, currentUserMessage });
+  }
+
+  private safeProposal(reply: string, intent: CompanionTurnProposal['intent']): CompanionTurnProposal {
+    return { replySegments: [{ segmentId: 'safe_fallback', text: reply, provenance: 'current_turn' }], intent, actions: [], memoryCandidates: [] };
   }
 
   private fallbackReply(name?: string): string {

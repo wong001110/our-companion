@@ -1662,27 +1662,25 @@ export interface CompanionTurnMemoryCandidate {
   confidence: number;
 }
 
-/** A model-declared use of durable Memory in a Companion reply. */
-export type GroundedClaimType =
-  | 'user_fact'
-  | 'user_preference'
-  | 'user_boundary'
-  | 'goal'
-  | 'shared_experience'
-  | 'relationship_memory';
+export type ReplySegmentProvenance = 'current_turn' | 'general_knowledge' | 'memory';
 
-export interface GroundedClaim {
-  claimId: string;
+/** A user-visible reply fragment with explicit provenance. */
+export interface GroundedReplySegment {
+  segmentId: string;
   text: string;
-  type: GroundedClaimType;
-  /** IDs are restricted to records selected for this turn. */
-  supportingMemoryIds: string[];
+  provenance: ReplySegmentProvenance;
+  /** Required exactly when provenance is `memory`. */
+  supportingMemoryId?: string;
+}
+
+/** The only user-visible reply representation accepted from the model. */
+export function assembleCompanionReply(segments: GroundedReplySegment[]): string {
+  return segments.map((segment) => segment.text).join('');
 }
 
 export interface CompanionTurnProposal {
-  reply: string;
+  replySegments: GroundedReplySegment[];
   intent: CompanionTurnIntent;
-  groundedClaims: GroundedClaim[];
   actions: CompanionTurnActionRequest[];
   memoryCandidates: CompanionTurnMemoryCandidate[];
 }
@@ -1823,6 +1821,19 @@ export interface TurnInspectionRecord {
   retrievalTrace?: MemoryRetrievalTrace;
   oocValidation?: OocValidationResult;
   oocAction?: 'pass' | 'repair' | 'regenerate' | 'fallback';
+  grounding?: {
+    passed: boolean;
+    regenerated: boolean;
+    embeddingAvailable: boolean;
+    segmentResults: Array<{
+      segmentId: string;
+      provenance: ReplySegmentProvenance;
+      supportingMemoryId?: string;
+      valid: boolean;
+      reason?: string;
+      similarity?: number;
+    }>;
+  };
 }
 
 export interface MemoryProcessingState {

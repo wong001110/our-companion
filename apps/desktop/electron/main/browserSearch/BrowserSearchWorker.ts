@@ -113,7 +113,7 @@ export class BrowserSearchWorker {
 
     const workerSession = worker.webContents.session;
 
-    const onBeforeRequest = (details: Electron.OnBeforeRequestListenerDetails, callback: (response: Electron.BeforeRequestResponse) => void) => {
+    const onBeforeRequest = (details: Electron.OnBeforeRequestListenerDetails, callback: (response: { cancel?: boolean }) => void) => {
       if (blockedResourceTypes.has(details.resourceType)) {
         callback({ cancel: true });
         return;
@@ -132,7 +132,7 @@ export class BrowserSearchWorker {
     };
     workerSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, onBeforeRequest);
 
-    const onPermissionRequest = (_webContents: Electron.WebContents, _permission: Electron.Permission, callback: (granted: boolean) => void) => callback(false);
+    const onPermissionRequest = (_webContents: Electron.WebContents, _permission: string, callback: (granted: boolean) => void) => callback(false);
     workerSession.setPermissionRequestHandler(onPermissionRequest);
 
     const onHeadersReceived = (details: Electron.OnHeadersReceivedListenerDetails, callback: (response: Electron.HeadersReceivedResponse) => void) => {

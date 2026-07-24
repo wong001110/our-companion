@@ -287,7 +287,7 @@ describe('BrowserSearchWorker', () => {
       if (code.includes('document.body')) return 'Please complete the CAPTCHA.';
       if (code.includes('"results"') || code.includes('"no_results"') || code.includes('"loading"')) return 'loading';
       return '';
-    });
+    }) as any;
     const challengeAdapter: BrowserSearchEngineAdapter = {
       ...stubAdapter,
       detectResultState: async () => 'loading',

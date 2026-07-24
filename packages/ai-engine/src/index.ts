@@ -98,16 +98,17 @@ export const actionPlanSchema = z.object({
 });
 
 export const companionTurnProposalSchema = z.object({
-  reply: z.string().max(4_000),
   intent: z.enum(['conversation', 'action', 'conversation_and_action', 'cannot_complete']),
-  groundedClaims: z.array(z.object({
-    claimId: z.string().min(1).max(100),
+  replySegments: z.array(z.object({
+    segmentId: z.string().min(1).max(100),
     text: z.string().min(1).max(1_000),
-    type: z.enum(['user_fact', 'user_preference', 'user_boundary', 'goal', 'shared_experience', 'relationship_memory']),
-    supportingMemoryIds: z.array(z.string().min(1).max(200)).min(1).max(6)
-      .refine((ids) => new Set(ids).size === ids.length, 'Grounded claim citations must be unique.'),
-  }).strict()).max(12)
-    .refine((claims) => new Set(claims.map((claim) => claim.claimId)).size === claims.length, 'Grounded claim IDs must be unique.'),
+    provenance: z.enum(['current_turn', 'general_knowledge', 'memory']),
+    supportingMemoryId: z.string().min(1).max(200).refine((id) => !/[\s,;]/.test(id), 'Memory IDs must be a single token.').optional(),
+  }).strict().superRefine((segment, context) => {
+    if (segment.provenance === 'memory' && !segment.supportingMemoryId) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Memory segments require supportingMemoryId.' });
+    if (segment.provenance !== 'memory' && segment.supportingMemoryId !== undefined) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Only memory segments may cite a Memory ID.' });
+  })).min(1).max(24)
+    .refine((segments) => new Set(segments.map((segment) => segment.segmentId)).size === segments.length, 'Reply segment IDs must be unique.'),
   actions: z.array(z.object({
     toolName: z.string().min(1).max(80),
     args: z.record(z.unknown()),

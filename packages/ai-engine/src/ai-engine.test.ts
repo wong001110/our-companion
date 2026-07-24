@@ -65,7 +65,7 @@ describe('ai engine', () => {
 
   it('strictly validates a structured Companion turn and safely extracts wrapper JSON', () => {
     const proposal = validateCompanionTurnProposal(
-      'Result:\n{"reply":"I can help.","intent":"conversation_and_action","groundedClaims":[],"actions":[{"toolName":"search_web","args":{"query":"PixiJS"},"reason":"The user asked."}],"memoryCandidates":[{"type":"goal","summary":"build Our Companion","evidence":"My goal is build Our Companion","confidence":0.9}]}'
+      'Result:\n{"replySegments":[{"segmentId":"answer","text":"I can help.","provenance":"current_turn"}],"intent":"conversation_and_action","actions":[{"toolName":"search_web","args":{"query":"PixiJS"},"reason":"The user asked."}],"memoryCandidates":[{"type":"goal","summary":"build Our Companion","evidence":"My goal is build Our Companion","confidence":0.9}]}'
     );
     expect(proposal?.actions[0].toolName).toBe('search_web');
     expect(proposal?.memoryCandidates[0].type).toBe('goal');
@@ -74,11 +74,20 @@ describe('ai engine', () => {
   it('rejects malformed, over-permissive, or internally inconsistent turn proposals', () => {
     expect(validateCompanionTurnProposal('not json')).toBeUndefined();
     expect(validateCompanionTurnProposal(
-      '{"reply":"x","intent":"conversation","groundedClaims":[],"actions":[{"toolName":"open_url","args":{"url":"example.com"},"reason":"x"}],"memoryCandidates":[]}'
+      '{"replySegments":[{"segmentId":"x","text":"x","provenance":"current_turn"}],"intent":"conversation","actions":[{"toolName":"open_url","args":{"url":"example.com"},"reason":"x"}],"memoryCandidates":[]}'
     )).toBeUndefined();
     expect(validateCompanionTurnProposal(
-      '{"reply":"x","intent":"conversation","groundedClaims":[],"actions":[],"memoryCandidates":[],"internalEvent":"arbitrary"}'
+      '{"replySegments":[{"segmentId":"x","text":"x","provenance":"current_turn"}],"intent":"conversation","actions":[],"memoryCandidates":[],"internalEvent":"arbitrary"}'
     )).toBeUndefined();
+  });
+
+  it('requires strict reply-segment provenance and rejects the legacy reply contract', () => {
+    const base = '{"replySegments":[{"segmentId":"one","text":"Hello","provenance":"current_turn"}],"intent":"conversation","actions":[],"memoryCandidates":[]}';
+    expect(validateCompanionTurnProposal(base)?.replySegments).toHaveLength(1);
+    expect(validateCompanionTurnProposal('{"reply":"Hello","groundedClaims":[],"intent":"conversation","actions":[],"memoryCandidates":[]}')).toBeUndefined();
+    expect(validateCompanionTurnProposal('{"replySegments":[{"segmentId":"one","text":"Memory","provenance":"memory"}],"intent":"conversation","actions":[],"memoryCandidates":[]}')).toBeUndefined();
+    expect(validateCompanionTurnProposal('{"replySegments":[{"segmentId":"one","text":"Hello","provenance":"current_turn","supportingMemoryId":"memory-1"}],"intent":"conversation","actions":[],"memoryCandidates":[]}')).toBeUndefined();
+    expect(validateCompanionTurnProposal('{"replySegments":[{"segmentId":"one","text":"Memory","provenance":"memory","supportingMemoryId":"memory-1"},{"segmentId":"one","text":"Again","provenance":"current_turn"}],"intent":"conversation","actions":[],"memoryCandidates":[]}')).toBeUndefined();
   });
 
   it('validates and normalizes registry-backed action plans from the live snake-case prompt contract', () => {

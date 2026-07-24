@@ -1,4 +1,5 @@
-import { load, type Cheerio, type Element } from 'cheerio';
+import { load, type Cheerio } from 'cheerio';
+import type { Element } from 'domhandler';
 import { createId } from '@our-companion/shared';
 import type { WebSearchResult } from '@our-companion/shared';
 import type { BrowserSearchExtractedResult } from './browserSearchTypes';
