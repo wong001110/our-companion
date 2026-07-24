@@ -1,0 +1,40 @@
+name: Phase 0 finalizer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/phase0-finalize.mjs
+      - .github/workflows/phase0-finalize.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: corepack enable
+      - run: npm ci
+      - name: Apply bounded Phase 0 fixes
+        run: node scripts/phase0-finalize.mjs
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run arch:check
+      - run: npm run build
+      - name: Commit validated fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: close phase 0 lifecycle admission"
+          git push origin HEAD:main
