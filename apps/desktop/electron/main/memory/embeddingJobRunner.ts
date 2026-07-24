@@ -21,7 +21,16 @@ export class EmbeddingJobRunner {
   private lastRunAt?: string;
   private lastError?: string;
   private drainPromise?: Promise<void>;
-  constructor(private readonly db: DatabaseService, private readonly embeddings: EmbeddingProvider, private readonly vectors: VectorIndex, private readonly batchSize = 8, private readonly maxAttempts = 3) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly embeddings: EmbeddingProvider,
+    private readonly vectors: VectorIndex,
+    private readonly batchSize = 8,
+    private readonly maxAttempts = 3,
+    private readonly isRuntimeActive: () => boolean = () => true,
+  ) {}
+
+  private get canWrite(): boolean { return this.writesAllowed && this.isRuntimeActive(); }
 
   start(): void { this.stopped = false; this.writesAllowed = true; this.lifecycle = 'running'; this.scheduleDrain(); }
   scheduleDrain(): void {
@@ -48,15 +57,15 @@ export class EmbeddingJobRunner {
   private async drainInternal(): Promise<void> {
     this.running = true; this.processedInCurrentRun = 0; this.lastError = undefined;
     try {
-      while (this.writesAllowed && !this.stopped && !this.paused) {
+    while (this.canWrite && !this.stopped && !this.paused) {
         const jobs = this.db.listPendingEmbeddingJobs(this.batchSize);
         if (!jobs.length) { this.drainRequested = false; break; }
         this.drainRequested = false;
         for (const job of jobs) {
-          if (!this.writesAllowed || this.stopped || this.paused) break;
+          if (!this.canWrite || this.stopped || this.paused) break;
           if (!this.db.claimEmbeddingJob(job.id)) continue;
           try {
-            if (!this.writesAllowed) return;
+            if (!this.canWrite) return;
             if (!this.db.isEmbeddingJobCurrent(job.memoryId, job.sourceRevision, job.sourceContentHash)) {
               this.db.supersedeEmbeddingJob(job.id);
               continue;
@@ -71,7 +80,7 @@ export class EmbeddingJobRunner {
                 // Inference is asynchronous.  Recheck the immutable source
                 // snapshot before committing; vector upsert repeats this check
                 // inside its SQLite transaction to close the delete/update race.
-                if (!this.writesAllowed) return;
+                if (!this.canWrite) return;
                 if (!this.db.isEmbeddingJobCurrent(job.memoryId, job.sourceRevision, job.sourceContentHash)) {
                   this.db.supersedeEmbeddingJob(job.id);
                   continue;
@@ -79,10 +88,10 @@ export class EmbeddingJobRunner {
                 await this.vectors.upsert({ memoryId: memory.id, embedding, modelId: this.embeddings.modelId, modelVersion: this.embeddings.version, contentHash: job.sourceContentHash, sourceRevision: job.sourceRevision, userId: memory.userId, companionId: memory.companionId, memoryType: memory.memoryType, memoryStatus: memory.status });
               }
             }
-            if (!this.writesAllowed) return;
+            if (!this.canWrite) return;
             this.db.finishEmbeddingJob(job.id); this.processedInCurrentRun += 1;
           } catch (error) {
-            if (!this.writesAllowed) return;
+            if (!this.canWrite) return;
             const message = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
             this.lastError = message;
             if (message.startsWith('MEMORY_REVISION_STALE')) {

@@ -12,14 +12,19 @@ export class VectorMaintenanceCoordinator {
   private maintenanceRequests = 0;
   private activeSearches = 0;
   private searchSettled?: () => void;
+  private accepting = true;
+
+  stopAccepting(): void { this.accepting = false; }
 
   async runExclusive<T>(operation: VectorMaintenanceOperation, task: () => Promise<T>): Promise<T> {
+    if (!this.accepting) throw new Error('APP_SHUTTING_DOWN');
     this.maintenanceRequests += 1;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const previous = this.tail;
     this.tail = previous.then(() => gate, () => gate);
     await previous;
+    if (!this.accepting) { this.maintenanceRequests -= 1; release(); throw new Error('APP_SHUTTING_DOWN'); }
     if (this.activeSearches > 0) await new Promise<void>((resolve) => { this.searchSettled = resolve; });
     this.activeOperation = operation;
     try { return await task(); }
@@ -29,6 +34,7 @@ export class VectorMaintenanceCoordinator {
   waitUntilAvailable(): Promise<void> { return this.tail; }
   isSearchAvailable(): boolean { return this.maintenanceRequests === 0; }
   async tryRunSearch<T>(task: () => Promise<T>): Promise<{ available: true; result: T } | { available: false; reason: 'maintenance' }> {
+    if (!this.accepting) return { available: false, reason: 'maintenance' };
     if (!this.isSearchAvailable()) return { available: false, reason: 'maintenance' };
     this.activeSearches += 1;
     // A maintenance request can arrive on the same event-loop turn; do not

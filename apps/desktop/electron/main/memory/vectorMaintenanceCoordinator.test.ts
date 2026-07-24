@@ -17,4 +17,10 @@ describe('VectorMaintenanceCoordinator', () => {
     expect(maintained).toBe(true);
     expect(await coordinator.tryRunSearch(async () => 'after')).toEqual({ available: true, result: 'after' });
   });
+  it('rejects maintenance and searches after runtime quiescing', async () => {
+    const coordinator = new VectorMaintenanceCoordinator();
+    coordinator.stopAccepting();
+    await expect(coordinator.runExclusive('rebuild', async () => undefined)).rejects.toThrow('APP_SHUTTING_DOWN');
+    await expect(coordinator.tryRunSearch(async () => 'late')).resolves.toEqual({ available: false, reason: 'maintenance' });
+  });
 });

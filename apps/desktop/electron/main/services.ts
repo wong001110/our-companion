@@ -220,7 +220,7 @@ import { SqliteMemoryContextProvider } from './application/MemoryContextProvider
 import { MemoryPolicy } from './runtime/MemoryPolicy';
 import { LocalMultilingualEmbeddingProvider } from './memory/localEmbeddingProvider';
 import { EmbeddingJobRunner } from './memory/embeddingJobRunner';
-import { OperationTracker, type ApplicationLifecycleState, type OperationKind } from './application/OperationTracker';
+import { OperationTracker, type ApplicationLifecycleState, type OperationKind, type OperationToken } from './application/OperationTracker';
 import { VectorMaintenanceCoordinator } from './memory/vectorMaintenanceCoordinator';
 
 const DEBUG_LOG_MAX = 100;
@@ -463,16 +463,17 @@ export class AppServices {
     this.db.recoverEmbeddingJobs();
     this.localEmbeddings = new LocalMultilingualEmbeddingProvider(path.join(userDataDir, 'models'));
     this.vectorIndex = new SqliteVecIndex(this.db.getExtensionDatabase(), this.localEmbeddings.dimensions);
-    this.embeddingJobRunner = new EmbeddingJobRunner(this.db, this.localEmbeddings, this.vectorIndex);
+    this.embeddingJobRunner = new EmbeddingJobRunner(this.db, this.localEmbeddings, this.vectorIndex, 8, 3, () => this.serviceState === 'running');
     this.db.setEmbeddingJobNotifier(() => this.embeddingJobRunner.scheduleDrain());
     this.db.setVectorDeletionHandler((memoryId) => this.vectorIndex.removeForDeletion(memoryId));
-    void this.vectorIndex.initialize().then(() => {
+    void this.trackOperation('vector_initialization', async (token) => this.vectorIndex.initialize().then(async () => {
       // Initialization can settle after shutdown has begun. Never revive the
       // embedding worker or touch SQLite after AppServices has been disposed.
-      if (this.serviceState !== 'running') return;
-      this.db.queueAllEligibleEmbeddings();
-      if (this.serviceState === 'running') this.embeddingJobRunner.start();
-    }).catch(() => undefined);
+      await this.commitOperation(token, () => {
+        this.db.queueAllEligibleEmbeddings();
+        this.embeddingJobRunner.start();
+      });
+    })).catch(() => undefined);
 
     if (this.eventBus instanceof InProcessEventBus) {
       this.eventBus.setErrorReporter((error, event) => {
@@ -565,7 +566,7 @@ export class AppServices {
       wasOnline = status.state === 'online';
       this.networkStatusBroadcaster?.(status);
     });
-    this.debugFlushWorker = new DebugFlushWorker(this.db, this.network, { isPackaged: app.isPackaged });
+    this.debugFlushWorker = new DebugFlushWorker(this.db, this.network, { isPackaged: app.isPackaged, isRuntimeActive: () => this.serviceState === 'running' });
     this.publicCompanions = new PublicCompanionService(this.db, this.network, userDataDir);
     this.visits = new VisitService(this.network, this.publicCompanions);
     visits = this.visits;
@@ -2031,9 +2032,8 @@ export class AppServices {
       }
       return planAction(text, llmDeps);
     },
-    executePlan: async (plan: ActionPlan) => {
-      return this.executeActionPlan(plan, this.db.getActionPermissions());
-    },
+    executePlan: async (plan: ActionPlan) =>
+      this.trackOperation('tool_execution', () => this.executeActionPlan(plan, this.db.getActionPermissions())),
     getPermissions: async (): Promise<ActionPermissionState> => this.db.getActionPermissions(),
     updatePermissions: async (state: ActionPermissionState): Promise<ActionPermissionState> => this.db.setActionPermissions(state),
   };
@@ -2248,7 +2248,8 @@ export class AppServices {
       this.db.setAppSetting('developer.debugUploadEnabled', enabled);
       if (enabled) void this.debugFlushWorker.flushPendingDebugEvents();
     },
-    flushDebugEvents: async (): Promise<{ uploaded: number; failed: number }> => this.debugFlushWorker.flushPendingDebugEvents(),
+    flushDebugEvents: async (): Promise<{ uploaded: number; failed: number }> =>
+      this.trackOperation('debug_flush', () => this.debugFlushWorker.flushPendingDebugEvents()),
     getUploadStatus: async () => {
       const networkStatus = this.network.getStatusSnapshot();
       return {
@@ -2269,20 +2270,26 @@ export class AppServices {
   }
 
   private assertRunning(): void {
-    if (this.serviceState !== 'running') throw new Error('APP_SHUTTING_DOWN');
+    this.operationTracker.assertRunning();
   }
 
-  private async trackOperation<T>(kind: OperationKind, operation: () => Promise<T>): Promise<T> {
-    const token = this.operationTracker.begin(kind);
-    try { const result = await operation(); token.assertWritable(); return result; }
+  private async trackOperation<T>(kind: OperationKind, operation: (token: OperationToken) => Promise<T>): Promise<T> {
+    const token = this.operationTracker.beginOperation(kind);
+    try { const result = await operation(token); token.assertWritable(); return result; }
     finally { token.finish(); }
+  }
+
+  private async commitOperation<T>(token: OperationToken, mutation: () => T | Promise<T>): Promise<T> {
+    return this.operationTracker.commit(token, mutation);
   }
 
   async dispose(): Promise<void> {
     this.disposePromise ??= (async () => {
-      this.operationTracker.stopAccepting();
+      this.operationTracker.beginQuiescing();
       this.companionRuntime.stopLifeScheduler();
       this.cleanupFlushTimer();
+      this.vectorMaintenance.stopAccepting();
+      this.network.stopAccepting();
       const timeoutMs = 8_000;
       this.vectorIndex.beginShutdown();
       const settled = await Promise.race([
@@ -2294,12 +2301,12 @@ export class AppServices {
         new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
       ]);
       if (!settled) { this.embeddingJobRunner.preventFurtherWrites(); this.vectorIndex.detach(); }
-      this.operationTracker.abortAll();
-      this.operationTracker.beginShutdown();
+      this.operationTracker.abortRemaining();
+      this.operationTracker.beginDisposing();
       this.network.dispose(); this.visits.stopAll(); this.visualVisits.stopAll('app_shutdown');
       await this.localEmbeddings.dispose();
       this.db.close();
-      this.operationTracker.dispose();
+      this.operationTracker.markDisposed();
     })();
     return this.disposePromise;
   }
@@ -2317,22 +2324,21 @@ export class AppServices {
     updateSettings: async (input: UpdateSpeechSettingsInput) => this.updateSpeechSettings(input),
     transcribe: async (input: TranscribeAudioInput) => {
       try {
-        const language = input.language ?? whisperLanguageForReplyLanguage(this.getAiSettings().replyLanguage);
-        const speechSettings = this.getSpeechSettings();
-        const result = await this.speechProvider.transcribe({
-          audio: input.audio,
-          mimeType: input.mimeType,
-          userDataRoot: app.getPath('userData'),
-          language,
-          useGpu: speechSettings.useGpu
+        return await this.trackOperation('speech_transcription', async (token) => {
+          const language = input.language ?? whisperLanguageForReplyLanguage(this.getAiSettings().replyLanguage);
+          const speechSettings = this.getSpeechSettings();
+          const result = await this.speechProvider.transcribe({
+            audio: input.audio,
+            mimeType: input.mimeType,
+            userDataRoot: app.getPath('userData'),
+            language,
+            useGpu: speechSettings.useGpu
+          });
+          await this.commitOperation(token, () => this.emitFoundationEvent('SignalCaptured', 'speech', {
+            sourceType: 'user', title: 'Voice transcript', summary: result.text, language: result.language
+          }));
+          return { text: result.text, language: result.language };
         });
-        this.emitFoundationEvent('SignalCaptured', 'speech', {
-          sourceType: 'user',
-          title: 'Voice transcript',
-          summary: result.text,
-          language: result.language
-        });
-        return { text: result.text, language: result.language };
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         if (/^I could not/i.test(detail)) {
@@ -2504,9 +2510,10 @@ export class AppServices {
     advanceRuntimeTime: async (input: { milliseconds: number; runScheduledTick?: boolean }) => this.advanceRuntimeTime(input),
     resetRuntimeTime: async () => this.resetRuntimeTime(),
     runScheduledTick: async () => this.runRuntimeScheduledTick(),
-    runFixtureResearch: async (input: { topic: string }) => this.runFixtureResearch(input.topic),
-    researchFromUrl: async (input: { url: string }) => this.researchFromUrl(input.url),
+    runFixtureResearch: async (input: { topic: string }) => this.trackOperation('research', (token) => this.runFixtureResearch(input.topic, token)),
+    researchFromUrl: async (input: { url: string }) => this.trackOperation('research', (token) => this.researchFromUrl(input.url, token)),
     getMemoryDiagnostics: async () => ({
+      lifecycle: this.operationTracker.snapshot(),
       vector: await this.vectorIndex.healthCheck(),
       maintenance: this.vectorMaintenance.getStatus(),
       embedding: this.localEmbeddings.getStatus(),
@@ -2514,15 +2521,17 @@ export class AppServices {
       jobCounts: this.db.getEmbeddingJobCounts(),
       runner: this.embeddingJobRunner.getStatus(),
     }),
-    installLocalEmbeddingModel: async () => {
+    installLocalEmbeddingModel: async () => this.trackOperation('embedding_job', async (operation) => {
       await this.localEmbeddings.install();
+      operation.assertCanCommit();
       this.db.unblockEmbeddingJobs();
       this.db.retryFailedEmbeddingJobs();
       this.db.queueAllEligibleEmbeddings();
       await this.embeddingJobRunner.drain();
+      operation.assertCanCommit();
       return { completed: this.embeddingJobRunner.getStatus().processedInCurrentRun, failed: this.embeddingJobRunner.getStatus().failedCount };
-    },
-    rebuildMemoryVectors: async () => {
+    }),
+    rebuildMemoryVectors: async () => this.trackOperation('vector_rebuild', async (operation) => {
       const healthBefore = await this.vectorIndex.healthCheck();
       let vectorsDeleted = 0;
       let mappingsReset = 0;
@@ -2530,6 +2539,7 @@ export class AppServices {
       await this.vectorMaintenance.runExclusive('rebuild', async () => {
         await this.embeddingJobRunner.pauseAndWait();
         try {
+          operation.assertCanCommit();
           const reset = await this.vectorIndex.rebuildDerivedState();
           vectorsDeleted = reset.vectorsDeleted;
           mappingsReset = reset.mappingsReset;
@@ -2540,6 +2550,7 @@ export class AppServices {
         }
         await this.embeddingJobRunner.drain();
       });
+      operation.assertCanCommit();
       return {
         mode: 'full_rebuild' as const,
         vectorsDeleted,
@@ -2550,7 +2561,7 @@ export class AppServices {
         healthBefore,
         healthAfter: await this.vectorIndex.healthCheck(),
       };
-    },
+    }),
   };
 
   workspace = {
@@ -2846,12 +2857,11 @@ export class AppServices {
       if (prioritizedDiscoveryBaseId || forcedPlatformId) throw new Error('EXPLORATION_ALREADY_RUNNING');
       return active;
     }
-    const operation = this.runAutonomousExplorationCycle(
-      { ...input, companionId },
-      prioritizedDiscoveryBaseId,
-      forcedPlatformId,
-    )
+    const operation = this.trackOperation('discovery', (token) => this.runAutonomousExplorationCycle(
+      { ...input, companionId }, prioritizedDiscoveryBaseId, forcedPlatformId, token,
+    ))
       .catch((error) => {
+        if (this.serviceState !== 'running') throw error;
         const current = this.db.getCurrentExplorationCycleForCompanion(companionId);
         if (current) {
           const recovered = this.saveCycleState(current, 'returning');
@@ -2930,6 +2940,7 @@ export class AppServices {
     input: StartExplorationInput = {},
     prioritizedDiscoveryBaseId?: string,
     forcedPlatformId?: DiscoveryPlatformId,
+    operation?: OperationToken,
   ): Promise<ExplorationCycleResult> {
     const userId = input.userId ?? 'default';
     const companionId = this.db.resolveActiveCompanionId(input.companionId);
@@ -3439,6 +3450,7 @@ export class AppServices {
         correlationId,
       }),
     });
+    operation?.assertCanCommit();
     const executedBaseIds = new Set(research.usedBaseIds);
     discoveryInspection.executedBases = selectedDiscoveryBases
       .filter((base) => executedBaseIds.has(base.id))
@@ -4199,7 +4211,7 @@ export class AppServices {
     };
   }
 
-  private async runFixtureResearch(topic: string): Promise<ResearchDeveloperReport> {
+  private async runFixtureResearch(topic: string, operation?: OperationToken): Promise<ResearchDeveloperReport> {
     if (!this.researchFixtureEnabled) throw new Error('RESEARCH_FIXTURE_DISABLED');
     const trimmed = topic.trim();
     if (!trimmed) throw new Error('RESEARCH_FIXTURE_DISABLED');
@@ -4248,6 +4260,7 @@ export class AppServices {
         correlationId,
       }),
     });
+    operation?.assertCanCommit();
     this.db.insertResearchIntent(research.intent);
     this.db.insertResearchPlan(research.plan);
     for (const evidence of research.evidence) this.db.insertWebPageEvidence(evidence);
@@ -4309,7 +4322,7 @@ export class AppServices {
     };
   }
 
-  private async researchFromUrl(rawUrl: string): Promise<ResearchDeveloperReport> {
+  private async researchFromUrl(rawUrl: string, operation?: OperationToken): Promise<ResearchDeveloperReport> {
     const normalizedUrl = normalizeActionUrl(rawUrl);
     if (!normalizedUrl) throw new Error('RESEARCH_MANUAL_URL_INVALID');
     const companionId = this.db.resolveActiveCompanionId();
@@ -4379,6 +4392,7 @@ export class AppServices {
       }
       throw error;
     }
+    operation?.assertCanCommit();
     const completedPlan: ResearchPlan = {
       ...plan,
       outcome: { stopReason: 'manual_url_completed', additionalPasses: 0, completedAt: this.runtimeClock.now().toISOString() },
@@ -4693,6 +4707,9 @@ export class AppServices {
     payload?: Record<string, unknown>,
     correlationId?: string
   ): void {
+    // This is the final publication boundary for renderer/debug application events.
+    // Individual operations additionally validate their token before reaching it.
+    if (this.serviceState !== 'running') return;
     const event = createEvent({ type, source, payload, correlationId });
     this.eventBus.emit(event);
     this.foundationEventLog.unshift(event);

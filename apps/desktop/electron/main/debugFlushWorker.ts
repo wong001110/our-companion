@@ -19,6 +19,8 @@ export interface FlushNetwork {
 
 export interface FlushConfig {
   isPackaged: boolean;
+  /** Global lifecycle admission check; false means no SQLite/event work may continue. */
+  isRuntimeActive?: () => boolean;
 }
 
 export interface FlushResult {
@@ -41,6 +43,7 @@ export class DebugFlushWorker {
   ) {}
 
   private canUpload(): boolean {
+    if (!this.runtimeActive()) return false;
     if (this.config.isPackaged) return false;
     const ns = this.network.getStatusSnapshot();
     if (!ns.onlineModeEnabled || ns.state !== 'online') return false;
@@ -48,6 +51,8 @@ export class DebugFlushWorker {
     if (!this.db.getAppSetting<boolean>('developer.debugUploadEnabled')) return false;
     return true;
   }
+
+  private runtimeActive(): boolean { return !this.config.isRuntimeActive || this.config.isRuntimeActive(); }
 
   async flushPendingDebugEvents(): Promise<FlushResult> {
     if (this.config.isPackaged) return { uploaded: 0, failed: 0 };
@@ -116,6 +121,7 @@ export class DebugFlushWorker {
           this.db.markDeveloperDebugEventsUploading(fallbackIds);
           const result = await this.network.postBatchDebugEvents(fallback);
           postsThisDrain++;
+          if (!this.runtimeActive()) return { uploaded: totalUploaded, failed: totalFailed };
           if (result.accepted !== fallback.length) {
             this.db.markDeveloperDebugEventsPending(fallbackIds);
             const msg = `Batch accepted ${result.accepted}/${fallback.length}`;
@@ -146,6 +152,7 @@ export class DebugFlushWorker {
         const result = await this.network.postBatchDebugEvents(batch);
         postsThisDrain++;
 
+        if (!this.runtimeActive()) return { uploaded: totalUploaded, failed: totalFailed };
         if (result.accepted !== batch.length) {
           this.db.markDeveloperDebugEventsPending(dbIds);
           const msg = `Batch accepted ${result.accepted}/${batch.length}`;
@@ -166,11 +173,11 @@ export class DebugFlushWorker {
       }
     }
 
-    if (totalUploaded > 0) {
+    if (totalUploaded > 0 && this.canUpload()) {
       this.db.setAppSetting('developer.lastUploadAt', nowIso());
     }
 
-    if (postsThisDrain >= MAX_POSTS_PER_DRAIN) {
+    if (postsThisDrain >= MAX_POSTS_PER_DRAIN && this.canUpload()) {
       const remaining = this.db.countDeveloperDebugEvents({ syncStatus: 'pending' });
       if (remaining > 0) this.scheduleFlushFollowUp();
     }

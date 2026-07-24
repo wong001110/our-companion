@@ -68,6 +68,7 @@ export class NetworkConnectionService {
   private lastPresenceActivityAt = 0;
   private transferLifecycleHandler?: (reason: string) => void;
   private smokeFriendLookupFixture?: FriendLookupResult;
+  private accepting = true;
 
   constructor(
     private readonly db: DatabaseService,
@@ -79,6 +80,8 @@ export class NetworkConnectionService {
 
   getStatus = async (): Promise<NetworkStatus> => ({ ...this.status });
   getStatusSnapshot = (): NetworkStatus => ({ ...this.status });
+  /** Quiescing stops reconnects and makes late socket callbacks inert. */
+  stopAccepting(): void { this.accepting = false; this.clearReconnectTimer(); }
 
   getSmokeDeviceIdHash = (): string => {
     assertSmokeTestRuntime();
@@ -250,7 +253,7 @@ export class NetworkConnectionService {
   getVisitSessionDownloadUrls = (sessionId: string, fileIds: string[]) => this.socialRequest<{ downloads: Array<{ fileId: string; relativePath: string; downloadUrl: string; expiresAt: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/visit-sessions/${sessionId}/assets/download-urls`, { fileIds });
 
   setTransferLifecycleHandler(handler: (reason: string) => void) { this.transferLifecycleHandler = handler; }
-  dispose(): void { this.transferLifecycleHandler?.('app_shutdown'); this.stopSocket(); }
+  dispose(): void { this.stopAccepting(); this.transferLifecycleHandler?.('app_shutdown'); this.stopSocket(); }
 
   postBatchDebugEvents = async (batch: DeveloperDebugUploadEvent[]): Promise<{ accepted: number }> => this.socialRequest<{ accepted: number }>('/api/developer/debug-events/batch', { events: batch });
 
@@ -319,6 +322,7 @@ export class NetworkConnectionService {
   }
 
   private async connectSocket(): Promise<void> {
+    if (!this.accepting) return;
     if (!this.enabled || !this.session || this.session.serverOrigin !== this.serverUrl) return;
     this.clearReconnectTimer();
     this.socket?.disconnect();
@@ -360,6 +364,7 @@ export class NetworkConnectionService {
   }
 
   private async handleSocketFailure(error: unknown): Promise<void> {
+    if (!this.accepting) return;
     if (!this.enabled) return;
     const code = messageFor(error);
     if (isAuthenticationError(code) && !this.socketRefreshAttempted) {
@@ -373,6 +378,7 @@ export class NetworkConnectionService {
   }
 
   private scheduleReconnect(error: unknown): void {
+    if (!this.accepting) return;
     if (!this.enabled || this.reconnectTimer) return;
     const attempt = Math.min(6, (this.db.getAppSetting<number>(RECONNECT_ATTEMPT_KEY) ?? 0) + 1);
     this.db.setAppSetting(RECONNECT_ATTEMPT_KEY, attempt);
@@ -445,7 +451,10 @@ export class NetworkConnectionService {
     this.db.setAppSetting(SESSION_KEY, this.deps.secureStorage.encryptString(JSON.stringify(session)).toString('base64'));
   }
   private clearSession(): void { this.session = undefined; this.db.setAppSetting(SESSION_KEY, ''); this.setStatus({ account: undefined }); }
-  private setStatus(update: Partial<NetworkStatus>): void { this.status = { ...this.status, ...update, serverUrl: this.serverUrl }; this.notify({ ...this.status }); }
+  private setStatus(update: Partial<NetworkStatus>): void {
+    if (!this.accepting) return;
+    this.status = { ...this.status, ...update, serverUrl: this.serverUrl }; this.notify({ ...this.status });
+  }
   private statusFor(error: unknown, fallback: NetworkConnectionState): NetworkConnectionState { const code = messageFor(error); return isIncompatible(code) ? 'incompatible_client' : code === 'AUTHENTICATION_FAILED' ? 'authentication_failed' : fallback; }
 }
 
