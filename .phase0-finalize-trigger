@@ -1,0 +1,1 @@
+Apply the trusted Phase 0 finalizer from main, run all automated checks, and commit only validated results.
