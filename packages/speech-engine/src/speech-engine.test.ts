@@ -64,10 +64,15 @@ describe('speech-engine userDataPath', () => {
     expect(ELECTRON_APP_NAME).toBe('@our-companion/desktop');
   });
 
-  it('resolves default user data root for the desktop app', () => {
-    const root = getDefaultUserDataRoot();
-    expect(root).toContain('@our-companion');
-    expect(root).toContain('desktop');
+  it('resolves the default root on supported desktop platforms and rejects unsupported hosts', () => {
+    if (process.platform === 'win32' || process.platform === 'darwin') {
+      const root = getDefaultUserDataRoot();
+      expect(root).toContain('@our-companion');
+      expect(root).toContain('desktop');
+      return;
+    }
+
+    expect(() => getDefaultUserDataRoot()).toThrow(`Unsupported platform: ${process.platform}`);
   });
 });
 
