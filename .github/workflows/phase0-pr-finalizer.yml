@@ -1,7 +1,8 @@
 name: Phase 0 PR finalizer
 
 on:
-  pull_request_target:
+  pull_request:
+    branches: [main]
     types: [opened, synchronize, reopened]
 
 permissions:
@@ -12,7 +13,8 @@ jobs:
   apply:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'agent/phase0-finalize'
+      github.event.pull_request.head.ref == 'agent/phase0-finalize' &&
+      github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,8 +39,10 @@ jobs:
             .github/workflows/phase0-finalize.yml \
             .github/workflows/phase0-apply-only.yml \
             .github/workflows/phase0-pr-finalizer.yml \
+            .github/workflows/phase0-pr-finalize.yml \
             scripts/phase0-finalize.mjs \
-            .phase0-finalizer-trigger
+            .phase0-finalizer-trigger \
+            .phase0-finalize-trigger
       - name: Commit patch to PR branch
         shell: bash
         run: |
