@@ -221,6 +221,7 @@ import { MemoryPolicy } from './runtime/MemoryPolicy';
 import { LocalMultilingualEmbeddingProvider } from './memory/localEmbeddingProvider';
 import { EmbeddingJobRunner } from './memory/embeddingJobRunner';
 import { OperationTracker, type ApplicationLifecycleState, type OperationKind, type OperationToken } from './application/OperationTracker';
+import { shouldCloseDatabaseAfterDrain } from './application/ShutdownDrainPolicy';
 import { VectorMaintenanceCoordinator } from './memory/vectorMaintenanceCoordinator';
 
 const DEBUG_LOG_MAX = 100;
@@ -2283,7 +2284,7 @@ export class AppServices {
     return this.operationTracker.commit(token, mutation);
   }
 
-  async dispose(): Promise<void> {
+  async dispose(options: { allowDatabaseClose?: boolean } = {}): Promise<void> {
     this.disposePromise ??= (async () => {
       this.operationTracker.beginQuiescing();
       this.companionRuntime.stopLifeScheduler();
@@ -2292,20 +2293,33 @@ export class AppServices {
       this.network.stopAccepting();
       const timeoutMs = 8_000;
       this.vectorIndex.beginShutdown();
-      const settled = await Promise.race([
+      const drainState = await Promise.race([
         Promise.all([
           this.embeddingJobRunner.stop(),
           this.vectorIndex.stopAndWait(timeoutMs),
           this.operationTracker.drain(timeoutMs),
-        ]).then(([_, vector]) => vector.settled),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+        ]).then(([, vector, operations]) => ({ timedOut: false, vectorSettled: vector.settled, operationsDrained: operations.drained })),
+        new Promise<{ timedOut: true; vectorSettled: false; operationsDrained: false }>((resolve) =>
+          setTimeout(() => resolve({ timedOut: true, vectorSettled: false, operationsDrained: false }), timeoutMs)),
       ]);
-      if (!settled) { this.embeddingJobRunner.preventFurtherWrites(); this.vectorIndex.detach(); }
+      if (drainState.timedOut || !drainState.vectorSettled || !drainState.operationsDrained) {
+        this.embeddingJobRunner.preventFurtherWrites();
+        this.vectorIndex.detach();
+      }
       this.operationTracker.abortRemaining();
+      const finalDrain = drainState.operationsDrained
+        ? { drained: true, active: 0 }
+        : await this.operationTracker.drain(250);
       this.operationTracker.beginDisposing();
       this.network.dispose(); this.visits.stopAll(); this.visualVisits.stopAll('app_shutdown');
       await this.localEmbeddings.dispose();
-      this.db.close();
+      const closeDatabase = shouldCloseDatabaseAfterDrain({
+        allowDatabaseClose: options.allowDatabaseClose !== false,
+        operationsDrained: finalDrain.drained,
+        activeOperationCount: this.operationTracker.activeCount(),
+      });
+      if (closeDatabase) this.db.close();
+      else console.error('[our-companion] SQLite close deferred to process exit because shutdown work remains active.');
       this.operationTracker.markDisposed();
     })();
     return this.disposePromise;

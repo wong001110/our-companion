@@ -13,3 +13,6 @@ Vector maintenance serializes rebuild work and rejects new searches while mainte
 Diagnostics use the shared sensitive-descriptor classifier. Exportable inspections and debug uploads redact descriptor values; local conversation storage retains the original conversation according to the existing local-first policy.
 
 Future offline Companion visits, cloud-hosted execution, durable cloud jobs, and cross-device task ownership remain outside this local-runtime phase.
+
+
+Renderer IPC admission is closed before shutdown drain begins. Every registered service route is counted until completion. SQLite closes only when renderer IPC work and the internal runtime tracker have both drained; if an uncancellable task exceeds the bounded window, explicit SQLite close is deferred to process exit rather than risking a write-after-close.
