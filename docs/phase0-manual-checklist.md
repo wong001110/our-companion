@@ -1,6 +1,6 @@
 # Phase 0 manual verification checklist
 
-Run this checklist on a packaged desktop build after automated validation passes.
+Run this checklist on a packaged desktop build after automated validation passes. Automated validation is required before the Phase 0 repair is merged.
 
 ## Startup and ordinary use
 
