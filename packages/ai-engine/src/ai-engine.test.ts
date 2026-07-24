@@ -88,6 +88,7 @@ describe('ai engine', () => {
     expect(validateCompanionTurnProposal('{"replySegments":[{"segmentId":"one","text":"Memory","provenance":"memory"}],"intent":"conversation","actions":[],"memoryCandidates":[]}')).toBeUndefined();
     expect(validateCompanionTurnProposal('{"replySegments":[{"segmentId":"one","text":"Hello","provenance":"current_turn","supportingMemoryId":"memory-1"}],"intent":"conversation","actions":[],"memoryCandidates":[]}')).toBeUndefined();
     expect(validateCompanionTurnProposal('{"replySegments":[{"segmentId":"one","text":"Memory","provenance":"memory","supportingMemoryId":"memory-1"},{"segmentId":"one","text":"Again","provenance":"current_turn"}],"intent":"conversation","actions":[],"memoryCandidates":[]}')).toBeUndefined();
+    expect(validateCompanionTurnProposal('{"replySegments":[{"segmentId":"one","provenance":"memory","supportingMemoryId":"memory-1"},{"segmentId":"two","provenance":"memory","supportingMemoryId":"memory-1"}],"intent":"conversation","actions":[],"memoryCandidates":[]}')).toBeUndefined();
     expect(validateCompanionTurnProposal(JSON.stringify({ replySegments: [{ segmentId: 'long', text: 'x'.repeat(4_001), provenance: 'current_turn' }], intent: 'conversation', actions: [], memoryCandidates: [] }))).toBeUndefined();
   });
 

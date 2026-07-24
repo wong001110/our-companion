@@ -307,6 +307,12 @@ export interface MemoryMetadata {
   supersedesMemoryId?: string;
   correctedByMemoryId?: string;
   userEvidence?: string;
+  /** Exact user evidence or a deterministic/confirmed value safe for reply rendering. */
+  canonicalText?: string;
+  /** Provenance of canonicalText; AI interpretations are never canonical by default. */
+  canonicalSource?: 'exact_user_evidence' | 'deterministic_boundary' | 'user_confirmed';
+  /** Optional model interpretation retained for retrieval/review only, never reply rendering. */
+  unverifiedInterpretation?: string;
   assistantInterpretation?: string;
   userBoundary?: UserBoundaryMetadata;
   sourceMessageIds?: string[];

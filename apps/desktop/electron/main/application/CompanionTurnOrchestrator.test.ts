@@ -91,6 +91,27 @@ describe('CompanionTurnOrchestrator', () => {
     harness.db.close();
   });
 
+  it('regenerates once when application-rendered Memory makes the final reply exceed 4,000 characters', async () => {
+    let calls = 0;
+    const harness = createHarness(() => (++calls === 1
+      ? proposal({ replySegments: [
+        { segmentId: 'first', provenance: 'memory', supportingMemoryId: 'memory-a' },
+        { segmentId: 'second', provenance: 'memory', supportingMemoryId: 'memory-b' },
+        { segmentId: 'extra', provenance: 'current_turn', text: '!' },
+      ] })
+      : proposal({ replySegments: [{ segmentId: 'short', text: 'A shorter reply.', provenance: 'current_turn' }] })));
+    for (const id of ['memory-a', 'memory-b']) {
+      const node = createMemoryNode({ companionId: harness.companion.id, type: 'topic', title: id, summary: 'x'.repeat(1_990) });
+      harness.db.insertMemoryNode({ ...node, id, userId: 'local', memoryType: 'user_preference', metadata: { sourceType: 'user_explicit', confidence: 1, sensitivity: 'normal', scope: 'companion', createdAt: node.createdAt, canonicalText: 'x'.repeat(1_990), canonicalSource: 'exact_user_evidence' } });
+    }
+    const result = await harness.orchestrator.handle({ message: 'What do I prefer?', source: 'panel_text', characterId: harness.companion.id });
+    expect(calls).toBe(2);
+    expect(result.message).toBe('A shorter reply.');
+    expect(harness.orchestrator.getInspections()[0]?.grounding).toMatchObject({ regenerationAttempted: true, regenerationSucceeded: true, segmentResults: expect.arrayContaining([expect.objectContaining({ reason: 'RENDERED_REPLY_TOO_LONG' })]) });
+    expect(harness.db.listCompanionMessages({ characterId: harness.companion.id }).at(-1)?.content.length).toBeLessThanOrEqual(4_000);
+    harness.db.close();
+  });
+
   it('retries exactly once without durable Memory after validation-time E5 failure', async () => {
     let queryCalls = 0;
     let documentCalls = 0;
@@ -112,7 +133,7 @@ describe('CompanionTurnOrchestrator', () => {
       ? proposal({ replySegments: [{ segmentId: 'first', text: 'I can help with that.', provenance: 'current_turn' }], actions: [{ toolName: 'open_url', args: { url: 'https://example.com' }, reason: 'not needed' }] })
       : proposal({ replySegments: [{ segmentId: 'retry', text: 'I can help with that.', provenance: 'current_turn' }] })), validator);
     const node = createMemoryNode({ companionId: harness.companion.id, type: 'topic', title: 'DURABLE_LOCAL_FIRST_SECRET', content: 'DURABLE_LOCAL_FIRST_SECRET' });
-    harness.db.insertMemoryNode({ ...node, id: 'memory-existing', userId: 'local', memoryType: 'user_preference', summary: 'Use local-first processing.', metadata: { sourceType: 'user_explicit', confidence: 1, sensitivity: 'normal', scope: 'companion', createdAt: node.createdAt } });
+    harness.db.insertMemoryNode({ ...node, id: 'memory-existing', userId: 'local', memoryType: 'user_preference', summary: 'Use local-first processing.', metadata: { sourceType: 'user_explicit', confidence: 1, sensitivity: 'normal', scope: 'companion', createdAt: node.createdAt, canonicalText: 'Use local-first processing.', canonicalSource: 'exact_user_evidence' } });
 
     const result = await harness.orchestrator.handle({ message: 'What should I use?', source: 'panel_text', characterId: harness.companion.id });
     expect(queryCalls).toBeGreaterThanOrEqual(3);

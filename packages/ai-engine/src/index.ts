@@ -109,6 +109,10 @@ export const companionTurnProposalSchema = z.object({
     }).strict(),
   ])).min(1).max(24)
     .refine((segments) => new Set(segments.map((segment) => segment.segmentId)).size === segments.length, 'Reply segment IDs must be unique.')
+    .refine((segments) => {
+      const references = segments.filter((segment) => segment.provenance === 'memory').map((segment) => segment.supportingMemoryId);
+      return new Set(references).size === references.length;
+    }, 'A Memory may be referenced at most once per reply.')
     .refine((segments) => segments.reduce((total, segment) => total + ('text' in segment ? segment.text.length : 0), 0) <= 4_000, 'Assembled reply must not exceed 4,000 characters.'),
   actions: z.array(z.object({
     toolName: z.string().min(1).max(80),

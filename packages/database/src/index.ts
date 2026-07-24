@@ -1300,9 +1300,11 @@ export class DatabaseService {
         this.db.exec('COMMIT');
         return { record, outcome: 'created' };
       }
+      const sameCanonical = Boolean(node.metadata?.canonicalText && existing.metadata?.canonicalText
+        && normalizeSemanticText(node.metadata.canonicalText) === normalizeSemanticText(existing.metadata.canonicalText));
       const stronger = (node.confidence ?? 0) > (existing.confidence ?? existing.metadata?.confidence ?? 0)
         || node.importance > existing.importance
-        || (node.summary?.length ?? 0) > (existing.summary?.length ?? 0);
+        || (!sameCanonical && (node.summary?.length ?? 0) > (existing.summary?.length ?? 0));
       const next: MemoryNode = {
         ...existing,
         ...(stronger ? {

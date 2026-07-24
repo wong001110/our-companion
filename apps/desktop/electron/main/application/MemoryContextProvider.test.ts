@@ -37,6 +37,9 @@ function insertMemory(
       scope: 'companion',
       createdAt: base.createdAt,
       expiresAt: input.expiresAt,
+      canonicalText: input.summary,
+      canonicalSource: input.memoryType === 'user_boundary' ? 'deterministic_boundary' : 'exact_user_evidence',
+      ...(input.memoryType === 'user_boundary' ? { userBoundary: { action: 'do_not_recommend' as const, target: 'cloud-only software' } } : {}),
     },
   });
 }

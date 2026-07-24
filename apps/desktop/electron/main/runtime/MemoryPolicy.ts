@@ -97,7 +97,7 @@ export class MemoryPolicy {
     ];
     const unique = new Map<string, CompanionTurnMemoryCandidate>();
     for (const candidate of proposed) {
-      const normalized = normalizeSemanticText(candidate.summary);
+      const normalized = normalizeSemanticText(candidate.evidence);
       if (!normalized) continue;
       unique.set(`${candidate.type}:${normalized}`, candidate);
     }
@@ -140,6 +140,10 @@ export class MemoryPolicy {
     input: MemoryTurnInput,
   ): MemoryCaptureOutcome {
     const evidence = candidate.evidence.trim();
+    if (!['user_preference', 'user_fact', 'user_boundary', 'goal'].includes(candidate.type)
+      || AMBIGUOUS_CORRECTION_PATTERNS.some((pattern) => pattern.test(input.userMessage.trim()))) {
+      return { candidate, outcome: 'discarded', reason: 'unsupported_or_ambiguous_memory_candidate' };
+    }
     if (Array.from(normalizeSemanticText(evidence)).length < 3
       || evidence.length > input.userMessage.length
       || !Number.isFinite(candidate.confidence)
@@ -150,9 +154,7 @@ export class MemoryPolicy {
     if (!this.isSafe(`${candidate.summary}\n${evidence}`)) {
       return { candidate, outcome: 'discarded', reason: 'memory_safety_policy' };
     }
-    const normalizedMessage = normalizeSemanticText(input.userMessage);
-    const normalizedEvidence = normalizeSemanticText(evidence);
-    if (!normalizedEvidence || !normalizedMessage.includes(normalizedEvidence)) {
+    if (!evidence || !input.userMessage.includes(evidence)) {
       return { candidate, outcome: 'discarded', reason: 'evidence_not_grounded_in_user_message' };
     }
     if (candidate.confidence < 0.7) {
@@ -160,17 +162,22 @@ export class MemoryPolicy {
     }
 
     const timestamp = this.timestamp();
-    const normalizedSummary = normalizeSemanticText(candidate.summary);
+    const boundary = candidate.type === 'user_boundary' ? deriveUserBoundary(evidence) : undefined;
+    if (candidate.type === 'user_boundary' && !boundary) {
+      return { candidate, outcome: 'discarded', reason: 'invalid_boundary_metadata' };
+    }
+    const canonicalText = evidence;
+    const normalizedCanonical = normalizeSemanticText(canonicalText);
     const fingerprint = createSemanticFingerprint('memory', [
       input.companionId,
       candidate.type,
-      normalizedSummary,
+      normalizedCanonical,
     ]);
     const node = createMemoryNode({
       type: candidate.type === 'goal' ? 'outcome' : 'topic',
-      title: candidate.summary.slice(0, 80),
-      summary: candidate.summary.slice(0, 500),
-      content: evidence.slice(0, 1_000),
+      title: canonicalText.slice(0, 80),
+      summary: canonicalText.slice(0, 500),
+      content: canonicalText.slice(0, 1_000),
       source: 'conversation',
       companionId: input.companionId,
     });
@@ -196,9 +203,12 @@ export class MemoryPolicy {
         sensitivity: candidate.type === 'user_boundary' ? 'personal' : 'normal',
         scope: 'companion',
         createdAt: timestamp,
-        userEvidence: input.userMessage.slice(0, 500),
+        userEvidence: canonicalText.slice(0, 1_000),
+        canonicalText: canonicalText.slice(0, 1_000),
+        canonicalSource: candidate.type === 'user_boundary' ? 'deterministic_boundary' : 'exact_user_evidence',
+        unverifiedInterpretation: candidate.summary.slice(0, 500),
         assistantInterpretation: input.assistantReply.slice(0, 300),
-        ...(candidate.type === 'user_boundary' ? { userBoundary: deriveUserBoundary(evidence) } : {}),
+        ...(boundary ? { userBoundary: boundary } : {}),
       },
     };
     const result = this.db.upsertCapturedMemory(captured);

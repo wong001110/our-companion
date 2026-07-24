@@ -27,3 +27,9 @@ Per-language positive means were: English 0.8820, Simplified Chinese 0.7690, Tra
 The additional production-style undeclared-Memory audit correctly separated all four undeclared cases from all four permitted current-turn/general cases at the selected 0.89 similarity and 0.12 margin gates.
 
 Known limitations: this is a compact release-calibration corpus, not a demographic or safety benchmark. The 66.7% false-rejection result at 0.87 is retained as an audit finding. Explicit selected Memory is now rendered deterministically by the application, so that score is no longer the sole acceptance gate for the exact rendered fact; E5 remains required for retrieval and undeclared-Memory auditing. If validation-time E5 fails after Memory exposure, the turn regenerates once with no durable Memory and otherwise falls back. Run `npm run e5:setup` explicitly to install the model, then re-run `npm run qa:e5-grounding` with `OUR_COMPANION_E5_CACHE` set to the installed cache whenever model, text policy, or corpus changes.
+
+## Canonical Memory rendering
+
+Explicit Memory replies render only verified canonical evidence: exact user evidence, deterministic structured boundary metadata, or an explicitly user-confirmed representation. AI-generated candidate summaries are retained only as unverified interpretations and never become reply facts by default. Legacy records without verified canonical evidence remain available for retrieval but are non-renderable until reviewed.
+
+Boundary prompt constraints and displayed acknowledgements are separate. A prompt may receive the structured target needed to honor a boundary; normal user-facing output, especially for `do_not_mention`, never exposes that target. Final assembled replies include application-rendered Memory text in the 4,000-character limit, and each Memory ID may appear at most once.

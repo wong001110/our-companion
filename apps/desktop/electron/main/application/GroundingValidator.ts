@@ -1,5 +1,5 @@
 import type { GroundedReplySegment, MemoryNode, ReplySegmentProvenance } from '@our-companion/shared';
-import { decideMemoryDisclosure, renderSafeMemoryText } from './MemoryDisclosurePolicy';
+import { decideMemoryDisclosure, renderMemoryPromptConstraint, renderSafeMemoryText } from './MemoryDisclosurePolicy';
 
 /** Calibrated against the committed local E5 QA corpus; see docs/qa/e5-grounding-report.md. */
 export const MIN_GROUNDING_SUPPORT_SIMILARITY = 0.87;
@@ -26,7 +26,8 @@ export type GroundingValidationReason =
   | 'MEMORY_ID_NOT_SELECTED' | 'MEMORY_NOT_FOUND' | 'MEMORY_SCOPE_MISMATCH'
   | 'MEMORY_INACTIVE' | 'MEMORY_MARKED_WRONG' | 'MEMORY_NOT_DISCLOSABLE'
   | 'MEMORY_TYPE_MISMATCH' | 'MEMORY_NOT_RENDERABLE' | 'MEMORY_SEMANTIC_SUPPORT_TOO_LOW'
-  | 'UNDECLARED_MEMORY_USAGE' | 'GROUNDING_EMBEDDING_UNAVAILABLE';
+  | 'UNDECLARED_MEMORY_USAGE' | 'GROUNDING_EMBEDDING_UNAVAILABLE' | 'DUPLICATE_MEMORY_REFERENCE'
+  | 'RENDERED_REPLY_TOO_LONG';
 
 export interface GroundingValidationInput {
   segments: GroundedReplySegment[];
@@ -110,9 +111,17 @@ export class GroundingValidator {
     const memories = new Map(input.selectedMemories.map((memory) => [memory.id, memory]));
     const results: GroundingSegmentValidation[] = [];
     const memorySegments: Array<{ segment: Extract<GroundedReplySegment, { provenance: 'memory' }>; memory: MemoryNode }> = [];
+    const memoryReferenceCounts = new Map<string, number>();
+    for (const segment of input.segments) {
+      if (segment.provenance === 'memory') memoryReferenceCounts.set(segment.supportingMemoryId, (memoryReferenceCounts.get(segment.supportingMemoryId) ?? 0) + 1);
+    }
 
     for (const segment of input.segments) {
       if (segment.provenance !== 'memory') continue;
+      if ((memoryReferenceCounts.get(segment.supportingMemoryId) ?? 0) > 1) {
+        results.push({ segmentId: segment.segmentId, provenance: segment.provenance, supportingMemoryId: segment.supportingMemoryId, valid: false, reason: 'DUPLICATE_MEMORY_REFERENCE' });
+        continue;
+      }
       const failure = this.validateMemorySegment(segment, selected, memories, input);
       if (failure) results.push({ segmentId: segment.segmentId, provenance: segment.provenance, supportingMemoryId: segment.supportingMemoryId, valid: false, reason: failure });
       else memorySegments.push({ segment, memory: memories.get(segment.supportingMemoryId!)! });
@@ -174,7 +183,9 @@ export class GroundingValidator {
 }
 
 export function buildSafeGroundingRepresentation(memory: MemoryNode, currentUserMessage?: string): string {
-  return renderSafeMemoryText(memory, currentUserMessage) ?? '';
+  return (memory.memoryType === 'user_boundary'
+    ? renderMemoryPromptConstraint(memory, currentUserMessage)
+    : renderSafeMemoryText(memory, currentUserMessage)) ?? '';
 }
 
 export { renderSafeMemoryText } from './MemoryDisclosurePolicy';

@@ -16,7 +16,7 @@ function vector(text: string): Float32Array {
   return output;
 }
 function memory(overrides: Partial<MemoryNode> = {}): MemoryNode {
-  return { id: 'memory-1', type: 'topic', title: 'Gambling boundary', content: 'Do not recommend gambling-related content.', importance: 0.8, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', userId: 'local', companionId: 'companion-1', memoryType: 'user_boundary', status: 'active', ...overrides };
+  return { id: 'memory-1', type: 'topic', title: 'Gambling boundary', content: 'Do not recommend gambling-related content.', importance: 0.8, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', userId: 'local', companionId: 'companion-1', memoryType: 'user_boundary', status: 'active', metadata: { sourceType: 'user_explicit', confidence: 1, sensitivity: 'normal', scope: 'companion', createdAt: '2026-01-01T00:00:00.000Z', canonicalText: 'Do not recommend gambling-related content.', canonicalSource: 'deterministic_boundary', userBoundary: { action: 'do_not_recommend', target: 'gambling-related content' } }, ...overrides };
 }
 function segment(overrides: Partial<GroundedReplySegment> = {}): GroundedReplySegment {
   return { segmentId: 'segment-1', provenance: 'memory', supportingMemoryId: 'memory-1', ...overrides } as GroundedReplySegment;
@@ -38,7 +38,7 @@ describe('GroundingValidator', () => {
       [segment(), [memory({ isMarkedWrong: true })], ['memory-1'], 'MEMORY_MARKED_WRONG'],
       [segment(), [memory({ metadata: { sensitivity: 'sensitive' } as MemoryNode['metadata'] })], ['memory-1'], 'MEMORY_NOT_DISCLOSABLE'],
       [segment(), [memory({ memoryType: 'temporary_context' })], ['memory-1'], 'MEMORY_TYPE_MISMATCH'],
-      [segment(), [memory({ memoryType: 'user_fact', summary: '', title: '', content: '' })], ['memory-1'], 'MEMORY_NOT_RENDERABLE'],
+      [segment(), [memory({ memoryType: 'user_fact', summary: '', title: '', content: '', metadata: { sourceType: 'user_explicit', confidence: 1, sensitivity: 'normal', scope: 'companion', createdAt: '2026-01-01T00:00:00.000Z' } })], ['memory-1'], 'MEMORY_NOT_RENDERABLE'],
     ];
     for (const [item, memories, ids, reason] of cases) expect((await validate([item], memories, ids)).segments[0]?.reason).toBe(reason);
   });
@@ -46,6 +46,13 @@ describe('GroundingValidator', () => {
   it('flags undeclared Memory use but leaves generic advice alone', async () => {
     await expect(validate([{ segmentId: 'undeclared', text: 'Do not recommend gambling-related content.', provenance: 'general_knowledge' }])).resolves.toMatchObject({ passed: false, segments: [expect.objectContaining({ reason: 'UNDECLARED_MEMORY_USAGE' })] });
     await expect(validate([{ segmentId: 'generic', text: 'Take a short break and drink water.', provenance: 'general_knowledge' }])).resolves.toMatchObject({ passed: true });
+  });
+
+  it('rejects repeated references to the same selected Memory ID', async () => {
+    const result = await validate([segment(), { segmentId: 'repeat', provenance: 'memory', supportingMemoryId: 'memory-1' }]);
+    expect(result).toMatchObject({ passed: false, segments: expect.arrayContaining([
+      expect.objectContaining({ reason: 'DUPLICATE_MEMORY_REFERENCE' }),
+    ]) });
   });
 
   it('fails closed after an audit runtime failure with selected Memory, but preserves ordinary conversation', async () => {

@@ -3,6 +3,32 @@ import { DatabaseService } from '@our-companion/database';
 import { MemoryPolicy } from './MemoryPolicy';
 
 describe('MemoryPolicy', () => {
+  it('stores exact evidence as canonical text and keeps a contradictory model summary non-authoritative', () => {
+    const db = new DatabaseService();
+    const policy = new MemoryPolicy(db);
+    const outcomes = policy.captureTurn({
+      userId: 'local', companionId: 'ann', userMessage: 'I do not like gambling.', assistantReply: 'Understood.',
+      candidates: [{ type: 'user_preference', summary: 'The user likes gambling.', evidence: 'I do not like gambling.', confidence: 1 }],
+    });
+    const outcome = outcomes.find((item) => item.candidate.summary === 'The user likes gambling.')!;
+    expect(outcome).toMatchObject({ outcome: 'created' });
+    expect(db.getMemoryNode(outcome.memoryId!, 'ann')?.metadata).toMatchObject({
+      canonicalText: 'I do not like gambling.', canonicalSource: 'exact_user_evidence',
+      unverifiedInterpretation: 'The user likes gambling.',
+    });
+    db.close();
+  });
+
+  it('rejects evidence that is not a verbatim user-message substring', () => {
+    const db = new DatabaseService();
+    const policy = new MemoryPolicy(db);
+    const outcomes = policy.captureTurn({
+      userId: 'local', companionId: 'ann', userMessage: 'I prefer tea.', assistantReply: 'Understood.',
+      candidates: [{ type: 'goal', summary: 'The user has a goal.', evidence: 'I prefer tea!', confidence: 1 }],
+    });
+    expect(outcomes).toEqual(expect.arrayContaining([expect.objectContaining({ outcome: 'discarded', reason: 'evidence_not_grounded_in_user_message' })]));
+    db.close();
+  });
   it('long message does not automatically become memory', () => {
     const db = new DatabaseService();
     const policy = new MemoryPolicy(db);

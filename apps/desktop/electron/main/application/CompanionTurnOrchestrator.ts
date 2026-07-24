@@ -32,7 +32,7 @@ import { createProposalPrivacyContext, sanitizeHistory, validateExternalActionDi
 import { CharacterContractBuilder } from './CharacterContractBuilder';
 import { resolveCharacterContractSource } from './CharacterContractSourceResolver';
 import { GroundingValidator, type GroundingValidationResult } from './GroundingValidator';
-import { renderSafeMemoryText } from './MemoryDisclosurePolicy';
+import { renderMemoryPromptConstraint, renderSafeMemoryText } from './MemoryDisclosurePolicy';
 
 const TURN_INSPECTION_LIMIT = 50;
 
@@ -297,6 +297,8 @@ export class CompanionTurnOrchestrator {
     let validationMetadata = metadata;
     let groundingValidation = await this.validateGrounding(proposal, validationNodes, validationMetadata.selectedMemoryIds, companionId, input.message);
     let reply = this.renderReply(proposal, validationNodes, input.message);
+    groundingValidation = this.validateRenderedReplyLength(groundingValidation, reply);
+    const initialGroundingSegments = groundingValidation.segments;
     let oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata: validationMetadata, currentUserMessage: input.message, renderedReply: reply });
     let oocAction = oocValidation.recommendedAction;
     let regenerationAttempted = false;
@@ -316,12 +318,13 @@ export class CompanionTurnOrchestrator {
         proposal = repaired;
         groundingValidation = await this.validateGrounding(proposal, validationNodes, validationMetadata.selectedMemoryIds, companionId, input.message);
         reply = this.renderReply(proposal, validationNodes, input.message);
+        groundingValidation = this.validateRenderedReplyLength(groundingValidation, reply);
         oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata: validationMetadata, currentUserMessage: input.message, renderedReply: reply });
         oocAction = oocValidation.passed && groundingValidation.passed ? 'repair' : 'fallback';
         regenerationSucceeded = oocValidation.passed && groundingValidation.passed;
       }
     }
-    inspection.grounding = { passed: groundingValidation.passed, regenerationAttempted, regenerationSucceeded, embeddingAvailable: generationGroundingAvailable && groundingValidation.embeddingAvailable, segmentResults: groundingValidation.segments };
+    inspection.grounding = { passed: groundingValidation.passed, regenerationAttempted, regenerationSucceeded, embeddingAvailable: generationGroundingAvailable && groundingValidation.embeddingAvailable, segmentResults: regenerationAttempted ? [...initialGroundingSegments, ...groundingValidation.segments] : groundingValidation.segments };
     inspection.oocValidation = oocValidation;
     inspection.oocAction = oocAction;
     if (!oocValidation.passed || !groundingValidation.passed) {
@@ -340,16 +343,7 @@ export class CompanionTurnOrchestrator {
     }
     inspection.memoryCandidates = proposal.memoryCandidates;
     this.assertRunning();
-    const captured = this.deps.memoryPolicy.captureTurn({
-      userId: 'local',
-      companionId,
-      userMessage: input.message,
-      assistantReply: reply,
-      sessionId,
-      candidates: proposal.memoryCandidates,
-    });
-    this.applyMemoryOutcomes(inspection, captured);
-    const remembered = captured.flatMap((outcome) => outcome.mutation ? [outcome.mutation] : []);
+    let remembered: CompanionTurnResult['remembered'] = [];
 
     if (proposal.actions.length > 0 && !plan) {
       const status: CompanionTurnActionStatus = inspection.rejectedActions.some((action) => action.reason === 'UNSUPPORTED_TOOL')
@@ -367,6 +361,16 @@ export class CompanionTurnOrchestrator {
       });
     }
     if (!plan) {
+      const captured = this.deps.memoryPolicy.captureTurn({
+        userId: 'local',
+        companionId,
+        userMessage: input.message,
+        assistantReply: reply,
+        sessionId,
+        candidates: proposal.memoryCandidates,
+      });
+      this.applyMemoryOutcomes(inspection, captured);
+      remembered = captured.flatMap((outcome) => outcome.mutation ? [outcome.mutation] : []);
       inspection.finalReplySource ??= 'ai_conversation';
       return this.finish({
         turnId,
@@ -531,7 +535,9 @@ export class CompanionTurnOrchestrator {
       const invalidSegments = input.grounding.segments.filter((segment) => !segment.valid)
         .map((segment) => `- ${segment.segmentId}: ${segment.reason}`).join('\n');
       const safeFacts = privacyViolation || input.memoryUnavailable ? [] : input.selectedNodes.map((memory) => {
-        const rendered = renderSafeMemoryText(memory, input.userMessage);
+        const rendered = memory.memoryType === 'user_boundary'
+          ? renderMemoryPromptConstraint(memory, input.userMessage)
+          : renderSafeMemoryText(memory, input.userMessage);
         return rendered ? `[${memory.id}] ${rendered}` : '';
       }).filter(Boolean);
       const safeDraft = privacyViolation || input.memoryUnavailable
@@ -570,6 +576,18 @@ export class CompanionTurnOrchestrator {
       const memory = memories.get(segment.supportingMemoryId);
       return memory ? renderSafeMemoryText(memory, currentUserMessage) : undefined;
     });
+  }
+
+  private validateRenderedReplyLength(validation: GroundingValidationResult, reply: string): GroundingValidationResult {
+    if (reply.length <= 4_000) return validation;
+    return {
+      ...validation,
+      passed: false,
+      segments: [...validation.segments, {
+        segmentId: 'rendered_reply', provenance: 'current_turn', valid: false,
+        reason: 'RENDERED_REPLY_TOO_LONG',
+      }],
+    };
   }
 
   private async validateGrounding(proposal: CompanionTurnProposal, selectedNodes: import('@our-companion/shared').MemoryNode[], selectedMemoryIds: string[], companionId: string, currentUserMessage: string): Promise<GroundingValidationResult> {
