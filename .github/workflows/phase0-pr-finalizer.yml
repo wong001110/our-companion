@@ -33,7 +33,20 @@ jobs:
             echo "Finalizer already applied."
             exit 0
           fi
-          node scripts/phase0-finalize.mjs
+          set +e
+          node scripts/phase0-finalize.mjs 2>&1 | tee /tmp/phase0-finalizer.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            git reset --hard HEAD
+            cp /tmp/phase0-finalizer.log .phase0-finalizer-error.log
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .phase0-finalizer-error.log
+            git commit -m "chore: record phase 0 finalizer failure"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+            exit "$status"
+          fi
           rm -f \
             .github/workflows/phase0-finalize-direct.yml \
             .github/workflows/phase0-finalize.yml \
@@ -42,7 +55,8 @@ jobs:
             .github/workflows/phase0-pr-finalize.yml \
             scripts/phase0-finalize.mjs \
             .phase0-finalizer-trigger \
-            .phase0-finalize-trigger
+            .phase0-finalize-trigger \
+            .phase0-finalizer-error.log
       - name: Commit patch to PR branch
         shell: bash
         run: |
