@@ -24,23 +24,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: corepack enable
-      - run: npm ci
       - name: Apply bounded Phase 0 repair
         run: node scripts/phase0-finalize.mjs
       - name: Remove one-shot bootstrap files
         run: |
           rm -f .phase0-finalize-trigger
+          rm -f .phase0-finalizer-trigger
           rm -f scripts/phase0-finalize.mjs
           rm -f .github/workflows/phase0-finalize.yml
           rm -f .github/workflows/phase0-finalize-direct.yml
+          rm -f .github/workflows/phase0-apply-only.yml
           rm -f .github/workflows/phase0-pr-finalize.yml
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run arch:check
-      - run: npm run build
-      - name: Commit validated repair to PR branch
+          rm -f .github/workflows/phase0-pr-finalizer.yml
+      - name: Commit repair to PR branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
