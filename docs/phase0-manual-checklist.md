@@ -1,6 +1,6 @@
 # Phase 0 manual verification checklist
 
-Run this checklist on a packaged desktop build after automated validation passes. Automated validation is required before the Phase 0 repair is merged.
+Run this checklist on a packaged desktop build after automated validation passes. Automated validation is required before the Phase 0 repair is merged. Failed CI runs must retain the `phase0-test-log` artifact for diagnosis.
 
 ## Startup and ordinary use
 
