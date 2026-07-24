@@ -13,6 +13,7 @@ describe('IpcOperationGate', () => {
     const gate = new IpcOperationGate();
     let release!: () => void;
     const work = gate.run(() => new Promise<void>((resolve) => { release = resolve; }));
+    await Promise.resolve();
     gate.stopAccepting();
     const draining = gate.drain(100);
     release();
@@ -24,6 +25,7 @@ describe('IpcOperationGate', () => {
     const gate = new IpcOperationGate();
     let release!: () => void;
     const work = gate.run(() => new Promise<void>((resolve) => { release = resolve; }));
+    await Promise.resolve();
     gate.stopAccepting();
     await expect(gate.drain(1)).resolves.toEqual({ drained: false, active: 1 });
     release();
