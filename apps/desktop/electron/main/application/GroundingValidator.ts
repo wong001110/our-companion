@@ -1,11 +1,10 @@
 import type { GroundedReplySegment, MemoryNode, ReplySegmentProvenance } from '@our-companion/shared';
-import { decideMemoryDisclosure, minimalBoundaryConstraint } from './MemoryDisclosurePolicy';
+import { decideMemoryDisclosure, renderSafeMemoryText } from './MemoryDisclosurePolicy';
 
 /** Calibrated against the committed local E5 QA corpus; see docs/qa/e5-grounding-report.md. */
 export const MIN_GROUNDING_SUPPORT_SIMILARITY = 0.87;
 export const UNDECLARED_MEMORY_SIMILARITY_THRESHOLD = 0.89;
 export const UNDECLARED_MEMORY_CURRENT_TURN_MARGIN = 0.12;
-export const MAX_GROUNDING_MEMORY_CHARACTERS = 2_000;
 
 export interface GroundingRuntimeStatus {
   available: boolean;
@@ -15,6 +14,7 @@ export interface GroundingRuntimeStatus {
 
 export interface GroundingEmbeddingProvider {
   initialize?: () => Promise<void>;
+  markUnavailable?: () => void;
   /** Production E5 is fixed at 384 dimensions; test providers may omit this. */
   dimensions?: number;
   embedQuery(text: string): Promise<Float32Array>;
@@ -25,7 +25,7 @@ export interface GroundingEmbeddingProvider {
 export type GroundingValidationReason =
   | 'MEMORY_ID_NOT_SELECTED' | 'MEMORY_NOT_FOUND' | 'MEMORY_SCOPE_MISMATCH'
   | 'MEMORY_INACTIVE' | 'MEMORY_MARKED_WRONG' | 'MEMORY_NOT_DISCLOSABLE'
-  | 'MEMORY_TYPE_MISMATCH' | 'MEMORY_SEMANTIC_SUPPORT_TOO_LOW'
+  | 'MEMORY_TYPE_MISMATCH' | 'MEMORY_NOT_RENDERABLE' | 'MEMORY_SEMANTIC_SUPPORT_TOO_LOW'
   | 'UNDECLARED_MEMORY_USAGE' | 'GROUNDING_EMBEDDING_UNAVAILABLE';
 
 export interface GroundingValidationInput {
@@ -58,6 +58,8 @@ const CONVERSATIONAL_MEMORY_TYPES = new Set([
 
 /** Language-independent structured provenance validation and conservative audit. */
 export class GroundingValidator {
+  private runtimeFailed = false;
+
   constructor(private readonly embeddings: GroundingEmbeddingProvider) {}
 
   getRuntimeStatus(): GroundingRuntimeStatus {
@@ -91,10 +93,12 @@ export class GroundingValidator {
       if (!isProductionVector(queryProbe) || documentProbes.length !== 1 || !isProductionVector(documentProbes[0])) {
         return { available: false, modelId: 'Xenova/multilingual-e5-small', reason: 'dimension_mismatch' };
       }
+      this.runtimeFailed = false;
       return runtime;
     } catch {
       // Convert loader/cache/runtime failures into a safe, prompt-gating status.
       const runtime = this.getRuntimeStatus();
+      this.markRuntimeUnavailable();
       return runtime.available
         ? { available: false, modelId: 'Xenova/multilingual-e5-small', reason: 'model_load_failed' }
         : runtime;
@@ -105,7 +109,7 @@ export class GroundingValidator {
     const selected = new Set(input.selectedMemoryIds);
     const memories = new Map(input.selectedMemories.map((memory) => [memory.id, memory]));
     const results: GroundingSegmentValidation[] = [];
-    const memorySegments: Array<{ segment: GroundedReplySegment; memory: MemoryNode }> = [];
+    const memorySegments: Array<{ segment: Extract<GroundedReplySegment, { provenance: 'memory' }>; memory: MemoryNode }> = [];
 
     for (const segment of input.segments) {
       if (segment.provenance !== 'memory') continue;
@@ -114,21 +118,12 @@ export class GroundingValidator {
       else memorySegments.push({ segment, memory: memories.get(segment.supportingMemoryId!)! });
     }
 
-    if (memorySegments.length) {
-      try {
-        const segmentVectors = await Promise.all(memorySegments.map(({ segment }) => this.embeddings.embedQuery(segment.text)));
-        const memoryVectors = await this.embeddings.embedDocuments(memorySegments.map(({ memory }) => buildSafeGroundingRepresentation(memory, input.currentUserMessage)));
-        memorySegments.forEach(({ segment }, index) => {
-          const similarity = cosineSimilarity(segmentVectors[index], memoryVectors[index]);
-          results.push({ segmentId: segment.segmentId, provenance: 'memory', supportingMemoryId: segment.supportingMemoryId, valid: similarity >= MIN_GROUNDING_SUPPORT_SIMILARITY, reason: similarity >= MIN_GROUNDING_SUPPORT_SIMILARITY ? undefined : 'MEMORY_SEMANTIC_SUPPORT_TOO_LOW', similarity });
-        });
-      } catch {
-        memorySegments.forEach(({ segment }) => results.push({ segmentId: segment.segmentId, provenance: 'memory', supportingMemoryId: segment.supportingMemoryId, valid: false, reason: 'GROUNDING_EMBEDDING_UNAVAILABLE' }));
-      }
-    }
+    // Explicit Memory references render the deterministic representation below.
+    // E5 is deliberately not an entailment gate for that application-owned fact.
+    memorySegments.forEach(({ segment }) => results.push({ segmentId: segment.segmentId, provenance: 'memory', supportingMemoryId: segment.supportingMemoryId, valid: true }));
 
     const auditMemories = input.selectedMemories.filter((memory) => CONVERSATIONAL_MEMORY_TYPES.has(memory.memoryType ?? '')
-      && decideMemoryDisclosure({ memory, target: 'main_prompt', currentUserMessage: input.currentUserMessage }).allowed);
+      && renderSafeMemoryText(memory, input.currentUserMessage) !== undefined);
     const nonMemory = input.segments.filter((segment) => segment.provenance !== 'memory');
     if (nonMemory.length && auditMemories.length) {
       try {
@@ -144,17 +139,21 @@ export class GroundingValidator {
           results.push({ segmentId: segment.segmentId, provenance: segment.provenance, valid: !undeclared, reason: undeclared ? 'UNDECLARED_MEMORY_USAGE' : undefined, similarity });
         }
       } catch {
-        // Non-memory conversation must stay available when E5 is unavailable.
-        nonMemory.forEach((segment) => results.push({ segmentId: segment.segmentId, provenance: segment.provenance, valid: true }));
+        this.markRuntimeUnavailable();
+        // If durable Memory was exposed to this model attempt, an audit failure
+        // cannot make an undeclared Memory claim trustworthy. With no exposed
+        // Memory, ordinary current-turn conversation remains available.
+        const failClosed = input.selectedMemoryIds.length > 0;
+        nonMemory.forEach((segment) => results.push({ segmentId: segment.segmentId, provenance: segment.provenance, valid: !failClosed, reason: failClosed ? 'GROUNDING_EMBEDDING_UNAVAILABLE' : undefined }));
       }
     } else nonMemory.forEach((segment) => results.push({ segmentId: segment.segmentId, provenance: segment.provenance, valid: true }));
 
-    const runtime = this.getRuntimeStatus();
+    const runtime = this.runtimeFailed ? { available: false } : this.getRuntimeStatus();
     const embeddingUnavailable = results.some((result) => result.reason === 'GROUNDING_EMBEDDING_UNAVAILABLE');
     return { passed: results.every((result) => result.valid), embeddingAvailable: !embeddingUnavailable && runtime.available, segments: results };
   }
 
-  private validateMemorySegment(segment: GroundedReplySegment, selected: Set<string>, memories: Map<string, MemoryNode>, input: GroundingValidationInput): GroundingValidationReason | undefined {
+  private validateMemorySegment(segment: Extract<GroundedReplySegment, { provenance: 'memory' }>, selected: Set<string>, memories: Map<string, MemoryNode>, input: GroundingValidationInput): GroundingValidationReason | undefined {
     const id = segment.supportingMemoryId!;
     if (!selected.has(id)) return 'MEMORY_ID_NOT_SELECTED';
     const memory = memories.get(id);
@@ -164,16 +163,21 @@ export class GroundingValidator {
     if (memory.isMarkedWrong) return 'MEMORY_MARKED_WRONG';
     if (!decideMemoryDisclosure({ memory, target: 'main_prompt', currentUserMessage: input.currentUserMessage }).allowed) return 'MEMORY_NOT_DISCLOSABLE';
     if (!CONVERSATIONAL_MEMORY_TYPES.has(memory.memoryType ?? '')) return 'MEMORY_TYPE_MISMATCH';
+    if (!renderSafeMemoryText(memory, input.currentUserMessage)) return 'MEMORY_NOT_RENDERABLE';
     return undefined;
+  }
+
+  private markRuntimeUnavailable(): void {
+    this.runtimeFailed = true;
+    this.embeddings.markUnavailable?.();
   }
 }
 
 export function buildSafeGroundingRepresentation(memory: MemoryNode, currentUserMessage?: string): string {
-  const disclosure = decideMemoryDisclosure({ memory, target: 'main_prompt', currentUserMessage });
-  if (!disclosure.allowed) return '';
-  if (memory.memoryType === 'user_boundary') return minimalBoundaryConstraint(memory);
-  return [memory.title, memory.summary, memory.content].filter(Boolean).join('\n').slice(0, MAX_GROUNDING_MEMORY_CHARACTERS);
+  return renderSafeMemoryText(memory, currentUserMessage) ?? '';
 }
+
+export { renderSafeMemoryText } from './MemoryDisclosurePolicy';
 
 export function cosineSimilarity(left: Float32Array, right: Float32Array): number {
   if (!left || !right || left.length === 0 || left.length !== right.length) throw new Error('GROUNDING_EMBEDDING_DIMENSION_MISMATCH');

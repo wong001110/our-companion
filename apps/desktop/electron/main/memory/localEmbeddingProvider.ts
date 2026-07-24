@@ -127,6 +127,13 @@ export class LocalMultilingualEmbeddingProvider implements EmbeddingProvider {
     return value.trim();
   }
 
+  /** Fail closed after an inference or vector-shape failure until preflight reloads it. */
+  markUnavailable(): void {
+    this.extractor = undefined;
+    this.state = 'error';
+    this.error = 'LOCAL_EMBEDDING_RUNTIME_UNAVAILABLE';
+  }
+
   private hasCompleteLocalModel(): boolean {
     const modelRoot = path.join(this.cacheDir, ...this.modelId.split('/'));
     return [

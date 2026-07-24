@@ -34,8 +34,8 @@ export class OocGuardService {
   }
 
   /** Validate all externalizable proposal fields before actions or Memory persist. */
-  validateProposal(input: { proposal: CompanionTurnProposal; contract: CharacterContract; metadata: GenerationContextMetadata; currentUserMessage: string }): OocValidationResult {
-    const reply = this.validate({ response: assembleCompanionReply(input.proposal.replySegments), contract: input.contract, metadata: input.metadata });
+  validateProposal(input: { proposal: CompanionTurnProposal; contract: CharacterContract; metadata: GenerationContextMetadata; currentUserMessage: string; renderedReply?: string }): OocValidationResult {
+    const reply = this.validate({ response: input.renderedReply ?? assembleCompanionReply(input.proposal.replySegments), contract: input.contract, metadata: input.metadata });
     const violations = [...reply.violations];
     const sensitiveFacts = input.metadata.activeMemoryFacts.filter((fact) => fact.sensitivity === 'sensitive' || fact.sensitivity === 'private');
     const actionText = input.proposal.actions.flatMap((action) => [action.toolName, action.reason, ...stringValues(action.args)]).join('\n');

@@ -1664,18 +1664,34 @@ export interface CompanionTurnMemoryCandidate {
 
 export type ReplySegmentProvenance = 'current_turn' | 'general_knowledge' | 'memory';
 
-/** A user-visible reply fragment with explicit provenance. */
-export interface GroundedReplySegment {
+/** A model-authored fragment that does not make a persistent-Memory claim. */
+export interface NonMemoryReplySegment {
   segmentId: string;
   text: string;
-  provenance: ReplySegmentProvenance;
-  /** Required exactly when provenance is `memory`. */
-  supportingMemoryId?: string;
+  provenance: 'current_turn' | 'general_knowledge';
 }
 
+/**
+ * A reference to a deterministically rendered Memory fact. The model cannot
+ * supply, frame, or rewrite the factual payload itself.
+ */
+export interface MemoryReferenceReplySegment {
+  segmentId: string;
+  provenance: 'memory';
+  supportingMemoryId: string;
+}
+
+export type GroundedReplySegment = NonMemoryReplySegment | MemoryReferenceReplySegment;
+
 /** The only user-visible reply representation accepted from the model. */
-export function assembleCompanionReply(segments: GroundedReplySegment[]): string {
-  return segments.map((segment) => segment.text).join('');
+export function assembleCompanionReply(
+  segments: GroundedReplySegment[],
+  renderMemory?: (segment: MemoryReferenceReplySegment) => string | undefined,
+): string {
+  return segments.map((segment) => {
+    if (segment.provenance !== 'memory') return segment.text;
+    return renderMemory?.(segment) ?? '';
+  }).join('');
 }
 
 export interface CompanionTurnProposal {

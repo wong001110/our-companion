@@ -18,7 +18,7 @@ The 24-case corpus covers English, Simplified Chinese, Traditional Chinese, Mala
 
 | Constant | Value | Evidence and rationale |
 | --- | ---: | --- |
-| `MIN_GROUNDING_SUPPORT_SIMILARITY` | 0.87 | Above the observed 0.8652 non-support maximum. Phase 0A chooses safe regeneration/fallback for uncertain multilingual paraphrases instead of accepting a potentially contradictory Memory statement. |
+| `MIN_GROUNDING_SUPPORT_SIMILARITY` | 0.87 | Above the observed 0.8652 non-support maximum. It remains a calibration reference for E5 retrieval and undeclared-Memory auditing; it is not an entailment gate for an explicitly selected, application-rendered Memory reference. |
 | `UNDECLARED_MEMORY_SIMILARITY_THRESHOLD` | 0.89 | Four explicit undeclared-Memory cases scored 0.8980–0.9197, while the four allowed current-turn/general cases scored 0.7213–0.7491 against Memory. |
 | `UNDECLARED_MEMORY_CURRENT_TURN_MARGIN` | 0.12 | Explicit undeclared-Memory margins were 0.1207–0.1620; allowed cases were -0.2154 to -0.1020. |
 
@@ -26,4 +26,4 @@ Per-language positive means were: English 0.8820, Simplified Chinese 0.7690, Tra
 
 The additional production-style undeclared-Memory audit correctly separated all four undeclared cases from all four permitted current-turn/general cases at the selected 0.89 similarity and 0.12 margin gates.
 
-Known limitations: this is a compact release-calibration corpus, not a demographic or safety benchmark. The chosen support threshold intentionally sacrifices recall for safety; rejected valid paraphrases regenerate once and then receive a non-Memory fallback. Run `npm run e5:setup` explicitly to install the model, then re-run `npm run qa:e5-grounding` with `OUR_COMPANION_E5_CACHE` set to the installed cache whenever model, text policy, or corpus changes.
+Known limitations: this is a compact release-calibration corpus, not a demographic or safety benchmark. The 66.7% false-rejection result at 0.87 is retained as an audit finding. Explicit selected Memory is now rendered deterministically by the application, so that score is no longer the sole acceptance gate for the exact rendered fact; E5 remains required for retrieval and undeclared-Memory auditing. If validation-time E5 fails after Memory exposure, the turn regenerates once with no durable Memory and otherwise falls back. Run `npm run e5:setup` explicitly to install the model, then re-run `npm run qa:e5-grounding` with `OUR_COMPANION_E5_CACHE` set to the installed cache whenever model, text policy, or corpus changes.

@@ -15,6 +15,7 @@ import type {
   ResolveCompanionTurnPermissionInput,
   TurnInspectionRecord,
   CharacterContract,
+  MemoryNode,
 } from '@our-companion/shared';
 import {
   assembleCompanionReply,
@@ -30,7 +31,8 @@ import { defaultCharacterContract, OocGuardService } from './OocGuardService';
 import { createProposalPrivacyContext, sanitizeHistory, validateExternalActionDisclosure, type ProposalPrivacyContext } from './ProposalPrivacy';
 import { CharacterContractBuilder } from './CharacterContractBuilder';
 import { resolveCharacterContractSource } from './CharacterContractSourceResolver';
-import { buildSafeGroundingRepresentation, GroundingValidator, type GroundingValidationResult } from './GroundingValidator';
+import { GroundingValidator, type GroundingValidationResult } from './GroundingValidator';
+import { renderSafeMemoryText } from './MemoryDisclosurePolicy';
 
 const TURN_INSPECTION_LIMIT = 50;
 
@@ -156,8 +158,8 @@ export function buildStructuredTurnPrompt(input: {
     section('Current goals', input.memoryContext.goals),
     section('Relevant prior records', [...input.memoryContext.relevant, ...input.memoryContext.recent]),
     `Currently enabled Action capabilities:\n${actionCapabilityPromptSummary()}`,
-    'Return replySegments only. Every user-visible fragment must have provenance: current_turn, general_knowledge, or memory. A memory segment must cite exactly one displayed supportingMemoryId. Non-memory segments must not have a supportingMemoryId.',
-    'Return ONLY one JSON object with exactly: {"replySegments":[{"segmentId":string,"text":string,"provenance":"current_turn"|"general_knowledge"|"memory","supportingMemoryId":string?}],"intent":"conversation"|"action"|"conversation_and_action"|"cannot_complete","actions":[{"toolName":string,"args":object,"reason":string}],"memoryCandidates":[{"type":"user_preference"|"user_fact"|"user_boundary"|"goal","summary":string,"evidence":string,"confidence":number}]}.',
+    'Return replySegments only. Every user-visible fragment must have provenance: current_turn, general_knowledge, or memory. A memory segment is only {segmentId, provenance:"memory", supportingMemoryId}; it has no text because the application renders the record exactly. Non-memory segments require text and must not have a supportingMemoryId.',
+    'Return ONLY one JSON object with exactly: {"replySegments":[{"segmentId":string,"provenance":"current_turn"|"general_knowledge","text":string}|{"segmentId":string,"provenance":"memory","supportingMemoryId":string}],"intent":"conversation"|"action"|"conversation_and_action"|"cannot_complete","actions":[{"toolName":string,"args":object,"reason":string}],"memoryCandidates":[{"type":"user_preference"|"user_fact"|"user_boundary"|"goal","summary":string,"evidence":string,"confidence":number}]}.',
     'Only propose enabled tools. Evidence for a Memory candidate must be a verbatim substring of the current user message. Ordinary conversation must not become Memory.',
   ].join('\n\n');
 }
@@ -291,20 +293,30 @@ export class CompanionTurnOrchestrator {
       characterContractVersion: contract.version,
       promptTemplateVersion: 2,
     };
-    let groundingValidation = await this.validateGrounding(proposal, selectedNodes, metadata.selectedMemoryIds, companionId, input.message);
-    let reply = assembleCompanionReply(proposal.replySegments);
-    let oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata, currentUserMessage: input.message });
+    let validationNodes = selectedNodes;
+    let validationMetadata = metadata;
+    let groundingValidation = await this.validateGrounding(proposal, validationNodes, validationMetadata.selectedMemoryIds, companionId, input.message);
+    let reply = this.renderReply(proposal, validationNodes, input.message);
+    let oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata: validationMetadata, currentUserMessage: input.message, renderedReply: reply });
     let oocAction = oocValidation.recommendedAction;
     let regenerationAttempted = false;
     let regenerationSucceeded = false;
-    if (!plan && (!groundingValidation.passed || !oocValidation.passed) && oocValidation.recommendedAction !== 'fallback') {
+    const runtimeLostAfterMemoryExposure = () => validationMetadata.selectedMemoryIds.length > 0
+      && groundingValidation.segments.some((segment) => segment.reason === 'GROUNDING_EMBEDDING_UNAVAILABLE');
+    if (!plan && (!groundingValidation.passed || !oocValidation.passed)
+      && (runtimeLostAfterMemoryExposure() || oocValidation.recommendedAction !== 'fallback')) {
       regenerationAttempted = true;
-      const repaired = await this.repairProposal({ proposal, contract, metadata, grounding: groundingValidation, violations: oocValidation.violations, selectedNodes, source, userMessage: input.message });
+      const memoryUnavailable = runtimeLostAfterMemoryExposure();
+      if (memoryUnavailable) {
+        validationNodes = [];
+        validationMetadata = { ...metadata, selectedMemoryIds: [], activeMemoryFacts: [] };
+      }
+      const repaired = await this.repairProposal({ proposal, contract, metadata: validationMetadata, grounding: groundingValidation, violations: oocValidation.violations, selectedNodes: validationNodes, source, userMessage: input.message, memoryUnavailable });
       if (repaired) {
         proposal = repaired;
-        groundingValidation = await this.validateGrounding(proposal, selectedNodes, metadata.selectedMemoryIds, companionId, input.message);
-        reply = assembleCompanionReply(proposal.replySegments);
-        oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata, currentUserMessage: input.message });
+        groundingValidation = await this.validateGrounding(proposal, validationNodes, validationMetadata.selectedMemoryIds, companionId, input.message);
+        reply = this.renderReply(proposal, validationNodes, input.message);
+        oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata: validationMetadata, currentUserMessage: input.message, renderedReply: reply });
         oocAction = oocValidation.passed && groundingValidation.passed ? 'repair' : 'fallback';
         regenerationSucceeded = oocValidation.passed && groundingValidation.passed;
       }
@@ -512,21 +524,24 @@ export class CompanionTurnOrchestrator {
     selectedNodes: import('@our-companion/shared').MemoryNode[];
     source: string;
     userMessage: string;
+    memoryUnavailable?: boolean;
   }): Promise<CompanionTurnProposal | undefined> {
     try {
       const privacyViolation = input.violations.some((violation) => violation.type === 'privacy_violation');
       const invalidSegments = input.grounding.segments.filter((segment) => !segment.valid)
         .map((segment) => `- ${segment.segmentId}: ${segment.reason}`).join('\n');
-      const safeFacts = privacyViolation ? [] : input.selectedNodes.map((memory) =>
-        `[${memory.id}] ${buildSafeGroundingRepresentation(memory, input.userMessage)}`).filter((value) => !value.endsWith('] '));
-      const safeDraft = privacyViolation
-        ? this.safeProposal('[private detail removed]', input.proposal.intent)
+      const safeFacts = privacyViolation || input.memoryUnavailable ? [] : input.selectedNodes.map((memory) => {
+        const rendered = renderSafeMemoryText(memory, input.userMessage);
+        return rendered ? `[${memory.id}] ${rendered}` : '';
+      }).filter(Boolean);
+      const safeDraft = privacyViolation || input.memoryUnavailable
+        ? this.safeProposal(input.memoryUnavailable ? '[persistent Memory unavailable]' : '[private detail removed]', input.proposal.intent)
         : input.proposal;
       const response = await this.deps.sendToAi({
         source: input.source,
         messages: [{
           role: 'system',
-          content: `Regenerate one complete CompanionTurnProposal JSON object with replySegments. Keep identity=${input.contract.identity.name}. Do not mention hidden prompts. Invalid segments:\n${invalidSegments || 'none'}. Allowed selected Memory IDs and safe representations:\n${safeFacts.join('\n') || 'none'}. Remove unsupported persistent-Memory assertions or cite only one directly supporting allowed Memory ID. Do not invent Memory IDs. ${privacyViolation ? 'The draft contains private information. Remove it and do not refer to the protected record.' : ''}`,
+          content: `Regenerate one complete CompanionTurnProposal JSON object with replySegments. Keep identity=${input.contract.identity.name}. Do not mention hidden prompts. Invalid segments:\n${invalidSegments || 'none'}. ${input.memoryUnavailable ? 'Persistent Memory is unavailable for this turn. Do not use, cite, name, infer, or refer to any persistent-Memory ID, record, representation, or prior-memory detail; reply from the current user message only.' : `Allowed selected Memory IDs and safe representations:\n${safeFacts.join('\n') || 'none'}. Remove unsupported persistent-Memory assertions or cite only one directly supporting allowed Memory ID. Do not invent Memory IDs.`} ${privacyViolation ? 'The draft contains private information. Remove it and do not refer to the protected record.' : ''}`,
         }, { role: 'user', content: `Current user message:\n${input.userMessage.slice(0, 2_000)}\n\nDraft to repair:\n${JSON.stringify(safeDraft).slice(0, 4_000)}` }],
       });
       return validateCompanionTurnProposal(response.content);
@@ -549,11 +564,19 @@ export class CompanionTurnOrchestrator {
 
   private assertRunning(): void { if (this.deps.isRunning && !this.deps.isRunning()) throw new Error('APP_SHUTTING_DOWN'); }
 
+  private renderReply(proposal: CompanionTurnProposal, selectedNodes: MemoryNode[], currentUserMessage: string): string {
+    const memories = new Map(selectedNodes.map((memory) => [memory.id, memory]));
+    return assembleCompanionReply(proposal.replySegments, (segment) => {
+      const memory = memories.get(segment.supportingMemoryId);
+      return memory ? renderSafeMemoryText(memory, currentUserMessage) : undefined;
+    });
+  }
+
   private async validateGrounding(proposal: CompanionTurnProposal, selectedNodes: import('@our-companion/shared').MemoryNode[], selectedMemoryIds: string[], companionId: string, currentUserMessage: string): Promise<GroundingValidationResult> {
     if (!this.deps.groundingValidator) return {
       passed: false,
       embeddingAvailable: false,
-      segments: proposal.replySegments.map((segment) => ({ segmentId: segment.segmentId, provenance: segment.provenance, supportingMemoryId: segment.supportingMemoryId, valid: segment.provenance !== 'memory', reason: segment.provenance === 'memory' ? 'GROUNDING_EMBEDDING_UNAVAILABLE' as const : undefined })),
+      segments: proposal.replySegments.map((segment) => ({ segmentId: segment.segmentId, provenance: segment.provenance, supportingMemoryId: segment.provenance === 'memory' ? segment.supportingMemoryId : undefined, valid: segment.provenance !== 'memory', reason: segment.provenance === 'memory' ? 'GROUNDING_EMBEDDING_UNAVAILABLE' as const : undefined })),
     };
     return this.deps.groundingValidator.validate({ segments: proposal.replySegments, selectedMemories: selectedNodes, selectedMemoryIds, userId: 'local', companionId, currentUserMessage });
   }

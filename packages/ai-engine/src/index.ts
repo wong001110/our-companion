@@ -99,17 +99,17 @@ export const actionPlanSchema = z.object({
 
 export const companionTurnProposalSchema = z.object({
   intent: z.enum(['conversation', 'action', 'conversation_and_action', 'cannot_complete']),
-  replySegments: z.array(z.object({
-    segmentId: z.string().min(1).max(100),
-    text: z.string().min(1).max(1_000),
-    provenance: z.enum(['current_turn', 'general_knowledge', 'memory']),
-    supportingMemoryId: z.string().min(1).max(200).refine((id) => !/[\s,;]/.test(id), 'Memory IDs must be a single token.').optional(),
-  }).strict().superRefine((segment, context) => {
-    if (segment.provenance === 'memory' && !segment.supportingMemoryId) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Memory segments require supportingMemoryId.' });
-    if (segment.provenance !== 'memory' && segment.supportingMemoryId !== undefined) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Only memory segments may cite a Memory ID.' });
-  })).min(1).max(24)
+  replySegments: z.array(z.discriminatedUnion('provenance', [
+    z.object({ segmentId: z.string().min(1).max(100), text: z.string().min(1).max(1_000), provenance: z.literal('current_turn') }).strict(),
+    z.object({ segmentId: z.string().min(1).max(100), text: z.string().min(1).max(1_000), provenance: z.literal('general_knowledge') }).strict(),
+    z.object({
+      segmentId: z.string().min(1).max(100),
+      provenance: z.literal('memory'),
+      supportingMemoryId: z.string().min(1).max(200).refine((id) => !/[\s,;]/.test(id), 'Memory IDs must be a single token.'),
+    }).strict(),
+  ])).min(1).max(24)
     .refine((segments) => new Set(segments.map((segment) => segment.segmentId)).size === segments.length, 'Reply segment IDs must be unique.')
-    .refine((segments) => segments.reduce((total, segment) => total + segment.text.length, 0) <= 4_000, 'Assembled reply must not exceed 4,000 characters.'),
+    .refine((segments) => segments.reduce((total, segment) => total + ('text' in segment ? segment.text.length : 0), 0) <= 4_000, 'Assembled reply must not exceed 4,000 characters.'),
   actions: z.array(z.object({
     toolName: z.string().min(1).max(80),
     args: z.record(z.unknown()),

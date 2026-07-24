@@ -8,7 +8,7 @@ import type {
 import { normalizeSemanticText } from '@our-companion/shared';
 import type { EmbeddingProvider } from '../memory/localEmbeddingProvider';
 import type { VectorIndex } from '@our-companion/memory-engine';
-import { decideMemoryDisclosure, minimalBoundaryConstraint } from './MemoryDisclosurePolicy';
+import { decideMemoryDisclosure, renderSafeMemoryText } from './MemoryDisclosurePolicy';
 
 const DEFAULT_MAX_ITEMS = 18;
 const DEFAULT_MAX_CHARACTERS = 4_800;
@@ -26,9 +26,7 @@ export interface MemoryContextProvider {
   buildContext(input: MemoryContextBuildInput): Promise<CompanionMemoryContext>;
 }
 
-function textFor(node: MemoryNode): string {
-  return (node.summary || node.content || node.title).trim();
-}
+function textFor(node: MemoryNode): string { return (node.summary ?? '').trim(); }
 
 function contextItem(node: MemoryNode, selectedBecause: string, summary?: string): MemoryContextItem {
   return {
@@ -137,9 +135,9 @@ export class SqliteMemoryContextProvider implements MemoryContextProvider {
     const candidateRows = this.db.getMemoryNodesByIds({ memoryIds: [...traceCandidates.keys()], userId: 'local', companionId: input.companionId });
     const disclosure = new Map(candidateRows.map((node) => [node.id, decideMemoryDisclosure({ memory: node, target: 'main_prompt', currentUserMessage: input.message })]));
     const candidates = candidateRows
-      .filter((node) => !node.isMarkedWrong && node.status === 'active' && !isExpired(node, this.now().getTime()) && disclosure.get(node.id)?.allowed);
-    const safeSummary = (node: MemoryNode) => disclosure.get(node.id)?.representation === 'minimal_constraint'
-      ? minimalBoundaryConstraint(node) : textFor(node);
+      .filter((node) => !node.isMarkedWrong && node.status === 'active' && !isExpired(node, this.now().getTime()) && disclosure.get(node.id)?.allowed
+        && renderSafeMemoryText(node, input.message) !== undefined);
+    const safeSummary = (node: MemoryNode) => renderSafeMemoryText(node, input.message) ?? '';
 
     const pinnedNodes = candidates.filter((node) => node.isPinned).slice(0, 5);
     const pinnedIds = new Set(pinnedNodes.map((node) => node.id));

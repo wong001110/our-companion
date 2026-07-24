@@ -25,6 +25,10 @@ export type UserBoundaryAction = 'do_not_mention' | 'do_not_recommend' | 'do_not
 export interface UserBoundaryMetadata { action: UserBoundaryAction; target: string; sourceLanguage?: 'en' | 'zh'; }
 
 const PERSONAL_RELEVANCE_THRESHOLD = 0.2;
+export const MAX_SAFE_MEMORY_RENDER_CHARACTERS = 2_000;
+const CONVERSATIONAL_MEMORY_TYPES = new Set([
+  'user_fact', 'user_preference', 'user_boundary', 'goal', 'shared_experience', 'relationship_memory',
+]);
 
 function terms(value: string): Set<string> {
   const normalized = normalizeSemanticText(value);
@@ -88,6 +92,22 @@ export function minimalBoundaryConstraint(memory: MemoryNode): string {
     .trim()
     .replace(/[,:;，：；]\s*$/, '');
   return `User boundary: ${withoutExplanation || 'Respect the user\'s stated boundary.'}`;
+}
+
+/**
+ * The sole user-facing rendering of a Memory reference.  This is deliberately
+ * application-owned: the model can select an allowed ID but never supply or
+ * paraphrase the underlying fact.  Stored summaries are already the bounded,
+ * canonical memory representation; raw title/content and private metadata are
+ * never used as a fallback here.
+ */
+export function renderSafeMemoryText(memory: MemoryNode, currentUserMessage?: string): string | undefined {
+  const disclosure = decideMemoryDisclosure({ memory, target: 'main_prompt', currentUserMessage });
+  if (!disclosure.allowed || !CONVERSATIONAL_MEMORY_TYPES.has(memory.memoryType ?? '')) return undefined;
+  const canonical = memory.memoryType === 'user_boundary'
+    ? minimalBoundaryConstraint(memory)
+    : (memory.summary ?? '').trim();
+  return canonical ? canonical.slice(0, MAX_SAFE_MEMORY_RENDER_CHARACTERS) : undefined;
 }
 
 export function deriveUserBoundary(source: string): UserBoundaryMetadata | undefined {

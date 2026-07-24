@@ -44,7 +44,7 @@ describe('CompanionTurnOrchestrator', () => {
   it('regenerates an invalid memory segment once and persists only the accepted assembled reply', async () => {
     let calls = 0;
     const harness = createHarness(() => (++calls === 1
-      ? proposal({ replySegments: [{ segmentId: 'bad', text: 'I remember a promise.', provenance: 'memory', supportingMemoryId: 'invented' }], memoryCandidates: [{ type: 'user_fact', summary: 'False promise', evidence: 'hello', confidence: 1 }] })
+      ? proposal({ replySegments: [{ segmentId: 'bad', provenance: 'memory', supportingMemoryId: 'invented' }], memoryCandidates: [{ type: 'user_fact', summary: 'False promise', evidence: 'hello', confidence: 1 }] })
       : proposal({ replySegments: [{ segmentId: 'safe', text: 'I do not have a reliable record of that promise.', provenance: 'current_turn' }] })));
     const result = await harness.orchestrator.handle({ message: 'hello', source: 'panel_text', characterId: harness.companion.id });
     expect(calls).toBe(2);
@@ -84,10 +84,45 @@ describe('CompanionTurnOrchestrator', () => {
   });
 
   it('does not execute actions from a proposal that fails grounding twice', async () => {
-    const harness = createHarness(() => proposal({ intent: 'action', replySegments: [{ segmentId: 'bad', text: 'I remember a secret.', provenance: 'memory', supportingMemoryId: 'invented' }], actions: [{ toolName: 'open_url', args: { url: 'https://example.com' }, reason: 'memory said so' }] }));
+    const harness = createHarness(() => proposal({ intent: 'action', replySegments: [{ segmentId: 'bad', provenance: 'memory', supportingMemoryId: 'invented' }], actions: [{ toolName: 'open_url', args: { url: 'https://example.com' }, reason: 'memory said so' }] }));
     const result = await harness.orchestrator.handle({ message: 'open it', source: 'panel_text', characterId: harness.companion.id });
     expect(result.kind).toBe('conversation');
     expect(harness.executions).toHaveLength(0);
+    harness.db.close();
+  });
+
+  it('retries exactly once without durable Memory after validation-time E5 failure', async () => {
+    let queryCalls = 0;
+    let documentCalls = 0;
+    const validator = new GroundingValidator({
+      dimensions: 384,
+      embedQuery: async () => {
+        queryCalls += 1;
+        if (queryCalls >= 3) throw new Error('ONNX session lost');
+        return new Float32Array(384);
+      },
+      embedDocuments: async () => {
+        documentCalls += 1;
+        return [new Float32Array(384)];
+      },
+      getStatus: () => ({ state: 'ready', modelId: 'Xenova/multilingual-e5-small' }),
+    });
+    let calls = 0;
+    const harness = createHarness(() => (++calls === 1
+      ? proposal({ replySegments: [{ segmentId: 'first', text: 'I can help with that.', provenance: 'current_turn' }], actions: [{ toolName: 'open_url', args: { url: 'https://example.com' }, reason: 'not needed' }] })
+      : proposal({ replySegments: [{ segmentId: 'retry', text: 'I can help with that.', provenance: 'current_turn' }] })), validator);
+    const node = createMemoryNode({ companionId: harness.companion.id, type: 'topic', title: 'DURABLE_LOCAL_FIRST_SECRET', content: 'DURABLE_LOCAL_FIRST_SECRET' });
+    harness.db.insertMemoryNode({ ...node, id: 'memory-existing', userId: 'local', memoryType: 'user_preference', summary: 'Use local-first processing.', metadata: { sourceType: 'user_explicit', confidence: 1, sensitivity: 'normal', scope: 'companion', createdAt: node.createdAt } });
+
+    const result = await harness.orchestrator.handle({ message: 'What should I use?', source: 'panel_text', characterId: harness.companion.id });
+    expect(queryCalls).toBeGreaterThanOrEqual(3);
+    expect(documentCalls).toBeGreaterThanOrEqual(2);
+    expect(calls).toBe(2);
+    expect(harness.aiMessages[1]?.[0]?.content).toContain('Persistent Memory is unavailable for this turn');
+    expect(harness.aiMessages[1]?.[0]?.content).not.toContain('memory-existing');
+    expect(result).toMatchObject({ kind: 'conversation', message: 'I can help with that.' });
+    expect(harness.executions).toHaveLength(0);
+    expect(harness.orchestrator.getInspections()[0]?.grounding).toMatchObject({ regenerationAttempted: true, regenerationSucceeded: true, embeddingAvailable: false });
     harness.db.close();
   });
 
@@ -104,7 +139,7 @@ describe('CompanionTurnOrchestrator', () => {
       let calls = 0;
       const harness = createHarness(() => {
         calls += 1;
-        return proposal({ intent: 'action', replySegments: [{ segmentId: `memory-${calls}`, text: 'You prefer DURABLE_LOCAL_FIRST_SECRET.', provenance: 'memory', supportingMemoryId: 'memory-existing' }], actions: [{ toolName: 'open_url', args: { url: 'https://example.com' }, reason: 'Memory preference' }] });
+        return proposal({ intent: 'action', replySegments: [{ segmentId: `memory-${calls}`, provenance: 'memory', supportingMemoryId: 'memory-existing' }], actions: [{ toolName: 'open_url', args: { url: 'https://example.com' }, reason: 'Memory preference' }] });
       }, unavailable);
       const node = createMemoryNode({ companionId: harness.companion.id, type: 'topic', title: 'DURABLE_LOCAL_FIRST_SECRET', content: 'DURABLE_LOCAL_FIRST_SECRET' });
       harness.db.insertMemoryNode({ ...node, id: 'memory-existing', userId: 'local', memoryType: 'user_preference', metadata: { sourceType: 'user_explicit', confidence: 1, sensitivity: 'normal', scope: 'companion', createdAt: node.createdAt } });
