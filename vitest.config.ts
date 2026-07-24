@@ -6,7 +6,15 @@ const root = __dirname;
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['packages/**/*.test.ts', 'apps/**/*.test.ts', 'tests/**/*.test.ts']
+    include: ['packages/**/*.test.ts', 'apps/**/*.test.ts', 'tests/**/*.test.ts'],
+    // The ONNX runtime is optional at test time and is intentionally loaded
+    // only after the local model cache passes validation.  Keep it in Node's
+    // native module loader instead of compiling it into every Vitest worker.
+    server: {
+      deps: {
+        external: ['@huggingface/transformers']
+      }
+    }
   },
   resolve: {
     extensions: ['.ts', '.tsx', '.mts', '.mjs', '.js', '.jsx', '.json'],

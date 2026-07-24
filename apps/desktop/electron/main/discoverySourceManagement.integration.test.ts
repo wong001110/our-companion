@@ -38,8 +38,8 @@ function addCompanion(services: AppServices, name: string, description: string, 
 describe('Discovery Source management', () => {
   const servicesToClose: AppServices[] = [];
 
-  afterEach(() => {
-    for (const services of servicesToClose.splice(0)) services.db.close();
+  afterEach(async () => {
+    await Promise.all(servicesToClose.splice(0).map((services) => services.dispose()));
   });
 
   function createServices(runtimeDependencies: AppRuntimeDependencies = {}) {

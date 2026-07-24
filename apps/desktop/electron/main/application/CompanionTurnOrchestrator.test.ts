@@ -1,18 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { DatabaseService } from '@our-companion/database';
+import { createMemoryNode } from '@our-companion/memory-engine';
 import type { ActionPermissionState, ActionPlan, ActionResult, CompanionTurnProposal } from '@our-companion/shared';
 import { MemoryPolicy } from '../runtime/MemoryPolicy';
 import { CompanionTurnOrchestrator } from './CompanionTurnOrchestrator';
 import { GroundingValidator } from './GroundingValidator';
 import { SqliteMemoryContextProvider } from './MemoryContextProvider';
 
+function e5TestVector(text: string): Float32Array {
+  const vector = new Float32Array(384);
+  vector[/local-first/i.test(text) ? 0 : 1] = 1;
+  return vector;
+}
+
 const grounding = new GroundingValidator({
-  embedQuery: async (text) => /local-first/i.test(text) ? new Float32Array([1, 0]) : new Float32Array([0, 1]),
-  embedDocuments: async (texts) => texts.map((text) => /local-first/i.test(text) ? new Float32Array([1, 0]) : new Float32Array([0, 1])),
+  dimensions: 384,
+  embedQuery: async (text) => e5TestVector(text),
+  embedDocuments: async (texts) => texts.map(e5TestVector),
   getStatus: () => ({ state: 'ready', modelId: 'Xenova/multilingual-e5-small' }),
 });
 
-function createHarness(aiReply: (messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => string) {
+function createHarness(aiReply: (messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => string, validator = grounding) {
   const db = new DatabaseService();
   const companion = db.createCompanion({ name: 'Ann', personalityDescription: 'Warm and concise.', personalityAnalysisId: 'test', assetRoot: 'test', personality: { energy: 50, curiosity: 50, sociability: 50, diligence: 50, playfulness: 50, confidence: 50, calmness: 50, shyness: 50 } });
   db.setPrimaryCompanion(companion.id);
@@ -20,7 +28,7 @@ function createHarness(aiReply: (messages: Array<{ role: 'system' | 'user' | 'as
   const executions: ActionPlan[] = [];
   const aiMessages: Array<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>> = [];
   const orchestrator = new CompanionTurnOrchestrator({
-    db, groundingValidator: grounding, memoryContext: new SqliteMemoryContextProvider(db, () => new Date('2026-07-18T00:00:00.000Z')),
+    db, groundingValidator: validator, memoryContext: new SqliteMemoryContextProvider(db, () => new Date('2026-07-18T00:00:00.000Z')),
     memoryPolicy: new MemoryPolicy(db, { now: () => Date.parse('2026-07-18T00:00:00.000Z') }), now: () => new Date('2026-07-18T00:00:00.000Z'), getReplyLanguage: () => 'en',
     sendToAi: async ({ messages }) => { aiMessages.push(messages); return { content: aiReply(messages) }; },
     getPermissions: () => permissions, setPermissions: (next) => { permissions = next; db.setActionPermissions(next); return next; },
@@ -81,5 +89,32 @@ describe('CompanionTurnOrchestrator', () => {
     expect(result.kind).toBe('conversation');
     expect(harness.executions).toHaveLength(0);
     harness.db.close();
+  });
+
+  it('gates durable Memory for every unavailable E5 state and falls back safely', async () => {
+    const unavailableCases = [
+      { name: 'model not installed', provider: { initialize: async () => { throw new Error('LOCAL_EMBEDDING_MODEL_NOT_INSTALLED'); }, embedQuery: async () => { throw new Error('LOCAL_EMBEDDING_MODEL_NOT_INSTALLED'); }, embedDocuments: async () => { throw new Error('LOCAL_EMBEDDING_MODEL_NOT_INSTALLED'); }, getStatus: () => ({ state: 'not-installed', modelId: 'Xenova/multilingual-e5-small' }) } },
+      { name: 'model load failure', provider: { initialize: async () => { throw new Error('ONNX load failed'); }, embedQuery: async () => { throw new Error('ONNX load failed'); }, embedDocuments: async () => { throw new Error('ONNX load failed'); }, getStatus: () => ({ state: 'failed', modelId: 'Xenova/multilingual-e5-small', error: 'ONNX load failed' }) } },
+      { name: 'malformed local cache', provider: { initialize: async () => { throw new Error('malformed ONNX cache'); }, embedQuery: async () => { throw new Error('malformed ONNX cache'); }, embedDocuments: async () => { throw new Error('malformed ONNX cache'); }, getStatus: () => ({ state: 'failed', modelId: 'Xenova/multilingual-e5-small', error: 'malformed ONNX cache' }) } },
+      { name: 'embedding dimension mismatch', provider: { dimensions: 384, initialize: async () => {}, embedQuery: async () => new Float32Array(384), embedDocuments: async () => [new Float32Array(383)], getStatus: () => ({ state: 'ready', modelId: 'Xenova/multilingual-e5-small' }) } },
+    ];
+
+    for (const unavailableCase of unavailableCases) {
+      const unavailable = new GroundingValidator(unavailableCase.provider);
+      let calls = 0;
+      const harness = createHarness(() => {
+        calls += 1;
+        return proposal({ intent: 'action', replySegments: [{ segmentId: `memory-${calls}`, text: 'You prefer DURABLE_LOCAL_FIRST_SECRET.', provenance: 'memory', supportingMemoryId: 'memory-existing' }], actions: [{ toolName: 'open_url', args: { url: 'https://example.com' }, reason: 'Memory preference' }] });
+      }, unavailable);
+      const node = createMemoryNode({ companionId: harness.companion.id, type: 'topic', title: 'DURABLE_LOCAL_FIRST_SECRET', content: 'DURABLE_LOCAL_FIRST_SECRET' });
+      harness.db.insertMemoryNode({ ...node, id: 'memory-existing', userId: 'local', memoryType: 'user_preference', metadata: { sourceType: 'user_explicit', confidence: 1, sensitivity: 'normal', scope: 'companion', createdAt: node.createdAt } });
+      const result = await harness.orchestrator.handle({ message: 'What should I use?', source: 'panel_text', characterId: harness.companion.id });
+      expect(calls, unavailableCase.name).toBe(2);
+      expect(harness.aiMessages[0]?.[0]?.content, unavailableCase.name).not.toContain('DURABLE_LOCAL_FIRST_SECRET');
+      expect(result.kind, unavailableCase.name).toBe('conversation');
+      expect(harness.executions, unavailableCase.name).toHaveLength(0);
+      expect(harness.orchestrator.getInspections()[0]?.grounding, unavailableCase.name).toMatchObject({ regenerationAttempted: true, regenerationSucceeded: false, embeddingAvailable: false });
+      harness.db.close();
+    }
   });
 });

@@ -29,8 +29,8 @@ const personality: CompanionPersonality = {
   shyness: 50,
 };
 
-afterEach(() => {
-  for (const services of openServices.splice(0)) services.db.close();
+afterEach(async () => {
+  await Promise.all(openServices.splice(0).map((services) => services.dispose()));
 });
 
 function createServices(

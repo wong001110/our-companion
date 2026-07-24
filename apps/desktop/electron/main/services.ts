@@ -465,7 +465,13 @@ export class AppServices {
     this.embeddingJobRunner = new EmbeddingJobRunner(this.db, this.localEmbeddings, this.vectorIndex);
     this.db.setEmbeddingJobNotifier(() => this.embeddingJobRunner.scheduleDrain());
     this.db.setVectorDeletionHandler((memoryId) => this.vectorIndex.removeForDeletion(memoryId));
-    void this.vectorIndex.initialize().then(() => { this.db.queueAllEligibleEmbeddings(); this.embeddingJobRunner.start(); }).catch(() => undefined);
+    void this.vectorIndex.initialize().then(() => {
+      // Initialization can settle after shutdown has begun. Never revive the
+      // embedding worker or touch SQLite after AppServices has been disposed.
+      if (this.serviceState !== 'running') return;
+      this.db.queueAllEligibleEmbeddings();
+      if (this.serviceState === 'running') this.embeddingJobRunner.start();
+    }).catch(() => undefined);
 
     if (this.eventBus instanceof InProcessEventBus) {
       this.eventBus.setErrorReporter((error, event) => {

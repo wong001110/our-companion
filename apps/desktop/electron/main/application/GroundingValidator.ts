@@ -1,9 +1,9 @@
 import type { GroundedReplySegment, MemoryNode, ReplySegmentProvenance } from '@our-companion/shared';
 import { decideMemoryDisclosure, minimalBoundaryConstraint } from './MemoryDisclosurePolicy';
 
-/** Conservative initial values; `qa:e5-grounding` records real-model calibration evidence. */
-export const MIN_GROUNDING_SUPPORT_SIMILARITY = 0.74;
-export const UNDECLARED_MEMORY_SIMILARITY_THRESHOLD = 0.86;
+/** Calibrated against the committed local E5 QA corpus; see docs/qa/e5-grounding-report.md. */
+export const MIN_GROUNDING_SUPPORT_SIMILARITY = 0.87;
+export const UNDECLARED_MEMORY_SIMILARITY_THRESHOLD = 0.89;
 export const UNDECLARED_MEMORY_CURRENT_TURN_MARGIN = 0.12;
 export const MAX_GROUNDING_MEMORY_CHARACTERS = 2_000;
 
@@ -14,6 +14,9 @@ export interface GroundingRuntimeStatus {
 }
 
 export interface GroundingEmbeddingProvider {
+  initialize?: () => Promise<void>;
+  /** Production E5 is fixed at 384 dimensions; test providers may omit this. */
+  dimensions?: number;
   embedQuery(text: string): Promise<Float32Array>;
   embedDocuments(texts: string[]): Promise<Float32Array[]>;
   getStatus?: () => { state: string; modelId: string; error?: string };
@@ -59,6 +62,9 @@ export class GroundingValidator {
 
   getRuntimeStatus(): GroundingRuntimeStatus {
     const status = this.embeddings.getStatus?.();
+    if (this.embeddings.dimensions !== undefined && this.embeddings.dimensions !== 384) {
+      return { available: false, modelId: 'Xenova/multilingual-e5-small', reason: 'dimension_mismatch' };
+    }
     if (!status || status.state === 'ready') return { available: true, modelId: 'Xenova/multilingual-e5-small' };
     const error = status.error ?? '';
     return {
@@ -66,6 +72,33 @@ export class GroundingValidator {
       modelId: 'Xenova/multilingual-e5-small',
       reason: /DIMENSION/i.test(error) ? 'dimension_mismatch' : status.state === 'not-installed' ? 'model_not_installed' : 'model_load_failed',
     };
+  }
+
+  /** Loads only an already-installed local model; remote access stays disabled by the provider. */
+  async ensureAvailable(): Promise<GroundingRuntimeStatus> {
+    try {
+      await this.embeddings.initialize?.();
+      const runtime = this.getRuntimeStatus();
+      if (!runtime.available) return runtime;
+
+      // Prove the loaded local runtime can produce the production vector shape
+      // before any durable Memory is rendered into the generation prompt.
+      const [queryProbe, documentProbes] = await Promise.all([
+        this.embeddings.embedQuery('grounding availability probe'),
+        this.embeddings.embedDocuments(['grounding availability probe']),
+      ]);
+      const isProductionVector = (vector: Float32Array | undefined) => vector?.length === 384 && Array.from(vector).every(Number.isFinite);
+      if (!isProductionVector(queryProbe) || documentProbes.length !== 1 || !isProductionVector(documentProbes[0])) {
+        return { available: false, modelId: 'Xenova/multilingual-e5-small', reason: 'dimension_mismatch' };
+      }
+      return runtime;
+    } catch {
+      // Convert loader/cache/runtime failures into a safe, prompt-gating status.
+      const runtime = this.getRuntimeStatus();
+      return runtime.available
+        ? { available: false, modelId: 'Xenova/multilingual-e5-small', reason: 'model_load_failed' }
+        : runtime;
+    }
   }
 
   async validate(input: GroundingValidationInput): Promise<GroundingValidationResult> {

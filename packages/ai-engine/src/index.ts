@@ -108,7 +108,8 @@ export const companionTurnProposalSchema = z.object({
     if (segment.provenance === 'memory' && !segment.supportingMemoryId) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Memory segments require supportingMemoryId.' });
     if (segment.provenance !== 'memory' && segment.supportingMemoryId !== undefined) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Only memory segments may cite a Memory ID.' });
   })).min(1).max(24)
-    .refine((segments) => new Set(segments.map((segment) => segment.segmentId)).size === segments.length, 'Reply segment IDs must be unique.'),
+    .refine((segments) => new Set(segments.map((segment) => segment.segmentId)).size === segments.length, 'Reply segment IDs must be unique.')
+    .refine((segments) => segments.reduce((total, segment) => total + segment.text.length, 0) <= 4_000, 'Assembled reply must not exceed 4,000 characters.'),
   actions: z.array(z.object({
     toolName: z.string().min(1).max(80),
     args: z.record(z.unknown()),

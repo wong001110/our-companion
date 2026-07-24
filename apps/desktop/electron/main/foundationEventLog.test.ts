@@ -85,7 +85,7 @@ describe('foundation event log', () => {
     expect(services.startRuntimeIfReady()).toBe(false);
     expect(start).toHaveBeenCalledTimes(1);
     internals.companionRuntime.stopLifeScheduler();
-    services.db.close();
+    await services.dispose();
   });
 
   it('rejects arbitrary personality input without a Main Process AI analysis', async () => {
@@ -94,7 +94,7 @@ describe('foundation event log', () => {
       name: 'Untrusted', personalityDescription: 'Renderer supplied values', personalityAnalysisId: 'missing', assetRoot: '', assets: [],
       personality: { energy: 50, curiosity: 50, sociability: 50, diligence: 50, playfulness: 50, confidence: 50, calmness: 50, shyness: 50 },
     })).rejects.toThrow('invalid, expired, or already used');
-    services.db.close();
+    await services.dispose();
   });
 
   it('accepts only a validated Main Process AI personality result', async () => {
@@ -111,7 +111,7 @@ describe('foundation event log', () => {
     expect(analysis.analysisId).toMatch(/^personality_analysis_/);
     expect(analysis.personality).toEqual(expect.objectContaining({ curiosity: 82, calmness: 71 }));
     expect(analysis.description).toBe('Warm, curious, and quietly confident');
-    services.db.close();
+    await services.dispose();
   });
 
   it('rejects malformed AI personality analysis output', async () => {
@@ -125,7 +125,7 @@ describe('foundation event log', () => {
       content: JSON.stringify({ energy: 101, curiosity: 50 }),
     });
     await expect(services.companionNew.analyzePersonality('Invalid output fixture')).rejects.toThrow('invalid energy');
-    services.db.close();
+    await services.dispose();
   });
 
   it('rolls back the profile when required asset persistence fails', async () => {
@@ -143,7 +143,7 @@ describe('foundation event log', () => {
     expect(services.db.listCompanions()).toEqual([]);
     expect(analyses.get('analysis-fixture')?.used).toBe(false);
     mkdir.mockRestore();
-    services.db.close();
+    await services.dispose();
   });
 
   it('validates required PNG animation assets before creation', async () => {
@@ -191,7 +191,7 @@ describe('foundation event log', () => {
     await expect(services.companionNew.create({
       name: 'HugeFrames', personalityDescription: 'PNG fixture', personalityAnalysisId: 'analysis-fixture-4', assetRoot: '', assets: requiredAssets(png(300 * 121, 300)),
     })).rejects.toThrow('invalid sprite-sheet frame count');
-    services.db.close();
+    await services.dispose();
   });
 
   it('persists every validated required and optional animation before reporting success', async () => {
@@ -218,7 +218,7 @@ describe('foundation event log', () => {
     const stored = await services.companionNew.listAssets(created.id);
     expect(stored.filter((asset) => asset.subfolder === 'animations').map((asset) => asset.name).sort())
       .toEqual(COMPANION_ANIMATION_MANIFEST.map((entry) => entry.fileName).sort());
-    services.db.close();
+    await services.dispose();
   });
 
   it('atomically saves profile edits, sprite replacements, and optional deletions', async () => {
@@ -255,7 +255,7 @@ describe('foundation event log', () => {
     expect(fs.readFileSync(path.join(animationsDir, 'Idle_Neutral.png'))).toEqual(Buffer.from(replacement));
     expect(fs.existsSync(path.join(animationsDir, 'Idle_Breathe.png'))).toBe(false);
     expect(fs.existsSync(path.join(animationsDir, 'Enter.png'))).toBe(true);
-    services.db.close();
+    await services.dispose();
   });
 
   it('replaces an existing Optional animation through the public edit service', async () => {
@@ -291,7 +291,7 @@ describe('foundation event log', () => {
       fileName: 'Idle_Breathe.png',
     });
     expect(persisted?.dataUrl).toBe(`data:image/png;base64,${Buffer.from(replacement).toString('base64')}`);
-    services.db.close();
+    await services.dispose();
   });
 
   it('synchronizes the managed seed after Personality Edit while preserving user and muted/blocked Sources', async () => {
@@ -368,7 +368,7 @@ describe('foundation event log', () => {
     });
     expect(bases.some((base) => String(base.locator).includes('site:'))).toBe(false);
     expect(channels.filter((channel) => channel.platformId !== 'generic-web' && channel.state === 'enabled').length).toBeGreaterThanOrEqual(4);
-    services.db.close();
+    await services.dispose();
   });
 
   it('rejects required animation deletion without changing profile or files', async () => {
@@ -406,7 +406,7 @@ describe('foundation event log', () => {
 
     expect(services.db.getCompanion(created.id)?.name).toBe('Protected');
     expect(fs.existsSync(requiredPath)).toBe(true);
-    services.db.close();
+    await services.dispose();
   });
 
   it('restores profile, personality seed, assets, and AI analysis when an edit fails', async () => {
@@ -461,7 +461,7 @@ describe('foundation event log', () => {
       .toEqual(originalAsset);
     expect(internals.personalityAnalyses.get('edit-rollback-analysis')?.used).toBe(false);
     expect(seedSync).toHaveBeenCalledTimes(2);
-    services.db.close();
+    await services.dispose();
   });
 
   it('keeps legacy companions usable for profile edits and requires missing assets only when assets change', async () => {
@@ -476,7 +476,7 @@ describe('foundation event log', () => {
       assets: [{ animationKey: 'Idle_Neutral', buffer: png(300, 300) }],
     })).rejects.toThrow('Missing required Companion animations');
     expect(services.db.getCompanion(id)?.name).toBe('Legacy Renamed');
-    services.db.close();
+    await services.dispose();
   });
 
   it('rolls back a newly primary Companion and promoted assets when seed synchronization fails', async () => {
@@ -511,7 +511,7 @@ describe('foundation event log', () => {
     expect(internals.personalityAnalyses.get('seed-failure-fixture')?.used).toBe(false);
     const companionRoot = path.join(userDataRoot, 'companions');
     expect(fs.existsSync(companionRoot) ? fs.readdirSync(companionRoot) : []).toEqual([]);
-    services.db.close();
+    await services.dispose();
   });
 
   it('enforces asset size limits, duplicate keys, and missing required animations', async () => {
@@ -544,7 +544,7 @@ describe('foundation event log', () => {
     ));
     analyses.set('total-fixture', { personality, description: 'Limit fixture', expiresAt: Date.now() + 60_000, used: false });
     await expect(create('total-fixture', requiredAssets(overTotal))).rejects.toThrow('maximum total size');
-    services.db.close();
+    await services.dispose();
   });
 
   it('deletes consumed personality analyses, restores failed attempts, prunes expired entries, and caps the cache', async () => {
@@ -594,7 +594,7 @@ describe('foundation event log', () => {
     }
     internals.prunePersonalityAnalyses();
     expect(internals.personalityAnalyses.size).toBeLessThanOrEqual(50);
-    services.db.close();
+    await services.dispose();
   });
 
   it('sets only the first Companion primary and leaves later creation non-primary without starting onboarding UI synchronously', async () => {
@@ -623,7 +623,7 @@ describe('foundation event log', () => {
     const switched = await services.companionNew.setPrimary(second.id);
     expect(switched.isPrimary).toBe(true);
     expect(services.db.getPrimaryCompanion()?.id).toBe(second.id);
-    services.db.close();
+    await services.dispose();
   });
 
   it('records emitted foundation events and filters by source', async () => {
@@ -640,7 +640,7 @@ describe('foundation event log', () => {
     expect(decisions).toHaveLength(1);
     expect(decisions[0].correlationId).toBe('corr_1');
 
-    services.db.close();
+    await services.dispose();
   });
 
   it('caps the ring buffer at 200 events', async () => {
@@ -654,7 +654,7 @@ describe('foundation event log', () => {
     expect(log).toHaveLength(200);
     expect((log[0].payload as { index: number }).index).toBe(204);
 
-    services.db.close();
+    await services.dispose();
   });
 
   it('keeps the first command active and records the real issued lifecycle', async () => {
@@ -692,7 +692,7 @@ describe('foundation event log', () => {
     const acknowledgements = (await services.debug.getFoundationLog({ source: 'companion', limit: 10 }))
       .filter((event) => event.type === 'CompanionCommandAck' && (event.payload as { commandId: string }).commandId === first.id);
     expect(acknowledgements.map((event) => (event.payload as { status: string }).status).reverse()).toEqual(['received', 'started', 'completed']);
-    services.db.close();
+    await services.dispose();
   });
 
   it('recovers only a non-expired command for the active Companion', async () => {
@@ -732,7 +732,7 @@ describe('foundation event log', () => {
     const expiryEvents = (await services.debug.getFoundationLog({ source: 'companion', limit: 10 }))
       .filter((event) => event.type === 'CompanionCommandAck' && (event.payload as { commandId: string }).commandId === expired.id);
     expect((expiryEvents[0].payload as { status: string; reason: string }).reason).toBe('command_expired');
-    services.db.close();
+    await services.dispose();
   });
 
   it('uses one terminal transition for switch and renderer acknowledgement cleanup', async () => {
@@ -759,6 +759,6 @@ describe('foundation event log', () => {
       .filter((event) => event.type === 'CompanionCommandAck');
     expect(cancellations).toHaveLength(3);
     expect(cancellations.every((event) => (event.payload as { reason: string }).reason === 'companion_switched')).toBe(true);
-    services.db.close();
+    await services.dispose();
   });
 });

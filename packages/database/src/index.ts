@@ -727,9 +727,13 @@ export class DatabaseService {
   }
 
   private hasMeaningfulApplicationActivity(): boolean {
-    const ignored = new Set(['companions', 'sqlite_sequence']);
+    // FTS5 creates implementation-owned shadow tables (notably
+    // memory_fts_config) that contain rows in a brand-new database. They must
+    // not be mistaken for user activity and prevent removal of an untouched
+    // legacy built-in profile.
+    const ignored = new Set(['companions', 'memory_fts', 'sqlite_sequence']);
     for (const table of this.listUserTables()) {
-      if (ignored.has(table)) continue;
+      if (ignored.has(table) || table.startsWith('memory_fts_')) continue;
       const row = this.db.prepare(`SELECT 1 FROM ${quoteIdent(table)} LIMIT 1`).get();
       if (row) return true;
     }
@@ -1186,18 +1190,20 @@ export class DatabaseService {
   }
 
   deleteMemoryNode(id: string): void {
-    if (!this.getMemoryNode(id)) return;
+    const node = this.getMemoryNode(id);
+    if (!node) return;
     this.db.exec('BEGIN IMMEDIATE');
     try {
       // The handler removes the vec0 row synchronously while the authoritative
       // mapping still exists. The relational derived records then disappear in
-      // the same transaction, so no delete job can outlive its parent memory.
+      // the same transaction, while the processing-state tombstone records the
+      // deletion revision for vector/index reconciliation.
       this.vectorDeletionHandler?.(id);
       this.db.prepare('DELETE FROM memory_embeddings WHERE memory_id = ?').run(id);
       this.db.prepare('DELETE FROM embedding_jobs WHERE memory_id = ?').run(id);
       this.db.prepare('DELETE FROM memory_fts WHERE memory_id = ?').run(id);
       this.db.prepare('DELETE FROM memory_edges WHERE from_node_id = ? OR to_node_id = ?').run(id, id);
-      this.db.prepare('DELETE FROM memory_processing_state WHERE memory_id = ?').run(id);
+      this.markMemoryDirty(node, true);
       this.db.prepare('DELETE FROM memory_nodes WHERE id = ?').run(id);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }

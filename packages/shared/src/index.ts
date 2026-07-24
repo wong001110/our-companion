@@ -1823,7 +1823,8 @@ export interface TurnInspectionRecord {
   oocAction?: 'pass' | 'repair' | 'regenerate' | 'fallback';
   grounding?: {
     passed: boolean;
-    regenerated: boolean;
+    regenerationAttempted: boolean;
+    regenerationSucceeded: boolean;
     embeddingAvailable: boolean;
     segmentResults: Array<{
       segmentId: string;

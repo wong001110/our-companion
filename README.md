@@ -108,11 +108,11 @@ The LLM proposes structured actions and memories, but deterministic application 
 
 ## Memory system
 
-The current Memory system is local and SQLite-backed. It uses typed memory nodes, graph edges, pinned memories, user boundaries, user preferences, goals, keyword overlap, CJK bigram matching, recency fallback, bounded item and character budgets, confidence and safety checks, fingerprint-based upsert, and undo support for captured memory.
+The current Memory system is local and SQLite-backed. SQLite is authoritative; sqlite-vec is disposable derived state. Retrieval may combine structured, lexical, recency, pinned and Vector signals using local 384-dimensional Xenova/multilingual-e5-small embeddings. Grounding uses structured reply provenance plus deterministic scope/privacy checks and semantic support validation when the local model is available.
 
 Memory capture requires grounded evidence from the current user message and applies deterministic rejection rules for sensitive, temporary, test-like or explicitly non-memory content. Memory context is bounded before it is placed in an AI prompt.
 
-The current implementation does not yet use a Vector Database or embedding-based semantic retrieval.
+The local E5 model is never downloaded during normal conversation. If it is unavailable, durable Memory is excluded from the generation prompt and ordinary current-turn conversation continues safely.
 
 ## Discovery and research
 
@@ -198,7 +198,7 @@ The current Desktop `lint` command performs TypeScript project checks; it is not
 
 ## Current limitations
 
-- No Vector Database or embedding-based semantic retrieval yet.
+- Multilingual E5 grounding thresholds are recorded in the local [QA report](docs/qa/e5-grounding-report.md). Re-run the explicit `e5:setup` and `qa:e5-grounding` commands when the model, embedding policy, or corpus changes.
 - Canvas 2D is the active renderer; PixiJS is not the active Companion rendering path.
 - Main Process service composition remains relatively large.
 - Internal IPC validation is not yet centralized into one schema registry.

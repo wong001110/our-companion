@@ -3,6 +3,14 @@ import { DatabaseService } from '@our-companion/database';
 import { createMemoryNode, SqliteVecIndex } from '@our-companion/memory-engine';
 
 describe('SqliteVecIndex in Electron', () => {
+  it('initializes the production 384-dimensional E5 derived index', async () => {
+    const db = new DatabaseService();
+    const index = new SqliteVecIndex(db.getExtensionDatabase(), 384);
+    await index.initialize();
+    expect((await index.healthCheck()).available).toBe(true);
+    db.close();
+  });
+
   it('loads the pinned extension and enforces authoritative user and companion scope', async () => {
     const db = new DatabaseService();
     const timestamp = '2026-07-23T00:00:00.000Z';

@@ -3,6 +3,7 @@ import type { GroundedReplySegment, MemoryNode } from '@our-companion/shared';
 import { GroundingValidator } from './GroundingValidator';
 
 const embeddings = {
+  dimensions: 384,
   embedQuery: async (text: string) => vector(text),
   embedDocuments: async (texts: string[]) => texts.map(vector),
   getStatus: () => ({ state: 'ready', modelId: 'Xenova/multilingual-e5-small' }),
@@ -10,7 +11,9 @@ const embeddings = {
 function vector(text: string): Float32Array {
   const gambling = /gambl|赌博|perjudian|ギャンブル/iu.test(text);
   const hiking = /hiking|mountain/iu.test(text);
-  return gambling ? new Float32Array([1, 0, 0]) : hiking ? new Float32Array([0, 1, 0]) : new Float32Array([0, 0, 1]);
+  const output = new Float32Array(384);
+  output[gambling ? 0 : hiking ? 1 : 2] = 1;
+  return output;
 }
 function memory(overrides: Partial<MemoryNode> = {}): MemoryNode {
   return { id: 'memory-1', type: 'topic', title: 'Gambling boundary', content: 'Do not recommend gambling-related content.', importance: 0.8, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', userId: 'local', companionId: 'companion-1', memoryType: 'user_boundary', status: 'active', ...overrides };

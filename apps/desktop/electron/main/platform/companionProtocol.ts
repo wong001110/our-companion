@@ -11,11 +11,17 @@ export interface CompanionProtocolOptions {
 }
 
 export function handleCompanionProtocolRequest(requestUrl: string, options: CompanionProtocolOptions): Response {
+  let url: URL;
+  try {
+    url = new URL(requestUrl);
+  } catch {
+    return new Response('Malformed asset URL', { status: 400 });
+  }
+
   try {
     if (/%2e|%2f|%5c/i.test(requestUrl)) {
       return new Response('Invalid asset request', { status: 403 });
     }
-    const url = new URL(requestUrl);
     if (url.protocol !== 'companion:') {
       return new Response('Malformed asset URL', { status: 400 });
     }
@@ -41,7 +47,6 @@ export function handleCompanionProtocolRequest(requestUrl: string, options: Comp
         400;
       return new Response(status === 404 ? 'Not found' : 'Invalid asset request', { status });
     }
-    if (error instanceof TypeError) return new Response('Malformed asset URL', { status: 400 });
     return new Response('Unable to read asset', { status: 500 });
   }
 }

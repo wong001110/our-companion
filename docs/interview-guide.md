@@ -52,7 +52,7 @@ Debug events begin in a local SQLite queue and upload only from an unpackaged de
 
 **Does the AI control the computer?** No. It proposes structured actions. The action registry, argument validation, permission state and deterministic adapters decide whether anything runs.
 
-**Is memory semantic vector search?** Not yet. Current retrieval is SQLite-based with typed memory, keyword overlap, CJK bigrams, importance and recency. A Vector Database is future work.
+**Is memory semantic vector search?** SQLite is the authority for Memory. Retrieval can combine typed/structured, lexical, CJK, importance, recency, pinned and local `sqlite-vec` signals. The Vector rows are disposable derived state produced locally by 384-dimensional `Xenova/multilingual-e5-small` embeddings.
 
 **Why use Socket.IO if REST is authoritative?** Socket.IO reduces staleness by telling clients which resource changed. REST reloads the resource and PostgreSQL remains the durable authority, which makes reconnect and missed-event recovery straightforward.
 
@@ -67,7 +67,7 @@ Debug events begin in a local SQLite queue and upload only from an unpackaged de
 - Desktop is an Electron 37 / React 19 / TypeScript application.
 - Node.js `>=22 <23` and Node's `node:sqlite` API are the current Desktop requirements.
 - Canvas 2D through `SpriteAnimator` is the active sprite path.
-- Memory is local SQLite graph retrieval, not a completed embedding system.
+- Memory is local SQLite graph retrieval with optional local `sqlite-vec` signals; SQLite remains authoritative.
 - Network is a modular NestJS monolith with PostgreSQL and Prisma.
 - REST and PostgreSQL are authoritative; Socket.IO provides invalidation/notification hints.
 - Desktop authentication uses bearer access tokens, rotating refresh tokens and device-scoped sessions.
@@ -80,7 +80,7 @@ Debug events begin in a local SQLite queue and upload only from an unpackaged de
 
 Do not claim that:
 
-- A Vector Database is already implemented.
+- Real-model multilingual grounding thresholds are already calibrated unless the recorded local E5 QA run is available.
 - Our Companion Network uses microservices.
 - The system is event sourced.
 - PixiJS is the active renderer.
@@ -100,7 +100,7 @@ Do not claim that:
 
 ## 9. Future roadmap
 
-Appropriate future work includes a carefully evaluated semantic retrieval layer, centralized IPC schemas, further Main Process decomposition, shared Socket.IO/presence/background-job infrastructure, stronger production packaging and update automation, and load/failure testing for the Network. These are roadmap items, not current implementation claims.
+Appropriate future work includes real-model multilingual grounding calibration, centralized IPC schemas, further Main Process decomposition, shared Socket.IO/presence/background-job infrastructure, stronger production packaging and update automation, and load/failure testing for the Network. These are roadmap items, not current implementation claims.
 
 ## 10. Resume bullet points
 

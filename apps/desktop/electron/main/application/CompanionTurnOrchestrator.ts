@@ -162,6 +162,10 @@ export function buildStructuredTurnPrompt(input: {
   ].join('\n\n');
 }
 
+function withoutDurableMemory(context: Awaited<ReturnType<MemoryContextProvider['buildContext']>>): Awaited<ReturnType<MemoryContextProvider['buildContext']>> {
+  return { ...context, pinned: [], boundaries: [], preferences: [], goals: [], relevant: [], recent: [], selectedCount: 0, characterCount: 0 };
+}
+
 export function buildVoiceContract(contract: CharacterContract): string {
   return ['Voice contract:', `- Tone: ${contract.voice.tone.join(', ') || 'default'}.`, `- Preferred response length: ${contract.voice.preferredVerbosity}.`, ...(contract.voice.typicalPatterns.length ? [`- Typical patterns: ${contract.voice.typicalPatterns.join('; ')}.`] : []), ...(contract.voice.avoidPatterns.length ? [`- Avoid patterns: ${contract.voice.avoidPatterns.join('; ')}.`] : [])].join('\n');
 }
@@ -230,6 +234,8 @@ export class CompanionTurnOrchestrator {
 
     let proposal: CompanionTurnProposal;
     let plan = planActionFromRules(input.message);
+    let generationMemoryContext = memoryContext;
+    let generationGroundingAvailable = true;
     if (plan) {
       proposal = proposalForRule(plan);
       const blocked = plan.steps.find((step) => !validateExternalActionDisclosure(step.toolName, step.args, privacyContext).ok);
@@ -240,6 +246,9 @@ export class CompanionTurnOrchestrator {
         inspection.deterministicActionMatch = plan.steps.map((step) => step.toolName).join(', ');
       }
     } else {
+      const runtime = this.deps.groundingValidator ? await this.deps.groundingValidator.ensureAvailable() : { available: false as const };
+      generationGroundingAvailable = runtime.available;
+      if (!runtime.available) generationMemoryContext = withoutDurableMemory(memoryContext);
       const contract = new CharacterContractBuilder().build(resolveCharacterContractSource(this.deps.db, companionId));
       const messages = [
         {
@@ -248,7 +257,7 @@ export class CompanionTurnOrchestrator {
             name: companion.name,
             personality: companion.personalityDescription,
             replyLanguage: this.deps.getReplyLanguage(),
-            memoryContext,
+            memoryContext: generationMemoryContext,
             contract,
           }),
         },
@@ -270,8 +279,8 @@ export class CompanionTurnOrchestrator {
     }
     const contract = new CharacterContractBuilder().build(resolveCharacterContractSource(this.deps.db, companionId));
     const selected = [
-      ...memoryContext.pinned, ...memoryContext.boundaries, ...memoryContext.preferences,
-      ...memoryContext.goals, ...memoryContext.relevant, ...memoryContext.recent,
+      ...generationMemoryContext.pinned, ...generationMemoryContext.boundaries, ...generationMemoryContext.preferences,
+      ...generationMemoryContext.goals, ...generationMemoryContext.relevant, ...generationMemoryContext.recent,
     ];
     const selectedNodes = this.deps.db.getMemoryNodesByIds({ memoryIds: selected.map((item) => item.memoryId), userId: 'local', companionId });
     const metadata = {
@@ -286,7 +295,10 @@ export class CompanionTurnOrchestrator {
     let reply = assembleCompanionReply(proposal.replySegments);
     let oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata, currentUserMessage: input.message });
     let oocAction = oocValidation.recommendedAction;
+    let regenerationAttempted = false;
+    let regenerationSucceeded = false;
     if (!plan && (!groundingValidation.passed || !oocValidation.passed) && oocValidation.recommendedAction !== 'fallback') {
+      regenerationAttempted = true;
       const repaired = await this.repairProposal({ proposal, contract, metadata, grounding: groundingValidation, violations: oocValidation.violations, selectedNodes, source, userMessage: input.message });
       if (repaired) {
         proposal = repaired;
@@ -294,9 +306,10 @@ export class CompanionTurnOrchestrator {
         reply = assembleCompanionReply(proposal.replySegments);
         oocValidation = this.oocGuard.validateProposal({ proposal, contract, metadata, currentUserMessage: input.message });
         oocAction = oocValidation.passed && groundingValidation.passed ? 'repair' : 'fallback';
+        regenerationSucceeded = oocValidation.passed && groundingValidation.passed;
       }
     }
-    inspection.grounding = { passed: groundingValidation.passed, regenerated: oocAction === 'repair', embeddingAvailable: groundingValidation.embeddingAvailable, segmentResults: groundingValidation.segments };
+    inspection.grounding = { passed: groundingValidation.passed, regenerationAttempted, regenerationSucceeded, embeddingAvailable: generationGroundingAvailable && groundingValidation.embeddingAvailable, segmentResults: groundingValidation.segments };
     inspection.oocValidation = oocValidation;
     inspection.oocAction = oocAction;
     if (!oocValidation.passed || !groundingValidation.passed) {

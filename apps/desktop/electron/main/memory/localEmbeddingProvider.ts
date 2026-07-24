@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+
 export interface EmbeddingProvider {
   readonly modelId: string;
   readonly version: number;
@@ -59,16 +62,28 @@ export class LocalMultilingualEmbeddingProvider implements EmbeddingProvider {
   private async loadInternal(allowRemoteModels: boolean): Promise<void> {
     if (this.extractor) return;
     this.state = allowRemoteModels ? 'installing' : 'loading';
+    let transformers: {
+      env: { cacheDir?: string; localModelPath?: string; allowRemoteModels?: boolean; allowLocalModels?: boolean; backends?: { onnx?: { wasm?: { wasmPaths?: string } } } };
+      pipeline: (task: string, model: string, options: Record<string, unknown>) => Promise<FeatureExtractor>;
+    } | undefined;
     try {
-      const transformers = await import('@huggingface/transformers') as unknown as {
-        env: { cacheDir?: string; localModelPath?: string; allowRemoteModels?: boolean; allowLocalModels?: boolean; backends?: { onnx?: { wasm?: { wasmPaths?: string } } } };
-        pipeline: (task: string, model: string, options: Record<string, unknown>) => Promise<FeatureExtractor>;
-      };
-      transformers.env.cacheDir = this.cacheDir;
-      transformers.env.localModelPath = this.cacheDir;
-      transformers.env.allowLocalModels = true;
-      transformers.env.allowRemoteModels = allowRemoteModels;
-      this.extractor = await transformers.pipeline('feature-extraction', this.modelId, { dtype: 'q8' });
+      // Ordinary chat must fail closed before importing the heavyweight runtime
+      // when its local model files are absent or incomplete. Besides preventing
+      // a remote fetch, this keeps memory capture/retrieval workers lightweight
+      // on a first-run installation.
+      if (!allowRemoteModels && !this.hasCompleteLocalModel()) {
+        throw new Error('LOCAL_E5_CACHE_INCOMPLETE');
+      }
+      // Keep the optional, heavyweight runtime out of the Vite/Vitest module
+      // graph. Electron's Node runtime resolves it only after the local cache
+      // has been verified (or during the explicit installation command).
+      const runtime = await import(/* @vite-ignore */ '@huggingface/transformers') as unknown as NonNullable<typeof transformers>;
+      transformers = runtime;
+      runtime.env.cacheDir = this.cacheDir;
+      runtime.env.localModelPath = this.cacheDir;
+      runtime.env.allowLocalModels = true;
+      runtime.env.allowRemoteModels = allowRemoteModels;
+      this.extractor = await runtime.pipeline('feature-extraction', this.modelId, { dtype: 'q8' });
       this.state = 'ready';
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
@@ -77,8 +92,9 @@ export class LocalMultilingualEmbeddingProvider implements EmbeddingProvider {
     } finally {
       // A deliberate install must not leave ordinary chat able to contact the network.
       try {
-        const transformers = await import('@huggingface/transformers') as unknown as { env: { allowRemoteModels?: boolean } };
+        if (transformers) {
         transformers.env.allowRemoteModels = false;
+        }
       } catch { /* the original load error is more useful */ }
     }
   }
@@ -109,5 +125,14 @@ export class LocalMultilingualEmbeddingProvider implements EmbeddingProvider {
     // The model pipeline owns tokenization. Preserve the prefix above and use
     // its max_length/truncation options instead of a character-count cutoff.
     return value.trim();
+  }
+
+  private hasCompleteLocalModel(): boolean {
+    const modelRoot = path.join(this.cacheDir, ...this.modelId.split('/'));
+    return [
+      path.join(modelRoot, 'config.json'),
+      path.join(modelRoot, 'tokenizer.json'),
+      path.join(modelRoot, 'onnx', 'model_quantized.onnx'),
+    ].every(existsSync);
   }
 }

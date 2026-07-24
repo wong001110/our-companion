@@ -18,6 +18,7 @@
     "test": "vitest run",
     "lint": "tsc -b --pretty false",
     "arch:check": "node --test scripts/check-architecture-boundaries.test.mjs && node scripts/check-architecture-boundaries.mjs",
+    "e5:setup": "node scripts/setup-e5-grounding.mjs",
     "qa:e5-grounding": "node scripts/run-e5-grounding-qa.mjs",
     "test:ui": "npm run build && playwright test tests/ui",
     "test:ui:headed": "npm run build && playwright test tests/ui --headed",

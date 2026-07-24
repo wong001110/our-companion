@@ -14,7 +14,7 @@ Vector rebuild is available through `window.ourCompanion.debug.rebuildMemoryVect
 
 ## Stabilization notes
 
-The vector schema now uses cosine distance and `user_id` + `companion_id` vec0 partition keys, preventing other companions' nearest vectors from starving the current search. The mapping is confirmed before it becomes `ready`; removal clears the vec0 row and row ID, and authoritative memory deletion synchronously removes vector, FTS, mapping, jobs, edges, and processing state in one SQLite transaction.
+The vector schema now uses cosine distance and `user_id` + `companion_id` vec0 partition keys, preventing other companions' nearest vectors from starving the current search. The mapping is confirmed before it becomes `ready`; removal clears the vec0 row and row ID, and authoritative memory deletion synchronously removes vector, FTS, mapping, jobs and edges while retaining a processing-state tombstone for reconciliation.
 
 Embedding jobs use a single-flight main-process drain loop. Memory writes notify the loop, which drains in batches, blocks jobs while the local model is absent, and bounds retries for transient errors. Startup only queues missing/stale/version-mismatched embeddings; it does not recreate jobs for current mappings. Rebuild drains every queued job before returning.
 

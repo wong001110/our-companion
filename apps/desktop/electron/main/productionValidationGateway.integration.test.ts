@@ -30,8 +30,8 @@ const reasonFixture = JSON.stringify({
   tags: ['frontend']
 });
 
-afterEach(() => {
-  for (const gateway of openGateways.splice(0)) gateway.close();
+afterEach(async () => {
+  await Promise.all(openGateways.splice(0).map((gateway) => gateway.close()));
 });
 
 function createGateway(input: {

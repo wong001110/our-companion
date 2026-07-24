@@ -185,9 +185,9 @@ export class ProductionValidationGateway implements ProductionRuntimeGateway {
     return this.services.db.listEngineTraces({ limit: 10_000 });
   }
 
-  close(): void {
+  async close(): Promise<void> {
     this.orchestrator.stop();
-    this.services.db.close();
+    await this.services.dispose();
   }
 
   private async executeProductionOperation(command: ProductionRuntimeCommand): Promise<{
