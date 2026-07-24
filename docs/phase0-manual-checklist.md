@@ -1,6 +1,7 @@
 # Phase 0 manual verification checklist
 
 Run this checklist on a packaged desktop build after automated validation passes.
+Record the operating system, packaged build identifier, and observed result for any failed item.
 
 ## Startup and ordinary use
 
