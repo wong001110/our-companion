@@ -1,3 +1,4 @@
+# One-shot workflow; removed by the validated patch commit.
 name: Phase 0 finalizer
 
 on:
