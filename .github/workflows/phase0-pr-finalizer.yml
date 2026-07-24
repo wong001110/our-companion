@@ -27,13 +27,28 @@ jobs:
         with:
           node-version: 22
       - name: Apply deterministic final patch
+        id: apply
+        continue-on-error: true
         shell: bash
         run: |
+          set -o pipefail
           if [ ! -f scripts/phase0-finalize.mjs ]; then
-            echo "Finalizer already applied."
+            echo "Finalizer already applied." | tee phase0-finalizer.log
             exit 0
           fi
-          node scripts/phase0-finalize.mjs
+          node scripts/phase0-finalize.mjs 2>&1 | tee phase0-finalizer.log
+      - name: Upload finalizer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase0-finalizer-log
+          path: phase0-finalizer.log
+          if-no-files-found: error
+      - name: Stop on patch failure
+        if: steps.apply.outcome == 'failure'
+        run: exit 1
+      - name: Remove one-shot bootstrap files
+        run: |
           rm -f \
             .github/workflows/phase0-finalize-direct.yml \
             .github/workflows/phase0-finalize.yml \
@@ -42,7 +57,8 @@ jobs:
             .github/workflows/phase0-pr-finalize.yml \
             scripts/phase0-finalize.mjs \
             .phase0-finalizer-trigger \
-            .phase0-finalize-trigger
+            .phase0-finalize-trigger \
+            phase0-finalizer.log
       - name: Commit patch to PR branch
         shell: bash
         run: |
