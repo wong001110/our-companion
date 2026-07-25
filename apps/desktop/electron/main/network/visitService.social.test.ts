@@ -104,7 +104,7 @@ describe('VisitService social MVP', () => {
 
     await service.prepare(session.id);
 
-    expect(network.setVisitSocialShare).toHaveBeenCalledBefore(network.markVisitReady);
+    expect(network.setVisitSocialShare.mock.invocationCallOrder[0]).toBeLessThan(network.markVisitReady.mock.invocationCallOrder[0]);
     expect(network.setVisitSocialShare).toHaveBeenCalledWith(session.id, expect.objectContaining({ title: 'Quiet work music' }));
   });
 
