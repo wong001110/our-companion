@@ -20,7 +20,9 @@ import type { CommandAckStatus, CompanionDecision, CompanionCommand, CompanionCo
 import { generateDailyDiary } from '@our-companion/diary-engine';
 import {
   adjustDiscoveryModeWeights,
+  attachDiscoveryMemoryAlignment,
   buildBoundedDiscoveryContext,
+  buildDiscoveryMemoryProfile,
   canStartDiscoveryTrial,
   DEFAULT_DISCOVERY_TRIAL_POLICY,
   classifyDiscoveryAgainstSeen,
@@ -32,6 +34,9 @@ import {
   findSeenDiscoveryCandidates,
   normalizeDiscoveryUrl,
   normalizeDiscoveryBaseInput,
+  rankDiscoveryCandidatesWithMemory,
+  readDiscoveryMemoryAlignment,
+  scoreCandidate,
   selectDiscoveryBasesForExecution,
   selectDiscoveryMode,
   startDiscoveryTrial,
@@ -164,6 +169,7 @@ import {
   createSemanticFingerprint,
   clampScore,
   createTimer,
+  toUnitScore,
   type BaseEvent,
   type CompanionAnimationManifestEntry,
   type RuntimeClock,
@@ -2153,8 +2159,12 @@ export class AppServices {
       const primary = this.requireActiveCompanion();
       const name = primary.name;
       const personalityDesc = ` Personality: ${primary.personalityDescription}`;
+      const memoryAlignment = readDiscoveryMemoryAlignment(input.discovery.raw);
+      const relevanceTopics = memoryAlignment?.publicHintTerms.slice(0, 4) ?? [];
       const fallback = {
-        why_this_matters: `${input.discovery.title} matches ${name}'s curiosity around web, UX, and exploration.`,
+        why_this_matters: relevanceTopics.length
+          ? `${input.discovery.title} connects with a few themes that seem relevant.`
+          : `${input.discovery.title} matches ${name}'s current curiosity.`,
         recommended_action: 'view' as const,
         short_message: 'I found something that might be worth a small look.',
         tags: input.discovery.tags
@@ -2193,7 +2203,9 @@ export class AppServices {
             '- why_this_matters can be more internal/detail-oriented.\n' +
             '- Do not repeat the full discovery summary.\n' +
             '- Do not sound like a system assistant.\n' +
-            '- If user memory/personality context exists, use it subtly.'
+            '- Use relevanceTopics only as subtle themes; never quote or claim a specific Memory.\n' +
+            '- Never say "I remember", "you said", or "based on your history".\n' +
+            '- Never expose Memory IDs, internal scores, or private context.'
         },
         {
           role: 'user',
@@ -2201,7 +2213,8 @@ export class AppServices {
             title: input.discovery.title,
             summary: input.discovery.summary,
             source: input.discovery.source,
-            tags: input.discovery.tags
+            tags: input.discovery.tags,
+            relevanceTopics
           })
         }
       ] satisfies Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
@@ -3536,6 +3549,30 @@ export class AppServices {
       researchIntentId: research.intent.id,
       researchPlanId: research.plan.id
     });
+    const discoveryMemoryProfile = buildDiscoveryMemoryProfile({
+      memoryNodes,
+      patterns: persistedPatterns,
+      interestGraph,
+      discoveries: discoveryHistory,
+      feedback: feedbackHistory,
+      generatedAt: evaluatedAt,
+    });
+    const rankedResearchCandidates = rankDiscoveryCandidatesWithMemory({
+      candidates: research.candidates,
+      profile: discoveryMemoryProfile,
+      mode: discoveryMode,
+      curiosityTarget: selectedCuriosityTarget,
+      activeCharacter: characterProfile,
+      baseScore: scoreCandidate,
+    });
+    const acceptedMemoryRanks = new Map<string, (typeof rankedResearchCandidates)[number]>();
+    trace(
+      'discovery',
+      'rank-memory-context',
+      rankedResearchCandidates.length === 0 ? 'empty' : 'completed',
+      [...discoveryMemoryProfile.sourceMemoryIds, ...discoveryMemoryProfile.sourcePatternIds, ...discoveryMemoryProfile.sourceInterestNodeIds],
+      rankedResearchCandidates.map((item) => item.candidate.id),
+    );
     const discoveryCandidates: DiscoveryCandidate[] = [];
     const persistedSeen = this.db.listDiscoverySeenIdentities(companionId, 1_000);
     const durableTargetCache = new Map<string, boolean>();
@@ -3551,7 +3588,8 @@ export class AppServices {
       if (!durable) this.db.clearDiscoverySeenIdentityTarget(seen.id, companionId);
       return durable;
     });
-    for (const candidate of research.candidates) {
+    for (const rankedCandidate of rankedResearchCandidates) {
+      const candidate = attachDiscoveryMemoryAlignment(rankedCandidate.candidate, rankedCandidate);
       let rawEvidence: Record<string, unknown> = {};
       try {
         rawEvidence = candidate.rawEvidence ? JSON.parse(candidate.rawEvidence) as Record<string, unknown> : {};
@@ -3608,6 +3646,7 @@ export class AppServices {
         now: evaluatedAt,
       });
       const accepted = dedup.outcome !== 'duplicate'
+        && !rankedCandidate.alignment.blockedByBoundary
         && !candidateSaturation.blocked
         && (!requiresMaterialUpdate || dedup.outcome === 'material_update')
         && discoveryCandidates.length < 3;
@@ -3616,12 +3655,15 @@ export class AppServices {
         // Persist the durable artifact before any Seen identity can point at it.
         this.db.insertDiscoveryCandidate(candidate);
         discoveryCandidates.push(candidate);
+        acceptedMemoryRanks.set(candidate.id, rankedCandidate);
         discoveryInspection.candidatesAccepted.push(candidate.id);
       } else {
         discoveryInspection.candidatesRejected.push({
           candidateId: candidate.id,
-          reason: dedup.outcome === 'duplicate'
-            ? `${dedup.reason}${dedup.attachEvidenceOnly ? ':evidence_attached' : ''}`
+          reason: rankedCandidate.alignment.blockedByBoundary
+            ? 'memory_boundary_blocked'
+            : dedup.outcome === 'duplicate'
+              ? `${dedup.reason}${dedup.attachEvidenceOnly ? ':evidence_attached' : ''}`
             : candidateSaturation.reason
               ?? (requiresMaterialUpdate ? 'saved_requires_material_update' : 'candidate_limit_reached'),
         });
@@ -3796,9 +3838,10 @@ export class AppServices {
       const createdAt = this.now().toISOString();
       const sourceCandidate = [...discoveryCandidates].sort(
         (left, right) =>
-          right.relevanceScore + right.noveltyScore + right.usefulnessScore
-          - (left.relevanceScore + left.noveltyScore + left.usefulnessScore)
+          (acceptedMemoryRanks.get(right.id)?.personalizedScore ?? scoreCandidate(right))
+          - (acceptedMemoryRanks.get(left.id)?.personalizedScore ?? scoreCandidate(left))
       )[0];
+      const sourceMemoryRank = sourceCandidate ? acceptedMemoryRanks.get(sourceCandidate.id) : undefined;
       let sourceRaw: Record<string, unknown> = {};
       try {
         sourceRaw = sourceCandidate?.rawEvidence
@@ -3807,6 +3850,7 @@ export class AppServices {
       } catch {
         sourceRaw = {};
       }
+      const sourceMemoryAlignment = readDiscoveryMemoryAlignment(sourceRaw);
       const source: DiscoverySource = sourceCandidate?.sourceName === 'github'
         || sourceCandidate?.sourceName === 'rss'
         || sourceCandidate?.sourceName === 'youtube'
@@ -3847,14 +3891,15 @@ export class AppServices {
           discoveryBaseIds: Array.isArray(sourceRaw.discoveryBaseIds)
             ? sourceRaw.discoveryBaseIds
             : [],
+          memoryAlignment: sourceRaw.memoryAlignment,
         },
         fingerprint: sourceCandidate?.fingerprint,
-        userInterestScore: 0.5,
-        userHistoryScore: 0.5,
-        characterExpertiseScore: 0.5,
+        userInterestScore: toUnitScore(((sourceMemoryAlignment?.memoryScore ?? 0.5) + (sourceMemoryAlignment?.interestScore ?? 0.5)) / 2),
+        userHistoryScore: sourceMemoryAlignment?.userHistoryScore ?? 0.5,
+        characterExpertiseScore: sourceMemoryAlignment?.expertiseScore ?? 0.5,
         noveltyScore: selectedInsight.novelty,
         usefulnessScore: selectedInsight.importance,
-        finalScore: selectedInsight.confidence,
+        finalScore: toUnitScore(selectedInsight.confidence * 0.6 + (sourceMemoryRank?.personalizedScore ?? 0.5) * 0.4),
         companionId,
         cycleId: cycle.id,
         status: 'eligible',
@@ -4070,13 +4115,15 @@ export class AppServices {
     }
 
     if (input.value === 'saved' && insight) {
+      const savedDiscovery = this.db.getDiscovery(insight.id);
       const memory = this.db.insertMemoryNode({
         ...createMemoryNode({
           type: 'discovery',
           title: insight.title,
           summary: insight.summary,
           content: insight.explanation,
-          source: 'autonomous_exploration'
+          source: 'autonomous_exploration',
+          sourceUrl: savedDiscovery?.canonicalUrl ?? savedDiscovery?.url
         }),
         companionId: cycle.companionId,
         userId: cycle.userId,
