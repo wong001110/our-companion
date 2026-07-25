@@ -1,0 +1,43 @@
+name: Apply Social Visit MVP
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/desktop/electron/main/network/visitService.ts'
+      - 'apps/desktop/renderer/src/features/social/SocialVisitConversation.tsx'
+      - 'docs/SOCIAL_VISIT_MVP_CHECKLIST.md'
+      - '.github/agent/apply-social-visit-mvp.py'
+      - '.github/workflows/apply-social-visit-mvp.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Apply audited integration patch
+        run: python .github/agent/apply-social-visit-mvp.py
+      - run: npm run arch:check
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
+      - name: Commit validated integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "feat: integrate companion social visit MVP"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
