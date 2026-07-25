@@ -2,6 +2,8 @@
 
 ## Automated validation
 
+Record the GitHub Actions run ID or local command transcript beside the release decision.
+
 - [ ] `npm ci`
 - [ ] `npm run typecheck`
 - [ ] `npm test`
@@ -46,4 +48,5 @@ Memory and proactive productization ready: YES / NO
 Blocking reason:
 Validated build SHA:
 Validated on:
+Validation evidence:
 ```
