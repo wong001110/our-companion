@@ -2466,6 +2466,10 @@ export class AppServices {
         this.companionRuntime.reevaluatePendingActions();
       }
     },
+    getProactiveSettings: async (): Promise<ProactiveCompanionSettings> =>
+      this.companionRuntime.getProactiveSettings(),
+    updateProactiveSettings: async (input: ProactiveCompanionSettings): Promise<ProactiveCompanionSettings> =>
+      this.companionRuntime.updateProactiveSettings(input),
     listPendingActions: async () => {
       const companionId = this.db.resolveActiveCompanionId();
       return this.db.listPendingActions(companionId, 'local').filter((action) => action.status === 'pending' || action.status === 'ready');
