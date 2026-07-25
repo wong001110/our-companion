@@ -296,7 +296,7 @@ export const zhCN = {
   "settings_appearance_title": "外观",
   "settings_appearance_desc": "面板使用淡紫色、暖色纸张和小笔记本装饰。",
   "settings_privacy_title": "隐私与回忆",
-  "settings_privacy_desc": "当有需要更正的内容时，可以随时从回忆页面编辑记忆。",
+  "settings_privacy_desc": "请使用记忆查看来确认、重新核对或暂停伙伴可以使用的内容，而不是改写原始证据。",
   "settings_ai_title": "AI 提供商",
   "settings_ai_provider": "DeepSeek",
   "settings_ai_model_label": "模型",

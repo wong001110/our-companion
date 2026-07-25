@@ -315,7 +315,7 @@ export const en = {
   settings_appearance_title: 'Appearance',
   settings_appearance_desc: 'Soft lavender, warm paper, and small notebook decorations are used for the panel experience.',
   settings_privacy_title: 'Privacy & Memory',
-  settings_privacy_desc: 'Memory editing stays available from the Memories page whenever something needs correction.',
+  settings_privacy_desc: 'Use Memory Review to confirm, re-check, or pause what the Companion may use without rewriting evidence.',
   settings_ai_title: 'AI Provider',
   settings_ai_provider: 'DeepSeek',
   settings_ai_model_label: 'Model',
