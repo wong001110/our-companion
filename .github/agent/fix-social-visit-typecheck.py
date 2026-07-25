@@ -22,6 +22,16 @@ replace_once(
     '  const requestedSequence = useRef<number | undefined>(undefined);',
 )
 replace_once(
+    'apps/desktop/renderer/src/features/social/SocialVisitConversation.tsx',
+    '    if (live || finalized.current || !state?.share) return;',
+    "    if (session.state !== 'ended' || finalized.current || !state?.share) return;",
+)
+replace_once(
+    'apps/desktop/renderer/src/features/social/SocialVisitConversation.tsx',
+    '  }, [live, state?.share]);',
+    '  }, [session.state, state?.share]);',
+)
+replace_once(
     'apps/desktop/renderer/src/pages/SocialPage.tsx',
     'map((item) => ({ id: item.id, title: item.title, summary: item.summary }));',
     'map((item) => ({ id: item.id, title: item.title, summary: item.summary ?? item.title }));',
