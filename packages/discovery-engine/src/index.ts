@@ -393,3 +393,4 @@ export function deduplicateCandidates(candidates: DiscoveryCandidate[]): Discove
 }
 
 export { DISCOVERY_STARTUP_DELAY_MS, getDiscoveryFetchDelay, getDiscoveryFetchDelayRange } from './timing';
+export * from './discoveryMemory';
