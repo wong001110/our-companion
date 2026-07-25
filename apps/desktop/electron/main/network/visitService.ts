@@ -107,7 +107,7 @@ export class VisitService {
       invitationId: invitation.id,
       discoveryId: discovery.id,
       title: discovery.title.slice(0, 120),
-      summary: discovery.summary.slice(0, 600),
+      summary: (discovery.summary ?? discovery.whyThisMatters ?? discovery.title).slice(0, 600),
       tags: [...new Set(discovery.tags)].slice(0, 5),
       ...(discovery.url ? { sourceUrl: discovery.url } : {}),
       approvedAt: new Date().toISOString(),
@@ -182,8 +182,6 @@ export class VisitService {
 
   start = async (sessionId: string): Promise<VisitSessionSummary> => {
     await this.assertHostSessionAllowed(await this.network.getVisitSession(sessionId));
-    const social = await this.network.getVisitSocialState(sessionId) as SocialVisitState;
-    if (!social.share) throw new Error('VISIT_SHARE_REQUIRED');
     const updated = await this.network.startVisitSession(sessionId);
     this.track(updated);
     return updated;
@@ -281,11 +279,11 @@ export class VisitService {
   };
 
   private attachApprovedShare = async (session: VisitSessionSummary): Promise<void> => {
-    if (!this.db) throw new Error('VISIT_SOCIAL_LOCAL_STORE_UNAVAILABLE');
+    if (!this.db) return;
     const existing = await this.network.getVisitSocialState(session.id) as SocialVisitState;
     if (existing.share) return;
     const pending = this.db.getAppSetting<PendingShare>(`${PENDING_SHARE_PREFIX}${session.invitationId}`);
-    if (!pending) throw new Error('VISIT_SHARE_REQUIRED');
+    if (!pending) return;
     await this.network.setVisitSocialShare(session.id, {
       title: pending.title,
       summary: pending.summary,

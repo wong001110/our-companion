@@ -66,7 +66,7 @@ export function SocialVisitConversation({
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [autoContinue, setAutoContinue] = useState(true);
-  const requestedSequence = useRef<number>();
+  const requestedSequence = useRef<number | undefined>(undefined);
   const finalized = useRef(false);
   const live = ['preparing', 'ready', 'active', 'ending'].includes(session.state);
 
@@ -102,10 +102,10 @@ export function SocialVisitConversation({
   }, [autoContinue, busy, session.state, stale, state, userId]);
 
   useEffect(() => {
-    if (live || finalized.current || !state?.share) return;
+    if (session.state !== 'ended' || finalized.current || !state?.share) return;
     finalized.current = true;
     void finalize();
-  }, [live, state?.share]);
+  }, [session.state, state?.share]);
 
   const respond = async () => {
     if (busy || stale) return;

@@ -251,6 +251,10 @@ export class NetworkConnectionService {
   heartbeatVisitSession = (sessionId: string) => this.socialRequest<VisitSessionSummary>(`/api/visit-sessions/${sessionId}/heartbeat`, {});
   getVisitSessionManifest = (sessionId: string) => this.socialRequest<{ manifest: CompanionAssetManifest; files: Array<{ id: string; relativePath: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/visit-sessions/${sessionId}/assets/manifest`);
   getVisitSessionDownloadUrls = (sessionId: string, fileIds: string[]) => this.socialRequest<{ downloads: Array<{ fileId: string; relativePath: string; downloadUrl: string; expiresAt: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/visit-sessions/${sessionId}/assets/download-urls`, { fileIds });
+  getVisitSocialState = (sessionId: string) => this.socialRequest<unknown>(`/api/visit-sessions/${sessionId}/social`);
+  setVisitSocialShare = (sessionId: string, input: { title: string; summary: string; tags?: string[]; sourceUrl?: string }) => this.socialRequest<unknown>(`/api/visit-sessions/${sessionId}/social/share`, input);
+  appendVisitSocialTurn = (sessionId: string, input: { clientTurnId: string; intent: string; message: string; emotion?: string; topic?: string }) => this.socialRequest<unknown>(`/api/visit-sessions/${sessionId}/social/turns`, input);
+  finalizeVisitSharedMoment = (sessionId: string) => this.socialRequest<unknown>(`/api/visit-sessions/${sessionId}/social/shared-moment`, {});
 
   setTransferLifecycleHandler(handler: (reason: string) => void) { this.transferLifecycleHandler = handler; }
   dispose(): void { this.stopAccepting(); this.transferLifecycleHandler?.('app_shutdown'); this.stopSocket(); }
@@ -357,7 +361,7 @@ export class NetworkConnectionService {
     for (const event of ['visit.invitation.created', 'visit.invitation.updated']) {
       socket.on(event, (payload: Partial<{ invitationId: string }>) => { if (payload.invitationId) this.setStatus({ socialRevision: ++this.socialRevision, socialInvalidation: { type: 'visit_invitation', invitationId: payload.invitationId } }); });
     }
-    for (const event of ['visit.session.created', 'visit.session.updated', 'visit.session.ended']) {
+    for (const event of ['visit.session.created', 'visit.session.updated', 'visit.session.ended', 'visit.share.updated', 'visit.turn.created', 'visit.shared_moment.created']) {
       socket.on(event, (payload: Partial<{ sessionId: string; state: VisitSessionState }>) => { if (payload.sessionId) this.setStatus({ socialRevision: ++this.socialRevision, socialInvalidation: { type: 'visit_session', sessionId: payload.sessionId, state: payload.state } }); });
     }
     socket.connect();

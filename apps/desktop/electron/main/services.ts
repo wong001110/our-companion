@@ -587,7 +587,12 @@ export class AppServices {
     });
     this.debugFlushWorker = new DebugFlushWorker(this.db, this.network, { isPackaged: app.isPackaged, isRuntimeActive: () => this.serviceState === 'running' });
     this.publicCompanions = new PublicCompanionService(this.db, this.network, userDataDir);
-    this.visits = new VisitService(this.network, this.publicCompanions);
+    this.visits = new VisitService(
+      this.network,
+      this.publicCompanions,
+      this.db,
+      async (messages, source) => (await this.sendToAi({ messages, channel: 'turn', source })).content,
+    );
     visits = this.visits;
     this.visualVisits = new VisualVisitService(this.network, this.visits, this.publicCompanions, (state) => {
       this.localCompanionAway = state.ownerPresenceMode === 'away_visiting';
