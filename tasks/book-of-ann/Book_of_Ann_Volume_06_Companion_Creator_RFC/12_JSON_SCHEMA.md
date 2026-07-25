@@ -1,7 +1,0 @@
-# JSON Schema
-
-CharacterPackage
-AssetManifest
-AnimationManifest
-PersonalityPreset
-ValidationResult

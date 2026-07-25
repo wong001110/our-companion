@@ -1,8 +1,0 @@
-# Events
-
-KnowledgeCreated
-JourneyUpdated
-ReflectionRequested
-ReflectionCreated
-ConceptRevived
-KnowledgeArchived
