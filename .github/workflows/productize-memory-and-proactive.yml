@@ -29,6 +29,7 @@ jobs:
         shell: bash
         run: |
           set +e
+          sed -i "s/\`    services.attachNetworkStatusBroadcaster((status) => {\`/\`  services.attachNetworkStatusBroadcaster((status) => {\`/" scripts/apply-memory-proactive-productization.mjs
           node scripts/apply-memory-proactive-productization.mjs > productization-integration.log 2>&1
           status=$?
           cat productization-integration.log
