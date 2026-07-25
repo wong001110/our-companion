@@ -21,6 +21,7 @@ eligible Memory + Patterns + Interest Graph + Discovery feedback
 - User Boundaries are internal hard blockers and are applied before a candidate is persisted.
 - Boundary targets and Memory IDs are never written into persisted Discovery alignment metadata.
 - The Discovery reason generator receives only bounded public theme terms. It must not claim that the Companion remembers a specific statement or expose internal scores.
+- Memory themes do not modify user-visible Discovery tags, and deterministic fallback text does not enumerate those themes.
 
 ## Ranking behavior
 
