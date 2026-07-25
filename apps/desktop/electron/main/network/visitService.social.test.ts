@@ -38,6 +38,7 @@ function networkMock(overrides: Record<string, unknown> = {}) {
     listVisitSessions: vi.fn().mockResolvedValue([]),
     createVisitInvitation: vi.fn().mockResolvedValue(invitation),
     getVisitSession: vi.fn().mockResolvedValue(session),
+    startVisitSession: vi.fn().mockResolvedValue(activeSession),
     getVisitSocialState: vi.fn().mockResolvedValue({
       sessionId: session.id,
       maxTurns: 12,
@@ -106,6 +107,18 @@ describe('VisitService social MVP', () => {
 
     expect(network.setVisitSocialShare.mock.invocationCallOrder[0]).toBeLessThan(network.markVisitReady.mock.invocationCallOrder[0]);
     expect(network.setVisitSocialShare).toHaveBeenCalledWith(session.id, expect.objectContaining({ title: 'Quiet work music' }));
+  });
+
+  it('preserves legacy visual Visit startup without a social share', async () => {
+    const network = networkMock({
+      getVisitSocialState: vi.fn().mockRejectedValue(new Error('VISIT_SHARE_REQUIRED')),
+    });
+    const service = new VisitService(network as never, companionsMock() as never);
+    services.push(service);
+
+    await expect(service.start(session.id)).resolves.toEqual(activeSession);
+    expect(network.getVisitSocialState).not.toHaveBeenCalled();
+    expect(network.startVisitSession).toHaveBeenCalledWith(session.id);
   });
 
   it('generates only the local participant turn from the approved share and bounded transcript', async () => {
