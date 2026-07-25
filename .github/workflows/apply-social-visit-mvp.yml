@@ -30,7 +30,19 @@ jobs:
       - name: Apply audited integration patch
         run: python .github/agent/apply-social-visit-mvp.py
       - run: npm run arch:check
-      - run: npm run typecheck
+      - name: Typecheck
+        id: typecheck
+        continue-on-error: true
+        run: npm run typecheck > typecheck.log 2>&1
+      - name: Upload typecheck diagnostics
+        if: steps.typecheck.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: social-visit-typecheck-diagnostics
+          path: typecheck.log
+      - name: Fail on typecheck error
+        if: steps.typecheck.outcome == 'failure'
+        run: cat typecheck.log && exit 1
       - run: npm run test
       - run: npm run build
       - name: Commit validated integration
