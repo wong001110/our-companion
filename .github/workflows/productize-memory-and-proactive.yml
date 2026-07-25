@@ -1,0 +1,62 @@
+name: Memory and proactive productization
+
+on:
+  push:
+    branches: [agent/productize-memory-and-proactive]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: productize-memory-and-proactive
+  cancel-in-progress: false
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/productize-memory-and-proactive
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: corepack enable
+      - name: Apply product integration
+        run: node scripts/apply-memory-proactive-productization.mjs
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Run targeted product tests
+        run: >-
+          npx vitest run
+          apps/desktop/electron/main/memory/memoryReview.test.ts
+          apps/desktop/electron/main/memory/vectorProductStatus.test.ts
+          apps/desktop/electron/main/runtime/ProactiveCompanionPolicy.test.ts
+      - name: Run all tests
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee memory-proactive-test.log
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-proactive-test-log
+          path: memory-proactive-test.log
+          if-no-files-found: ignore
+      - run: npm run arch:check
+      - run: npm run build
+      - name: Commit validated productization
+        shell: bash
+        run: |
+          rm -f .github/workflows/productize-memory-and-proactive.yml
+          rm -f scripts/apply-memory-proactive-productization.mjs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: productize memory and proactive behavior"
+          git push origin HEAD:agent/productize-memory-and-proactive
