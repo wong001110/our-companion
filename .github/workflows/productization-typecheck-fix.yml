@@ -1,0 +1,34 @@
+name: Productization typecheck fix
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/productize-memory-and-proactive' &&
+      github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - run: node scripts/fix-productization-typecheck.mjs
+      - name: Commit targeted fix
+        run: |
+          rm -f scripts/fix-productization-typecheck.mjs
+          rm -f .github/workflows/productization-typecheck-fix.yml
+          rm -f .github/workflows/productization-typecheck-debug.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: wire proactive companion settings"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
