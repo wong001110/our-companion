@@ -90,6 +90,8 @@ import { RemoteVisitorLayer, useVisualVisitState } from '../visits/RemoteVisitor
 import { useSettingsViewModel } from '../features/settings/useSettingsViewModel';
 import { validateLoginCredentials, validateRegistrationCredentials } from '../features/settings/networkAuthValidation';
 import { SETTINGS_CATEGORIES, settingsCategoryForKey, type SettingsCategory } from '../features/settings/settingsCategoryNavigation';
+import { MemoryIntelligenceSettingsCard } from '../features/memory/MemoryIntelligenceSettingsCard';
+import { ProactiveCompanionSettingsCard } from '../features/companion/ProactiveCompanionSettingsCard';
 
 export function SettingsPage({ state, behaviorSettings, onRefresh, onLangChange, companionId, assetRoot }: {
   state?: CharacterRuntimeState;
@@ -160,7 +162,9 @@ export function SettingsPage({ state, behaviorSettings, onRefresh, onLangChange,
         <PaperCard title={t(lang, 'settings_queued_discoveries')}>
           {pendingActions.length === 0 ? <p>{t(lang, 'settings_no_queued_discoveries')}</p> : pendingActions.map((action) => <div key={action.id} className="action-row"><span>{action.deferReason ?? t(lang, 'settings_deferred_discovery')} — {t(lang, 'settings_expires', { time: new Date(action.expiresAt).toLocaleTimeString() })}</span><button onClick={() => void window.ourCompanion.companion.cancelPendingAction(action.id).then(() => setPendingActions((items) => items.filter((item) => item.id !== action.id)))}>{t(lang, 'social_cancel')}</button></div>)}
         </PaperCard>
+        <ProactiveCompanionSettingsCard />
         </>}
+        {category === 'memory' && <><MemoryIntelligenceSettingsCard /><PaperCard title={t(lang, 'memory_review_settings_title')}><p>{t(lang, 'memory_review_settings_desc')}</p></PaperCard></>}
         {category === 'appearance' && <PaperCard title={t(lang, 'settings_appearance_title')}><p>{t(lang, 'settings_appearance_desc')}</p><p>{t(lang, 'settings_appearance_language_note')}</p></PaperCard>}
         {category === 'privacy' && <><PaperCard title={t(lang, 'settings_privacy_title')}><p>{t(lang, 'settings_privacy_desc')}</p></PaperCard><ActionPermissionsCard /></>}
         {category === 'voice' && <VoiceSettingsCard />}

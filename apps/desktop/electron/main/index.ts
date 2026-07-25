@@ -372,6 +372,11 @@ function registerIpc(): void {
     'memory:search': services.memory.search,
     'memory:inspectImpact': services.memory.inspectImpact,
     'memory:recomputeImpact': services.memory.recomputeImpact,
+    'memory:listReview': services.memory.listReview,
+    'memory:updateReview': services.memory.updateReview,
+    'memory:getVectorStatus': services.memory.getVectorStatus,
+    'memory:installVectorModel': services.memory.installVectorModel,
+    'memory:rebuildVectorIndex': services.memory.rebuildVectorIndex,
     'journey:create': services.journey.create,
     'journey:getActive': services.journey.getActive,
     'journey:getTimeline': services.journey.getTimeline,
@@ -404,6 +409,8 @@ function registerIpc(): void {
     'companion:reportDragging': services.companion.reportDragging,
     'companion:getAttentionMode': services.companion.getAttentionMode,
     'companion:setAttentionMode': services.companion.setAttentionMode,
+    'companion:getProactiveSettings': services.companion.getProactiveSettings,
+    'companion:updateProactiveSettings': services.companion.updateProactiveSettings,
     'companion:listPendingActions': services.companion.listPendingActions,
     'companion:cancelPendingAction': services.companion.cancelPendingAction,
     'companion:getActiveCommand': services.companion.getActiveCommand,
@@ -1087,7 +1094,10 @@ app.whenReady().then(async () => {
     }
 
     services = new AppServices();
-  services.attachNetworkStatusBroadcaster((status) => {
+    services.attachProactivePromptBroadcaster((prompt) => {
+      if (companionWindow && !companionWindow.isDestroyed()) companionWindow.webContents.send('companion:proactivePrompt', prompt);
+    });
+    services.attachNetworkStatusBroadcaster((status) => {
       for (const win of [companionWindow, panelWindow]) {
         if (win && !win.isDestroyed()) win.webContents.send('network:statusChanged', status);
       }

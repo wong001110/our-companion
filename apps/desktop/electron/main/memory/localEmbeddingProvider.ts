@@ -43,7 +43,7 @@ export class LocalMultilingualEmbeddingProvider implements EmbeddingProvider {
     // Runtime readiness proves only this process loaded a model. Packaged,
     // network-blocked verification is recorded separately when that harness is
     // available; never infer it from an ordinary initialization.
-    return { state: this.state, modelId: this.modelId, dimensions: this.dimensions, textPolicy: EMBEDDING_TEXT_POLICY, runtimeReady: this.state === 'ready', offlineVerified: false, manifestValid: false, cachePath: this.cacheDir, error: this.error };
+    return { state: this.state, modelId: this.modelId, dimensions: this.dimensions, textPolicy: EMBEDDING_TEXT_POLICY, runtimeReady: this.state === 'ready', offlineVerified: false, manifestValid: this.hasCompleteLocalModel(), cachePath: this.cacheDir, error: this.error };
   }
 
   async initialize(): Promise<void> {

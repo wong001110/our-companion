@@ -66,3 +66,12 @@ Pending: remove deprecated IPC, stale tests update, full validation run.
 | `decideForDiscovery` | `services.ts` autonomy + refresh |
 | `advanceWithIntent` | `services.ts` character + feedback |
 | `behaviorHint` IPC | `index.ts`, `services.attachAutonomyBroadcasters`, preload `onBehaviorHint` |
+
+## Phase 6 — Memory and Proactive Productization
+
+| Area | Old surface | New surface | Verification |
+| --- | --- | --- | --- |
+| Vector Memory | Developer diagnostics only | Normal Settings status/install/rebuild with explicit fallback | Vector status tests + packaged checklist |
+| Memory management | Free-form normal-user editor | Read-only review, confirm, ask again and pause use | Review transition tests + UI checklist |
+| Proactive behavior | Random life activity + Discovery only | Existing scheduler evaluates unfinished topic, Goal, Journey and quiet presence | Policy tests + runtime-time checklist |
+| Documentation | Product decisions scattered across task briefs | Product specs, state ownership, core loop, README and release checklists | Documentation review |

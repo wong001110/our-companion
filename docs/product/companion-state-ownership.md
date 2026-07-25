@@ -71,3 +71,14 @@ Context      → immediate (session phase, activity)
 ```
 
 Relationship does **not** grant tool permissions. Personality does **not** become temporary emotion.
+
+## Productized Memory and Proactivity
+
+| Field | Owner | Storage | Consumers |
+| --- | --- | --- | --- |
+| Memory review state | Main Memory review helper | `memory_nodes.metadata_json` + `memory_status` | Review UI, retrieval, Discovery |
+| Vector product state | Main Memory service | local model, sqlite-vec and embedding jobs | Settings, Memory Context |
+| Proactive preferences | Main `CompanionRuntime` | `app_settings` | Proactive policy |
+| Proactive prompt decision | Main `ProactiveCompanionPolicy` through the existing life scheduler | prompt counters in `app_settings` | Renderer speech bubble |
+
+Renderer components display these states and never create a proactive opportunity or rewrite durable Memory evidence.

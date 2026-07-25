@@ -121,6 +121,11 @@ const api: OurCompanionApi = {
     search: (input: { query: string; companionId?: string }) => invoke('memory:search', input)
     ,inspectImpact: (id: string) => invoke('memory:inspectImpact', id)
     ,recomputeImpact: (input: { id: string; explore?: boolean }) => invoke('memory:recomputeImpact', input)
+    ,listReview: (input) => invoke('memory:listReview', input)
+    ,updateReview: (input) => invoke('memory:updateReview', input)
+    ,getVectorStatus: () => invoke('memory:getVectorStatus')
+    ,installVectorModel: () => invoke('memory:installVectorModel')
+    ,rebuildVectorIndex: () => invoke('memory:rebuildVectorIndex')
   },
   journey: {
     create: (input: CreateJourneyInput) => invoke('journey:create', input),
@@ -173,11 +178,19 @@ const api: OurCompanionApi = {
     reportDragging: (input: { dragging: boolean }) => invoke('companion:reportDragging', input),
     getAttentionMode: () => invoke('companion:getAttentionMode'),
     setAttentionMode: (mode: 'available' | 'focused' | 'do_not_disturb') => invoke('companion:setAttentionMode', mode),
+    getProactiveSettings: () => invoke('companion:getProactiveSettings'),
+    updateProactiveSettings: (input) => invoke('companion:updateProactiveSettings', input),
     listPendingActions: () => invoke('companion:listPendingActions'),
     cancelPendingAction: (id: string) => invoke('companion:cancelPendingAction', id),
     getActiveCommand: () => invoke('companion:getActiveCommand'),
     reportCommandAck: (ack: import('@our-companion/shared').CompanionCommandAck) =>
       invoke('companion:reportCommandAck', ack),
+    onProactivePrompt: (listener: (prompt: import('@our-companion/shared').CompanionProactivePrompt) => void) => {
+      const channel = 'companion:proactivePrompt';
+      const handler = (_event: Electron.IpcRendererEvent, prompt: import('@our-companion/shared').CompanionProactivePrompt) => listener(prompt);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    },
     onCommand: (listener: (command: import('@our-companion/shared').CompanionCommand) => void) => {
       const channel = 'companion:command';
       const handler = (_event: Electron.IpcRendererEvent, command: import('@our-companion/shared').CompanionCommand) =>

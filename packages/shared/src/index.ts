@@ -316,6 +316,9 @@ export interface MemoryMetadata {
   assistantInterpretation?: string;
   userBoundary?: UserBoundaryMetadata;
   sourceMessageIds?: string[];
+  reviewState?: MemoryReviewState;
+  reviewNote?: string;
+  reviewedAt?: string;
 }
 
 export interface UserCompanionRelationship {
@@ -1732,7 +1735,8 @@ export interface CompanionMemoryContext {
   retrievalTrace?: MemoryRetrievalTrace;
 }
 
-export type MemoryStatus = 'candidate' | 'active' | 'superseded' | 'archived';
+export type MemoryStatus = 'candidate' | 'active' | 'superseded' | 'archived'
+  | 'review_pending';
 
 export interface MemoryRetrievalTrace {
   query: string;
@@ -2595,6 +2599,81 @@ export interface AuthState {
   token: string | null;
 }
 
+export type MemoryReviewState = 'unreviewed' | 'confirmed' | 'needs_confirmation' | 'user_disputed';
+
+export interface MemoryReviewItem {
+  id: string;
+  title: string;
+  summary?: string;
+  memoryType?: TypedMemoryType;
+  nodeType: MemoryNodeType;
+  status: MemoryStatus;
+  reviewState: MemoryReviewState;
+  reviewNote?: string;
+  confidence: number;
+  importance: number;
+  sensitivity: MemorySensitivity;
+  sourceType?: MemoryMetadata['sourceType'];
+  canonicalSource?: MemoryMetadata['canonicalSource'];
+  sourceUrl?: string;
+  isPinned: boolean;
+  observationCount: number;
+  sourceMessageCount: number;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt?: string;
+}
+
+export interface MemoryReviewQuery {
+  search?: string;
+  memoryTypes?: TypedMemoryType[];
+  reviewStates?: MemoryReviewState[];
+  statuses?: MemoryStatus[];
+  limit?: number;
+}
+
+export interface MemoryReviewUpdateInput {
+  id: string;
+  state: MemoryReviewState;
+  note?: string;
+}
+
+export type MemoryVectorProductState = 'not_installed' | 'installing' | 'indexing' | 'ready' | 'degraded' | 'error';
+export interface MemoryVectorProductStatus {
+  state: MemoryVectorProductState;
+  modelId: string;
+  dimensions: number;
+  indexedCount: number;
+  eligibleCount: number;
+  pendingJobs: number;
+  runningJobs: number;
+  failedJobs: number;
+  runtimeReady: boolean;
+  manifestValid: boolean;
+  offlineVerified: boolean;
+  localOnly: true;
+  lexicalFallbackAvailable: true;
+  message: string;
+  lastError?: string;
+}
+
+export type ProactiveCompanionMode = 'off' | 'quiet' | 'balanced' | 'active';
+export interface ProactiveCompanionSettings {
+  mode: ProactiveCompanionMode;
+  unfinishedTopicFollowUps: boolean;
+  goalCheckIns: boolean;
+  journeyReflections: boolean;
+  quietPresence: boolean;
+}
+
+export interface CompanionProactivePrompt {
+  id: string;
+  companionId: string;
+  type: 'unfinished_topic' | 'goal_check_in' | 'journey_reflection' | 'quiet_presence';
+  message: string;
+  createdAt: string;
+}
+
 export interface OurCompanionApi {
   character: {
     getState(characterId?: string): Promise<CharacterRuntimeState>;
@@ -2659,6 +2738,16 @@ export interface OurCompanionApi {
     search(input: { query: string; companionId?: string }): Promise<MemoryRecord[]>;
     inspectImpact(id: string): Promise<MemoryImpactReport>;
     recomputeImpact(input: { id: string; explore?: boolean }): Promise<MemoryImpactRecomputeReport>;
+    listReview(input?: MemoryReviewQuery): Promise<MemoryReviewItem[]>;
+    updateReview(input: MemoryReviewUpdateInput): Promise<MemoryReviewItem>;
+    getVectorStatus(): Promise<MemoryVectorProductStatus>;
+    installVectorModel(): Promise<{ completed: number; failed: number }>;
+    rebuildVectorIndex(): Promise<{
+      mode: 'full_rebuild'; vectorsDeleted: number; mappingsReset: number; jobsQueued: number;
+      completed: number; failed: number;
+      healthBefore: { available: boolean; indexedCount: number };
+      healthAfter: { available: boolean; indexedCount: number };
+    }>;
   };
   journey: {
     create(input: CreateJourneyInput): Promise<CompanionJourney>;
@@ -2709,11 +2798,14 @@ export interface OurCompanionApi {
     reportDragging(input: { dragging: boolean }): Promise<void>;
     getAttentionMode(): Promise<'available' | 'focused' | 'do_not_disturb'>;
     setAttentionMode(mode: 'available' | 'focused' | 'do_not_disturb'): Promise<void>;
+    getProactiveSettings(): Promise<ProactiveCompanionSettings>;
+    updateProactiveSettings(input: ProactiveCompanionSettings): Promise<ProactiveCompanionSettings>;
     listPendingActions(): Promise<PendingCompanionAction[]>;
     cancelPendingAction(id: string): Promise<void>;
     getActiveCommand(): Promise<CompanionCommand | null>;
     onCommand(listener: (command: CompanionCommand) => void): () => void;
     reportCommandAck(ack: CompanionCommandAck): Promise<void>;
+    onProactivePrompt(listener: (prompt: CompanionProactivePrompt) => void): () => void;
     getHistory(input?: CompanionHistoryInput): Promise<CompanionMessage[]>;
     appendMessage(input: CompanionAppendMessageInput): Promise<CompanionMessage>;
     clearHistory(input?: { characterId?: string }): Promise<void>;

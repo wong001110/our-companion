@@ -540,6 +540,11 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
       };
       discovery.enqueue(pc);
     });
+    const unsubscribeProactive = window.ourCompanion.companion.onProactivePrompt((prompt) => {
+      if (sessionActiveRef.current) return;
+      behavior.recordSpeech();
+      speech.showTypewriter(prompt.message);
+    });
     const unsubscribePerformance = window.ourCompanion.action.onPerformance((script: PerformanceScript) => {
       performancePlaybackRef.current?.cancel();
       setPerformanceAnimation(undefined);
@@ -548,6 +553,7 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
     return () => {
       unsubscribeState();
       unsubscribeAnnounce();
+      unsubscribeProactive();
       unsubscribePerformance();
       performancePlaybackRef.current?.cancel();
       performancePlaybackRef.current = undefined;
