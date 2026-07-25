@@ -2,7 +2,7 @@
 
 ## Automated validation
 
-Record the GitHub Actions run ID or local command transcript beside the release decision.
+Record the GitHub Actions run ID or local command transcript beside the release decision. Validation must run against the final implementation head, after all generated or diagnostic workflow files have been removed.
 
 - [ ] `npm ci`
 - [ ] `npm run typecheck`
