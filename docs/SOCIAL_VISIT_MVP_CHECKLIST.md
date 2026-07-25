@@ -20,7 +20,7 @@
 - [x] Database migration with cascade cleanup and Prisma schema alignment.
 - [x] Network policy and service security tests plus dedicated CI gate.
 - [x] Network migration validation, lint, build, tests and independent diff review complete.
-- [ ] Network PR merged to `main`; task branch deleted.
+- [x] Network PR merged to `main`; task branch deleted.
 
 ### Desktop implementation
 
@@ -36,7 +36,7 @@
 - [x] Local relationship continuity update is idempotent per Session.
 - [x] Desktop architecture, typecheck, 1,189 Vitest cases and production build are green.
 - [x] Desktop independent diff review complete with no unresolved blocking code findings.
-- [ ] Desktop PR merged to `main`; task branch deleted.
+- [x] Desktop PR merged to `main`; task branch deleted.
 - [ ] Real two-device UI, privacy and interruption checklist completed by the user.
 
 ## Real-device test checklist
