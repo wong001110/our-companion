@@ -26,12 +26,26 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Apply product integration
-        run: node scripts/apply-memory-proactive-productization.mjs
+        shell: bash
+        run: |
+          set +e
+          node scripts/apply-memory-proactive-productization.mjs > productization-integration.log 2>&1
+          status=$?
+          cat productization-integration.log
+          if [ "$status" -ne 0 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add productization-integration.log
+            git commit -m "chore: preserve productization integration failure"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+            exit "$status"
+          fi
       - name: Commit generated implementation
         shell: bash
         run: |
           rm -f .github/workflows/productize-memory-and-proactive.yml
           rm -f scripts/apply-memory-proactive-productization.mjs
+          rm -f productization-integration.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
