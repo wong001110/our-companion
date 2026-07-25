@@ -209,7 +209,6 @@ The current Desktop `lint` command performs TypeScript project checks; it is not
 ## Further reading
 
 - [Desktop architecture overview](docs/architecture-overview.md)
-- [Interview guide](docs/interview-guide.md)
 - [Our Companion Network](../network/README.md)
 
 ## License
