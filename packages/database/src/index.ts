@@ -3206,6 +3206,15 @@ export class DatabaseService {
     ).all(userId) as Array<Record<string, unknown>>).map(mapPendingAction);
   }
 
+  getLatestUnfinishedTopic(companionId: string, userId = 'local'): string | undefined {
+    const row = this.db.prepare(
+      `SELECT unfinished_topic FROM conversation_sessions
+       WHERE companion_id = ? AND user_id = ? AND unfinished_topic IS NOT NULL AND unfinished_topic != ''
+       ORDER BY updated_at DESC LIMIT 1`
+    ).get(companionId, userId) as { unfinished_topic?: string } | undefined;
+    return row?.unfinished_topic ? String(row.unfinished_topic) : undefined;
+  }
+
   updateConversationSessionPhase(sessionId: string, phase: ConversationPhase): ConversationSessionRecord {
     const now = nowIso();
     const endedAt = phase === 'inactive' || phase === 'closing' ? now : null;

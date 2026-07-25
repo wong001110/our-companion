@@ -13,3 +13,7 @@
 | Animation registry | `AnimationCategories.ts` + `animationRegistry.ts` | Single `animationRegistry.ts` | `AnimationCategories.ts` duplicate | None | Resolver uses one registry |
 | Panel chat | Separate Chat + Ask tabs | Unified "Messages" tab | `AskView` duplicate flow | None | One chat entry point |
 | Debug | `debugOverride` in behavior controller | Dev-only flag | Production debug override path | None | Production build excludes override |
+
+| Normal Memory editor | Free-form Add/Edit/Delete in Memory tab | Evidence-preserving review controls | Normal-user editor UI | No schema migration; existing APIs remain Developer/internal | Memory page has no CRUD controls |
+| Developer-only Vector controls | Model install/rebuild only in Observatory | Normal Memory Settings + Developer diagnostics | Developer-only product dependency | None | First-run and fallback manual checklist |
+| Random-only life activity | Activity selection without meaningful opportunity | Existing scheduler + bounded proactive policy | Any second Renderer scheduler | App settings only | Proactive policy and manual time-controller tests |

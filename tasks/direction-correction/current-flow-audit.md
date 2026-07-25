@@ -220,3 +220,10 @@ Leaks: debugOverride in CompanionBehaviorController affects production renderer
 | Ambient speech | App.tsx renderer | Random lines |
 | Behavior poll | useCompanionBehavior 30s | Renderer decisions |
 | Orchestrator step delays | discoveryShareOrchestrator | Presentation choreography |
+
+## 2026-07-25 Productization Update
+
+- Vector installation and rebuild moved from Developer-only diagnostics into a normal Memory Settings category while retaining the same local-only runtime.
+- The normal Memory page no longer creates or edits durable Memory. It reviews provenance and can confirm, request confirmation or pause use.
+- Proactive prompts are selected only by the existing Main Process life scheduler; no Renderer timer or secondary decision authority was added.
+- Review-pending Memory is excluded from active retrieval, Vector eligibility and future cognitive recomputation.

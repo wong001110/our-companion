@@ -74,3 +74,9 @@ base budget
 ```
 
 Hard safety maximum retained.
+
+## Memory and Proactive Productization
+
+`active Memory → structured/FTS/Vector retrieval → conversation and Discovery` remains the Memory path. Review-pending Memory is visible to the user but excluded from active use.
+
+The existing life scheduler now also evaluates one bounded proactive opportunity. It may choose an unfinished-topic follow-up, Goal check-in, Journey reflection or quiet presence. It must pass user attention, time-of-day, cooldown, daily-budget and repeated-ignore gates before emitting a typed prompt.

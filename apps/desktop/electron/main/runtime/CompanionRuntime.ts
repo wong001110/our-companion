@@ -11,7 +11,9 @@ import type {
   CompanionCommand,
   CompanionDecision,
   CompanionLifeActivity,
+  CompanionProactivePrompt,
   CompanionSessionPhase,
+  ProactiveCompanionSettings,
   Discovery,
   NormalizedDiscovery,
   RelationshipSignal,
@@ -33,6 +35,7 @@ import {
 import { LifeCoordinator, type LifeCoordinatorDeps } from './LifeCoordinator';
 import { MemoryPolicy } from './MemoryPolicy';
 import { RelationshipPolicy } from './RelationshipPolicy';
+import { DEFAULT_PROACTIVE_COMPANION_SETTINGS, selectProactiveCompanionOpportunity } from './ProactiveCompanionPolicy';
 
 const LOCAL_USER_ID = 'local';
 const LIFE_TICK_BASE_MS = 90_000;
@@ -40,6 +43,7 @@ const LIFE_TICK_BASE_MS = 90_000;
 export interface CompanionRuntimeDependencies extends LifeCoordinatorDeps {
   setTimer?: (callback: () => void, delayMs: number) => unknown;
   clearTimer?: (handle: unknown) => void;
+  emitProactivePrompt?: (prompt: CompanionProactivePrompt) => void;
 }
 
 export function shouldEmitCompanionCommand(decision: CompanionDecision): boolean {
@@ -63,6 +67,7 @@ export class CompanionRuntime {
   private readonly now: () => number;
   private readonly setTimer: (callback: () => void, delayMs: number) => unknown;
   private readonly clearTimer: (handle: unknown) => void;
+  private readonly emitProactivePrompt?: (prompt: CompanionProactivePrompt) => void;
 
   constructor(
     private readonly db: DatabaseService,
@@ -75,6 +80,7 @@ export class CompanionRuntime {
     this.setTimer = dependencies.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
     this.clearTimer = dependencies.clearTimer ?? ((handle) =>
       clearTimeout(handle as ReturnType<typeof setTimeout>));
+    this.emitProactivePrompt = dependencies.emitProactivePrompt;
     this.conversation = new ConversationCoordinator(db);
     this.decisions = new DecisionCoordinator(db, { now: this.now });
     this.memory = new MemoryPolicy(db, { now: this.now });
@@ -141,13 +147,18 @@ export class CompanionRuntime {
 
     const hour = new Date(this.now()).getHours();
     const hasPending = this.decisions.listReadyForPresentation(companionId, LOCAL_USER_ID).length > 0;
-    const next = this.life.selectNextActivity(companionId, {
+    const opportunity = this.selectProactiveOpportunity(companionId, hour, sessionActive);
+    const next = opportunity?.lifeActivity ?? this.life.selectNextActivity(companionId, {
       conversationActive: sessionActive,
       companionDragging: this.companionDragging,
       hasPendingAction: hasPending,
       localHour: hour
     });
     this.setLifeActivity(companionId, next);
+    if (opportunity) {
+      this.recordProactivePrompt(opportunity.prompt);
+      this.emitProactivePrompt?.(opportunity.prompt);
+    }
     this.reevaluatePendingActions(companionId);
   }
 
@@ -276,6 +287,75 @@ export class CompanionRuntime {
 
   setExplicitMode(mode?: 'available' | 'focused' | 'do_not_disturb'): void {
     this.explicitMode = mode;
+  }
+
+  getProactiveSettings(): ProactiveCompanionSettings {
+    const stored = this.db.getAppSetting<Partial<ProactiveCompanionSettings>>('companion.proactive.settings') ?? {};
+    return { ...DEFAULT_PROACTIVE_COMPANION_SETTINGS, ...stored };
+  }
+
+  updateProactiveSettings(input: ProactiveCompanionSettings): ProactiveCompanionSettings {
+    const modes = new Set(['off', 'quiet', 'balanced', 'active']);
+    const next: ProactiveCompanionSettings = {
+      mode: modes.has(input.mode) ? input.mode : 'balanced',
+      unfinishedTopicFollowUps: Boolean(input.unfinishedTopicFollowUps),
+      goalCheckIns: Boolean(input.goalCheckIns),
+      journeyReflections: Boolean(input.journeyReflections),
+      quietPresence: Boolean(input.quietPresence),
+    };
+    return this.db.setAppSetting('companion.proactive.settings', next);
+  }
+
+  private selectProactiveOpportunity(companionId: string, localHour: number, conversationActive: boolean) {
+    const now = this.timestamp();
+    const date = new Date(this.now()).toLocaleDateString('en-CA');
+    const key = `companion.proactive.${companionId}.state`;
+    const stored = this.db.getAppSetting<{ date: string; promptCount: number; lastPromptAt?: string }>(key);
+    const promptCountToday = stored?.date === date ? stored.promptCount : 0;
+    const messages = this.db.listCompanionContext(companionId, 50);
+    const lastUserInteractionAt = messages
+      .filter((message) => message.role === 'user')
+      .map((message) => message.createdAt)
+      .sort()
+      .at(-1);
+    const activeGoalCount = this.db.listMemoryNodes(companionId).filter((memory) =>
+      memory.status === 'active'
+      && memory.memoryType === 'goal'
+      && (memory.metadata?.sensitivity ?? 'normal') === 'normal'
+    ).length;
+    const relationship = this.db.getRelationship(LOCAL_USER_ID, companionId);
+    const language = this.db.getAppSetting<'en' | 'zh-CN'>('ui.lang')
+      ?? this.db.getAppSetting<'en' | 'zh-CN'>('ai.replyLanguage')
+      ?? 'en';
+    return selectProactiveCompanionOpportunity({
+      companionId,
+      settings: this.getProactiveSettings(),
+      now,
+      localHour,
+      attentionMode: this.explicitMode ?? 'available',
+      conversationActive,
+      companionDragging: this.companionDragging,
+      companionAway: this.visualPresenceMode === 'away_visiting',
+      recentIgnoredInteractions: relationship.recentIgnoredInteractions,
+      lastUserInteractionAt,
+      lastPromptAt: stored?.lastPromptAt,
+      promptCountToday,
+      unfinishedTopic: this.db.getLatestUnfinishedTopic(companionId, LOCAL_USER_ID),
+      activeGoalCount,
+      activeJourneyCount: this.db.listActiveJourneys().length,
+      language,
+    });
+  }
+
+  private recordProactivePrompt(prompt: CompanionProactivePrompt): void {
+    const date = new Date(this.now()).toLocaleDateString('en-CA');
+    const key = `companion.proactive.${prompt.companionId}.state`;
+    const stored = this.db.getAppSetting<{ date: string; promptCount: number; lastPromptAt?: string }>(key);
+    this.db.setAppSetting(key, {
+      date,
+      promptCount: stored?.date === date ? stored.promptCount + 1 : 1,
+      lastPromptAt: prompt.createdAt,
+    });
   }
 
   advanceWithIntent(

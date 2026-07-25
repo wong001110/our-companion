@@ -135,6 +135,11 @@ import type {
   FoundationEventLogInput,
   MemoryImpactRecomputeReport,
   MemoryImpactReport,
+  MemoryReviewQuery,
+  MemoryReviewUpdateInput,
+  MemoryVectorProductStatus,
+  CompanionProactivePrompt,
+  ProactiveCompanionSettings,
   NormalizedDiscovery,
   PerformanceScript,
   ResearchDeveloperReport,
@@ -229,6 +234,8 @@ import { EmbeddingJobRunner } from './memory/embeddingJobRunner';
 import { OperationTracker, type ApplicationLifecycleState, type OperationKind, type OperationToken } from './application/OperationTracker';
 import { shouldCloseDatabaseAfterDrain } from './application/ShutdownDrainPolicy';
 import { VectorMaintenanceCoordinator } from './memory/vectorMaintenanceCoordinator';
+import { applyMemoryReviewUpdate, filterMemoryReviewItems, toMemoryReviewItem } from './memory/memoryReview';
+import { buildMemoryVectorProductStatus } from './memory/vectorProductStatus';
 
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
@@ -351,6 +358,7 @@ export class AppServices {
   private commandBroadcaster?: (command: CompanionCommand) => void;
   private activeCommand: ActiveCommandRecord | null = null;
   private foundationEventBroadcaster?: (event: BaseEvent) => void;
+  private proactivePromptBroadcaster?: (prompt: CompanionProactivePrompt) => void;
   private foundationEventLog: BaseEvent[] = [];
   private readonly debugFlushWorker: DebugFlushWorker;
   private lastSchedulerTick?: string;
@@ -554,7 +562,11 @@ export class AppServices {
         now: () => this.now().getTime(),
         random: runtimeDependencies.random,
         setTimer: runtimeDependencies.setTimer,
-        clearTimer: runtimeDependencies.clearTimer
+        clearTimer: runtimeDependencies.clearTimer,
+        emitProactivePrompt: (prompt) => {
+          this.proactivePromptBroadcaster?.(prompt);
+          this.emitFoundationEvent('CompanionProactivePrompt', 'companion', { type: prompt.type, companionId: prompt.companionId });
+        }
       }
     );
     let visits: VisitService | undefined;
@@ -1913,37 +1925,71 @@ export class AppServices {
       const existing = this.db.getMemoryNode(id, companionId);
       if (!existing) throw new Error(`Memory node not found: ${id}`);
       this.db.deleteMemoryNode(id);
-      this.reconcileDeletedMemoryTombstones(
-        companionId,
-        existing.userId ?? 'default',
-        this.runtimeClock.now().toISOString(),
-      );
+      this.reconcileDeletedMemoryTombstones(companionId, existing.userId ?? 'default', this.runtimeClock.now().toISOString());
       return { id, deleted: true as const };
     },
     createEdge: async (input: CreateMemoryEdgeInput) => {
       const companionId = this.db.resolveActiveCompanionId(input.companionId);
-      if (
-        !this.db.getMemoryNode(input.fromNodeId, companionId) ||
-        !this.db.getMemoryNode(input.toNodeId, companionId)
-      ) {
+      if (!this.db.getMemoryNode(input.fromNodeId, companionId) || !this.db.getMemoryNode(input.toNodeId, companionId)) {
         throw new Error('Memory edge endpoints must belong to the active Companion.');
       }
       return this.db.insertMemoryEdge(createMemoryEdge(input));
     },
     getGraph: async (input: { query?: string; companionId?: string } = {}) => {
       const companionId = this.db.resolveActiveCompanionId(input.companionId);
-      return graphFromMemory(
-        this.db.listMemoryNodes(companionId),
-        this.db.listMemoryEdges(companionId),
-        input.query
-      );
+      return graphFromMemory(this.db.listMemoryNodes(companionId), this.db.listMemoryEdges(companionId), input.query);
     },
     search: async (input: { query: string; companionId?: string }) => {
       const companionId = this.db.resolveActiveCompanionId(input.companionId);
-      return searchMemory(this.db.listMemoryNodes(companionId), input.query);
+      return searchMemory(this.db.listMemoryNodes(companionId).filter((memory) => memory.status === 'active'), input.query);
     },
     inspectImpact: async (id: string) => this.inspectMemoryImpact(id),
     recomputeImpact: async (input: { id: string; explore?: boolean }) => this.recomputeMemoryImpact(input),
+    listReview: async (input: MemoryReviewQuery = {}) => {
+      const companionId = this.db.resolveActiveCompanionId();
+      return filterMemoryReviewItems(this.db.listMemoryNodes(companionId).map(toMemoryReviewItem), input);
+    },
+    updateReview: async (input: MemoryReviewUpdateInput) => {
+      const companionId = this.db.resolveActiveCompanionId();
+      const existing = this.db.getMemoryNode(input.id, companionId);
+      if (!existing) throw new Error('MEMORY_REVIEW_NOT_FOUND');
+      const impact = this.inspectMemoryImpact(existing.id);
+      const at = this.runtimeClock.now().toISOString();
+      const updated = this.db.updateMemoryNode(applyMemoryReviewUpdate(existing, input, at));
+      const userId = updated.userId ?? 'default';
+      if (updated.status === 'review_pending') {
+        this.db.pruneDeletedMemoryPatternEvidence(userId, companionId, [updated.id], at);
+        for (const targetId of impact.curiosityTargetIds) this.db.setCuriosityTargetStatus(targetId, 'ignored', at);
+        const activeMemories = this.db.listCognitionMemoryCandidates(companionId, undefined, 1_000);
+        const patterns = this.db.listPatterns(userId, 10_000, companionId);
+        this.db.replaceInterestGraph(buildInterestGraph({
+          userId: `${userId}:${companionId}`,
+          memoryNodes: activeMemories,
+          patterns,
+          discoveries: this.db.listDiscoveries({ limit: 500, companionId }),
+          feedback: this.db.listDiscoveryFeedback(500, undefined, companionId),
+        }));
+      } else if (input.state === 'confirmed') {
+        await this.recomputeMemoryImpact({ id: updated.id, companionId });
+      }
+      return toMemoryReviewItem(this.db.getMemoryNode(updated.id, companionId) ?? updated);
+    },
+    getVectorStatus: async (): Promise<MemoryVectorProductStatus> => {
+      const companionId = this.db.resolveActiveCompanionId();
+      const vector = await this.vectorIndex.healthCheck();
+      const embedding = this.localEmbeddings.getStatus();
+      const eligibleCount = this.db.listMemoryNodes(companionId).filter((memory) =>
+        memory.status === 'active' && !memory.isMarkedWrong && (memory.metadata?.sensitivity ?? 'normal') === 'normal'
+      ).length;
+      return buildMemoryVectorProductStatus({
+        embedding,
+        vector,
+        jobCounts: this.db.getEmbeddingJobCounts() as Record<string, number>,
+        eligibleCount,
+      });
+    },
+    installVectorModel: async () => this.debug.installLocalEmbeddingModel(),
+    rebuildVectorIndex: async () => this.debug.rebuildMemoryVectors(),
   };
 
   journey = {
@@ -2738,6 +2784,10 @@ export class AppServices {
       this.startedDiscoveryPayloads.add(discovery.id);
       this.presentationDiscoveries.delete(discovery.id);
     }
+  }
+
+  attachProactivePromptBroadcaster(broadcaster: (prompt: CompanionProactivePrompt) => void): void {
+    this.proactivePromptBroadcaster = broadcaster;
   }
 
   attachAutonomyBroadcasters(callbacks: {

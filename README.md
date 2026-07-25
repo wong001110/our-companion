@@ -215,3 +215,24 @@ The current Desktop `lint` command performs TypeScript project checks; it is not
 ## License
 
 Private project — All rights reserved.
+
+## Memory productization roadmap
+
+The current product surface now separates three concerns:
+
+1. **Semantic Memory** — optional local E5 installation, index status and rebuild controls in normal Settings. SQLite remains authoritative and keyword/structured fallback remains available.
+2. **Memory Review** — normal users review provenance, confidence and influence, then Confirm, Ask Again or Pause Use. Direct durable Memory CRUD is not part of the normal MVP surface.
+3. **Proactive companionship** — the existing Main Process life scheduler may emit bounded unfinished-topic, Goal, Journey or quiet-presence prompts under attention, time, cooldown and daily-budget gates.
+
+Product specifications:
+
+- [Vector Memory productization](docs/product/vector-memory-productization.md)
+- [Memory review and control](docs/product/memory-review-and-control.md)
+- [Proactive Companion behavior](docs/product/proactive-companion-behavior.md)
+
+Manual validation:
+
+- [Vector Memory checklist](docs/checklists/vector-memory-productization.md)
+- [Memory Review checklist](docs/checklists/memory-review-ui.md)
+- [Proactive behavior checklist](docs/checklists/proactive-companion-behavior.md)
+- [Combined release checklist](docs/checklists/memory-and-proactive-productization-release.md)

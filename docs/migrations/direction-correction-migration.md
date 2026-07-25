@@ -46,3 +46,7 @@ Deprecated IPC routes remain until Phase 5 cleanup. `character:*` routes delegat
 | `discovery_feedback.feedback_domain` | Separates topic / timing / interaction feedback |
 
 Existing relationship and message data preserved. Ambiguous memories are not promoted to stronger facts.
+
+## Memory Review Metadata
+
+No new table is required. `memory_nodes.metadata_json` may contain `reviewState`, `reviewNote` and `reviewedAt`. Memory awaiting confirmation uses `memory_status = review_pending`; confirming it restores `active`. Existing rows default to `unreviewed` and remain readable.

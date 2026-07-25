@@ -3,6 +3,7 @@ export const SETTINGS_CATEGORIES = [
   'ai',
   'voice',
   'privacy',
+  'memory',
   'appearance',
   'online',
   'advanced',
