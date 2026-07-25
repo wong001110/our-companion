@@ -408,6 +408,20 @@ const api: OurCompanionApi = {
   }
 };
 
+type SocialVisitApiExtension = {
+  invitations: { sendDiscovery(input: { hostUserId: string; discoveryId: string }): Promise<unknown> };
+  sessions: {
+    getSocial(sessionId: string): Promise<unknown>;
+    respondSocial(sessionId: string): Promise<unknown>;
+    finalizeSocial(sessionId: string): Promise<unknown>;
+  };
+};
+const socialVisits = api.network.visits as typeof api.network.visits & SocialVisitApiExtension;
+socialVisits.invitations.sendDiscovery = (input) => invoke('network:visits:invitations:sendDiscovery', input);
+socialVisits.sessions.getSocial = (sessionId) => invoke('network:visits:sessions:getSocial', sessionId);
+socialVisits.sessions.respondSocial = (sessionId) => invoke('network:visits:sessions:respondSocial', sessionId);
+socialVisits.sessions.finalizeSocial = (sessionId) => invoke('network:visits:sessions:finalizeSocial', sessionId);
+
 if (process.env.OUR_COMPANION_SMOKE_TEST === '1') {
   api.smoke = {
     getState: () => invoke('smoke:getState'),

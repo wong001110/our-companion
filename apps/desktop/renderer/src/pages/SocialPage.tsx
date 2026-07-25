@@ -3,6 +3,7 @@ import type { FriendLookupResult, NetworkStatus, VisitInvitationSummary, VisitSe
 import { PaperCard } from '../ui/NotebookPrimitives';
 import { useVisualVisitState } from '../visits/RemoteVisitorLayer';
 import { PublishedCompanionSection } from '../features/social/PublishedCompanionSection';
+import { SocialVisitConversation, socialVisitApi } from '../features/social/SocialVisitConversation';
 import { ConfirmDialog } from '../components/feedback/ConfirmDialog';
 import { EmptyState } from '../components/feedback/EmptyState';
 import { InlineNotice } from '../components/feedback/InlineNotice';
@@ -25,6 +26,8 @@ export function SocialPage() {
   const [pendingDestructiveAction, setPendingDestructiveAction] = useState<{ title: string; description: string; confirmLabel: string; phase: SocialMutationPhase; operation: () => Promise<unknown> }>();
   const [mutationPhase, setMutationPhase] = useState<SocialMutationPhase>();
   const [publicationAvailability, setPublicationAvailability] = useState({ loaded: false, canSendVisit: false });
+  const [shareCandidates, setShareCandidates] = useState<Array<{ id: string; title: string; summary: string }>>([]);
+  const [selectedDiscoveryId, setSelectedDiscoveryId] = useState('');
   const handlePublicationAvailability = useCallback((next: { loaded: boolean; canSendVisit: boolean }) => {
     setPublicationAvailability((current) => current.loaded === next.loaded && current.canSendVisit === next.canSendVisit ? current : next);
   }, []);
@@ -36,6 +39,13 @@ export function SocialPage() {
     setPendingDestructiveAction(undefined);
     setMutationPhase(undefined);
     setPublicationAvailability({ loaded: false, canSendVisit: false });
+    setShareCandidates([]);
+    setSelectedDiscoveryId('');
+    void window.ourCompanion.discovery.getFeed({ limit: 20 }).then((items) => {
+      const candidates = items.filter((item) => item.title && item.summary).map((item) => ({ id: item.id, title: item.title, summary: item.summary ?? item.title }));
+      setShareCandidates(candidates);
+      setSelectedDiscoveryId(candidates[0]?.id ?? '');
+    }).catch(() => undefined);
   }, [scopeKey]);
 
   if (!status) return <div data-testid="social-panel" className="social-page"><PaperCard title={t(lang, 'social_title')} tape className="settings-panel social-unavailable"><SectionLoading label={t(lang, 'social_availability_loading')} /></PaperCard></div>;
@@ -80,6 +90,7 @@ export function SocialPage() {
   const latestTerminalVisit = visitSessions.find((session) => ['ended', 'cancelled', 'failed'].includes(session.state));
   const userId = account.id;
   const friendsById = new Map(friends.map((friend) => [friend.userId, friend]));
+  const suggestedFriend = friends.find((friend) => friend.presence === 'online');
   const visibleIncomingVisits = visibleInvitations(visitIncoming);
   const visibleOutgoingVisits = visibleInvitations(visitOutgoing);
   const mutationReason = mutationPhase ? t(lang, SOCIAL_MUTATION_PRESENTATION[mutationPhase].labelKey) : undefined;
@@ -98,13 +109,26 @@ export function SocialPage() {
     {actionError && <InlineNotice tone="error">{t(lang, actionError)}</InlineNotice>}
     {mutationReason && <LoadingState label={mutationReason} />}
     {!hasLoaded && loading && <SectionLoading label={t(lang, 'social_loading')} />}
+    {suggestedFriend && <section className="social-overview" data-testid="social-visit-suggestion">
+      <h3>{lang === 'zh-CN' ? 'Companion 的拜访建议' : 'Companion visit suggestion'}</h3>
+      <p>{lang === 'zh-CN' ? `${suggestedFriend.username} 在线。你的 Companion 可以带一条 Discovery 去拜访。` : `${suggestedFriend.username} is online. Your Companion can visit with one approved Discovery.`}</p>
+      <label><span>{lang === 'zh-CN' ? '允许分享的 Discovery' : 'Discovery approved to share'}</span>
+        <select value={selectedDiscoveryId} onChange={(event) => setSelectedDiscoveryId(event.target.value)}>
+          <option value="">{lang === 'zh-CN' ? '请选择' : 'Select one'}</option>
+          {shareCandidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}</option>)}
+        </select>
+      </label>
+      {!shareCandidates.length && <p>{lang === 'zh-CN' ? '目前没有可分享的 Discovery。' : 'There is no Discovery available to share yet.'}</p>}
+    </section>}
     <h3>{t(lang, 'social_friends')}</h3>{domainErrors.friends && <SectionPartialError message={t(lang, domainErrors.friends)} onRetry={() => void refresh()} />}{domainErrors.presence && <SectionPartialError message={t(lang, domainErrors.presence)} onRetry={() => void refresh()} />}{loadedDomains.friends && (friends.length ? friends.map((friend) => {
       const pendingVisit = visitOutgoing.some((invite) => invite.status === 'pending' && invite.hostUserId === friend.userId);
       const visitDisabledCode = hostOccupancy > 0 ? 'VISIT_HOST_HAS_ACTIVE_GUESTS' : localCompanionAway ? 'VISIT_HOST_COMPANION_AWAY' : undefined;
       const visitDisabledReason = mutationReason ?? (!available ? t(lang, 'online_state_detail_reconnecting') : !visitsAvailable ? t(lang, 'social_visit_unavailable') : !publicationAvailability.loaded ? t(lang, 'social_partial_publishing') : !publicationAvailability.canSendVisit ? t(lang, 'social_publish_before_visit_hint') : visitDisabledCode ? visitAdmissionMessage(lang, visitDisabledCode) : pendingVisit ? t(lang, 'social_pending') : undefined);
       return <FriendRow key={friend.userId} lang={lang} friend={friend} disabled={busyAction} visitDisabledReason={visitDisabledReason}
         onView={() => void action(() => window.ourCompanion.network.companions.getFriendCompanion(friend.userId), { phase: 'sending', onSuccess: (companion) => { setFriendCompanion(companion); setFriendAssetStatus(''); } })}
-        onVisit={() => void action(() => window.ourCompanion.network.visits.invitations.send(friend.userId), { phase: 'sending' })}
+        onVisit={() => selectedDiscoveryId
+          ? void action(() => socialVisitApi().invitations.sendDiscovery({ hostUserId: friend.userId, discoveryId: selectedDiscoveryId }), { phase: 'sending' })
+          : setActionError('social_error_action_unavailable')}
         onRemove={() => setPendingDestructiveAction({ title: t(lang, 'social_remove_friend_title'), description: t(lang, 'social_remove_friend_desc', { username: friend.username }), confirmLabel: t(lang, 'social_remove_friend'), phase: 'removing', operation: () => window.ourCompanion.network.friends.remove(friend.userId) })}
         onBlock={() => setPendingDestructiveAction({ title: t(lang, 'social_block_user_title'), description: t(lang, 'social_block_user_desc', { username: friend.username }), confirmLabel: t(lang, 'social_block_user'), phase: 'blocking', operation: () => window.ourCompanion.network.blocks.block(friend.userId) })}
       />;
@@ -155,6 +179,7 @@ function CurrentVisitSection({
           {session.state === 'ready' && session.hostUserId === userId && <button data-testid="start-visit" disabled={busyAction || stale} onClick={() => void action(() => window.ourCompanion.network.visits.sessions.start(session.id), { phase: 'starting' })}>{t(lang, 'social_start_visit')}</button>}
           <button data-testid="end-visit" disabled={busyAction || stale} onClick={() => void action(() => window.ourCompanion.network.visits.sessions.end(session.id), { phase: 'ending' })}>{session.state === 'preparing' || session.state === 'ready' ? t(lang, 'social_cancel_visit') : t(lang, 'social_end_visit')}</button>
         </div>}
+        <SocialVisitConversation session={session} userId={userId} lang={lang} stale={stale} />
       </div>;
     }) : <p data-testid="visit-session-state">{t(lang, 'social_no_current_visit')}</p>}
   </section>;
