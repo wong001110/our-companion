@@ -9,6 +9,7 @@ on:
       - 'docs/SOCIAL_VISIT_MVP_CHECKLIST.md'
       - '.github/agent/apply-social-visit-mvp.py'
       - '.github/agent/fix-social-visit-typecheck.py'
+      - '.github/agent/fix-social-visit-compatibility.py'
       - '.github/workflows/apply-social-visit-mvp.yml'
 
 permissions:
@@ -30,8 +31,10 @@ jobs:
       - run: npm ci
       - name: Apply audited integration patch
         run: python .github/agent/apply-social-visit-mvp.py
-      - name: Apply type narrowing fixes
+      - name: Apply type narrowing and completion fixes
         run: python .github/agent/fix-social-visit-typecheck.py
+      - name: Preserve legacy Visit compatibility
+        run: python .github/agent/fix-social-visit-compatibility.py
       - run: npm run arch:check
       - name: Typecheck
         id: typecheck
