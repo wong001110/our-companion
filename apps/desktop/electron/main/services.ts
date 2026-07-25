@@ -2163,7 +2163,7 @@ export class AppServices {
       const relevanceTopics = memoryAlignment?.publicHintTerms.slice(0, 4) ?? [];
       const fallback = {
         why_this_matters: relevanceTopics.length
-          ? `${input.discovery.title} connects with themes around ${relevanceTopics.join(', ')}.`
+          ? `${input.discovery.title} connects with a few themes that seem relevant.`
           : `${input.discovery.title} matches ${name}'s current curiosity.`,
         recommended_action: 'view' as const,
         short_message: 'I found something that might be worth a small look.',
@@ -3875,7 +3875,7 @@ export class AppServices {
         summary: selectedInsight.summary,
         url: sourceCandidate?.sourceUrl,
         canonicalUrl: normalizeDiscoveryUrl(sourceCandidate?.sourceUrl),
-        tags: [...new Set([selectedCuriosityTarget.topic, ...(sourceMemoryAlignment?.publicHintTerms ?? [])])].slice(0, 4),
+        tags: [selectedCuriosityTarget.topic],
         publishedAt: sourceEvidence?.publishedAt
           ?? (typeof sourceRaw.publishedAt === 'string' ? sourceRaw.publishedAt : undefined),
         raw: {
