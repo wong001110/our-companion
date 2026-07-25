@@ -22,6 +22,7 @@ Record the GitHub Actions run ID or local command transcript beside the release 
 - [ ] Companion core loop and state ownership docs are updated.
 - [ ] Direction-correction audit, legacy table and implementation log are current.
 - [ ] Root README links all product specs and manual checklists.
+- [ ] English and Simplified Chinese product copy describe Memory Review as confirm/re-check/pause control, not direct evidence editing.
 
 ## Real-device validation
 
