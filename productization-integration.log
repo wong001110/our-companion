@@ -1,0 +1,12 @@
+file:///home/runner/work/our-companion/our-companion/scripts/apply-memory-proactive-productization.mjs:8
+  if (count !== 1) throw new Error(`${label}: expected one match, found ${count}`);
+                         ^
+
+Error: main proactive broadcaster: expected one match, found 0
+    at replaceOnce (file:///home/runner/work/our-companion/our-companion/scripts/apply-memory-proactive-productization.mjs:8:26)
+    at file:///home/runner/work/our-companion/our-companion/scripts/apply-memory-proactive-productization.mjs:170:1
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+
+Node.js v22.23.1
