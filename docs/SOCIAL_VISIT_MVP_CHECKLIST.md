@@ -15,26 +15,29 @@
 - [x] Approved Discovery Share Envelope API.
 - [x] Participant-scoped Social Visit state API.
 - [x] Alternating, idempotent Companion turn relay.
-- [x] Deterministic Shared Moment.
+- [x] Deterministic Shared Moment for completed conversations only.
 - [x] Friendship and Block revalidation during conversation.
-- [x] Database migration with cascade cleanup.
-- [x] Network policy unit tests and dedicated CI gate.
-- [ ] Network CI green and independent diff review complete.
+- [x] Database migration with cascade cleanup and Prisma schema alignment.
+- [x] Network policy and service security tests plus dedicated CI gate.
+- [x] Network migration validation, lint, build, tests and independent diff review complete.
 - [ ] Network PR merged to `main`; task branch deleted.
 
 ### Desktop implementation
 
-- [x] Discovery selection before sending a Visit request.
+- [x] Discovery selection before sending a Social Visit request.
 - [x] Approved share persisted locally until the invitation becomes a Session.
-- [x] Share attached before the visiting Companion can become Ready.
+- [x] New Social Visit flow attaches the share before the visiting Companion becomes Ready.
+- [x] Legacy Visual Visit preparation and startup remain compatible without a Social share.
 - [x] Social Visit conversation UI with bounded transcript and automatic turn continuation.
 - [x] Each device generates only its own Companion's turn.
 - [x] AI prompt receives only the approved share and bounded Social transcript.
 - [x] Deterministic response fallback when the configured AI provider is unavailable.
 - [x] Shared Moment and local-only Private Reflection presentation.
 - [x] Local relationship continuity update is idempotent per Session.
-- [ ] Desktop architecture, typecheck, unit, build and UI smoke gates green.
-- [ ] Desktop PR independently reviewed and merged to `main`; task branch deleted.
+- [x] Desktop architecture, typecheck, 1,189 Vitest cases and production build are green.
+- [x] Desktop independent diff review complete with no unresolved blocking code findings.
+- [ ] Desktop PR merged to `main`; task branch deleted.
+- [ ] Real two-device UI, privacy and interruption checklist completed by the user.
 
 ## Real-device test checklist
 
