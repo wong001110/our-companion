@@ -8,6 +8,7 @@ on:
       - 'apps/desktop/renderer/src/features/social/SocialVisitConversation.tsx'
       - 'docs/SOCIAL_VISIT_MVP_CHECKLIST.md'
       - '.github/agent/apply-social-visit-mvp.py'
+      - '.github/agent/fix-social-visit-typecheck.py'
       - '.github/workflows/apply-social-visit-mvp.yml'
 
 permissions:
@@ -29,6 +30,8 @@ jobs:
       - run: npm ci
       - name: Apply audited integration patch
         run: python .github/agent/apply-social-visit-mvp.py
+      - name: Apply type narrowing fixes
+        run: python .github/agent/fix-social-visit-typecheck.py
       - run: npm run arch:check
       - name: Typecheck
         id: typecheck
