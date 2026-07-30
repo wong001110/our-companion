@@ -8,6 +8,7 @@ import {
 
 describe('discoverySearchGuard', () => {
   it('caps every discovery cycle at three search attempts', () => {
+    expect(Number.isInteger(MAX_DISCOVERY_SEARCH_ATTEMPTS)).toBe(true);
     expect(MAX_DISCOVERY_SEARCH_ATTEMPTS).toBe(3);
     expect(clampDiscoverySearchAttempts(undefined)).toBe(MAX_DISCOVERY_SEARCH_ATTEMPTS);
     expect(clampDiscoverySearchAttempts(0)).toBe(1);
