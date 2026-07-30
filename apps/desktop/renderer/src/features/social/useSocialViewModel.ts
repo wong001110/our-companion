@@ -84,30 +84,35 @@ export function useSocialViewModel() {
     try {
       const getOverview = window.ourCompanion.network.friends.getOverview;
       if (typeof getOverview === 'function') {
-        const overview = await getOverview();
-        if (scopeAtStart !== scopeRef.current) return;
-        setFriends(overview.friends);
-        setIncoming(overview.incomingRequests);
-        setOutgoing(overview.outgoingRequests);
-        setBlocked(overview.blockedUsers);
-        setVisitIncoming(overview.visitInvitations.incoming);
-        setVisitOutgoing(overview.visitInvitations.outgoing);
-        setVisitSessions(overview.visitSessions);
-        setDomainErrors({});
-        setLoadedDomains({
-          friends: true,
-          presence: true,
-          incomingRequests: true,
-          outgoingRequests: true,
-          blockedUsers: true,
-          incomingVisitInvitations: true,
-          outgoingVisitInvitations: true,
-          visitSessions: true,
-        });
-        setDataScope(scopeAtStart);
-        setHasLoaded(true);
-        setLastSynchronizedAt(overview.synchronizedAt);
-        return;
+        try {
+          const overview = await getOverview();
+          if (scopeAtStart !== scopeRef.current) return;
+          setFriends(overview.friends);
+          setIncoming(overview.incomingRequests);
+          setOutgoing(overview.outgoingRequests);
+          setBlocked(overview.blockedUsers);
+          setVisitIncoming(overview.visitInvitations.incoming);
+          setVisitOutgoing(overview.visitInvitations.outgoing);
+          setVisitSessions(overview.visitSessions);
+          setDomainErrors({});
+          setLoadedDomains({
+            friends: true,
+            presence: true,
+            incomingRequests: true,
+            outgoingRequests: true,
+            blockedUsers: true,
+            incomingVisitInvitations: true,
+            outgoingVisitInvitations: true,
+            visitSessions: true,
+          });
+          setDataScope(scopeAtStart);
+          setHasLoaded(true);
+          setLastSynchronizedAt(overview.synchronizedAt);
+          return;
+        } catch {
+          // A pre-overview Network server returns 404. Continue with the legacy
+          // bounded fan-out until Railway finishes the rolling deployment.
+        }
       }
 
       // Compatibility with a pre-overview server during rolling deployment.

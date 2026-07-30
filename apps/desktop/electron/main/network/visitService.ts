@@ -53,6 +53,14 @@ type SocialVisitState = {
   sharedMoment?: SharedMoment;
 };
 
+function isSocialVisitState(value: unknown): value is SocialVisitState {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Partial<SocialVisitState>;
+  return typeof record.sessionId === 'string'
+    && typeof record.maxTurns === 'number'
+    && Array.isArray(record.turns);
+}
+
 type PendingShare = {
   invitationId: string;
   discoveryId: string;
@@ -249,13 +257,18 @@ export class VisitService {
       }
     }
 
-    const next = await this.network.appendVisitSocialTurn(sessionId, {
+    const appended = await this.network.appendVisitSocialTurn(sessionId, {
       clientTurnId: randomUUID(),
       intent: proposal.intent,
       message: proposal.message,
       emotion: proposal.emotion,
       topic: proposal.topic,
-    }) as SocialVisitState;
+    });
+    // During a rolling deployment an older Network server returns only the
+    // appended turn. Newer servers return the full state and save one request.
+    const next = isSocialVisitState(appended)
+      ? appended
+      : await this.network.getVisitSocialState(sessionId) as SocialVisitState;
     return {
       ...next,
       privateReflection: this.db?.getAppSetting<string>(`${REFLECTION_PREFIX}${sessionId}`),
