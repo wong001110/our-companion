@@ -29,19 +29,15 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          def replace_once(path: str, old: str, new: str, label: str) -> None:
-              file = Path(path)
-              content = file.read_text(encoding='utf-8')
-              if old not in content:
-                  raise SystemExit(f'{label} anchor not found')
-              file.write_text(content.replace(old, new, 1), encoding='utf-8')
-
-          path = 'apps/desktop/electron/main/application/CompanionTurnOrchestrator.ts'
+          path = Path('apps/desktop/electron/main/application/CompanionTurnOrchestrator.ts')
+          content = path.read_text(encoding='utf-8')
           anchor = """function sourceFor(input: CompanionTurnInput['source']): CompanionMessageSource {
             return input === 'panel_text' ? 'panel' : input;
           }
           """
-          replacement = anchor + """
+          if anchor not in content:
+              raise SystemExit('plain reply helper anchor not found')
+          helper = """
           /**
            * Preserve an ordinary conversational provider reply when structured JSON
            * was not returned. This never infers Actions or Memory, and the wrapped
@@ -63,20 +59,22 @@ jobs:
             };
           }
           """
-          replace_once(path, anchor, replacement, 'plain reply helper')
+          content = content.replace(anchor, anchor + helper, 1)
 
-          old = """        const structured = validateCompanionTurnProposal(ai.content);
-                  proposal = structured ?? this.safeProposal(this.fallbackReply(), 'conversation');
-                  inspection.aiStructuredResult = redactSensitiveValue(structured) as CompanionTurnProposal;
-                  if (!structured) inspection.finalReplySource = 'safe_fallback';
-          """
-          new = """        const structured = validateCompanionTurnProposal(ai.content);
+          start_marker = "        const structured = validateCompanionTurnProposal(ai.content);"
+          end_marker = "        if (!structured) inspection.finalReplySource = 'safe_fallback';"
+          start = content.find(start_marker)
+          end = content.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit('plain reply parse markers not found')
+          end += len(end_marker)
+          parse_replacement = """        const structured = validateCompanionTurnProposal(ai.content);
                   const plainConversation = structured ? undefined : proposalFromPlainConversation(ai.content);
                   proposal = structured ?? plainConversation ?? this.safeProposal(this.fallbackReply(), 'conversation');
                   inspection.aiStructuredResult = redactSensitiveValue(structured) as CompanionTurnProposal;
-                  if (!structured && !plainConversation) inspection.finalReplySource = 'safe_fallback';
-          """
-          replace_once(path, old, new, 'plain reply parse')
+                  if (!structured && !plainConversation) inspection.finalReplySource = 'safe_fallback';"""
+          content = content[:start] + parse_replacement + content[end:]
+          path.write_text(content, encoding='utf-8')
 
           test_path = Path('apps/desktop/electron/main/application/CompanionTurnOrchestrator.test.ts')
           tests = test_path.read_text(encoding='utf-8')
