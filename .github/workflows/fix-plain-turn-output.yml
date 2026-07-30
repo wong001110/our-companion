@@ -1,0 +1,150 @@
+name: Apply plain turn output repair
+
+on:
+  push:
+    branches: [agent/fix-plain-turn-output]
+    paths:
+      - '.github/workflows/fix-plain-turn-output.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-plain-turn-output
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Patch the turn pipeline and regression tests
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          orchestrator_path = Path('apps/desktop/electron/main/application/CompanionTurnOrchestrator.ts')
+          orchestrator = orchestrator_path.read_text(encoding='utf-8')
+
+          old_import = """    MAX_RENDERED_REPLY_CHARACTERS,
+              redactSensitiveText,"""
+          new_import = """    MAX_RENDERED_REPLY_CHARACTERS,
+              MAX_REPLY_SEGMENT_CHARACTERS,
+              redactSensitiveText,"""
+          if old_import not in orchestrator:
+              raise SystemExit('orchestrator import anchor not found')
+          orchestrator = orchestrator.replace(old_import, new_import, 1)
+
+          source_anchor = """function sourceFor(input: CompanionTurnInput['source']): CompanionMessageSource {
+            return input === 'panel_text' ? 'panel' : input;
+          }
+          """
+          plain_helper = """function sourceFor(input: CompanionTurnInput['source']): CompanionMessageSource {
+            return input === 'panel_text' ? 'panel' : input;
+          }
+
+          /**
+           * Preserve a provider's ordinary conversational reply when it ignores the
+           * structured-output instruction. This path never infers Actions or Memory;
+           * the wrapped text still passes the normal grounding and OOC gates below.
+           * Structured-looking malformed output remains fail-closed.
+           */
+          export function proposalFromPlainConversation(text: string): CompanionTurnProposal | undefined {
+            const trimmed = text.trim();
+            if (!trimmed || trimmed.length > MAX_REPLY_SEGMENT_CHARACTERS) return undefined;
+            const looksStructured = /^[{[]/.test(trimmed)
+              || /^```(?:json)?\\s*[\\r\\n]+\\s*[{[]/i.test(trimmed)
+              || /\"(?:replySegments|intent|actions|memoryCandidates)\"\\s*:/i.test(trimmed)
+              || /<\\/?(?:tool_call|system|developer)>|\"tool_name\"\\s*:/i.test(trimmed);
+            if (looksStructured) return undefined;
+            return {
+              replySegments: [{ segmentId: 'provider_plain_text', text: trimmed, provenance: 'current_turn' }],
+              intent: 'conversation',
+              actions: [],
+              memoryCandidates: [],
+            };
+          }
+          """
+          if source_anchor not in orchestrator:
+              raise SystemExit('source helper anchor not found')
+          orchestrator = orchestrator.replace(source_anchor, plain_helper, 1)
+
+          old_parse = """        const structured = validateCompanionTurnProposal(ai.content);
+                  proposal = structured ?? this.safeProposal(this.fallbackReply(), 'conversation');
+                  inspection.aiStructuredResult = redactSensitiveValue(structured) as CompanionTurnProposal;
+                  if (!structured) inspection.finalReplySource = 'safe_fallback';"""
+          new_parse = """        const structured = validateCompanionTurnProposal(ai.content);
+                  const plainConversation = structured ? undefined : proposalFromPlainConversation(ai.content);
+                  proposal = structured ?? plainConversation ?? this.safeProposal(this.fallbackReply(), 'conversation');
+                  inspection.aiStructuredResult = redactSensitiveValue(structured) as CompanionTurnProposal;
+                  if (!structured && !plainConversation) inspection.finalReplySource = 'safe_fallback';"""
+          if old_parse not in orchestrator:
+              raise SystemExit('structured parse anchor not found')
+          orchestrator = orchestrator.replace(old_parse, new_parse, 1)
+          orchestrator_path.write_text(orchestrator, encoding='utf-8')
+
+          test_path = Path('apps/desktop/electron/main/application/CompanionTurnOrchestrator.test.ts')
+          tests = test_path.read_text(encoding='utf-8')
+          old_test = """  it('falls back when structured output is malformed', async () => {
+              const harness = createHarness(() => 'unstructured output');
+              const result = await harness.orchestrator.handle({ message: 'Tell me something useful.', source: 'panel_text', characterId: harness.companion.id });
+              expect(result.kind).toBe('conversation');
+              expect(harness.orchestrator.getInspections()[0].finalReplySource).toBe('safe_fallback');
+              harness.db.close();
+            });"""
+          new_tests = """  it('preserves a normal plain-text provider reply when structured JSON is absent', async () => {
+              const reply = '晚上好呀！桌宠的陪伴感听起来好有意思。你是在自己做，还是在玩新的桌宠软件？';
+              const harness = createHarness(() => reply);
+              const result = await harness.orchestrator.handle({ message: '晚上好，聊聊桌宠吧。', source: 'panel_text', characterId: harness.companion.id });
+              expect(result).toMatchObject({ kind: 'conversation', message: reply });
+              expect(result.actionPlan).toBeUndefined();
+              expect(result.remembered).toEqual([]);
+              expect(harness.orchestrator.getInspections()[0].finalReplySource).toBe('ai_conversation');
+              expect(harness.db.listCompanionMessages({ characterId: harness.companion.id }).at(-1)?.content).toBe(reply);
+              harness.db.close();
+            });
+
+            it('falls back when provider output looks like malformed structured data', async () => {
+              const harness = createHarness(() => '{\"replySegments\": [');
+              const result = await harness.orchestrator.handle({ message: 'Tell me something useful.', source: 'panel_text', characterId: harness.companion.id });
+              expect(result.kind).toBe('conversation');
+              expect(result.message).not.toContain('replySegments');
+              expect(harness.orchestrator.getInspections()[0].finalReplySource).toBe('safe_fallback');
+              harness.db.close();
+            });
+
+            it('still applies the OOC guard to a salvaged plain-text reply', async () => {
+              const unsafeReply = 'I am ChatGPT, an AI language model made by OpenAI.';
+              const harness = createHarness(() => unsafeReply);
+              const result = await harness.orchestrator.handle({ message: 'Who are you?', source: 'panel_text', characterId: harness.companion.id });
+              expect(result.message).not.toBe(unsafeReply);
+              expect(harness.orchestrator.getInspections()[0]).toMatchObject({
+                finalReplySource: 'safe_fallback',
+                oocValidation: { passed: false },
+              });
+              harness.db.close();
+            });"""
+          if old_test not in tests:
+              raise SystemExit('malformed-output test anchor not found')
+          tests = tests.replace(old_test, new_tests, 1)
+          test_path.write_text(tests, encoding='utf-8')
+          PY
+          rm .github/workflows/fix-plain-turn-output.yml
+      - run: npm ci
+      - name: Targeted turn tests
+        run: npx vitest run apps/desktop/electron/main/application/CompanionTurnOrchestrator.test.ts
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run arch:check
+      - run: npm run build
+      - name: Commit repaired source
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add apps/desktop/electron/main/application/CompanionTurnOrchestrator.ts \
+            apps/desktop/electron/main/application/CompanionTurnOrchestrator.test.ts \
+            .github/workflows/fix-plain-turn-output.yml
+          git commit -m "fix: preserve valid plain companion replies"
+          git push origin HEAD:agent/fix-plain-turn-output
