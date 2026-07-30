@@ -19,6 +19,7 @@ jobs:
         with:
           ref: agent/fix-plain-turn-output
           fetch-depth: 0
+      # The first connector commit installs this workflow; this follow-up push executes it.
       - run: python scripts/add-research-test-url-import.py
       - run: |
           rm scripts/add-research-test-url-import.py
