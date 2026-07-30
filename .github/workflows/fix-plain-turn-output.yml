@@ -28,26 +28,30 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          from textwrap import dedent
 
           orchestrator_path = Path('apps/desktop/electron/main/application/CompanionTurnOrchestrator.ts')
           orchestrator = orchestrator_path.read_text(encoding='utf-8')
 
-          old_import = """    MAX_RENDERED_REPLY_CHARACTERS,
-              redactSensitiveText,"""
-          new_import = """    MAX_RENDERED_REPLY_CHARACTERS,
-              MAX_REPLY_SEGMENT_CHARACTERS,
-              redactSensitiveText,"""
+          old_import = dedent('''\
+            MAX_RENDERED_REPLY_CHARACTERS,
+            redactSensitiveText,
+          ''')
+          new_import = dedent('''\
+            MAX_RENDERED_REPLY_CHARACTERS,
+            MAX_REPLY_SEGMENT_CHARACTERS,
+            redactSensitiveText,
+          ''')
           if old_import not in orchestrator:
               raise SystemExit('orchestrator import anchor not found')
           orchestrator = orchestrator.replace(old_import, new_import, 1)
 
-          source_anchor = """function sourceFor(input: CompanionTurnInput['source']): CompanionMessageSource {
+          source_anchor = dedent('''\
+          function sourceFor(input: CompanionTurnInput['source']): CompanionMessageSource {
             return input === 'panel_text' ? 'panel' : input;
           }
-          """
-          plain_helper = """function sourceFor(input: CompanionTurnInput['source']): CompanionMessageSource {
-            return input === 'panel_text' ? 'panel' : input;
-          }
+          ''')
+          helper = dedent('''\
 
           /**
            * Preserve a provider's ordinary conversational reply when it ignores the
@@ -58,8 +62,8 @@ jobs:
           export function proposalFromPlainConversation(text: string): CompanionTurnProposal | undefined {
             const trimmed = text.trim();
             if (!trimmed || trimmed.length > MAX_REPLY_SEGMENT_CHARACTERS) return undefined;
-            const looksStructured = /^[{[]/.test(trimmed)
-              || /^```(?:json)?\\s*[\\r\\n]+\\s*[{[]/i.test(trimmed)
+            const looksStructured = /^(?:\\{|\\[)/.test(trimmed)
+              || /^```(?:json)?\\s*[\\r\\n]+\\s*(?:\\{|\\[)/i.test(trimmed)
               || /\"(?:replySegments|intent|actions|memoryCandidates)\"\\s*:/i.test(trimmed)
               || /<\\/?(?:tool_call|system|developer)>|\"tool_name\"\\s*:/i.test(trimmed);
             if (looksStructured) return undefined;
@@ -70,20 +74,24 @@ jobs:
               memoryCandidates: [],
             };
           }
-          """
+          ''')
           if source_anchor not in orchestrator:
               raise SystemExit('source helper anchor not found')
-          orchestrator = orchestrator.replace(source_anchor, plain_helper, 1)
+          orchestrator = orchestrator.replace(source_anchor, source_anchor + helper, 1)
 
-          old_parse = """        const structured = validateCompanionTurnProposal(ai.content);
+          old_parse = dedent('''\
+                  const structured = validateCompanionTurnProposal(ai.content);
                   proposal = structured ?? this.safeProposal(this.fallbackReply(), 'conversation');
                   inspection.aiStructuredResult = redactSensitiveValue(structured) as CompanionTurnProposal;
-                  if (!structured) inspection.finalReplySource = 'safe_fallback';"""
-          new_parse = """        const structured = validateCompanionTurnProposal(ai.content);
+                  if (!structured) inspection.finalReplySource = 'safe_fallback';
+          ''')
+          new_parse = dedent('''\
+                  const structured = validateCompanionTurnProposal(ai.content);
                   const plainConversation = structured ? undefined : proposalFromPlainConversation(ai.content);
                   proposal = structured ?? plainConversation ?? this.safeProposal(this.fallbackReply(), 'conversation');
                   inspection.aiStructuredResult = redactSensitiveValue(structured) as CompanionTurnProposal;
-                  if (!structured && !plainConversation) inspection.finalReplySource = 'safe_fallback';"""
+                  if (!structured && !plainConversation) inspection.finalReplySource = 'safe_fallback';
+          ''')
           if old_parse not in orchestrator:
               raise SystemExit('structured parse anchor not found')
           orchestrator = orchestrator.replace(old_parse, new_parse, 1)
@@ -91,14 +99,14 @@ jobs:
 
           test_path = Path('apps/desktop/electron/main/application/CompanionTurnOrchestrator.test.ts')
           tests = test_path.read_text(encoding='utf-8')
-          old_test = """  it('falls back when structured output is malformed', async () => {
-              const harness = createHarness(() => 'unstructured output');
-              const result = await harness.orchestrator.handle({ message: 'Tell me something useful.', source: 'panel_text', characterId: harness.companion.id });
-              expect(result.kind).toBe('conversation');
-              expect(harness.orchestrator.getInspections()[0].finalReplySource).toBe('safe_fallback');
-              harness.db.close();
-            });"""
-          new_tests = """  it('preserves a normal plain-text provider reply when structured JSON is absent', async () => {
+          start_marker = "  it('falls back when structured output is malformed'"
+          end_marker = "  it('redacts sensitive values from retained turn inspection"
+          start = tests.find(start_marker)
+          end = tests.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit('malformed-output test range not found')
+          replacement = dedent('''\
+            it('preserves a normal plain-text provider reply when structured JSON is absent', async () => {
               const reply = '晚上好呀！桌宠的陪伴感听起来好有意思。你是在自己做，还是在玩新的桌宠软件？';
               const harness = createHarness(() => reply);
               const result = await harness.orchestrator.handle({ message: '晚上好，聊聊桌宠吧。', source: 'panel_text', characterId: harness.companion.id });
@@ -111,7 +119,7 @@ jobs:
             });
 
             it('falls back when provider output looks like malformed structured data', async () => {
-              const harness = createHarness(() => '{\"replySegments\": [');
+              const harness = createHarness(() => '{"replySegments": [');
               const result = await harness.orchestrator.handle({ message: 'Tell me something useful.', source: 'panel_text', characterId: harness.companion.id });
               expect(result.kind).toBe('conversation');
               expect(result.message).not.toContain('replySegments');
@@ -129,10 +137,10 @@ jobs:
                 oocValidation: { passed: false },
               });
               harness.db.close();
-            });"""
-          if old_test not in tests:
-              raise SystemExit('malformed-output test anchor not found')
-          tests = tests.replace(old_test, new_tests, 1)
+            });
+
+          ''')
+          tests = tests[:start] + replacement + tests[end:]
           test_path.write_text(tests, encoding='utf-8')
           PY
           rm .github/workflows/fix-plain-turn-output.yml
