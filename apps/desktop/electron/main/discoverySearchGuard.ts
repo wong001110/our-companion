@@ -12,8 +12,8 @@ export interface SeenDiscoverySearchEntry {
 export type SeenDiscoveryMatchReason = 'canonical_url' | 'semantic_title';
 
 export function clampDiscoverySearchAttempts(value: number | undefined): number {
-  if (!Number.isFinite(value)) return MAX_DISCOVERY_SEARCH_ATTEMPTS;
-  return Math.max(1, Math.min(MAX_DISCOVERY_SEARCH_ATTEMPTS, Math.floor(value!)));
+  if (value === undefined || !Number.isFinite(value)) return MAX_DISCOVERY_SEARCH_ATTEMPTS;
+  return Math.max(1, Math.min(MAX_DISCOVERY_SEARCH_ATTEMPTS, Math.floor(value)));
 }
 
 export function classifyPreviouslySeenSearchResult(
