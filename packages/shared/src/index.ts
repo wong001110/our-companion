@@ -2455,6 +2455,15 @@ export interface FriendLookupResult { id: string; username: string; uid: string;
 export interface FriendSummary { userId: string; username: string; uid: string; friendCode?: string; presence: FriendPresence; hasPublishedCompanion: boolean; }
 export interface FriendRequestSummary { id: string; direction: 'incoming' | 'outgoing'; userId: string; username: string; uid: string; friendCode?: string; status: 'pending'; createdAt: string; }
 export interface BlockedUserSummary { userId: string; username: string; uid?: string; blockedAt: string; }
+export interface SocialOverview {
+  friends: FriendSummary[];
+  incomingRequests: FriendRequestSummary[];
+  outgoingRequests: FriendRequestSummary[];
+  blockedUsers: BlockedUserSummary[];
+  visitInvitations: { incoming: VisitInvitationSummary[]; outgoing: VisitInvitationSummary[] };
+  visitSessions: VisitSessionSummary[];
+  synchronizedAt: string;
+}
 export interface PublicCompanionProfile {
   id: string;
   ownerUserId: string;
@@ -2864,6 +2873,7 @@ export interface OurCompanionApi {
     friends: {
       lookup(uid: string): Promise<FriendLookupResult>;
       getAll(): Promise<FriendSummary[]>;
+      getOverview(): Promise<SocialOverview>;
       getIncomingRequests(): Promise<FriendRequestSummary[]>;
       getOutgoingRequests(): Promise<FriendRequestSummary[]>;
       sendRequest(userId: string): Promise<unknown>;

@@ -64,6 +64,12 @@ function companionsMock() {
 }
 
 describe('VisitService social MVP', () => {
+  it('keeps a rolling Network deployment fallback for legacy turn responses', () => {
+    const source = require('node:fs').readFileSync(require('node:path').join(__dirname, 'visitService.ts'), 'utf8');
+    expect(source).toContain('isSocialVisitState(appended)');
+    expect(source).toContain('getVisitSocialState(sessionId)');
+  });
+
   const services: VisitService[] = [];
   afterEach(() => services.splice(0).forEach((service) => service.stopAll()));
 

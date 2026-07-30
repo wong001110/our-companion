@@ -82,6 +82,40 @@ export function useSocialViewModel() {
     const scopeAtStart = scope;
     setLoading(true);
     try {
+      const getOverview = window.ourCompanion.network.friends.getOverview;
+      if (typeof getOverview === 'function') {
+        try {
+          const overview = await getOverview();
+          if (scopeAtStart !== scopeRef.current) return;
+          setFriends(overview.friends);
+          setIncoming(overview.incomingRequests);
+          setOutgoing(overview.outgoingRequests);
+          setBlocked(overview.blockedUsers);
+          setVisitIncoming(overview.visitInvitations.incoming);
+          setVisitOutgoing(overview.visitInvitations.outgoing);
+          setVisitSessions(overview.visitSessions);
+          setDomainErrors({});
+          setLoadedDomains({
+            friends: true,
+            presence: true,
+            incomingRequests: true,
+            outgoingRequests: true,
+            blockedUsers: true,
+            incomingVisitInvitations: true,
+            outgoingVisitInvitations: true,
+            visitSessions: true,
+          });
+          setDataScope(scopeAtStart);
+          setHasLoaded(true);
+          setLastSynchronizedAt(overview.synchronizedAt);
+          return;
+        } catch {
+          // A pre-overview Network server returns 404. Continue with the legacy
+          // bounded fan-out until Railway finishes the rolling deployment.
+        }
+      }
+
+      // Compatibility with a pre-overview server during rolling deployment.
       const results = await Promise.allSettled([
         window.ourCompanion.network.friends.getAll(),
         window.ourCompanion.network.friends.getIncomingRequests(),
@@ -97,35 +131,32 @@ export function useSocialViewModel() {
       const errors: SocialDomainErrors = {};
       const loaded: SocialDomainLoaded = {};
       const presenceByUser = presence.status === 'fulfilled' ? new Map(presence.value.map((item) => [item.userId, item.status])) : undefined;
-
-      if (nextFriends.status === 'fulfilled') {
-        loaded.friends = true;
-        setFriends(nextFriends.value.map((friend) => ({ ...friend, presence: presenceByUser?.get(friend.userId) })));
-      } else {
-        errors.friends = 'social_partial_friends';
-        if (presenceByUser) setFriends((current) => current.map((friend) => ({ ...friend, presence: presenceByUser.get(friend.userId) })));
-      }
-      if (presence.status === 'rejected') {
-        errors.presence = 'social_partial_presence';
-        setFriends((current) => current.map((friend) => ({ ...friend, presence: undefined })));
-      } else loaded.presence = true;
-      if (nextIncoming.status === 'fulfilled') { loaded.incomingRequests = true; setIncoming(nextIncoming.value); }
-      else errors.incomingRequests = 'social_partial_incoming_requests';
-      if (nextOutgoing.status === 'fulfilled') { loaded.outgoingRequests = true; setOutgoing(nextOutgoing.value); }
-      else errors.outgoingRequests = 'social_partial_outgoing_requests';
-      if (nextBlocked.status === 'fulfilled') { loaded.blockedUsers = true; setBlocked(nextBlocked.value); }
-      else errors.blockedUsers = 'social_partial_blocked_users';
-      if (nextVisitIncoming.status === 'fulfilled') { loaded.incomingVisitInvitations = true; setVisitIncoming(nextVisitIncoming.value); }
-      else errors.incomingVisitInvitations = 'social_partial_visit_invitations';
-      if (nextVisitOutgoing.status === 'fulfilled') { loaded.outgoingVisitInvitations = true; setVisitOutgoing(nextVisitOutgoing.value); }
-      else errors.outgoingVisitInvitations = 'social_partial_visit_invitations';
-      if (nextVisitSessions.status === 'fulfilled') { loaded.visitSessions = true; setVisitSessions(nextVisitSessions.value); }
-      else errors.visitSessions = 'social_partial_visit_sessions';
+      if (nextFriends.status === 'fulfilled') { loaded.friends = true; setFriends(nextFriends.value.map((friend) => ({ ...friend, presence: presenceByUser?.get(friend.userId) ?? friend.presence }))); }
+      else errors.friends = 'social_partial_friends';
+      if (presence.status === 'fulfilled') loaded.presence = true; else errors.presence = 'social_partial_presence';
+      if (nextIncoming.status === 'fulfilled') { loaded.incomingRequests = true; setIncoming(nextIncoming.value); } else errors.incomingRequests = 'social_partial_incoming_requests';
+      if (nextOutgoing.status === 'fulfilled') { loaded.outgoingRequests = true; setOutgoing(nextOutgoing.value); } else errors.outgoingRequests = 'social_partial_outgoing_requests';
+      if (nextBlocked.status === 'fulfilled') { loaded.blockedUsers = true; setBlocked(nextBlocked.value); } else errors.blockedUsers = 'social_partial_blocked_users';
+      if (nextVisitIncoming.status === 'fulfilled') { loaded.incomingVisitInvitations = true; setVisitIncoming(nextVisitIncoming.value); } else errors.incomingVisitInvitations = 'social_partial_visit_invitations';
+      if (nextVisitOutgoing.status === 'fulfilled') { loaded.outgoingVisitInvitations = true; setVisitOutgoing(nextVisitOutgoing.value); } else errors.outgoingVisitInvitations = 'social_partial_visit_invitations';
+      if (nextVisitSessions.status === 'fulfilled') { loaded.visitSessions = true; setVisitSessions(nextVisitSessions.value); } else errors.visitSessions = 'social_partial_visit_sessions';
       setDomainErrors(errors);
       setLoadedDomains((current) => ({ ...current, ...loaded }));
       setDataScope(scopeAtStart);
       setHasLoaded(true);
       setLastSynchronizedAt(new Date().toISOString());
+    } catch {
+      if (scopeAtStart !== scopeRef.current) return;
+      setDomainErrors({
+        friends: 'social_partial_friends',
+        presence: 'social_partial_presence',
+        incomingRequests: 'social_partial_incoming_requests',
+        outgoingRequests: 'social_partial_outgoing_requests',
+        blockedUsers: 'social_partial_blocked_users',
+        incomingVisitInvitations: 'social_partial_visit_invitations',
+        outgoingVisitInvitations: 'social_partial_visit_invitations',
+        visitSessions: 'social_partial_visit_sessions',
+      });
     } finally {
       if (scopeAtStart === scopeRef.current) setLoading(false);
     }
