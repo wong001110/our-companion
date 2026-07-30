@@ -19,7 +19,7 @@ export function clampDiscoverySearchAttempts(value: number | undefined): number 
 export function classifyPreviouslySeenSearchResult(
   candidate: { url?: string; title: string },
   seen: readonly SeenDiscoverySearchEntry[],
-  options: { allowSeenCanonicalUrl?: boolean } = {},
+  options: { allowSeenCanonicalUrl?: boolean; allowSeenSemanticTitle?: boolean } = {},
 ): { seen: boolean; reason?: SeenDiscoveryMatchReason } {
   const candidateUrl = normalizeDiscoveryUrl(candidate.url);
   const candidateTitle = candidate.title.trim();
@@ -32,7 +32,7 @@ export function classifyPreviouslySeenSearchResult(
       }
     }
 
-    if (semanticallyEquivalentTitle(candidateTitle, entry.title)) {
+    if (!options.allowSeenSemanticTitle && semanticallyEquivalentTitle(candidateTitle, entry.title)) {
       return { seen: true, reason: 'semantic_title' };
     }
   }
