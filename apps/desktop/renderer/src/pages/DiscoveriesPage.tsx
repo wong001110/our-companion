@@ -33,7 +33,7 @@ export function shortDiscoverySummary(value: string, maximum = 180): string {
 export function compactDiscoveryTags(values: string[]): string[] {
   const tags: string[] = [];
   for (const value of values) {
-    for (const part of value.split(/[，,。.!?！？;；|/\:：—–]+/u)) {
+    for (const part of value.split(/[，,。.!?！？;；|/:：—–]+/u)) {
       const normalized = part.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
       if (!normalized) continue;
       const compact = /\p{Script=Han}/u.test(normalized)
@@ -91,7 +91,7 @@ export function DiscoveriesPage({ discoveries, exploration, exploring, onStartEx
                     <div className="card-topline"><span>{candidate.sourceType}</span><strong>{candidate.agentType}</strong></div>
                     <h3>{candidate.title}</h3><p className="discovery-card-summary">{shortDiscoverySummary(candidate.summary)}</p>
                     <div className="action-row">
-                      <button onClick={() => setDetail({ title: candidate.title, summary: candidate.summary, source: candidate.sourceName, url: candidate.sourceUrl, tags: [] })}>{detailsLabel}</button>
+                      <button onClick={() => setDetail({ title: candidate.title, summary: candidate.summary, source: candidate.sourceName ?? candidate.sourceType, url: candidate.sourceUrl, tags: [] })}>{detailsLabel}</button>
                       {candidate.sourceUrl && <button onClick={() => window.ourCompanion.tool.execute({ toolName: 'open_url', args: { url: candidate.sourceUrl } })}>{t(lang, 'discovery_view')}</button>}
                     </div>
                   </article>
