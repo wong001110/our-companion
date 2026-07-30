@@ -52,6 +52,14 @@ export function semanticallyEquivalentTitle(left: string, right: string): boolea
     return true;
   }
 
+  if (isHanText(leftCompact) && isHanText(rightCompact)) {
+    const leftBigrams = characterBigrams(leftCompact);
+    const rightBigrams = characterBigrams(rightCompact);
+    const intersection = [...leftBigrams].filter((token) => rightBigrams.has(token)).length;
+    const smaller = Math.min(leftBigrams.size, rightBigrams.size);
+    return intersection >= 4 && smaller > 0 && intersection / smaller >= 0.72;
+  }
+
   const leftTokens = semanticTokens(left);
   const rightTokens = semanticTokens(right);
   if (leftTokens.size < 3 || rightTokens.size < 3) return false;
@@ -67,6 +75,18 @@ function compactSemanticText(value: string): string {
     .replace(/[^\p{L}\p{N}]+/gu, '');
 }
 
+function isHanText(value: string): boolean {
+  return value.length >= 4 && [...value].every((character) => /\p{Script=Han}/u.test(character));
+}
+
+function characterBigrams(value: string): Set<string> {
+  const bigrams = new Set<string>();
+  for (let index = 0; index < value.length - 1; index += 1) {
+    bigrams.add(value.slice(index, index + 2));
+  }
+  return bigrams;
+}
+
 function semanticTokens(value: string): Set<string> {
   const normalized = value
     .normalize('NFKC')
@@ -75,16 +95,5 @@ function semanticTokens(value: string): Set<string> {
     .replace(/\s+/g, ' ')
     .trim();
   if (!normalized) return new Set();
-
-  const words = normalized.split(' ').filter((token) => token.length >= 2);
-  if (words.length > 1) return new Set(words);
-
-  const compact = compactSemanticText(normalized);
-  const han = [...compact].every((character) => /\p{Script=Han}/u.test(character));
-  if (!han || compact.length < 4) return new Set(words);
-  const bigrams = new Set<string>();
-  for (let index = 0; index < compact.length - 1; index += 1) {
-    bigrams.add(compact.slice(index, index + 2));
-  }
-  return bigrams;
+  return new Set(normalized.split(' ').filter((token) => token.length >= 2));
 }
