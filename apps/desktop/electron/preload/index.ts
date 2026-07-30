@@ -319,6 +319,7 @@ const api: OurCompanionApi = {
     friends: {
       lookup: (uid) => invoke<FriendLookupResult>('network:friends:lookup', uid),
       getAll: () => invoke('network:friends:getAll'),
+      getOverview: () => invoke('network:friends:getOverview'),
       getIncomingRequests: () => invoke('network:friends:getIncomingRequests'),
       getOutgoingRequests: () => invoke('network:friends:getOutgoingRequests'),
       sendRequest: (userId) => invoke('network:friends:sendRequest', userId),

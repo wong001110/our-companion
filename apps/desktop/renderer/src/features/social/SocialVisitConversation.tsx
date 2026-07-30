@@ -85,9 +85,18 @@ export function SocialVisitConversation({
     };
     void load();
     if (!live) return () => { cancelled = true; };
-    const timer = window.setInterval(() => void load(), 1_500);
+    const unsubscribe = window.ourCompanion.network.onStatusChanged((status) => {
+      const invalidation = status.socialInvalidation;
+      if (invalidation?.type === 'visit_session' && invalidation.sessionId === session.id) {
+        void load();
+      }
+    });
+    // Socket events are authoritative. This slow reconciliation only repairs a
+    // missed event after sleep, reconnect, or a renderer suspension.
+    const timer = window.setInterval(() => void load(), 30_000);
     return () => {
       cancelled = true;
+      unsubscribe();
       window.clearInterval(timer);
     };
   }, [lang, live, session.id]);

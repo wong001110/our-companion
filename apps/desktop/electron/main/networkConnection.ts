@@ -3,7 +3,7 @@ import { safeStorage } from 'electron';
 import { io, type Socket } from 'socket.io-client';
 import type { DatabaseService } from '@our-companion/database';
 import { assertSmokeTestRuntime, hashSmokeDeviceId, isSmokeTestRuntime } from './platform/smokeRuntime';
-import type { BlockedUserSummary, CompanionAssetManifest, CompleteAssetPackResult, DeveloperDebugUploadEvent, FriendLookupRelationship, FriendLookupResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile, VisitInvitationStatus, VisitInvitationSummary, VisitRuntimeConfig, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
+import type { BlockedUserSummary, CompanionAssetManifest, CompleteAssetPackResult, DeveloperDebugUploadEvent, FriendLookupRelationship, FriendLookupResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile, SocialOverview, VisitInvitationStatus, VisitInvitationSummary, VisitRuntimeConfig, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
 
 export const NETWORK_PROTOCOL_VERSION = '0.4';
 export const NETWORK_CLIENT_VERSION = '0.4.0';
@@ -205,6 +205,7 @@ export class NetworkConnectionService {
 
   lookupFriend = async (uid: string): Promise<FriendLookupResult> => this.smokeFriendLookupFixture ?? parseFriendLookupResult(await this.socialRequest<unknown>(`/api/friends/lookup/uid/${encodeURIComponent(uid)}`));
   getFriends = async (): Promise<FriendSummary[]> => this.smokeFriendLookupFixture ? [] : (await this.socialRequest<Array<{ id: string; username: string; uid: string; friendCode?: string; hasPublishedCompanion: boolean }>>('/api/friends')).map((friend) => ({ userId: friend.id, username: friend.username, uid: friend.uid, friendCode: friend.friendCode, presence: 'offline', hasPublishedCompanion: friend.hasPublishedCompanion }));
+  getSocialOverview = (): Promise<SocialOverview> => this.socialRequest<SocialOverview>('/api/friends/overview');
   getIncomingRequests = async (): Promise<FriendRequestSummary[]> => this.smokeFriendLookupFixture ? [] : (await this.socialRequest<Array<any>>('/api/friends/requests/incoming')).map((request) => ({ id: request.id, direction: 'incoming', userId: request.sender.id, username: request.sender.username, uid: request.sender.uid, friendCode: request.sender.friendCode, status: 'pending', createdAt: request.createdAt }));
   getOutgoingRequests = async (): Promise<FriendRequestSummary[]> => this.smokeFriendLookupFixture ? [] : (await this.socialRequest<Array<any>>('/api/friends/requests/outgoing')).map((request) => ({ id: request.id, direction: 'outgoing', userId: request.receiver.id, username: request.receiver.username, uid: request.receiver.uid, friendCode: request.receiver.friendCode, status: 'pending', createdAt: request.createdAt }));
   sendFriendRequest = (userId: string) => this.socialRequest('/api/friends/requests', { receiverId: userId });

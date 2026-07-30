@@ -451,6 +451,7 @@ function registerIpc(): void {
     'network:retryConnection': services.network.retryConnection,
     'network:friends:lookup': services.network.lookupFriend,
     'network:friends:getAll': services.network.getFriends,
+    'network:friends:getOverview': services.network.getSocialOverview,
     'network:friends:getIncomingRequests': services.network.getIncomingRequests,
     'network:friends:getOutgoingRequests': services.network.getOutgoingRequests,
     'network:friends:sendRequest': services.network.sendFriendRequest,
@@ -890,6 +891,15 @@ function resolveUiBetaSmokeRoute(channel: string, input: unknown): { handled: fa
     case 'network:getStatus':
     case 'network:retryConnection': return { handled: true, result: fixture.status };
     case 'network:friends:getAll': failure('friends'); return { handled: true, result: fixture.friends ?? [] };
+    case 'network:friends:getOverview': return { handled: true, result: {
+      friends: fixture.friends ?? [],
+      incomingRequests: fixture.incomingRequests ?? [],
+      outgoingRequests: fixture.outgoingRequests ?? [],
+      blockedUsers: fixture.blockedUsers ?? [],
+      visitInvitations: { incoming: fixture.incomingInvitations ?? [], outgoing: fixture.outgoingInvitations ?? [] },
+      visitSessions: fixture.sessions ?? [],
+      synchronizedAt: new Date().toISOString(),
+    } };
     case 'network:friends:getIncomingRequests': failure('incomingRequests'); return { handled: true, result: fixture.incomingRequests ?? [] };
     case 'network:friends:getOutgoingRequests': failure('outgoingRequests'); return { handled: true, result: fixture.outgoingRequests ?? [] };
     case 'network:blocks:getAll': failure('blockedUsers'); return { handled: true, result: fixture.blockedUsers ?? [] };

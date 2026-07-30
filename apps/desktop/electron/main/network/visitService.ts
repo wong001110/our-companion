@@ -249,14 +249,17 @@ export class VisitService {
       }
     }
 
-    await this.network.appendVisitSocialTurn(sessionId, {
+    const next = await this.network.appendVisitSocialTurn(sessionId, {
       clientTurnId: randomUUID(),
       intent: proposal.intent,
       message: proposal.message,
       emotion: proposal.emotion,
       topic: proposal.topic,
-    });
-    return this.getSocialState(sessionId);
+    }) as SocialVisitState;
+    return {
+      ...next,
+      privateReflection: this.db?.getAppSetting<string>(`${REFLECTION_PREFIX}${sessionId}`),
+    };
   };
 
   finalizeSocial = async (sessionId: string) => {
