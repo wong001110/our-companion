@@ -36,11 +36,11 @@ describe('discoverySearchGuard', () => {
     )).toBe(false);
   });
 
-  it('allows the exact URL only for an explicit material-update probe', () => {
+  it('allows exact and semantic repeats only for an explicit material-update probe', () => {
     expect(classifyPreviouslySeenSearchResult(
-      { url: 'https://example.com/article', title: 'Updated release notes for a new version' },
+      { url: 'https://example.com/article', title: 'Original release notes' },
       [{ canonicalUrl: 'https://example.com/article', title: 'Original release notes' }],
-      { allowSeenCanonicalUrl: true },
+      { allowSeenCanonicalUrl: true, allowSeenSemanticTitle: true },
     ).seen).toBe(false);
   });
 });
