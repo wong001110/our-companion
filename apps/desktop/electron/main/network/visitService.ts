@@ -63,6 +63,13 @@ type PendingShare = {
   approvedAt: string;
 };
 
+type VisitShareInput = {
+  title: string;
+  summary: string;
+  tags: string[];
+  sourceUrl?: string;
+};
+
 type SocialRelationship = {
   remoteUserId: string;
   familiarity: number;
@@ -284,12 +291,7 @@ export class VisitService {
     if (existing.share) return;
     const pending = this.db.getAppSetting<PendingShare>(`${PENDING_SHARE_PREFIX}${session.invitationId}`);
     if (!pending) return;
-    await this.network.setVisitSocialShare(session.id, {
-      title: pending.title,
-      summary: pending.summary,
-      tags: pending.tags,
-      sourceUrl: pending.sourceUrl,
-    });
+    await this.network.setVisitSocialShare(session.id, approvedShareInput(pending));
   };
 
   private fallbackTurn(state: SocialVisitState, role: string): { intent: string; message: string; emotion: string; topic: string } {
@@ -451,5 +453,38 @@ export class VisitService {
   private heartbeatIntervalMs(): number {
     const interval = this.network.getStatusSnapshot().visit?.heartbeatIntervalSeconds;
     return typeof interval === 'number' && Number.isInteger(interval) && interval >= 5 && interval <= 60 ? interval * 1_000 : 15_000;
+  }
+}
+
+/**
+ * Pending shares survive app upgrades, so they may predate the API's DTO
+ * constraints. Keep the approved content bounded and never let an optional,
+ * non-web source URL prevent a Visit from becoming ready.
+ */
+function approvedShareInput(pending: PendingShare): VisitShareInput {
+  const title = normalizeShareText(pending.title, 120) || 'Shared Discovery';
+  const summary = normalizeShareText(pending.summary, 600) || title;
+  const tags = [...new Set((Array.isArray(pending.tags) ? pending.tags : [])
+    .filter((tag): tag is string => typeof tag === 'string')
+    .map((tag) => normalizeShareText(tag, 40))
+    .filter(Boolean))]
+    .slice(0, 5);
+  const sourceUrl = toHttpUrl(pending.sourceUrl);
+
+  return { title, summary, tags, ...(sourceUrl ? { sourceUrl } : {}) };
+}
+
+function normalizeShareText(value: unknown, maximumLength: number): string {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, maximumLength) : '';
+}
+
+function toHttpUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const sourceUrl = value.trim();
+  try {
+    const parsed = new URL(sourceUrl);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? sourceUrl : undefined;
+  } catch {
+    return undefined;
   }
 }

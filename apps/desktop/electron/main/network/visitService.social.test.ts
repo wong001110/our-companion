@@ -109,6 +109,31 @@ describe('VisitService social MVP', () => {
     expect(network.setVisitSocialShare).toHaveBeenCalledWith(session.id, expect.objectContaining({ title: 'Quiet work music' }));
   });
 
+  it('omits a legacy non-web source URL instead of failing share validation', async () => {
+    const network = networkMock({ getVisitSocialState: vi.fn().mockResolvedValue({ sessionId: session.id, maxTurns: 12, turns: [] }) });
+    const db = {
+      getAppSetting: vi.fn().mockReturnValue({
+        invitationId: invitation.id,
+        discoveryId: 'discovery-1',
+        title: '  Quiet work music  ',
+        summary: '  A calm set for focused work. ',
+        tags: ['music', ' music ', 'focus'],
+        sourceUrl: 'file:///Users/example/private-note.txt',
+        approvedAt: new Date().toISOString(),
+      }),
+    };
+    const service = new VisitService(network as never, companionsMock() as never, db as never);
+    services.push(service);
+
+    await service.prepare(session.id);
+
+    expect(network.setVisitSocialShare).toHaveBeenCalledWith(session.id, {
+      title: 'Quiet work music',
+      summary: 'A calm set for focused work.',
+      tags: ['music', 'focus'],
+    });
+  });
+
   it('preserves legacy visual Visit startup without a social share', async () => {
     const network = networkMock({
       getVisitSocialState: vi.fn().mockRejectedValue(new Error('VISIT_SHARE_REQUIRED')),
