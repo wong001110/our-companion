@@ -1,0 +1,101 @@
+import { normalizeDiscoveryUrl } from '@our-companion/discovery-engine';
+
+export const MAX_DISCOVERY_SEARCH_ATTEMPTS = 3;
+
+export interface SeenDiscoverySearchEntry {
+  canonicalUrl?: string;
+  title: string;
+  summary?: string;
+  tags?: readonly string[];
+}
+
+export type SeenDiscoveryMatchReason = 'canonical_url' | 'semantic_title';
+
+export function clampDiscoverySearchAttempts(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return MAX_DISCOVERY_SEARCH_ATTEMPTS;
+  return Math.max(1, Math.min(MAX_DISCOVERY_SEARCH_ATTEMPTS, Math.floor(value)));
+}
+
+export function classifyPreviouslySeenSearchResult(
+  candidate: { url?: string; title: string },
+  seen: readonly SeenDiscoverySearchEntry[],
+  options: { allowSeenCanonicalUrl?: boolean; allowSeenSemanticTitle?: boolean } = {},
+): { seen: boolean; reason?: SeenDiscoveryMatchReason } {
+  const candidateUrl = normalizeDiscoveryUrl(candidate.url);
+  const candidateTitle = candidate.title.trim();
+
+  for (const entry of seen) {
+    const seenUrl = normalizeDiscoveryUrl(entry.canonicalUrl);
+    const exactUrlMatch = Boolean(candidateUrl && seenUrl && seenUrl === candidateUrl);
+    if (exactUrlMatch) {
+      if (!options.allowSeenCanonicalUrl) return { seen: true, reason: 'canonical_url' };
+      // An explicit same-URL verification probe must reach the bounded page
+      // selector. Do not reject the same record again through title matching.
+      continue;
+    }
+
+    if (!options.allowSeenSemanticTitle && semanticallyEquivalentTitle(candidateTitle, entry.title)) {
+      return { seen: true, reason: 'semantic_title' };
+    }
+  }
+
+  return { seen: false };
+}
+
+export function semanticallyEquivalentTitle(left: string, right: string): boolean {
+  const leftCompact = compactSemanticText(left);
+  const rightCompact = compactSemanticText(right);
+  if (!leftCompact || !rightCompact) return false;
+  if (leftCompact === rightCompact) return true;
+
+  const shorter = leftCompact.length <= rightCompact.length ? leftCompact : rightCompact;
+  const longer = leftCompact.length > rightCompact.length ? leftCompact : rightCompact;
+  if (shorter.length >= 12 && longer.includes(shorter) && shorter.length / longer.length >= 0.85) {
+    return true;
+  }
+
+  if (isHanText(leftCompact) && isHanText(rightCompact)) {
+    const leftBigrams = characterBigrams(leftCompact);
+    const rightBigrams = characterBigrams(rightCompact);
+    const intersection = [...leftBigrams].filter((token) => rightBigrams.has(token)).length;
+    const smaller = Math.min(leftBigrams.size, rightBigrams.size);
+    return intersection >= 4 && smaller > 0 && intersection / smaller >= 0.72;
+  }
+
+  const leftTokens = semanticTokens(left);
+  const rightTokens = semanticTokens(right);
+  if (leftTokens.size < 3 || rightTokens.size < 3) return false;
+  const intersection = [...leftTokens].filter((token) => rightTokens.has(token)).length;
+  const union = new Set([...leftTokens, ...rightTokens]).size;
+  return intersection >= 3 && intersection / union >= 0.82;
+}
+
+function compactSemanticText(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+function isHanText(value: string): boolean {
+  return value.length >= 4 && [...value].every((character) => /\p{Script=Han}/u.test(character));
+}
+
+function characterBigrams(value: string): Set<string> {
+  const bigrams = new Set<string>();
+  for (let index = 0; index < value.length - 1; index += 1) {
+    bigrams.add(value.slice(index, index + 2));
+  }
+  return bigrams;
+}
+
+function semanticTokens(value: string): Set<string> {
+  const normalized = value
+    .normalize('NFKC')
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return new Set();
+  return new Set(normalized.split(' ').filter((token) => token.length >= 2));
+}

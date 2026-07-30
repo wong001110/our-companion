@@ -77,6 +77,27 @@ function sourceFor(input: CompanionTurnInput['source']): CompanionMessageSource 
   return input === 'panel_text' ? 'panel' : input;
 }
 
+/**
+ * Preserve an ordinary conversational provider reply when structured JSON
+ * was not returned. This never infers Actions or Memory, and the wrapped
+ * text still passes the normal grounding and OOC gates below.
+ */
+export function proposalFromPlainConversation(text: string): CompanionTurnProposal | undefined {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > MAX_RENDERED_REPLY_CHARACTERS) return undefined;
+  const looksStructured = /^(?:\{|\[)/.test(trimmed)
+    || /^```(?:json)?\s*[\r\n]+\s*(?:\{|\[)/i.test(trimmed)
+    || /"(?:replySegments|intent|actions|memoryCandidates)"\s*:/i.test(trimmed)
+    || /<\/?(?:tool_call|system|developer)>|"tool_name"\s*:/i.test(trimmed);
+  if (looksStructured) return undefined;
+  return {
+    replySegments: [{ segmentId: 'provider_plain_text', text: trimmed, provenance: 'current_turn' }],
+    intent: 'conversation',
+    actions: [],
+    memoryCandidates: [],
+  };
+}
+
 function highestRisk(actions: CompanionTurnActionRequest[]): ActionPlan['riskLevel'] {
   const rank = { low: 0, medium: 1, high: 2 } as const;
   return actions.reduce<ActionPlan['riskLevel']>((current, action) => {
@@ -275,9 +296,10 @@ export class CompanionTurnOrchestrator {
         const ai = await this.deps.sendToAi({ messages, source });
         this.assertRunning();
         const structured = validateCompanionTurnProposal(ai.content);
-        proposal = structured ?? this.safeProposal(this.fallbackReply(), 'conversation');
+        const plainConversation = structured ? undefined : proposalFromPlainConversation(ai.content);
+        proposal = structured ?? plainConversation ?? this.safeProposal(this.fallbackReply(), 'conversation');
         inspection.aiStructuredResult = redactSensitiveValue(structured) as CompanionTurnProposal;
-        if (!structured) inspection.finalReplySource = 'safe_fallback';
+        if (!structured && !plainConversation) inspection.finalReplySource = 'safe_fallback';
       } catch {
         proposal = this.safeProposal(this.fallbackReply(), 'cannot_complete');
         inspection.finalReplySource = 'safe_fallback';

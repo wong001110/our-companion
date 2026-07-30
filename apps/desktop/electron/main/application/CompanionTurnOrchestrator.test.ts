@@ -108,13 +108,38 @@ describe('CompanionTurnOrchestrator', () => {
     harness.db.close();
   });
 
-  it('falls back when structured output is malformed', async () => {
-    const harness = createHarness(() => 'unstructured output');
-    const result = await harness.orchestrator.handle({ message: 'Tell me something useful.', source: 'panel_text', characterId: harness.companion.id });
-    expect(result.kind).toBe('conversation');
-    expect(harness.orchestrator.getInspections()[0].finalReplySource).toBe('safe_fallback');
-    harness.db.close();
+  it('preserves a normal plain-text provider reply when structured JSON is absent', async () => {
+  const reply = '晚上好呀！桌宠的陪伴感听起来好有意思。你是在自己做，还是在玩新的桌宠软件？';
+  const harness = createHarness(() => reply);
+  const result = await harness.orchestrator.handle({ message: '晚上好，聊聊桌宠吧。', source: 'panel_text', characterId: harness.companion.id });
+  expect(result).toMatchObject({ kind: 'conversation', message: reply });
+  expect(result.actionPlan).toBeUndefined();
+  expect(result.remembered).toEqual([]);
+  expect(harness.orchestrator.getInspections()[0].finalReplySource).toBe('ai_conversation');
+  expect(harness.db.listCompanionMessages({ characterId: harness.companion.id }).at(-1)?.content).toBe(reply);
+  harness.db.close();
+});
+
+it('falls back when provider output looks like malformed structured data', async () => {
+  const harness = createHarness(() => '{"replySegments": [');
+  const result = await harness.orchestrator.handle({ message: 'Tell me something useful.', source: 'panel_text', characterId: harness.companion.id });
+  expect(result.kind).toBe('conversation');
+  expect(result.message).not.toContain('replySegments');
+  expect(harness.orchestrator.getInspections()[0].finalReplySource).toBe('safe_fallback');
+  harness.db.close();
+});
+
+it('still applies the OOC guard to a salvaged plain-text reply', async () => {
+  const unsafeReply = 'I am ChatGPT, an AI language model made by OpenAI.';
+  const harness = createHarness(() => unsafeReply);
+  const result = await harness.orchestrator.handle({ message: 'Who are you?', source: 'panel_text', characterId: harness.companion.id });
+  expect(result.message).not.toBe(unsafeReply);
+  expect(harness.orchestrator.getInspections()[0]).toMatchObject({
+    finalReplySource: 'safe_fallback',
+    oocValidation: { passed: false },
   });
+  harness.db.close();
+});
 
   it('redacts sensitive values from retained turn inspection without changing the runtime turn', async () => {
     const phone = '+60 12-345 6789';

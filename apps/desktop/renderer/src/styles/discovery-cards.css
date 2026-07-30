@@ -1,0 +1,91 @@
+.discovery-card {
+  height: 520px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.discovery-card--evidence {
+  height: 320px;
+}
+
+.discovery-card h3 {
+  display: -webkit-box;
+  min-height: 2.7em;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.discovery-card-summary {
+  display: -webkit-box;
+  min-height: 6.2em;
+  max-height: 6.2em;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.discovery-card .tag-row {
+  min-height: 58px;
+  max-height: 58px;
+  overflow: hidden;
+  align-content: flex-start;
+}
+
+.discovery-card .tag-row span,
+.discovery-detail-dialog .tag-row span {
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discovery-card .action-row {
+  margin-top: auto;
+}
+
+.discovery-detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(24, 18, 29, 0.64);
+  backdrop-filter: blur(6px);
+}
+
+.discovery-detail-dialog {
+  width: min(660px, 100%);
+  max-height: min(78vh, 720px);
+  overflow: auto;
+  padding: 28px;
+  border: 1px solid rgba(95, 65, 92, 0.28);
+  border-radius: 12px;
+  color: #332733;
+  background: #f4e6c9;
+  box-shadow: 0 30px 90px rgba(3, 2, 8, 0.48);
+}
+
+.discovery-detail-dialog h2 {
+  margin: 18px 0 12px;
+  color: #352539;
+}
+
+.discovery-detail-dialog p {
+  color: #4d3f45;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 720px) {
+  .discovery-card {
+    height: 500px;
+  }
+
+  .discovery-card--evidence {
+    height: 300px;
+  }
+}
