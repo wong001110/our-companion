@@ -25,11 +25,13 @@ export function classifyPreviouslySeenSearchResult(
   const candidateTitle = candidate.title.trim();
 
   for (const entry of seen) {
-    if (!options.allowSeenCanonicalUrl && candidateUrl) {
-      const seenUrl = normalizeDiscoveryUrl(entry.canonicalUrl);
-      if (seenUrl && seenUrl === candidateUrl) {
-        return { seen: true, reason: 'canonical_url' };
-      }
+    const seenUrl = normalizeDiscoveryUrl(entry.canonicalUrl);
+    const exactUrlMatch = Boolean(candidateUrl && seenUrl && seenUrl === candidateUrl);
+    if (exactUrlMatch) {
+      if (!options.allowSeenCanonicalUrl) return { seen: true, reason: 'canonical_url' };
+      // An explicit same-URL verification probe must reach the bounded page
+      // selector. Do not reject the same record again through title matching.
+      continue;
     }
 
     if (!options.allowSeenSemanticTitle && semanticallyEquivalentTitle(candidateTitle, entry.title)) {
