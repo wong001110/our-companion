@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { WebPageEvidence, WebSearchResult } from '@our-companion/shared';
-import type { DiscoveryBase, DiscoveryConnector } from '@our-companion/discovery-engine';
+import { normalizeDiscoveryUrl, type DiscoveryBase, type DiscoveryConnector } from '@our-companion/discovery-engine';
 import { ResearchAdapterError, type WebPageFetcher, type WebSearchProvider } from './researchAdapters';
 import { ResearchOrchestrator } from './researchOrchestrator';
 
