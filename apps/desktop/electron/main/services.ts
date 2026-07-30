@@ -236,6 +236,8 @@ import { shouldCloseDatabaseAfterDrain } from './application/ShutdownDrainPolicy
 import { VectorMaintenanceCoordinator } from './memory/vectorMaintenanceCoordinator';
 import { applyMemoryReviewUpdate, filterMemoryReviewItems, toMemoryReviewItem } from './memory/memoryReview';
 import { buildMemoryVectorProductStatus } from './memory/vectorProductStatus';
+import { MAX_DISCOVERY_SEARCH_ATTEMPTS } from './discoverySearchGuard';
+import { compactDiscoveryTagsForStorage } from './discoveryPresentation';
 
 const DEBUG_LOG_MAX = 100;
 const FOUNDATION_EVENT_LOG_MAX = 200;
@@ -3516,6 +3518,13 @@ export class AppServices {
       discoveryBases: selectedDiscoveryBases,
       dynamicPlatformTasks: dynamicPlan.tasks,
       seenCanonicalUrls: new Set(discoveryHistory.map((discovery) => discovery.canonicalUrl ?? discovery.url).filter(Boolean) as string[]),
+      seenDiscoveryEntries: discoveryHistory.map((discovery) => ({
+        canonicalUrl: discovery.canonicalUrl ?? normalizeDiscoveryUrl(discovery.url),
+        title: discovery.title,
+        summary: discovery.summary,
+        tags: discovery.tags,
+      })),
+      maxSearchAttempts: MAX_DISCOVERY_SEARCH_ATTEMPTS,
       materialUpdateProbe: requiresMaterialUpdate,
       onTrace: (event) => trace(
         'research',
@@ -3934,7 +3943,12 @@ export class AppServices {
         summary: selectedInsight.summary,
         url: sourceCandidate?.sourceUrl,
         canonicalUrl: normalizeDiscoveryUrl(sourceCandidate?.sourceUrl),
-        tags: [selectedCuriosityTarget.topic],
+        tags: compactDiscoveryTagsForStorage([
+          source,
+          discoveryMode,
+          selectedCuriosityTarget.topic,
+          sourceCandidate?.title,
+        ]),
         publishedAt: sourceEvidence?.publishedAt
           ?? (typeof sourceRaw.publishedAt === 'string' ? sourceRaw.publishedAt : undefined),
         raw: {

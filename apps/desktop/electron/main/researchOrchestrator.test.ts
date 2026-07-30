@@ -729,4 +729,47 @@ describe('ResearchOrchestrator', () => {
     expect(payloadJson).not.toMatch(/<body/i);
     expect(payloadJson).not.toMatch(/<div/i);
   });
+
+  it('prefilters seen articles and never starts more than three web searches', async () => {
+    const oldUrl = 'https://seen.example/article';
+    const repeatedTitle = '温柔护理中的耐心观察与沟通方法';
+    const freshUrl = 'https://fresh.example/new';
+    const search = vi.fn<WebSearchProvider['search']>(async ({ query }) => [
+      { id: `old-${query}`, query, domain: 'seen.example', title: 'Already seen article', url: `${oldUrl}?utm_source=again`, rank: 1, provider: 'fixture' },
+      { id: `repeat-${query}`, query, domain: 'mirror.example', title: repeatedTitle, url: `https://mirror.example/${encodeURIComponent(query)}`, rank: 2, provider: 'fixture' },
+      { id: `fresh-${query}`, query, domain: 'fresh.example', title: '急诊护理中的交接流程与风险管理', url: freshUrl, rank: 3, provider: 'fixture' },
+    ]);
+    const fetchedUrls: string[] = [];
+    const pageFetcher: WebPageFetcher = {
+      ...fetcher,
+      fetchPage: vi.fn(async (input) => {
+        fetchedUrls.push(input.searchResult.url);
+        return fetcher.fetchPage(input);
+      }),
+    };
+    const orchestrator = new ResearchOrchestrator({
+      searchProvider: { id: 'fixture-search', mode: 'fixture', search },
+      pageFetcher,
+      structuredConnectors: [],
+    });
+    const outcome = await orchestrator.run({
+      userId: 'user', companionId: 'owner', cycleId: 'cycle', curiosityTarget: target,
+      dynamicPlatformTasks: Array.from({ length: 5 }, (_, index) => ({
+        id: `task-${index}`, platformId: 'generic-web', query: `nursing query ${index}`,
+        semanticQuery: `nursing query ${index}`, rationale: 'Find a different reliable source.',
+      })),
+      seenCanonicalUrls: new Set([oldUrl]),
+      seenDiscoveryEntries: [
+        { canonicalUrl: oldUrl, title: 'Already seen article' },
+        { canonicalUrl: 'https://old.example/repeated', title: '温柔护理：耐心观察与沟通方法' },
+      ],
+      maxSearchAttempts: 99,
+    });
+    expect(search).toHaveBeenCalledTimes(3);
+    expect(fetchedUrls.length).toBeGreaterThan(0);
+    expect(fetchedUrls.every((url) => url === freshUrl)).toBe(true);
+    expect(outcome.candidates.every((candidate) => candidate.sourceUrl === freshUrl)).toBe(true);
+    expect(outcome.searchRecords.every((record) => record.resultCount <= 1)).toBe(true);
+  });
+
 });

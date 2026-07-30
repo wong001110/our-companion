@@ -29,6 +29,11 @@ import {
 } from '@our-companion/discovery-engine';
 import { getDiscoveryPlatformPreset, isDiscoveryPlatformId } from '@our-companion/discovery-engine';
 import { ResearchAdapterError, type WebPageFetcher, type WebSearchProvider } from './researchAdapters';
+import {
+  clampDiscoverySearchAttempts,
+  classifyPreviouslySeenSearchResult,
+  type SeenDiscoverySearchEntry,
+} from './discoverySearchGuard';
 
 class ResearchCycleTimeoutError extends Error {
   constructor() {
@@ -445,11 +450,14 @@ export class ResearchOrchestrator {
       language?: string;
     }>;
     seenCanonicalUrls?: Set<string>;
+    seenDiscoveryEntries?: readonly SeenDiscoverySearchEntry[];
+    maxSearchAttempts?: number;
     materialUpdateProbe?: boolean;
     onTrace?: (event: ResearchTraceEvent) => void;
     onDebugEvent?: (event: import('@our-companion/shared').DeveloperDebugEventInput) => void;
   }): Promise<ResearchExecution> {
     const capabilities = toCapabilities(this.deps);
+    const maxSearchAttempts = clampDiscoverySearchAttempts(input.maxSearchAttempts);
     const eligibleBases = (input.discoveryBases ?? [])
       .filter((base) =>
         base.companionId === input.companionId
@@ -458,7 +466,7 @@ export class ResearchOrchestrator {
         && base.data.managedBy !== 'personality_platform_seed'
       )
       .slice(0, 3);
-    const dynamicTasks = (input.dynamicPlatformTasks ?? []).slice(0, 3);
+    const dynamicTasks = (input.dynamicPlatformTasks ?? []).slice(0, maxSearchAttempts);
     const dynamicQueries = dynamicTasks
       .map((task) => task.query.trim())
       .filter((query) => query.length >= 3);
@@ -554,7 +562,8 @@ export class ResearchOrchestrator {
     const dynamicCapabilityIds = dynamicQueries.length
       ? [this.deps.searchProvider.id, this.deps.pageFetcher.id].filter((id) => availableCapabilityIds.has(id))
       : [];
-    const queryBudget = Math.max(plan.limits.maxQueries, baseQueries.length + Math.min(dynamicQueries.length, 3));
+    const requestedQueryBudget = Math.max(plan.limits.maxQueries, baseQueries.length + Math.min(dynamicQueries.length, maxSearchAttempts));
+    const queryBudget = Math.min(maxSearchAttempts, requestedQueryBudget);
     plan = {
       ...plan,
       limits: {
@@ -597,6 +606,15 @@ export class ResearchOrchestrator {
           const candidates = raw.flatMap((item) => {
             const candidate = structuredCandidate({ userId: input.userId, companionId: input.companionId, curiosityTarget: input.curiosityTarget, researchPlanId: plan.id, connector, item, now: this.now().toISOString() });
             if (!candidate) return [];
+            const seenMatch = classifyPreviouslySeenSearchResult(
+              { url: candidate.sourceUrl, title: candidate.title },
+              input.seenDiscoveryEntries ?? [],
+              {
+                allowSeenCanonicalUrl: input.materialUpdateProbe,
+                allowSeenSemanticTitle: input.materialUpdateProbe,
+              },
+            );
+            if (seenMatch.seen) return [];
             if (!request.baseId) return [candidate];
             const rawEvidence = candidate.rawEvidence
               ? JSON.parse(candidate.rawEvidence) as Record<string, unknown>
@@ -665,7 +683,15 @@ export class ResearchOrchestrator {
           this.deps.searchProvider.search({ query, limit: plan.limits.maxSearchResultsPerQuery, freshnessDays: intent.freshnessDays, domainHints: intent.domainHints, excludedDomains: intent.excludedDomains, requiredDomains }),
           remainingMs()
         );
-        for (const result of found) {
+        const unseenFound = found.filter((result) => !classifyPreviouslySeenSearchResult(
+          result,
+          input.seenDiscoveryEntries ?? [],
+          {
+            allowSeenCanonicalUrl: input.materialUpdateProbe,
+            allowSeenSemanticTitle: input.materialUpdateProbe,
+          },
+        ).seen);
+        for (const result of unseenFound) {
           if (!queryBaseIds.length) continue;
           const known = results.find(
             (item) => normalizeDiscoveryUrl(item.url) === normalizeDiscoveryUrl(result.url)
@@ -675,7 +701,8 @@ export class ResearchOrchestrator {
             ...new Set([...(baseIdsBySearchResult.get(resultId) ?? []), ...queryBaseIds]),
           ]);
         }
-        const uniqueResults = found.filter((result) => !results.some((known) => normalizeDiscoveryUrl(known.url) === normalizeDiscoveryUrl(result.url)));
+        const uniqueResults = unseenFound.filter((result) => !results.some((known) => normalizeDiscoveryUrl(known.url) === normalizeDiscoveryUrl(result.url)));
+        const filteredSeenCount = found.length - unseenFound.length;
         results.push(...uniqueResults);
         providerOutcomes.push({ id: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: uniqueResults.length ? 'completed' : 'empty', itemCount: uniqueResults.length });
         const searchRecord = { id: createId('research_search'), query, provider: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: uniqueResults.length ? 'completed' as const : 'empty' as const, resultCount: uniqueResults.length };
@@ -684,7 +711,7 @@ export class ResearchOrchestrator {
           kind: 'research_search', operation: `web-search:${this.deps.searchProvider.id}`,
           status: searchRecord.status, provider: this.deps.searchProvider.id,
           summary: `Search: ${query} -> ${uniqueResults.length} results`,
-          payload: { query, resultCount: uniqueResults.length, freshnessDays: intent.freshnessDays, durationMs: Date.now() - searchStart },
+          payload: { query, resultCount: uniqueResults.length, filteredSeenCount, freshnessDays: intent.freshnessDays, durationMs: Date.now() - searchStart },
         });
         // Provider result IDs are transient handles. Engine Trace references only
         // the persisted operational record, never a provider result or selection.
