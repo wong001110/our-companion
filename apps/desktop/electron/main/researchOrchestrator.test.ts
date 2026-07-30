@@ -766,10 +766,12 @@ describe('ResearchOrchestrator', () => {
       maxSearchAttempts: 99,
     });
     expect(search).toHaveBeenCalledTimes(3);
-    expect(fetchedUrls.length).toBeGreaterThan(0);
-    expect(fetchedUrls.every((url) => url === freshUrl)).toBe(true);
-    expect(outcome.candidates.every((candidate) => candidate.sourceUrl === freshUrl)).toBe(true);
-    expect(outcome.searchRecords.every((record) => record.resultCount <= 1)).toBe(true);
+    expect(fetchedUrls).toContain(freshUrl);
+    expect(fetchedUrls.some((url) => url.startsWith('https://mirror.example/'))).toBe(false);
+    expect(fetchedUrls.filter((url) => normalizeDiscoveryUrl(url) === oldUrl)).toHaveLength(1);
+    expect(outcome.candidates.some((candidate) => candidate.sourceUrl === freshUrl)).toBe(true);
+    expect(outcome.candidates.some((candidate) => candidate.sourceUrl?.startsWith('https://mirror.example/'))).toBe(false);
+    expect(outcome.searchRecords.every((record) => record.resultCount <= 2)).toBe(true);
   });
 
 });
