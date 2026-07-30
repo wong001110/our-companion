@@ -1,0 +1,246 @@
+name: Apply bounded Discovery search integration
+
+on:
+  push:
+    branches: [agent/fix-plain-turn-output]
+    paths:
+      - '.github/workflows/apply-bounded-discovery-search.yml'
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.head_ref == 'agent/fix-plain-turn-output' || github.ref_name == 'agent/fix-plain-turn-output'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-plain-turn-output
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Patch ResearchOrchestrator and final Discovery persistence
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          research_path = Path('apps/desktop/electron/main/researchOrchestrator.ts')
+          research = research_path.read_text(encoding='utf-8')
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              if old not in text:
+                  raise SystemExit(f'{label} anchor not found')
+              return text.replace(old, new, 1)
+
+          research = replace_once(
+              research,
+              "import { ResearchAdapterError, type WebPageFetcher, type WebSearchProvider } from './researchAdapters';\n",
+              "import { ResearchAdapterError, type WebPageFetcher, type WebSearchProvider } from './researchAdapters';\nimport {\n  clampDiscoverySearchAttempts,\n  classifyPreviouslySeenSearchResult,\n  type SeenDiscoverySearchEntry,\n} from './discoverySearchGuard';\n",
+              'research import',
+          )
+          research = replace_once(
+              research,
+              "    seenCanonicalUrls?: Set<string>;\n    materialUpdateProbe?: boolean;\n",
+              "    seenCanonicalUrls?: Set<string>;\n    seenDiscoveryEntries?: readonly SeenDiscoverySearchEntry[];\n    maxSearchAttempts?: number;\n    materialUpdateProbe?: boolean;\n",
+              'research input',
+          )
+          research = replace_once(
+              research,
+              "    const capabilities = toCapabilities(this.deps);\n",
+              "    const capabilities = toCapabilities(this.deps);\n    const maxSearchAttempts = clampDiscoverySearchAttempts(input.maxSearchAttempts);\n",
+              'attempt initialization',
+          )
+          research = replace_once(
+              research,
+              "    const dynamicTasks = (input.dynamicPlatformTasks ?? []).slice(0, 3);\n",
+              "    const dynamicTasks = (input.dynamicPlatformTasks ?? []).slice(0, maxSearchAttempts);\n",
+              'dynamic task cap',
+          )
+          research = replace_once(
+              research,
+              "    const queryBudget = Math.max(plan.limits.maxQueries, baseQueries.length + Math.min(dynamicQueries.length, 3));\n",
+              "    const requestedQueryBudget = Math.max(plan.limits.maxQueries, baseQueries.length + Math.min(dynamicQueries.length, maxSearchAttempts));\n    const queryBudget = Math.min(maxSearchAttempts, requestedQueryBudget);\n",
+              'query budget cap',
+          )
+
+          old_structured = """            const candidate = structuredCandidate({ userId: input.userId, companionId: input.companionId, curiosityTarget: input.curiosityTarget, researchPlanId: plan.id, connector, item, now: this.now().toISOString() });
+            if (!candidate) return [];
+            if (!request.baseId) return [candidate];
+"""
+          new_structured = """            const candidate = structuredCandidate({ userId: input.userId, companionId: input.companionId, curiosityTarget: input.curiosityTarget, researchPlanId: plan.id, connector, item, now: this.now().toISOString() });
+            if (!candidate) return [];
+            const seenMatch = classifyPreviouslySeenSearchResult(
+              { url: candidate.sourceUrl, title: candidate.title },
+              input.seenDiscoveryEntries ?? [],
+              {
+                allowSeenCanonicalUrl: input.materialUpdateProbe,
+                allowSeenSemanticTitle: input.materialUpdateProbe,
+              },
+            );
+            if (seenMatch.seen) return [];
+            if (!request.baseId) return [candidate];
+"""
+          research = replace_once(research, old_structured, new_structured, 'structured prefilter')
+
+          old_search = """        for (const result of found) {
+          if (!queryBaseIds.length) continue;
+          const known = results.find(
+            (item) => normalizeDiscoveryUrl(item.url) === normalizeDiscoveryUrl(result.url)
+          );
+          const resultId = known?.id ?? result.id;
+          baseIdsBySearchResult.set(resultId, [
+            ...new Set([...(baseIdsBySearchResult.get(resultId) ?? []), ...queryBaseIds]),
+          ]);
+        }
+        const uniqueResults = found.filter((result) => !results.some((known) => normalizeDiscoveryUrl(known.url) === normalizeDiscoveryUrl(result.url)));
+        results.push(...uniqueResults);
+        providerOutcomes.push({ id: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: uniqueResults.length ? 'completed' : 'empty', itemCount: uniqueResults.length });
+        const searchRecord = { id: createId('research_search'), query, provider: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: uniqueResults.length ? 'completed' as const : 'empty' as const, resultCount: uniqueResults.length };
+"""
+          new_search = """        const unseenFound = found.filter((result) => !classifyPreviouslySeenSearchResult(
+          result,
+          input.seenDiscoveryEntries ?? [],
+          {
+            allowSeenCanonicalUrl: input.materialUpdateProbe,
+            allowSeenSemanticTitle: input.materialUpdateProbe,
+          },
+        ).seen);
+        for (const result of unseenFound) {
+          if (!queryBaseIds.length) continue;
+          const known = results.find(
+            (item) => normalizeDiscoveryUrl(item.url) === normalizeDiscoveryUrl(result.url)
+          );
+          const resultId = known?.id ?? result.id;
+          baseIdsBySearchResult.set(resultId, [
+            ...new Set([...(baseIdsBySearchResult.get(resultId) ?? []), ...queryBaseIds]),
+          ]);
+        }
+        const uniqueResults = unseenFound.filter((result) => !results.some((known) => normalizeDiscoveryUrl(known.url) === normalizeDiscoveryUrl(result.url)));
+        const filteredSeenCount = found.length - unseenFound.length;
+        results.push(...uniqueResults);
+        providerOutcomes.push({ id: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: uniqueResults.length ? 'completed' : 'empty', itemCount: uniqueResults.length });
+        const searchRecord = { id: createId('research_search'), query, provider: this.deps.searchProvider.id, providerMode: this.deps.searchProvider.mode, status: uniqueResults.length ? 'completed' as const : 'empty' as const, resultCount: uniqueResults.length };
+"""
+          research = replace_once(research, old_search, new_search, 'search result prefilter')
+          research = replace_once(
+              research,
+              "          payload: { query, resultCount: uniqueResults.length, freshnessDays: intent.freshnessDays, durationMs: Date.now() - searchStart },\n",
+              "          payload: { query, resultCount: uniqueResults.length, filteredSeenCount, freshnessDays: intent.freshnessDays, durationMs: Date.now() - searchStart },\n",
+              'search debug metadata',
+          )
+          research_path.write_text(research, encoding='utf-8')
+
+          services_path = Path('apps/desktop/electron/main/services.ts')
+          services = services_path.read_text(encoding='utf-8')
+          services = replace_once(
+              services,
+              "import { buildMemoryVectorProductStatus } from './memory/vectorProductStatus';\n",
+              "import { buildMemoryVectorProductStatus } from './memory/vectorProductStatus';\nimport { MAX_DISCOVERY_SEARCH_ATTEMPTS } from './discoverySearchGuard';\nimport { compactDiscoveryTagsForStorage } from './discoveryPresentation';\n",
+              'services imports',
+          )
+          services = replace_once(
+              services,
+              "      seenCanonicalUrls: new Set(discoveryHistory.map((discovery) => discovery.canonicalUrl ?? discovery.url).filter(Boolean) as string[]),\n      materialUpdateProbe: requiresMaterialUpdate,\n",
+              "      seenCanonicalUrls: new Set(discoveryHistory.map((discovery) => discovery.canonicalUrl ?? discovery.url).filter(Boolean) as string[]),\n      seenDiscoveryEntries: discoveryHistory.map((discovery) => ({\n        canonicalUrl: discovery.canonicalUrl ?? normalizeDiscoveryUrl(discovery.url),\n        title: discovery.title,\n        summary: discovery.summary,\n        tags: discovery.tags,\n      })),\n      maxSearchAttempts: MAX_DISCOVERY_SEARCH_ATTEMPTS,\n      materialUpdateProbe: requiresMaterialUpdate,\n",
+              'services seen search input',
+          )
+          services = replace_once(
+              services,
+              "        tags: [selectedCuriosityTarget.topic],\n",
+              "        tags: compactDiscoveryTagsForStorage([\n          source,\n          discoveryMode,\n          selectedCuriosityTarget.topic,\n          sourceCandidate?.title,\n        ]),\n",
+              'persisted discovery tags',
+          )
+          services_path.write_text(services, encoding='utf-8')
+
+          test_path = Path('apps/desktop/electron/main/researchOrchestrator.test.ts')
+          tests = test_path.read_text(encoding='utf-8')
+          insertion = r'''
+
+  it('prefilters seen articles and never starts more than three web searches', async () => {
+    const oldUrl = 'https://seen.example/article';
+    const repeatedTitle = '温柔护理中的耐心观察与沟通方法';
+    const freshUrl = 'https://fresh.example/new';
+    const search = vi.fn<WebSearchProvider['search']>(async ({ query }) => [
+      { id: `old-${query}`, query, domain: 'seen.example', title: 'Already seen article', url: `${oldUrl}?utm_source=again`, rank: 1, provider: 'fixture' },
+      { id: `repeat-${query}`, query, domain: 'mirror.example', title: repeatedTitle, url: `https://mirror.example/${encodeURIComponent(query)}`, rank: 2, provider: 'fixture' },
+      { id: `fresh-${query}`, query, domain: 'fresh.example', title: '急诊护理中的交接流程与风险管理', url: freshUrl, rank: 3, provider: 'fixture' },
+    ]);
+    const fetchedUrls: string[] = [];
+    const pageFetcher: WebPageFetcher = {
+      ...fetcher,
+      fetchPage: vi.fn(async (input) => {
+        fetchedUrls.push(input.searchResult.url);
+        return fetcher.fetchPage(input);
+      }),
+    };
+    const orchestrator = new ResearchOrchestrator({
+      searchProvider: { id: 'fixture-search', mode: 'fixture', search },
+      pageFetcher,
+      structuredConnectors: [],
+    });
+
+    const outcome = await orchestrator.run({
+      userId: 'user', companionId: 'owner', cycleId: 'cycle', curiosityTarget: target,
+      dynamicPlatformTasks: Array.from({ length: 5 }, (_, index) => ({
+        id: `task-${index}`, platformId: 'generic-web', query: `nursing query ${index}`,
+        semanticQuery: `nursing query ${index}`, rationale: 'Find a different reliable source.',
+      })),
+      seenCanonicalUrls: new Set([oldUrl]),
+      seenDiscoveryEntries: [
+        { canonicalUrl: oldUrl, title: 'Already seen article' },
+        { canonicalUrl: 'https://old.example/repeated', title: '温柔护理：耐心观察与沟通方法' },
+      ],
+      maxSearchAttempts: 99,
+    });
+
+    expect(search).toHaveBeenCalledTimes(3);
+    expect(fetchedUrls.length).toBeGreaterThan(0);
+    expect(fetchedUrls.every((url) => url === freshUrl)).toBe(true);
+    expect(outcome.candidates.every((candidate) => candidate.sourceUrl === freshUrl)).toBe(true);
+    expect(outcome.searchRecords.every((record) => record.resultCount <= 1)).toBe(true);
+  });
+'''
+          end = tests.rfind('\n});')
+          if end < 0:
+              raise SystemExit('research test suite end not found')
+          tests = tests[:end] + insertion + tests[end:]
+          test_path.write_text(tests, encoding='utf-8')
+          PY
+          rm .github/workflows/apply-bounded-discovery-search.yml
+      - run: npm ci
+      - name: Run targeted Discovery and turn tests
+        run: >-
+          npx vitest run
+          apps/desktop/electron/main/discoverySearchGuard.test.ts
+          apps/desktop/electron/main/discoveryPresentation.test.ts
+          apps/desktop/electron/main/researchOrchestrator.test.ts
+          apps/desktop/electron/main/application/CompanionTurnOrchestrator.test.ts
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run arch:check
+      - run: npm run build
+      - name: Commit validated integration
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add apps/desktop/electron/main/researchOrchestrator.ts \
+            apps/desktop/electron/main/researchOrchestrator.test.ts \
+            apps/desktop/electron/main/services.ts \
+            apps/desktop/electron/main/discoverySearchGuard.ts \
+            apps/desktop/electron/main/discoverySearchGuard.test.ts \
+            apps/desktop/electron/main/discoveryPresentation.ts \
+            apps/desktop/electron/main/discoveryPresentation.test.ts \
+            apps/desktop/renderer/src/pages/DiscoveriesPage.tsx \
+            apps/desktop/renderer/src/styles.css \
+            apps/desktop/renderer/src/styles/discovery-cards.css \
+            apps/desktop/electron/main/application/CompanionTurnOrchestrator.ts \
+            apps/desktop/electron/main/application/CompanionTurnOrchestrator.test.ts \
+            .github/workflows/apply-bounded-discovery-search.yml
+          git commit -m "fix: bound Discovery retries and prefilter repeats"
+          git push origin HEAD:agent/fix-plain-turn-output
