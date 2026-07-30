@@ -683,14 +683,20 @@ export class ResearchOrchestrator {
           this.deps.searchProvider.search({ query, limit: plan.limits.maxSearchResultsPerQuery, freshnessDays: intent.freshnessDays, domainHints: intent.domainHints, excludedDomains: intent.excludedDomains, requiredDomains }),
           remainingMs()
         );
-        const unseenFound = found.filter((result) => !classifyPreviouslySeenSearchResult(
-          result,
-          input.seenDiscoveryEntries ?? [],
-          {
-            allowSeenCanonicalUrl: input.materialUpdateProbe,
-            allowSeenSemanticTitle: input.materialUpdateProbe,
-          },
-        ).seen);
+        const unseenFound = found.filter((result) => {
+          const canonicalUrl = normalizeDiscoveryUrl(result.url) ?? result.url;
+          return !classifyPreviouslySeenSearchResult(
+            result,
+            input.seenDiscoveryEntries ?? [],
+            {
+              // Keep one explicitly bounded same-URL verification probe available
+              // to the existing page selector. Mirror URLs and semantic repeats
+              // remain excluded unless this cycle explicitly requires an update.
+              allowSeenCanonicalUrl: input.materialUpdateProbe || historicalSeenUrls.has(canonicalUrl),
+              allowSeenSemanticTitle: input.materialUpdateProbe,
+            },
+          ).seen;
+        });
         for (const result of unseenFound) {
           if (!queryBaseIds.length) continue;
           const known = results.find(
