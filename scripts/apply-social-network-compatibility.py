@@ -49,11 +49,9 @@ path.write_text(source, encoding='utf-8')
 
 test = Path('apps/desktop/electron/main/network/visitService.social.test.ts')
 test_source = test.read_text(encoding='utf-8')
-marker = "describe('VisitService Social Visit', () => {"
+marker = "describe('VisitService social MVP', () => {"
 if marker not in test_source:
-    raise SystemExit('VisitService Social test suite anchor not found')
-# The production guard is exported only through behavior. Add a static contract
-# assertion to protect the rolling-deploy fallback without exposing internals.
+    raise SystemExit('VisitService social test suite anchor not found')
 if 'rolling Network deployment' not in test_source:
     test_source = test_source.replace(marker, marker + "\n  it('keeps a rolling Network deployment fallback for legacy turn responses', () => {\n    const source = require('node:fs').readFileSync(require('node:path').join(__dirname, 'visitService.ts'), 'utf8');\n    expect(source).toContain('isSocialVisitState(appended)');\n    expect(source).toContain('getVisitSocialState(sessionId)');\n  });\n", 1)
     test.write_text(test_source, encoding='utf-8')
