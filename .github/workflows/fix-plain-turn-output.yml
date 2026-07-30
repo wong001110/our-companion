@@ -5,12 +5,16 @@ on:
     branches: [agent/fix-plain-turn-output]
     paths:
       - '.github/workflows/fix-plain-turn-output.yml'
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
 
 jobs:
   repair:
+    if: github.head_ref == 'agent/fix-plain-turn-output' || github.ref_name == 'agent/fix-plain-turn-output'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
