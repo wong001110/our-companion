@@ -37,7 +37,21 @@ describe('discoverySearchGuard', () => {
     )).toBe(false);
   });
 
-  it('allows exact and semantic repeats only for an explicit material-update probe', () => {
+  it('allows an exact URL verification probe without allowing a mirror title', () => {
+    const seen = [{ canonicalUrl: 'https://example.com/article', title: 'Original release notes' }];
+    expect(classifyPreviouslySeenSearchResult(
+      { url: 'https://example.com/article', title: 'Original release notes' },
+      seen,
+      { allowSeenCanonicalUrl: true },
+    ).seen).toBe(false);
+    expect(classifyPreviouslySeenSearchResult(
+      { url: 'https://mirror.example/article', title: 'Original release notes' },
+      seen,
+      { allowSeenCanonicalUrl: true },
+    )).toEqual({ seen: true, reason: 'semantic_title' });
+  });
+
+  it('allows exact and semantic repeats for an explicit material-update cycle', () => {
     expect(classifyPreviouslySeenSearchResult(
       { url: 'https://example.com/article', title: 'Original release notes' },
       [{ canonicalUrl: 'https://example.com/article', title: 'Original release notes' }],
