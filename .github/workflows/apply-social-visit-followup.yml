@@ -23,7 +23,9 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Apply follow-up fixes
-        run: python3 scripts/social-visit-followup/apply.py
+        run: |
+          python3 scripts/social-visit-followup/fix-anchor.py
+          python3 scripts/social-visit-followup/apply.py
       - run: npm run typecheck
       - run: npm test
       - run: npm run arch:check
