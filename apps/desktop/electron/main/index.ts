@@ -483,6 +483,11 @@ function registerIpc(): void {
     'network:companions:activate': services.publicCompanions.activate,
     'network:companions:publish': services.publicCompanions.publish,
     'network:companions:unpublish': services.publicCompanions.unpublish,
+    'network:companions:updateSocialPolicy': (input: { companionId: string; policy: { randomVisitsEnabled?: boolean; randomVisitAudience?: 'friends'; allowJoinRequests?: boolean } }) => services.publicCompanions.updateSocialPolicy(input.companionId, input.policy),
+    'network:companions:listShareableTopics': (companionId: string) => services.publicCompanions.listShareableTopics(companionId),
+    'network:companions:createShareableTopic': (input: { companionId: string; topic: import('@our-companion/shared').ShareableTopicInput }) => services.publicCompanions.createShareableTopic(input.companionId, input.topic),
+    'network:companions:updateShareableTopic': (input: { companionId: string; topicId: string; topic: import('@our-companion/shared').ShareableTopicInput }) => services.publicCompanions.updateShareableTopic(input.companionId, input.topicId, input.topic),
+    'network:companions:revokeShareableTopic': (input: { companionId: string; topicId: string }) => services.publicCompanions.revokeShareableTopic(input.companionId, input.topicId),
     'network:companions:getFriend': services.publicCompanions.getFriendCompanion,
     'network:assets:inspect': (input: { localCompanionId: string; includeVoices?: boolean }) => services.publicCompanions.inspectLocalPack(input),
     'network:assets:publish': (input: { localCompanionId: string; networkCompanionId: string; includeVoices?: boolean }) => services.publicCompanions.publishPack(input),
@@ -493,7 +498,8 @@ function registerIpc(): void {
     'network:assets:getCached': (assetPackId: string) => services.publicCompanions.getCachedPack(assetPackId),
     'network:assets:clearUnusedCache': () => services.publicCompanions.clearUnusedCache(),
     'network:visits:invitations:list': (input?: { direction?: 'incoming' | 'outgoing'; status?: import('@our-companion/shared').VisitInvitationStatus }) => services.visits.listInvitations(input),
-    'network:visits:invitations:send': (hostUserId: string) => services.visits.sendInvitation(hostUserId),
+    'network:visits:getReservation': () => services.visits.getReservation(),
+    'network:visits:invitations:send': (input: string | { hostUserId: string; mode?: import('@our-companion/shared').VisitMode; topicId?: string }) => typeof input === 'string' ? services.visits.sendInvitation(input) : services.visits.sendInvitation(input.hostUserId, { mode: input.mode, topicId: input.topicId }),
     'network:visits:invitations:accept': (invitationId: string) => services.visits.acceptInvitation(invitationId),
     'network:visits:invitations:decline': (invitationId: string) => services.visits.declineInvitation(invitationId),
     'network:visits:invitations:cancel': (invitationId: string) => services.visits.cancelInvitation(invitationId),
@@ -502,13 +508,25 @@ function registerIpc(): void {
     'network:visits:sessions:prepare': (sessionId: string) => services.visits.prepare(sessionId),
     'network:visits:sessions:start': (sessionId: string) => services.visits.start(sessionId),
     'network:visits:sessions:end': (sessionId: string) => services.visits.end(sessionId),
+    'network:visits:rooms:listJoinable': () => services.visits.listJoinableRooms(),
+    'network:visits:rooms:get': (sessionId: string) => services.visits.getRoom(sessionId),
+    'network:visits:rooms:requestJoin': (input: { sessionId: string; topicId?: string }) => services.visits.requestJoin(input.sessionId, input.topicId),
+    'network:visits:rooms:listJoinRequests': (sessionId: string) => services.visits.listJoinRequests(sessionId),
+    'network:visits:rooms:acceptJoinRequest': (joinRequestId: string) => services.visits.acceptJoinRequest(joinRequestId),
+    'network:visits:rooms:declineJoinRequest': (joinRequestId: string) => services.visits.declineJoinRequest(joinRequestId),
+    'network:visits:rooms:cancelJoinRequest': (joinRequestId: string) => services.visits.cancelJoinRequest(joinRequestId),
+    'network:visits:rooms:leave': (sessionId: string) => services.visits.leaveRoom(sessionId),
     'network:visits:invitations:sendDiscovery': (input: { hostUserId: string; discoveryId: string }) => services.visits.sendDiscoveryInvitation(input),
     'network:visits:sessions:getSocial': (sessionId: string) => services.visits.getSocialState(sessionId),
     'network:visits:sessions:respondSocial': (sessionId: string) => services.visits.respondSocial(sessionId),
     'network:visits:sessions:finalizeSocial': (sessionId: string) => services.visits.finalizeSocial(sessionId),
+    'network:visits:sessions:saveTopic': (input: { sessionId: string; topicId: string }) => services.visits.saveTopic(input.sessionId, input.topicId),
+    'network:visits:sessions:saveSharedMoment': (sessionId: string) => services.visits.saveSharedMoment(sessionId),
+    'network:visits:sessions:suppressTopic': (input: { sessionId: string; topicId: string }) => services.visits.suppressTopic(input.sessionId, input.topicId),
     'network:visits:visual:getState': () => services.visualVisits.getState(),
     'network:visits:visual:reportRendererFailure': (sessionId: string) => services.visualVisits.reportRendererFailure(sessionId),
     'network:visits:visual:completeRendererDeparture': (sessionId: string) => services.visualVisits.completeRendererDeparture(sessionId),
+    'network:visits:visual:acknowledgePresentation': (turnId: string) => services.visualVisits.acknowledgePresentation(turnId),
     'companionNew:create': services.companionNew.create,
     'companionNew:analyzePersonality': isSmokeTestRuntime()
       ? async (description: string) => ({
@@ -745,11 +763,11 @@ function registerSmokeIpc(): void {
       return candidateRole ? [{ sessionId: candidate.id, state: candidate.state, role: candidateRole, visitorOwnerReady: candidate.visitorOwnerReady, hostReady: candidate.hostReady }] : [];
     }) : [];
     const visitors: Array<{ runtimeId: string; sessionId: string; assetPackId: string; animationName?: string; observedAnimations?: string[]; x?: number; y?: number; sceneSlotIndex: number; departing?: boolean }> = [];
-    for (const sessionId of visual.visitorOrder) {
-      const visitor = visual.visitors[sessionId];
+    for (const runtimeId of visual.visitorOrder) {
+      const visitor = visual.visitors[runtimeId];
       if (!visitor) continue;
-      const renderer = smokeVisualRuntimes[sessionId];
-      const observed = smokeVisualAnimations[sessionId];
+      const renderer = smokeVisualRuntimes[runtimeId];
+      const observed = smokeVisualAnimations[runtimeId];
       visitors.push({
         runtimeId: visitor.runtimeId,
         sessionId: visitor.sessionId,
@@ -761,9 +779,9 @@ function registerSmokeIpc(): void {
         sceneSlotIndex: visitor.sceneSlotIndex,
       });
     }
-    for (const [sessionId, visitor] of Object.entries(visual.departingVisitors)) {
-      const renderer = smokeVisualRuntimes[sessionId];
-      const observed = smokeVisualAnimations[sessionId];
+    for (const [runtimeId, visitor] of Object.entries(visual.departingVisitors)) {
+      const renderer = smokeVisualRuntimes[runtimeId];
+      const observed = smokeVisualAnimations[runtimeId];
       visitors.push({
         runtimeId: visitor.runtimeId,
         sessionId: visitor.sessionId,
@@ -805,19 +823,21 @@ function registerSmokeIpc(): void {
     for (const window of [companionWindow, panelWindow]) if (window && !window.isDestroyed()) window.webContents.send('smoke:visualWorkAreaChanged', undefined);
   });
   ipcMain.handle('smoke:reportVisualRuntime', (_event, input: unknown) => {
-    const candidate = input as { sessionId?: string; animationName?: string; x?: number; y?: number };
+    const candidate = input as { runtimeId?: string; sessionId?: string; animationName?: string; x?: number; y?: number };
     if (typeof candidate.sessionId !== 'string' || typeof candidate.animationName !== 'string' || typeof candidate.x !== 'number' || !Number.isFinite(candidate.x) || typeof candidate.y !== 'number' || !Number.isFinite(candidate.y)) {
       throw new Error('SMOKE_VISUAL_RUNTIME_INVALID');
     }
-    const sessionId = candidate.sessionId;
     const visual = services.visualVisits.getState();
-    if (!(sessionId in visual.visitors) && !(sessionId in visual.departingVisitors)) throw new Error('SMOKE_VISUAL_RUNTIME_UNAVAILABLE');
+    const runtimeId = typeof candidate.runtimeId === 'string'
+      ? candidate.runtimeId
+      : [...visual.visitorOrder, ...Object.keys(visual.departingVisitors)].find((id) => (visual.visitors[id] ?? visual.departingVisitors[id])?.sessionId === candidate.sessionId);
+    if (!runtimeId || (!(runtimeId in visual.visitors) && !(runtimeId in visual.departingVisitors))) throw new Error('SMOKE_VISUAL_RUNTIME_UNAVAILABLE');
     const animationName = candidate.animationName;
     const x = candidate.x;
     const y = candidate.y;
-    smokeVisualRuntimes[sessionId] = { animationName: animationName.slice(0, 80), x: Math.round(x), y: Math.round(y) };
-    if (!smokeVisualAnimations[sessionId]) smokeVisualAnimations[sessionId] = [];
-    if (!smokeVisualAnimations[sessionId].includes(smokeVisualRuntimes[sessionId].animationName)) smokeVisualAnimations[sessionId].push(smokeVisualRuntimes[sessionId].animationName);
+    smokeVisualRuntimes[runtimeId] = { animationName: animationName.slice(0, 80), x: Math.round(x), y: Math.round(y) };
+    if (!smokeVisualAnimations[runtimeId]) smokeVisualAnimations[runtimeId] = [];
+    if (!smokeVisualAnimations[runtimeId].includes(smokeVisualRuntimes[runtimeId].animationName)) smokeVisualAnimations[runtimeId].push(smokeVisualRuntimes[runtimeId].animationName);
   });
   ipcMain.handle('smoke:simulateRendererFailure', (_event, input: unknown) => {
     const requested = typeof input === 'string' ? input : undefined;

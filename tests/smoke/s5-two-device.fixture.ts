@@ -29,7 +29,7 @@ export async function startVisit(owner: SmokeElectronDevice, host: SmokeElectron
   await hostPage.evaluate(async (id) => window.ourCompanion.network.visits.sessions.start(id), sessionId);
   await Promise.all([
     owner.waitForState((state) => state.visit?.sessionId === sessionId && state.visit.state === 'active' && state.visual.ownerPresenceMode === 'away_visiting', 30_000),
-    host.waitForState((state) => state.visit?.sessionId === sessionId && state.visit.state === 'active' && visitorForSession(state, sessionId)?.runtimeId === `visit:${sessionId}`, 120_000),
+    host.waitForState((state) => state.visit?.sessionId === sessionId && state.visit.state === 'active' && visitorForSession(state, sessionId)?.runtimeId.startsWith(`visit:${sessionId}:`) === true, 120_000),
   ]);
   return sessionId;
 }

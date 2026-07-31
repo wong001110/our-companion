@@ -7,7 +7,7 @@ import { SmokeElectronDevice } from './electron-device';
 import { loadNetworkEnvironment, ManagedSmokeNetwork, preflightSmokeServer, resolveSmokeNetworkRoot } from './network-process';
 import { establishFriendship, publishOwnerFixture, registerDevice } from './network-seed';
 import { assertTerminalCleanup, endVisit, startVisit } from './s5-two-device.fixture';
-import { assertIsolatedProfiles, cleanupDirectories, createSmokeRunId, sanitizedReport } from './smoke-state';
+import { assertIsolatedProfiles, cleanupDirectories, createSmokeRunId, sanitizedReport, waitUntil } from './smoke-state';
 import { footprintForPosition, footprintsOverlap } from '../../apps/desktop/renderer/src/motion/sceneMotion';
 
 const clientRoot = path.resolve(import.meta.dirname, '../..');
@@ -21,7 +21,7 @@ function overlaps(left: { x?: number; y?: number }, right: { x?: number; y?: num
   );
 }
 
-test('S5 logical three-device multi-Visitor smoke', async () => {
+test('S5 logical three-device Social Room smoke', async () => {
   const managedServer = process.env.OUR_COMPANION_SMOKE_MANAGE_SERVER === '1';
   const serverUrl = process.env.OUR_COMPANION_SMOKE_SERVER_URL ?? (managedServer ? 'http://127.0.0.1:3001' : undefined);
   if (!serverUrl) throw new Error('OUR_COMPANION_SMOKE_SERVER_URL is required; use a dedicated smoke Network Server.');
@@ -46,7 +46,7 @@ test('S5 logical three-device multi-Visitor smoke', async () => {
   const ownerA = new SmokeElectronDevice({ role: 'visitor_owner', userDataDir: profiles.ownerA, serverUrl, artifactDir: path.join(artifactRoot, 'owner-a'), appPath: path.join(clientRoot, 'apps', 'desktop') });
   const ownerB = new SmokeElectronDevice({ role: 'visitor_owner', userDataDir: profiles.ownerB, serverUrl, artifactDir: path.join(artifactRoot, 'owner-b'), appPath: path.join(clientRoot, 'apps', 'desktop') });
   const host = new SmokeElectronDevice({ role: 'host', userDataDir: profiles.host, serverUrl, artifactDir: path.join(artifactRoot, 'host'), appPath: path.join(clientRoot, 'apps', 'desktop') });
-  const checks = { preflight: false, isolatedProfiles: false, threeAccountsOnline: false, twoSessionsActive: false, twoVisitorsRendered: false, bothVisitorsWalking: false, distinctSlots: false, nonOverlapping: false, independentAssets: false, firstDepartureRetainsSecond: false, terminalCleanup: false, cleanupSucceeded: false };
+  const checks = { preflight: false, isolatedProfiles: false, threeAccountsOnline: false, oneRoomActive: false, guestJoined: false, twoVisitorsRendered: false, bothVisitorsWalking: false, distinctSlots: false, nonOverlapping: false, independentAssets: false, guestDepartureRetainsVisitor: false, terminalCleanup: false, cleanupSucceeded: false };
   let scenarioError: unknown;
   let cleanupError: string | undefined;
 
@@ -70,45 +70,67 @@ test('S5 logical three-device multi-Visitor smoke', async () => {
     if (!ownerAState.network.accountId || !ownerBState.network.accountId || !hostState.network.accountId) throw new Error('SMOKE_ACCOUNT_UNAVAILABLE');
     await establishFriendship(ownerA, host);
     await establishFriendship(ownerB, host);
-    const [ownerAPublished, ownerBPublished] = await Promise.all([publishOwnerFixture(ownerA, `${runId}-a`), publishOwnerFixture(ownerB, `${runId}-b`)]);
+    await establishFriendship(ownerB, ownerA);
+    const [ownerAPublished, ownerBPublished] = await Promise.all([
+      publishOwnerFixture(ownerA, `${runId}-a`),
+      publishOwnerFixture(ownerB, `${runId}-b`),
+      publishOwnerFixture(host, `${runId}-host`),
+    ]);
     checks.threeAccountsOnline = true;
 
-    const firstSessionId = await startVisit(ownerA, host, hostState.network.accountId);
-    const secondSessionId = await startVisit(ownerB, host, hostState.network.accountId);
-    const hostVisual = await host.waitForState((state) => {
-      const active = state.visual.visitors.filter((visitor) => !visitor.departing);
-      return active.some((visitor) => visitor.sessionId === firstSessionId) && active.some((visitor) => visitor.sessionId === secondSessionId);
-    }, 120_000);
-    expect(hostVisual.visits?.filter((visit) => visit.state === 'active')).toHaveLength(2);
-    checks.twoSessionsActive = checks.twoVisitorsRendered = true;
+    const sessionId = await startVisit(ownerA, host, hostState.network.accountId);
+    checks.oneRoomActive = true;
+    const ownerBPage = await ownerB.mainWindow();
+    const joinable = await ownerBPage.evaluate(async (expectedSessionId) => {
+      const rooms = await window.ourCompanion.network.visits.rooms.listJoinable();
+      return rooms.find((room) => room.sessionId === expectedSessionId);
+    }, sessionId);
+    if (!joinable) throw new Error('SMOKE_JOINABLE_ROOM_UNAVAILABLE');
+    await ownerBPage.evaluate(async (id) => { await window.ourCompanion.network.visits.rooms.requestJoin(id); }, sessionId);
 
-    const firstVisitor = hostVisual.visual.visitors.find((visitor) => visitor.sessionId === firstSessionId)!;
-    const secondVisitor = hostVisual.visual.visitors.find((visitor) => visitor.sessionId === secondSessionId)!;
+    const hostPage = await host.mainWindow();
+    const joinRequestId = await waitUntil(
+      () => hostPage.evaluate(async (id) => (await window.ourCompanion.network.visits.rooms.get(id)).pendingJoinRequests[0]?.id, sessionId),
+      Boolean,
+      { timeoutMs: 30_000, label: 'room-join-request' },
+    );
+    await hostPage.evaluate(async (id) => { await window.ourCompanion.network.visits.rooms.acceptJoinRequest(id); }, joinRequestId);
+    await ownerBPage.evaluate(async (id) => { await window.ourCompanion.network.visits.rooms.markParticipantReady(id); }, sessionId);
+    checks.guestJoined = true;
+
+    const hostVisual = await host.waitForState((state) => state.visual.visitors.filter((visitor) => visitor.sessionId === sessionId && !visitor.departing).length === 2, 120_000);
+    const activeVisitors = hostVisual.visual.visitors.filter((visitor) => visitor.sessionId === sessionId && !visitor.departing);
+    checks.twoVisitorsRendered = true;
+    expect(activeVisitors).toHaveLength(2);
+    const firstVisitor = activeVisitors.find((visitor) => visitor.assetPackId === ownerAPublished.assetPackId)!;
+    const secondVisitor = activeVisitors.find((visitor) => visitor.assetPackId === ownerBPublished.assetPackId)!;
+    expect(firstVisitor).toBeTruthy();
+    expect(secondVisitor).toBeTruthy();
     expect([firstVisitor.sceneSlotIndex, secondVisitor.sceneSlotIndex].sort()).toEqual([0, 1]);
     checks.distinctSlots = true;
     expect(overlaps(firstVisitor, secondVisitor)).toBe(false);
     checks.nonOverlapping = true;
 
     await host.waitForState((state) => {
-      const active = state.visual.visitors.filter((visitor) => !visitor.departing);
+      const active = state.visual.visitors.filter((visitor) => visitor.sessionId === sessionId && !visitor.departing);
       return active.length === 2 && active.every((visitor) => visitor.observedAnimations?.some((name) => name.startsWith('Walk_')));
     }, 30_000);
     checks.bothVisitorsWalking = true;
 
-    const hostPage = await host.mainWindow();
-    await expect.poll(() => hostPage.evaluate(async ({ session, pack }) => (await fetch(`companion-network://${session}/${pack}/assets/animations/Idle_Neutral.png`)).status, { session: firstSessionId, pack: ownerAPublished.assetPackId })).toBe(200);
-    await expect.poll(() => hostPage.evaluate(async ({ session, pack }) => (await fetch(`companion-network://${session}/${pack}/assets/animations/Idle_Neutral.png`)).status, { session: secondSessionId, pack: ownerBPublished.assetPackId })).toBe(200);
-    expect(await hostPage.evaluate(async ({ session, pack }) => (await fetch(`companion-network://${session}/${pack}/assets/animations/Idle_Neutral.png`)).status, { session: firstSessionId, pack: ownerBPublished.assetPackId })).toBeGreaterThanOrEqual(400);
+    await expect.poll(() => hostPage.evaluate(async ({ session, pack }) => (await fetch(`companion-network://${session}/${pack}/assets/animations/Idle_Neutral.png`)).status, { session: sessionId, pack: ownerAPublished.assetPackId })).toBe(200);
+    await expect.poll(() => hostPage.evaluate(async ({ session, pack }) => (await fetch(`companion-network://${session}/${pack}/assets/animations/Idle_Neutral.png`)).status, { session: sessionId, pack: ownerBPublished.assetPackId })).toBe(200);
     checks.independentAssets = true;
-    await hostPage.screenshot({ path: path.join(artifactRoot, 'host', 'two-visitors-active.png') });
+    await hostPage.screenshot({ path: path.join(artifactRoot, 'host', 'three-companion-room-active.png') });
 
-    await endVisit(ownerA, firstSessionId);
-    await host.waitForState((state) => !state.visual.visitors.some((visitor) => visitor.sessionId === firstSessionId && !visitor.departing)
-      && state.visual.visitors.some((visitor) => visitor.sessionId === secondSessionId && !visitor.departing), 30_000);
-    checks.firstDepartureRetainsSecond = true;
-    await assertTerminalCleanup(ownerA, host, firstSessionId);
-    await endVisit(host, secondSessionId);
-    await assertTerminalCleanup(ownerB, host, secondSessionId);
+    await ownerBPage.evaluate(async (id) => { await window.ourCompanion.network.visits.rooms.leave(id); }, sessionId);
+    await host.waitForState((state) => {
+      const active = state.visual.visitors.filter((visitor) => visitor.sessionId === sessionId && !visitor.departing);
+      return active.length === 1 && active[0]?.assetPackId === ownerAPublished.assetPackId;
+    }, 30_000);
+    checks.guestDepartureRetainsVisitor = true;
+
+    await endVisit(host, sessionId);
+    await assertTerminalCleanup(ownerA, host, sessionId);
     checks.terminalCleanup = true;
   } catch (error) {
     scenarioError = error;

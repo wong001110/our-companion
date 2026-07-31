@@ -23,7 +23,7 @@ export function RemoteVisitorLayer({ localCompanion, controller: sharedControlle
   if (!ownedController.current) ownedController.current = new SceneOccupancyController(viewport());
   const controller = sharedController ?? ownedController.current;
   const visitors = visualVisits.visitorOrder
-    .map((sessionId) => visualVisits.visitors[sessionId])
+    .map((runtimeId) => visualVisits.visitors[runtimeId])
     .filter((visitor): visitor is VisualVisitRenderModel => Boolean(visitor));
   const departingVisitors = Object.values(visualVisits.departingVisitors);
 
@@ -36,34 +36,34 @@ export function RemoteVisitorLayer({ localCompanion, controller: sharedControlle
     return () => controller.unregister('local-compatibility-occupant', 'local-hidden');
   }, [controller, localCompanion?.x, localCompanion?.y, sharedController]);
 
-  const updatePosition = useCallback((sessionId: string, position: VisitorPosition) => {
+  const updatePosition = useCallback((runtimeId: string, position: VisitorPosition) => {
     setPositions((current) => {
-      const previous = current[sessionId];
+      const previous = current[runtimeId];
       if (previous?.x === position.x && previous.y === position.y) return current;
-      return { ...current, [sessionId]: position };
+      return { ...current, [runtimeId]: position };
     });
   }, []);
-  const completeDeparture = useCallback((sessionId: string) => {
+  const completeDeparture = useCallback((runtimeId: string) => {
     setPositions((current) => {
       const next = { ...current };
-      delete next[sessionId];
+      delete next[runtimeId];
       return next;
     });
-    controller.unregister(`visit:${sessionId}`, 'departure-complete');
-    void window.ourCompanion.network.visits.visual.completeRendererDeparture(sessionId).catch(() => undefined);
+    controller.unregister(runtimeId, 'departure-complete');
+    void window.ourCompanion.network.visits.visual.completeRendererDeparture(runtimeId).catch(() => undefined);
   }, [controller]);
 
   return <>
     {[...visitors, ...departingVisitors].map((visitor) => {
-      const departing = Boolean(visualVisits.departingVisitors[visitor.sessionId]);
+      const departing = Boolean(visualVisits.departingVisitors[visitor.runtimeId]);
       // Keep the same React identity across active → departing so Leave starts
       // exactly where the visitor last stood instead of remounting at its slot.
-      return <RemoteVisitor key={visitor.sessionId} visitor={visitor} controller={controller} continuityPosition={positions[visitor.sessionId]} departing={departing} onPositionChange={updatePosition} onDepartureComplete={completeDeparture} />;
+      return <RemoteVisitor key={visitor.runtimeId} visitor={visitor} controller={controller} continuityPosition={positions[visitor.runtimeId]} departing={departing} onPositionChange={updatePosition} onDepartureComplete={completeDeparture} />;
     })}
   </>;
 }
 
-function RemoteVisitor({ visitor: initialVisitor, controller, continuityPosition, departing, onPositionChange, onDepartureComplete }: { visitor: VisualVisitRenderModel; controller: SceneOccupancyController; continuityPosition?: VisitorPosition; departing: boolean; onPositionChange: (sessionId: string, position: VisitorPosition) => void; onDepartureComplete: (sessionId: string) => void }) {
+function RemoteVisitor({ visitor: initialVisitor, controller, continuityPosition, departing, onPositionChange, onDepartureComplete }: { visitor: VisualVisitRenderModel; controller: SceneOccupancyController; continuityPosition?: VisitorPosition; departing: boolean; onPositionChange: (runtimeId: string, position: VisitorPosition) => void; onDepartureComplete: (runtimeId: string) => void }) {
   const [runtime, setRuntime] = useState<VisualVisitRenderModel | undefined>(initialVisitor);
   const [phase, setPhase] = useState<'entering' | 'idle' | 'walking' | 'leaving'>(departing ? 'leaving' : 'entering');
   const [bounds, setBounds] = useState(() => viewport());
@@ -105,6 +105,7 @@ function RemoteVisitor({ visitor: initialVisitor, controller, continuityPosition
       }
       if (current.name === initialVisitor.name
         && current.sceneSlotIndex === initialVisitor.sceneSlotIndex
+        && current.presentation?.turnId === initialVisitor.presentation?.turnId
         && sameAssets(current.assetUrls, initialVisitor.assetUrls)
         && sameTiming(current.frameTiming, initialVisitor.frameTiming)) return current;
       return {
@@ -113,6 +114,7 @@ function RemoteVisitor({ visitor: initialVisitor, controller, continuityPosition
         frameTiming: initialVisitor.frameTiming,
         sceneSlotIndex: initialVisitor.sceneSlotIndex,
         name: initialVisitor.name,
+        presentation: initialVisitor.presentation,
       };
     });
   }, [initialVisitor, departing, controller, actorId, continuityPosition]);
@@ -123,10 +125,10 @@ function RemoteVisitor({ visitor: initialVisitor, controller, continuityPosition
       setRuntime(undefined);
       if (!departureReported.current) {
         departureReported.current = true;
-        onDepartureComplete(initialVisitor.sessionId);
+        onDepartureComplete(initialVisitor.runtimeId);
       }
     }
-  }, [phase, initialVisitor.sessionId, onDepartureComplete]);
+  }, [phase, initialVisitor.runtimeId, onDepartureComplete]);
 
   const handleFailure = useCallback((failed: VisualVisitRenderModel) => {
     if (runtime?.runtimeId !== failed.runtimeId) return;
@@ -134,8 +136,8 @@ function RemoteVisitor({ visitor: initialVisitor, controller, continuityPosition
     targetRef.current = undefined;
     setActualSpeed(0);
     setRuntime(undefined);
-    if (departing) onDepartureComplete(failed.sessionId);
-    else void window.ourCompanion.network.visits.visual.reportRendererFailure(failed.sessionId).catch(() => undefined);
+    if (departing) onDepartureComplete(failed.runtimeId);
+    else void window.ourCompanion.network.visits.visual.reportRendererFailure(failed.runtimeId).catch(() => undefined);
   }, [runtime, departing, onDepartureComplete]);
 
   useEffect(() => {
@@ -160,15 +162,15 @@ function RemoteVisitor({ visitor: initialVisitor, controller, continuityPosition
   }, [actorId, controller]);
 
   useEffect(() => {
-    if (runtime) onPositionChange(runtime.sessionId, position);
+    if (runtime) onPositionChange(runtime.runtimeId, position);
   }, [runtime, position, onPositionChange]);
 
   useEffect(() => {
-    if (!runtime || runtime.sessionId !== initialVisitor.sessionId) return;
+    if (!runtime || runtime.runtimeId !== initialVisitor.runtimeId || runtime.presentation) return;
     if (phase !== 'idle') return;
     const delay = 2000 + Math.round((movementIndex.current % 5) * 1000);
     const timer = window.setTimeout(() => {
-      const target = controller.planTarget(actorId, nextWalkTarget(runtime.sessionId, movementIndex.current++, position, bounds));
+      const target = controller.planTarget(actorId, nextWalkTarget(runtime.runtimeId, movementIndex.current++, position, bounds));
       if (target && (target.x !== position.x || target.y !== position.y)) {
         targetRef.current = target;
         setPhase('walking');
@@ -202,15 +204,28 @@ function RemoteVisitor({ visitor: initialVisitor, controller, continuityPosition
 
   const target = targetRef.current ?? position;
   const walk = runtime ? walkSelection(position, target, runtime.assetUrls) : undefined;
-  const animationName = runtime ? (phase === 'entering' ? 'Enter' : phase === 'leaving' ? 'Leave' : phase === 'walking' ? walk!.animationName : 'Idle_Neutral') : undefined;
+  const animationName = runtime ? (runtime.presentation ? runtime.presentation.animationName : phase === 'entering' ? 'Enter' : phase === 'leaving' ? 'Leave' : phase === 'walking' ? walk!.animationName : 'Idle_Neutral') : undefined;
+
+  useEffect(() => {
+    if (!runtime?.presentation) return;
+    targetRef.current = undefined;
+    setActualSpeed(0);
+    setPhase('idle');
+    const turnId = runtime.presentation.turnId;
+    const timer = window.setTimeout(() => {
+      void window.ourCompanion.network.visits.visual.acknowledgePresentation(turnId).catch(() => undefined);
+    }, 2600);
+    return () => window.clearTimeout(timer);
+  }, [runtime?.presentation?.turnId]);
 
   useEffect(() => {
     if (!runtime || !animationName || !window.ourCompanion.smoke) return;
-    void window.ourCompanion.smoke.reportVisualRuntime({ sessionId: runtime.sessionId, animationName, x: position.x, y: position.y }).catch(() => undefined);
+    void window.ourCompanion.smoke.reportVisualRuntime({ runtimeId: runtime.runtimeId, sessionId: runtime.sessionId, animationName, x: position.x, y: position.y }).catch(() => undefined);
   }, [runtime, animationName, position]);
 
   if (!runtime || !animationName) return null;
-  return <div data-testid="remote-visual-visitor" data-runtime-id={runtime.runtimeId} data-session-id={runtime.sessionId} data-animation={animationName} data-slot={runtime.sceneSlotIndex} style={{ position: 'absolute', left: position.x, top: position.y, zIndex: sceneDepth(position, runtime.sessionId), pointerEvents: 'none' }} aria-label={`${runtime.name} is visiting`}>
+  return <div data-testid="remote-visual-visitor" data-runtime-id={runtime.runtimeId} data-session-id={runtime.sessionId} data-animation={animationName} data-slot={runtime.sceneSlotIndex} style={{ position: 'absolute', left: position.x, top: position.y, zIndex: sceneDepth(position, runtime.runtimeId), pointerEvents: 'none' }} aria-label={`${runtime.name} is visiting`}>
+    {runtime.presentation && <div className="remote-visitor-speech-bubble" data-testid="remote-visitor-speech-bubble"><strong>{runtime.name}</strong><span>{runtime.presentation.message}</span></div>}
     <RemoteVisitorSprite model={runtime} animationName={animationName} playbackRate={computeWalkPlaybackRate(actualSpeed)} onComplete={handleComplete} onFailure={handleFailure} />
   </div>;
 }

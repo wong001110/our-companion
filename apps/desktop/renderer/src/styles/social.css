@@ -39,3 +39,17 @@
 .social-unavailable {
   max-width: 680px;
 }
+
+.social-room-overview,
+.social-room-members,
+.social-room-join-requests,
+.social-visit-topic-segment { display: grid; gap: var(--space-2); }
+.social-room-topic-list,
+.social-room-topic-queue { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.social-room-topic { border-left: 3px solid var(--border-subtle); }
+.social-room-topic-active { border-left-color: var(--color-primary); }
+.social-room-topic-completed { opacity: .82; }
+.social-room-topic-queued { border-left-style: dashed; }
+.social-visit-topic-segment > h4 { margin: var(--space-2) 0 0; color: var(--color-text-secondary); }
+.visit-invitation-topic-preview { display: grid; gap: var(--space-1); padding: var(--space-2); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-primary), transparent 92%); }
+.visit-invitation-topic-preview p { margin: 0; }

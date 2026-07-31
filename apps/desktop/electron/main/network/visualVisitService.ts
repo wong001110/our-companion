@@ -1,9 +1,13 @@
 import type {
   CompanionAssetManifest,
+  SocialVisitPresentation,
+  SocialVisitState,
   VisualVisitRenderModel,
   VisualVisitRendererError,
   VisualVisitRendererState,
-  VisitSessionSummary
+  VisitRoomParticipant,
+  VisitRoomState,
+  VisitSessionSummary,
 } from '@our-companion/shared';
 import type { NetworkConnectionService } from '../networkConnection';
 import type { PublicCompanionService } from './publicCompanionService';
@@ -11,21 +15,18 @@ import type { VisitService } from './visitService';
 
 const REQUIRED_ANIMATIONS = ['Idle_Neutral', 'Enter', 'Leave', 'Walk_Left', 'Walk_Right', 'Walk_Up', 'Walk_Down'] as const;
 
-/**
- * Main-process S5 coordinator. It owns only Visit lifecycle and the sanitized
- * render contract; all position updates and movement remain local to the host
- * renderer and are never sent through the network.
- */
+/** Main-process coordinator for sanitized, room-aware remote Companion rendering. */
 export class VisualVisitService {
   private readonly capacity: number;
   private state: VisualVisitRendererState;
   private reconcilePromise?: Promise<void>;
   private reconcileRequested = false;
+  private readonly acknowledgedTurnIds = new Set<string>();
 
   constructor(
     private readonly network: Pick<NetworkConnectionService, 'getStatusSnapshot'>,
-    private readonly visits: Pick<VisitService, 'listSessions' | 'listInvitations'>,
-    private readonly companions: Pick<PublicCompanionService, 'getLocalCompanionId' | 'getVerifiedVisitVisualManifest' | 'readVerifiedCachedAsset'>,
+    private readonly visits: Pick<VisitService, 'listSessions' | 'listInvitations' | 'getRoom' | 'getSocialState'>,
+    private readonly companions: Pick<PublicCompanionService, 'getLocalCompanionId' | 'getVerifiedVisitVisualManifest' | 'getVerifiedVisitParticipantVisualManifest' | 'readVerifiedCachedAsset'>,
     private readonly publish: (state: VisualVisitRendererState) => void = () => {},
     capacity = 2,
   ) {
@@ -35,34 +36,36 @@ export class VisualVisitService {
 
   getState = (): VisualVisitRendererState => cloneState(this.state);
 
-  /**
-   * The protocol handler delegates here so a stale renderer URL cannot read a
-   * previously cached Pack after its authoritative Visit becomes terminal.
-   */
   readVerifiedCachedAsset = (sessionId: string, assetPackId: string, relativePath: string): { bytes: Buffer; mimeType: string } => {
-    const activeVisitor = this.state.visitors[sessionId];
-    const departingVisitor = this.state.departingVisitors[sessionId];
+    const activeVisitor = Object.values(this.state.visitors).find((visitor) => visitor.sessionId === sessionId && visitor.assetPackId === assetPackId);
+    const departingVisitor = Object.values(this.state.departingVisitors).find((visitor) => visitor.sessionId === sessionId && visitor.assetPackId === assetPackId);
     const visitor = activeVisitor ?? departingVisitor;
-    if (!visitor || visitor.assetPackId !== assetPackId || (departingVisitor && !activeVisitor && !isDepartureAsset(visitor, relativePath))) {
-      throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
-    }
+    if (!visitor || (departingVisitor && !activeVisitor && !isDepartureAsset(visitor, relativePath))) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
     return this.companions.readVerifiedCachedAsset(assetPackId, relativePath);
   };
 
-  /** Renderer failures are local-only: remove this runtime but retain the authoritative Visit session. */
-  reportRendererFailure = (sessionId: string): void => {
-    if (!(sessionId in this.state.visitors)) return;
+  reportRendererFailure = (runtimeId: string): void => {
+    const visitor = this.state.visitors[runtimeId];
+    if (!visitor) return;
     const next = cloneState(this.state);
-    delete next.visitors[sessionId];
-    next.visitorOrder = next.visitorOrder.filter((id) => id !== sessionId);
-    next.errors = { ...next.errors, [sessionId]: 'VISUAL_VISIT_RENDERER_UNAVAILABLE' };
+    delete next.visitors[runtimeId];
+    next.visitorOrder = next.visitorOrder.filter((id) => id !== runtimeId);
+    next.errors = { ...next.errors, [visitor.sessionId]: 'VISUAL_VISIT_RENDERER_UNAVAILABLE' };
     this.setState(next);
   };
 
-  completeRendererDeparture = (sessionId: string): void => {
-    if (!(sessionId in this.state.departingVisitors)) return;
+  completeRendererDeparture = (runtimeId: string): void => {
+    if (!(runtimeId in this.state.departingVisitors)) return;
     const next = cloneState(this.state);
-    delete next.departingVisitors[sessionId];
+    delete next.departingVisitors[runtimeId];
+    this.setState(next);
+  };
+
+  acknowledgePresentation = (turnId: string): void => {
+    this.acknowledgedTurnIds.add(turnId);
+    const next = cloneState(this.state);
+    if (next.localPresentation?.turnId === turnId) delete next.localPresentation;
+    for (const visitor of Object.values(next.visitors)) if (visitor.presentation?.turnId === turnId) delete visitor.presentation;
     this.setState(next);
   };
 
@@ -83,30 +86,26 @@ export class VisualVisitService {
   };
 
   stopSession = (sessionId: string, _reason?: string): void => {
-    if (!(sessionId in this.state.visitors) && !(sessionId in this.state.errors)) return;
     const next = cloneState(this.state);
-    delete next.visitors[sessionId];
-    next.visitorOrder = next.visitorOrder.filter((id) => id !== sessionId);
+    let changed = false;
+    for (const [runtimeId, visitor] of Object.entries(next.visitors)) {
+      if (visitor.sessionId !== sessionId) continue;
+      delete next.visitors[runtimeId];
+      next.visitorOrder = next.visitorOrder.filter((id) => id !== runtimeId);
+      changed = true;
+    }
     delete next.errors[sessionId];
-    this.setState(next);
+    if (next.localPresentation?.sessionId === sessionId) delete next.localPresentation;
+    if (changed) this.setState(next);
   };
 
-  /** A socket gap removes potentially stale host rendering without returning an active owner home. */
   pauseForReconnect = (): void => {
-    if (
-      this.state.visitorOrder.length === 0
-      && Object.keys(this.state.departingVisitors).length === 0
-      && Object.keys(this.state.errors).length === 0
-    ) return;
-    // A reconnect has no authority to continue serving a prior Visitor's
-    // Pack, including its Leave animation. Reconciliation will restore only
-    // the sessions that remain authoritatively active.
-    this.setState({ ...this.state, visitors: {}, departingVisitors: {}, visitorOrder: [], errors: {} });
+    if (!this.state.visitorOrder.length && !Object.keys(this.state.departingVisitors).length && !Object.keys(this.state.errors).length && !this.state.localPresentation) return;
+    this.setState({ ...this.state, visitors: {}, departingVisitors: {}, visitorOrder: [], errors: {}, localPresentation: undefined });
   };
 
   stopAll = (_reason?: string): void => this.setState(this.emptyState());
 
-  /** Test-only state injection, exposed exclusively through the smoke IPC surface. */
   setOwnerPresenceModeForSmoke = (ownerPresenceMode: VisualVisitRendererState['ownerPresenceMode']): void => {
     this.setState({ ...this.state, ownerPresenceMode });
   };
@@ -118,111 +117,100 @@ export class VisualVisitService {
       return;
     }
     const account = status.account;
-
-    const sessions = await this.visits.listSessions();
-    const allHostSessions = sessions
-      .filter((session) => session.state === 'active' && session.hostUserId === account.id)
-      .sort((left, right) => {
-        const leftTime = Date.parse(left.startedAt ?? left.createdAt);
-        const rightTime = Date.parse(right.startedAt ?? right.createdAt);
-        if (Number.isNaN(leftTime) && Number.isNaN(rightTime)) return left.id.localeCompare(right.id);
-        if (Number.isNaN(leftTime)) return 1;
-        if (Number.isNaN(rightTime)) return -1;
-        if (leftTime !== rightTime) return leftTime - rightTime;
-        return left.id.localeCompare(right.id);
-      });
-    const hostSessions = allHostSessions.slice(0, this.capacity);
-
-    const ownerSessions = sessions.filter((session) => session.state === 'active' && session.visitorOwnerUserId === account.id);
-
-    if (!hostSessions.length && !ownerSessions.length) {
+    const sessions = (await this.visits.listSessions()).filter((session) => session.state === 'active');
+    if (!sessions.length) {
       const next = this.emptyState();
-      // Preserve departures already being animated while adding each newly
-      // terminal Visitor. A second server event must not revoke the first
-      // Visitor's Leave asset before its renderer acknowledgement.
       next.departingVisitors = { ...this.state.departingVisitors, ...this.state.visitors };
       this.setState(next);
       return;
     }
 
-    const invitations = await this.visits.listInvitations();
+    const roomResults = await Promise.all(sessions.map(async (session) => ({
+      session,
+      room: typeof this.visits.getRoom === 'function'
+        ? await this.visits.getRoom(session.id).catch(() => legacyRoom(session, account.id))
+        : legacyRoom(session, account.id),
+      social: typeof this.visits.getSocialState === 'function'
+        ? await this.visits.getSocialState(session.id).catch(() => undefined)
+        : undefined,
+    })));
     const next = this.emptyState();
     next.departingVisitors = cloneState(this.state).departingVisitors;
+    const renderCandidates: Array<{ session: VisitSessionSummary; participant: VisitRoomParticipant; social?: SocialVisitState }> = [];
 
-    for (const overflow of allHostSessions.slice(this.capacity)) {
-      next.errors[overflow.id] = 'VISUAL_VISIT_CAPACITY_REACHED';
-    }
-
-    for (const ownerSession of ownerSessions) {
-      try {
-        const localCompanionId = await this.companions.getLocalCompanionId(ownerSession.networkCompanionId);
-        if (localCompanionId) {
-          next.ownerPresenceMode = 'away_visiting';
-        } else {
-          next.errors[ownerSession.id] = 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE';
+    for (const result of roomResults) {
+      const me = result.room.participants.find((participant) => participant.userId === account.id && participant.state !== 'left');
+      if (!me) continue;
+      const latestTurn = result.social?.turns.at(-1);
+      if (latestTurn && latestTurn.senderUserId === account.id && !this.acknowledgedTurnIds.has(latestTurn.id)) {
+        next.localPresentation = presentationFromTurn(result.session.id, latestTurn, 'Talk_Neutral');
+      }
+      if (me.role !== 'host') {
+        try {
+          if (await this.companions.getLocalCompanionId(me.networkCompanionId)) next.ownerPresenceMode = 'away_visiting';
+          else next.errors[result.session.id] = 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE';
+        } catch {
+          next.errors[result.session.id] = 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE';
         }
-      } catch {
-        next.errors[ownerSession.id] = 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE';
+        continue;
+      }
+      for (const participant of result.room.participants) {
+        if (participant.userId === account.id || participant.state === 'left' || !participant.assetPackId) continue;
+        renderCandidates.push({ session: result.session, participant, social: result.social });
       }
     }
 
-    // A local Companion cannot be away and host guests at the same time. The
-    // network must prevent this race, but the renderer must never show it.
-    if (next.ownerPresenceMode === 'away_visiting' && hostSessions.length) {
-      for (const hostSession of hostSessions) next.errors[hostSession.id] = 'VISUAL_VISIT_HOST_AWAY_CONFLICT';
+    if (next.ownerPresenceMode === 'away_visiting' && renderCandidates.length) {
+      for (const candidate of renderCandidates) next.errors[candidate.session.id] = 'VISUAL_VISIT_HOST_AWAY_CONFLICT';
       this.setState(next);
       return;
     }
 
-    const hostResults = await Promise.all(hostSessions.map((session, slotIndex) =>
-      this.buildHostVisitRenderModel(session, slotIndex, invitations)
-    ));
-    const activeHostSessionIds: string[] = [];
-    for (const result of hostResults) {
+    const acceptedCandidates = renderCandidates.slice(0, this.capacity);
+    for (const overflow of renderCandidates.slice(this.capacity)) next.errors[overflow.session.id] = 'VISUAL_VISIT_CAPACITY_REACHED';
+    const results = await Promise.all(acceptedCandidates.map((candidate, slotIndex) => this.buildParticipantRenderModel(candidate.session, candidate.participant, candidate.social, slotIndex)));
+    for (const result of results) {
       if (result.visitor) {
-        next.visitors[result.sessionId] = result.visitor;
-        activeHostSessionIds.push(result.sessionId);
-      } else if (result.error) {
-        next.errors[result.sessionId] = result.error;
-      }
+        next.visitors[result.runtimeId] = result.visitor;
+        next.visitorOrder.push(result.runtimeId);
+        delete next.departingVisitors[result.runtimeId];
+      } else if (result.error) next.errors[result.sessionId] = result.error;
     }
 
-    next.visitorOrder = activeHostSessionIds;
-    for (const [sessionId, visitor] of Object.entries(this.state.visitors)) {
-      if (!next.visitors[sessionId]) next.departingVisitors[sessionId] = visitor;
+    for (const [runtimeId, visitor] of Object.entries(this.state.visitors)) {
+      if (!next.visitors[runtimeId]) next.departingVisitors[runtimeId] = visitor;
     }
-    // A session that became active again owns a live runtime, not a stale
-    // departure runtime with the same identity.
-    for (const sessionId of activeHostSessionIds) delete next.departingVisitors[sessionId];
     this.setState(next);
   }
 
-  private async buildHostVisitRenderModel(
+  private async buildParticipantRenderModel(
     session: VisitSessionSummary,
+    participant: VisitRoomParticipant,
+    social: SocialVisitState | undefined,
     slotIndex: number,
-    invitations: Array<{ id: string; companionName: string }>,
-  ): Promise<{ sessionId: string; visitor?: VisualVisitRenderModel; error?: VisualVisitRendererError }> {
+  ): Promise<{ runtimeId: string; sessionId: string; visitor?: VisualVisitRenderModel; error?: VisualVisitRendererError }> {
+    const runtimeId = runtimeIdFor(session.id, participant.id);
     try {
-      const [manifest] = await Promise.all([
-        this.companions.getVerifiedVisitVisualManifest({ sessionId: session.id, assetPackId: session.assetPackId, networkCompanionId: session.networkCompanionId }),
-      ]);
-      const invitation = invitations.find((candidate) => candidate.id === session.invitationId);
-      if (!invitation || !supportsVisualManifest(manifest)) {
-        return { sessionId: session.id, error: 'VISUAL_VISIT_ASSET_UNAVAILABLE' };
-      }
-
-      const current = this.state.visitors[session.id];
-      const model = createRenderModel(session, invitation.companionName, manifest, slotIndex);
+      const manifest = typeof this.companions.getVerifiedVisitParticipantVisualManifest === 'function'
+        ? await this.companions.getVerifiedVisitParticipantVisualManifest({ sessionId: session.id, participantId: participant.id, assetPackId: participant.assetPackId!, networkCompanionId: participant.networkCompanionId })
+        : await this.companions.getVerifiedVisitVisualManifest({ sessionId: session.id, assetPackId: participant.assetPackId!, networkCompanionId: participant.networkCompanionId });
+      if (!supportsVisualManifest(manifest)) return { runtimeId, sessionId: session.id, error: 'VISUAL_VISIT_ASSET_UNAVAILABLE' };
+      const latestTurn = social?.turns.at(-1);
+      const presentation = latestTurn && latestTurn.senderUserId === participant.userId && !this.acknowledgedTurnIds.has(latestTurn.id)
+        ? presentationFromTurn(session.id, latestTurn, preferredTalkAnimation(latestTurn.emotion, manifest))
+        : undefined;
+      const current = this.state.visitors[runtimeId];
+      const model = createRenderModel(session, participant, manifest, slotIndex, presentation);
       if (current) {
         model.x = current.x;
         model.y = current.y;
         model.facing = current.facing;
-        model.state = current.state;
-        model.animationName = current.animationName;
+        model.state = presentation ? 'talking' : current.state === 'talking' || current.state === 'reacting' ? 'idle' : current.state;
+        model.animationName = presentation?.animationName ?? current.animationName;
       }
-      return { sessionId: session.id, visitor: model };
+      return { runtimeId, sessionId: session.id, visitor: model };
     } catch {
-      return { sessionId: session.id, error: 'VISUAL_VISIT_ASSET_UNAVAILABLE' };
+      return { runtimeId, sessionId: session.id, error: 'VISUAL_VISIT_ASSET_UNAVAILABLE' };
     }
   }
 
@@ -234,16 +222,24 @@ export class VisualVisitService {
   }
 
   private emptyState(): VisualVisitRendererState {
-    return {
-      ownerPresenceMode: 'home',
-      capacity: this.capacity,
-      visitors: {},
-      departingVisitors: {},
-      visitorOrder: [],
-      errors: {},
-    };
+    return { ownerPresenceMode: 'home', capacity: this.capacity, visitors: {}, departingVisitors: {}, visitorOrder: [], errors: {} };
   }
 }
+
+function legacyRoom(session: VisitSessionSummary, accountId: string): VisitRoomState {
+  const localIsHost = session.hostUserId === accountId;
+  return {
+    session: { id: session.id, state: session.state, hostUserId: session.hostUserId, roomCapacity: 3, currentTopicSequence: 1, createdAt: session.createdAt, updatedAt: session.updatedAt },
+    participants: [
+      { id: `${session.id}:host`, userId: session.hostUserId, networkCompanionId: session.hostNetworkCompanionId ?? '', role: 'host', state: 'active', joinedAt: session.createdAt },
+      { id: `${session.id}:visitor`, userId: session.visitorOwnerUserId, networkCompanionId: session.networkCompanionId, companionName: localIsHost ? undefined : 'Host Companion', assetPackId: session.assetPackId, role: 'visitor', state: 'active', joinedAt: session.createdAt },
+    ],
+    topics: [],
+    pendingJoinRequests: [],
+  };
+}
+
+function runtimeIdFor(sessionId: string, participantId: string): string { return `visit:${sessionId}:${participantId}`; }
 
 function isDepartureAsset(visitor: VisualVisitRenderModel, relativePath: string): boolean {
   const leaveUrl = visitor.assetUrls.Leave;
@@ -259,11 +255,22 @@ function supportsVisualManifest(manifest: CompanionAssetManifest): boolean {
   return REQUIRED_ANIMATIONS.every((name) => names.has(name));
 }
 
+function preferredTalkAnimation(emotion: string | undefined, manifest: CompanionAssetManifest): string {
+  const available = new Set(manifest.runtime.animations.map((animation) => animation.name));
+  const preferred = emotion === 'happy' ? 'Talk_Happy' : emotion === 'thoughtful' ? 'Talk_Thinking' : emotion === 'concerned' ? 'Talk_Concerned' : 'Talk_Neutral';
+  return available.has(preferred) ? preferred : available.has('Talk_Neutral') ? 'Talk_Neutral' : 'Idle_Neutral';
+}
+
+function presentationFromTurn(sessionId: string, turn: SocialVisitState['turns'][number], animationName: string): SocialVisitPresentation {
+  return { turnId: turn.id, sessionId, senderUserId: turn.senderUserId, message: turn.message, intent: turn.intent, emotion: turn.emotion, animationName };
+}
+
 function createRenderModel(
   session: VisitSessionSummary,
-  name: string,
+  participant: VisitRoomParticipant,
   manifest: CompanionAssetManifest,
   sceneSlotIndex: number,
+  presentation?: SocialVisitPresentation,
 ): VisualVisitRenderModel {
   const animations = new Map(manifest.runtime.animations.map((animation) => [animation.name, animation]));
   const assetUrls: Record<string, string> = {};
@@ -271,24 +278,23 @@ function createRenderModel(
   for (const [animationName, animation] of animations) {
     const source = animation.files[0];
     if (!source) continue;
-    assetUrls[animationName] = `companion-network://${session.id}/${session.assetPackId}/${source}`;
-    if (typeof animation.frameDurationMs === 'number' && animation.frameDurationMs > 0) {
-      frameTiming[animationName] = { frameDurationMs: animation.frameDurationMs, loop: animation.loop };
-    }
+    assetUrls[animationName] = `companion-network://${session.id}/${participant.assetPackId}/${source}`;
+    if (typeof animation.frameDurationMs === 'number' && animation.frameDurationMs > 0) frameTiming[animationName] = { frameDurationMs: animation.frameDurationMs, loop: animation.loop };
   }
-  for (const required of REQUIRED_ANIMATIONS) {
-    if (!assetUrls[required] || !frameTiming[required]) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
-  }
-
+  for (const required of REQUIRED_ANIMATIONS) if (!assetUrls[required] || !frameTiming[required]) throw new Error('VISUAL_VISIT_ASSET_UNAVAILABLE');
   return {
-    runtimeId: `visit:${session.id}`,
+    runtimeId: runtimeIdFor(session.id, participant.id),
     sessionId: session.id,
-    networkCompanionId: session.networkCompanionId,
-    assetPackId: session.assetPackId,
-    name: name.slice(0, 120),
+    participantId: participant.id,
+    userId: participant.userId,
+    participantRole: participant.role,
+    networkCompanionId: participant.networkCompanionId,
+    assetPackId: participant.assetPackId!,
+    name: (participant.companionName ?? 'Friend Companion').slice(0, 120),
     role: 'remote_visitor',
-    state: 'entering',
-    animationName: 'Enter',
+    state: presentation ? 'talking' : 'entering',
+    animationName: presentation?.animationName ?? 'Enter',
+    presentation,
     x: 0,
     y: 0,
     facing: 'left',
@@ -298,10 +304,5 @@ function createRenderModel(
   };
 }
 
-function clampPositiveInt(value: number, fallback: number): number {
-  return Number.isInteger(value) && value > 0 ? value : fallback;
-}
-
-function cloneState(state: VisualVisitRendererState): VisualVisitRendererState {
-  return JSON.parse(JSON.stringify(state)) as VisualVisitRendererState;
-}
+function clampPositiveInt(value: number, fallback: number): number { return Number.isInteger(value) && value > 0 ? value : fallback; }
+function cloneState(state: VisualVisitRendererState): VisualVisitRendererState { return JSON.parse(JSON.stringify(state)) as VisualVisitRendererState; }

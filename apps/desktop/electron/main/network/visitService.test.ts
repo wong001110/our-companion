@@ -120,29 +120,30 @@ describe('VisitService main-process coordinator', () => {
     expect(network.heartbeatVisitSession).toHaveBeenCalledTimes(1);
   });
 
-  it('permits a second host slot but rejects a third invitation at the main-process boundary', async () => {
+  it('enforces one Visit reservation per user before accepting or creating another Visit', async () => {
     const { service, network } = dependencies(host);
     const first = { ...session('active'), id: 'session-1', hostUserId: host };
     network.listVisitSessions.mockResolvedValue([first]);
     network.listVisitInvitations.mockResolvedValue([{ id: 'invitation-2', hostUserId: host }]);
-    network.acceptVisitInvitation.mockResolvedValue({ invitation: { id: 'invitation-2' }, session: { ...first, id: 'session-2' } });
-    await service.acceptInvitation('invitation-2');
-    expect(network.acceptVisitInvitation).toHaveBeenCalledWith('invitation-2');
 
-    network.listVisitSessions.mockResolvedValue([first, { ...first, id: 'session-2' }]);
-    await expect(service.acceptInvitation('invitation-2')).rejects.toThrow('VISIT_HOST_CAPACITY_REACHED');
-    expect(network.acceptVisitInvitation).toHaveBeenCalledTimes(1);
+    await expect(service.acceptInvitation('invitation-2')).rejects.toThrow('VISIT_COMPANION_RESERVED');
+    await expect(service.sendInvitation(owner)).rejects.toThrow('VISIT_COMPANION_RESERVED');
+    await expect(service.assertCanSwitchLocalCompanion()).rejects.toThrow('VISIT_COMPANION_RESERVED');
+    expect(network.acceptVisitInvitation).not.toHaveBeenCalled();
+    expect(network.createVisitInvitation).not.toHaveBeenCalled();
   });
 
-  it('blocks incoming hosting while away and outgoing/switching while hosting guests', async () => {
+  it('locks immediately after a successful incoming acceptance, before the room starts', async () => {
     const { service, network } = dependencies(host);
+    network.listVisitSessions.mockResolvedValue([]);
     network.listVisitInvitations.mockResolvedValue([{ id: 'invitation-2', hostUserId: host }]);
-    network.listVisitSessions.mockResolvedValue([{ ...session('active'), visitorOwnerUserId: host, hostUserId: owner }]);
-    await expect(service.acceptInvitation('invitation-2')).rejects.toThrow('VISIT_HOST_COMPANION_AWAY');
+    network.acceptVisitInvitation.mockResolvedValue({ invitation: { id: 'invitation-2' }, session: { ...session('preparing'), id: 'session-2', hostUserId: host } });
 
-    network.listVisitSessions.mockResolvedValue([{ ...session('active'), hostUserId: host }]);
-    await expect(service.sendInvitation(owner)).rejects.toThrow('VISIT_HOST_HAS_ACTIVE_GUESTS');
-    await expect(service.assertCanSwitchLocalCompanion()).rejects.toThrow('VISIT_COMPANION_RESERVED');
+    await service.acceptInvitation('invitation-2');
+
+    expect(service.getActivityLock()).toMatchObject({ locked: true, kind: 'session_participant', sessionId: 'session-2' });
+    network.listVisitSessions.mockResolvedValue([{ ...session('preparing'), id: 'session-2', hostUserId: host }]);
+    await expect(service.assertCanRunCompanionActivity()).rejects.toThrow('VISIT_COMPANION_RESERVED');
   });
 
   it('permits local switching while optimistic online status has no authenticated Session transport', async () => {

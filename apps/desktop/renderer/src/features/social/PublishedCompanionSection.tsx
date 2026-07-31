@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AssetUploadProgress, NetworkAssetPack } from '@our-companion/shared';
+import type { AssetUploadProgress, NetworkAssetPack, ShareableTopicInput, ShareableTopicSummary } from '@our-companion/shared';
 import { ConfirmDialog } from '../../components/feedback/ConfirmDialog';
 import { InlineNotice } from '../../components/feedback/InlineNotice';
 import { LoadingState } from '../../components/feedback/LoadingState';
@@ -258,6 +258,7 @@ export function PublishedCompanionSection({ onVisitAvailabilityChange }: {
       </section>
 
       <PublicationSummary activeProfile={activeProfile} activePack={activePack} snapshot={snapshot} lang={lang} loading={networkLoading} />
+      {activeProfile?.published && <ShareableTopicsSection profile={activeProfile} networkAvailable={networkAvailable} stale={stale} lang={lang} onProfileChanged={refreshNetwork} />}
 
       {activeProfile?.published && <div className="published-companion-actions"><button type="button" className="btn-danger btn-sm" disabled={operationBusy || !networkAvailable} onClick={() => setConfirmUnpublish(true)}>{t(lang, 'publish_unpublish')}</button></div>}
       <p className="published-visit-snapshot-note">{t(lang, 'publish_visit_snapshot_note')}</p>
@@ -273,6 +274,123 @@ export function PublishedCompanionSection({ onVisitAvailabilityChange }: {
       onConfirm={() => void unpublish()}
     />
   </>;
+}
+
+function ShareableTopicsSection({ profile, networkAvailable, stale, lang, onProfileChanged }: {
+  profile: OwnedPublishedCompanion;
+  networkAvailable: boolean;
+  stale: boolean;
+  lang: Lang;
+  onProfileChanged: () => Promise<unknown>;
+}) {
+  const [topics, setTopics] = useState<ShareableTopicSummary[]>([]);
+  const [title, setTitle] = useState('');
+  const [summary, setSummary] = useState('');
+  const [tags, setTags] = useState('');
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [shareSource, setShareSource] = useState(false);
+  const [allowRecipientSave, setAllowRecipientSave] = useState(true);
+  const [eligibleForRandomVisit, setEligibleForRandomVisit] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+
+  const load = async () => {
+    try {
+      setTopics(await window.ourCompanion.network.companions.listShareableTopics(profile.id));
+      setError(undefined);
+    } catch {
+      setError(topicCopy(lang, 'loadFailed'));
+    }
+  };
+
+  useEffect(() => { void load(); }, [profile.id]);
+
+  const createTopic = async () => {
+    if (!title.trim() || !summary.trim() || busy) return;
+    setBusy(true);
+    setError(undefined);
+    const input: ShareableTopicInput = {
+      title: title.trim(),
+      summary: summary.trim(),
+      tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean).slice(0, 8),
+      sourceUrl: shareSource && sourceUrl.trim() ? sourceUrl.trim() : undefined,
+      shareScope: shareSource ? 'summary_and_source' : 'summary_only',
+      allowRecipientSave,
+      eligibleForRandomVisit,
+      audience: 'friends',
+    };
+    try {
+      await window.ourCompanion.network.companions.createShareableTopic(profile.id, input);
+      setTitle(''); setSummary(''); setTags(''); setSourceUrl(''); setEligibleForRandomVisit(false);
+      await load();
+    } catch {
+      setError(topicCopy(lang, 'saveFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updatePolicy = async (patch: { randomVisitsEnabled?: boolean; allowJoinRequests?: boolean }) => {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await window.ourCompanion.network.companions.updateSocialPolicy(profile.id, patch);
+      await onProfileChanged();
+    } catch {
+      setError(topicCopy(lang, 'policyFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async (topicId: string) => {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await window.ourCompanion.network.companions.revokeShareableTopic(profile.id, topicId);
+      await load();
+    } catch {
+      setError(topicCopy(lang, 'revokeFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disabled = busy || stale || !networkAvailable;
+  return <section className="published-shareable-topics" aria-labelledby="shareable-topics-title">
+    <div className="published-section-heading"><div><h3 id="shareable-topics-title">{topicCopy(lang, 'title')}</h3><p>{topicCopy(lang, 'privacy')}</p></div></div>
+    {error && <InlineNotice tone="error">{error}</InlineNotice>}
+    <div className="shareable-topic-policy">
+      <label className="checkbox-row"><input type="checkbox" checked={profile.allowJoinRequests ?? true} disabled={disabled} onChange={(event) => void updatePolicy({ allowJoinRequests: event.target.checked })} /><span>{topicCopy(lang, 'allowJoin')}</span></label>
+      <label className="checkbox-row"><input type="checkbox" checked={profile.randomVisitsEnabled ?? false} disabled={disabled || !topics.some((topic) => topic.eligibleForRandomVisit && !topic.revokedAt)} onChange={(event) => void updatePolicy({ randomVisitsEnabled: event.target.checked })} /><span>{topicCopy(lang, 'randomVisits')}</span></label>
+    </div>
+    <div className="shareable-topic-editor">
+      <label><span>{topicCopy(lang, 'topicTitle')}</span><input value={title} maxLength={120} disabled={disabled} onChange={(event) => setTitle(event.target.value)} /></label>
+      <label><span>{topicCopy(lang, 'summary')}</span><textarea value={summary} maxLength={600} disabled={disabled} onChange={(event) => setSummary(event.target.value)} /></label>
+      <label><span>{topicCopy(lang, 'tags')}</span><input value={tags} disabled={disabled} onChange={(event) => setTags(event.target.value)} placeholder="AI, design, game" /></label>
+      <label className="checkbox-row"><input type="checkbox" checked={shareSource} disabled={disabled} onChange={(event) => setShareSource(event.target.checked)} /><span>{topicCopy(lang, 'shareSource')}</span></label>
+      {shareSource && <label><span>{topicCopy(lang, 'source')}</span><input type="url" value={sourceUrl} disabled={disabled} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://" /></label>}
+      <label className="checkbox-row"><input type="checkbox" checked={allowRecipientSave} disabled={disabled} onChange={(event) => setAllowRecipientSave(event.target.checked)} /><span>{topicCopy(lang, 'allowSave')}</span></label>
+      <label className="checkbox-row"><input type="checkbox" checked={eligibleForRandomVisit} disabled={disabled} onChange={(event) => setEligibleForRandomVisit(event.target.checked)} /><span>{topicCopy(lang, 'randomEligible')}</span></label>
+      <button type="button" className="btn-primary btn-sm" disabled={disabled || !title.trim() || !summary.trim() || (shareSource && !sourceUrl.startsWith('https://'))} onClick={() => void createTopic()}>{topicCopy(lang, busy ? 'saving' : 'create')}</button>
+    </div>
+    <div className="shareable-topic-list">
+      {topics.length ? topics.map((topic) => <article key={topic.id} className="online-user-info">
+        <div className="operational-row-main"><strong>{topic.title}</strong>{topic.eligibleForRandomVisit && <span className="soft-pill">{topicCopy(lang, 'random')}</span>}</div>
+        <p>{topic.summary}</p>
+        {topic.tags.length > 0 && <small>{topic.tags.join(' · ')}</small>}
+        <div className="operational-row-actions"><button type="button" className="btn-danger btn-sm" disabled={disabled} onClick={() => void revoke(topic.id)}>{topicCopy(lang, 'revoke')}</button></div>
+      </article>) : <p>{topicCopy(lang, 'empty')}</p>}
+    </div>
+  </section>;
+}
+
+function topicCopy(lang: Lang, key: string): string {
+  const en: Record<string, string> = { title: 'Shareable Topics', privacy: 'Only the title, summary, short tags, optional HTTPS source, and explicit permissions are uploaded. Local Memory and private evidence stay on this device.', allowJoin: 'Allow a third friend to request joining a Social Room', randomVisits: 'Allow random friend Visits using eligible topics', topicTitle: 'Topic title', summary: 'Sanitized summary', tags: 'Short tags', shareSource: 'Share the HTTPS source with recipients', source: 'Source URL', allowSave: 'Allow recipients to save this topic to Discovery Feed', randomEligible: 'Eligible for random Visits', create: 'Create topic', saving: 'Saving…', random: 'Random Visit', revoke: 'Revoke', empty: 'No active Shareable Topics yet.', loadFailed: 'Shareable Topics could not be loaded.', saveFailed: 'The Shareable Topic could not be saved.', policyFailed: 'The Social policy could not be updated.', revokeFailed: 'The Shareable Topic could not be revoked.' };
+  const zh: Record<string, string> = { title: '可分享主题', privacy: '只上传标题、摘要、短标签、可选 HTTPS 来源和明确权限。本地 Memory 与私人证据不会上传。', allowJoin: '允许第三位好友申请加入 Social Room', randomVisits: '允许好友使用合资格主题随机拜访', topicTitle: '主题标题', summary: '经过整理的摘要', tags: '短标签', shareSource: '向接收方分享 HTTPS 来源', source: '来源网址', allowSave: '允许接收方保存到 Discovery Feed', randomEligible: '可用于随机拜访', create: '创建主题', saving: '保存中…', random: '随机拜访', revoke: '撤销', empty: '目前没有可用的分享主题。', loadFailed: '无法载入可分享主题。', saveFailed: '无法保存这个分享主题。', policyFailed: '无法更新 Social 权限。', revokeFailed: '无法撤销这个分享主题。' };
+  return (lang === 'zh-CN' ? zh : en)[key] ?? key;
 }
 
 function PublishFeedback({ stage, progress, lang }: { stage: PublishStage; progress?: AssetUploadProgress; lang: Lang }) {

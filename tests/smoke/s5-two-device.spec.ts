@@ -117,7 +117,7 @@ test('S5 logical two-device smoke', async () => {
     // Scenarios 3–6 and 10–11 share one active Session.
     sessionId = await startVisit(owner, host, seeded.hostAccountId);
     await host.restart();
-    await host.waitForState((state) => state.network.state === 'online' && state.visit?.sessionId === sessionId && state.visual.visitors.some((visitor) => visitor.sessionId === sessionId && visitor.runtimeId === `visit:${sessionId}`), 60_000);
+    await host.waitForState((state) => state.network.state === 'online' && state.visit?.sessionId === sessionId && state.visual.visitors.some((visitor) => visitor.sessionId === sessionId && visitor.runtimeId.startsWith(`visit:${sessionId}:`)), 60_000);
     await host.screenshot('visitor-recovered'); checks.hostRestartRecovered = true;
     await owner.restart();
     await owner.waitForState((state) => state.network.state === 'online' && state.visit?.sessionId === sessionId && state.visual.ownerPresenceMode === 'away_visiting', 60_000);

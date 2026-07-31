@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { FriendLookupResult, NetworkStatus, VisitInvitationSummary, VisitSessionSummary } from '@our-companion/shared';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { FriendLookupResult, JoinableVisitRoom, NetworkStatus, ShareableTopicSummary, VisitInvitationSummary, VisitReservationSummary, VisitRoomState, VisitSessionSummary } from '@our-companion/shared';
 import { PaperCard } from '../ui/NotebookPrimitives';
 import { useVisualVisitState } from '../visits/RemoteVisitorLayer';
 import { PublishedCompanionSection } from '../features/social/PublishedCompanionSection';
-import { SocialVisitConversation, socialVisitApi } from '../features/social/SocialVisitConversation';
+import { SocialVisitConversation } from '../features/social/SocialVisitConversation';
 import { ConfirmDialog } from '../components/feedback/ConfirmDialog';
 import { EmptyState } from '../components/feedback/EmptyState';
 import { InlineNotice } from '../components/feedback/InlineNotice';
@@ -28,9 +28,42 @@ export function SocialPage() {
   const [publicationAvailability, setPublicationAvailability] = useState({ loaded: false, canSendVisit: false });
   const [shareCandidates, setShareCandidates] = useState<Array<{ id: string; title: string; summary: string }>>([]);
   const [selectedDiscoveryId, setSelectedDiscoveryId] = useState('');
+  const [visitMode, setVisitMode] = useState<'standard' | 'visitor_topic' | 'random_host_topic'>('standard');
+  const [shareableTopics, setShareableTopics] = useState<ShareableTopicSummary[]>([]);
+  const [selectedTopicId, setSelectedTopicId] = useState('');
+  const [selectedJoinTopicId, setSelectedJoinTopicId] = useState('');
+  const [joinableRooms, setJoinableRooms] = useState<JoinableVisitRoom[]>([]);
+  const [reservation, setReservation] = useState<VisitReservationSummary>({ locked: false });
+  const scopeKeyRef = useRef(scopeKey);
+  useEffect(() => { scopeKeyRef.current = scopeKey; }, [scopeKey]);
   const handlePublicationAvailability = useCallback((next: { loaded: boolean; canSendVisit: boolean }) => {
     setPublicationAvailability((current) => current.loaded === next.loaded && current.canSendVisit === next.canSendVisit ? current : next);
   }, []);
+
+  const refreshVisitOptions = useCallback(async () => {
+    if (!scopeKey) return;
+    const operationScope = scopeKey;
+    try {
+      const [mine, currentReservation, rooms] = await Promise.all([
+        window.ourCompanion.network.companions.getMine(),
+        window.ourCompanion.network.visits.getReservation(),
+        window.ourCompanion.network.visits.rooms.listJoinable(),
+      ]);
+      const topics = mine.activeNetworkCompanionId
+        ? await window.ourCompanion.network.companions.listShareableTopics(mine.activeNetworkCompanionId)
+        : [];
+      if (scopeKeyRef.current !== operationScope) return;
+      const activeTopics = topics.filter((topic) => !topic.revokedAt);
+      setShareableTopics(activeTopics);
+      setSelectedTopicId((current) => activeTopics.some((topic) => topic.id === current) ? current : activeTopics[0]?.id ?? '');
+      setSelectedJoinTopicId((current) => activeTopics.some((topic) => topic.id === current) ? current : '');
+      setReservation(currentReservation);
+      setJoinableRooms(rooms);
+    } catch {
+      if (scopeKeyRef.current !== operationScope) return;
+      setJoinableRooms([]);
+    }
+  }, [scopeKey]);
 
   useEffect(() => {
     setUid('');
@@ -41,12 +74,23 @@ export function SocialPage() {
     setPublicationAvailability({ loaded: false, canSendVisit: false });
     setShareCandidates([]);
     setSelectedDiscoveryId('');
+    setVisitMode('standard');
+    setShareableTopics([]);
+    setSelectedTopicId('');
+    setSelectedJoinTopicId('');
+    setJoinableRooms([]);
+    setReservation({ locked: false });
     void window.ourCompanion.discovery.getFeed({ limit: 20 }).then((items) => {
       const candidates = items.filter((item) => item.title && item.summary).map((item) => ({ id: item.id, title: item.title, summary: item.summary ?? item.title }));
       setShareCandidates(candidates);
       setSelectedDiscoveryId(candidates[0]?.id ?? '');
     }).catch(() => undefined);
-  }, [scopeKey]);
+    void refreshVisitOptions();
+    const unsubscribe = window.ourCompanion.network.onStatusChanged((next) => {
+      if (next.socialInvalidation?.type === 'visit_session' || next.socialInvalidation?.type === 'visit_invitation') void refreshVisitOptions();
+    });
+    return unsubscribe;
+  }, [refreshVisitOptions, scopeKey]);
 
   if (!status) return <div data-testid="social-panel" className="social-page"><PaperCard title={t(lang, 'social_title')} tape className="settings-panel social-unavailable"><SectionLoading label={t(lang, 'social_availability_loading')} /></PaperCard></div>;
   if (!canShowContent || !status.account) return <div data-testid="social-panel" className="social-page"><PaperCard title={t(lang, 'social_title')} tape className="settings-panel social-unavailable"><ConnectionBanner status={status} onRetry={() => void window.ourCompanion.network.retryConnection()} /><EmptyState title={t(lang, 'social_unavailable')}>{socialAvailabilityMessage(status, lang)}</EmptyState></PaperCard></div>;
@@ -102,7 +146,7 @@ export function SocialPage() {
       <p><strong>{account.username}</strong> <span className="soft-pill">UID: {account.uid}</span></p>
       <div className="action-row"><button type="button" onClick={() => void copyOwnUid()}>{copiedUid ? t(lang, 'social_friend_code_copied') : t(lang, 'social_copy_friend_code')}</button><span>{t(lang, 'social_friend_count', { count: friends.length, plural: friends.length === 1 ? '' : 's' })} · {t(lang, 'social_pending_request_count', { count: incoming.length, plural: incoming.length === 1 ? '' : 's' })}</span></div>
     </section>
-    {loadedDomains.visitSessions && <CurrentVisitSection lang={lang} stale={stale} liveVisits={liveVisits} latestTerminalVisit={latestTerminalVisit} userId={userId} visualVisit={visualVisit} busyAction={busyAction} action={action} />}
+    {loadedDomains.visitSessions && <CurrentVisitSection lang={lang} stale={stale} liveVisits={liveVisits} latestTerminalVisit={latestTerminalVisit} userId={userId} visualVisit={visualVisit} busyAction={busyAction} action={action} refreshVisitOptions={refreshVisitOptions} />}
     <section aria-labelledby="published-companion-heading"><h3 id="published-companion-heading">{t(lang, 'social_published_companion')}</h3><PublishedCompanionSection onVisitAvailabilityChange={handlePublicationAvailability} /></section>
     <div className="online-auth-form"><label><span>{t(lang, 'social_add_friend_by_code')}</span><input value={uid} onChange={(event) => setUid(event.target.value.toUpperCase())} placeholder="OC-7K4M92QX" /></label><button className="btn-secondary btn-sm" onClick={() => { setLookup(undefined); setActionError(undefined); void action(() => window.ourCompanion.network.friends.lookup(uid.trim()), { clearLookup: false, phase: 'sending', onSuccess: setLookup }); }} disabled={!uid.trim() || busyAction}>{t(lang, 'social_find')}</button></div>
     {lookup && <div data-testid="friend-lookup-result" className="online-user-info"><p><strong>{lookup.username}</strong> · UID: {lookup.uid}</p>{canSendFriendRequest(lookup.relationship) && <button data-testid="send-friend-request" className="btn-primary btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.sendRequest(lookup.id), { phase: 'sending' })}>{t(lang, 'social_send_request')}</button>}<p data-testid="friend-lookup-relationship" aria-live="polite">{friendLookupRelationshipMessage(lookup.relationship, lang)}</p></div>}
@@ -111,24 +155,42 @@ export function SocialPage() {
     {!hasLoaded && loading && <SectionLoading label={t(lang, 'social_loading')} />}
     {suggestedFriend && <section className="social-overview" data-testid="social-visit-suggestion">
       <h3>{lang === 'zh-CN' ? 'Companion 的拜访建议' : 'Companion visit suggestion'}</h3>
-      <p>{lang === 'zh-CN' ? `${suggestedFriend.username} 在线。你的 Companion 可以带一条 Discovery 去拜访。` : `${suggestedFriend.username} is online. Your Companion can visit with one approved Discovery.`}</p>
-      <label><span>{lang === 'zh-CN' ? '允许分享的 Discovery' : 'Discovery approved to share'}</span>
-        <select value={selectedDiscoveryId} onChange={(event) => setSelectedDiscoveryId(event.target.value)}>
-          <option value="">{lang === 'zh-CN' ? '请选择' : 'Select one'}</option>
-          {shareCandidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}</option>)}
-        </select>
-      </label>
-      {!shareCandidates.length && <p>{lang === 'zh-CN' ? '目前没有可分享的 Discovery。' : 'There is no Discovery available to share yet.'}</p>}
+      <p>{lang === 'zh-CN' ? `${suggestedFriend.username} 在线。选择普通 Discovery、自己携带的主题，或让对方用随机主题开场。` : `${suggestedFriend.username} is online. Choose an approved Discovery, bring a Shareable Topic, or let the Host open with a random topic.`}</p>
+      <label><span>{lang === 'zh-CN' ? '拜访方式' : 'Visit mode'}</span><select value={visitMode} onChange={(event) => setVisitMode(event.target.value as typeof visitMode)} disabled={reservation.locked}>
+        <option value="standard">{lang === 'zh-CN' ? '带一条 Discovery 拜访' : 'Visit with a Discovery'}</option>
+        <option value="visitor_topic">{lang === 'zh-CN' ? '带已发布主题拜访' : 'Visit with my Shareable Topic'}</option>
+        <option value="random_host_topic">{lang === 'zh-CN' ? '由 Host 随机选择主题' : 'Host chooses a random topic'}</option>
+      </select></label>
+      {visitMode === 'standard' && <label><span>{lang === 'zh-CN' ? '允许分享的 Discovery' : 'Discovery approved to share'}</span><select value={selectedDiscoveryId} onChange={(event) => setSelectedDiscoveryId(event.target.value)}><option value="">{lang === 'zh-CN' ? '请选择' : 'Select one'}</option>{shareCandidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}</option>)}</select></label>}
+      {visitMode === 'visitor_topic' && <label><span>{lang === 'zh-CN' ? '携带的主题' : 'Topic to bring'}</span><select value={selectedTopicId} onChange={(event) => setSelectedTopicId(event.target.value)}><option value="">{lang === 'zh-CN' ? '请选择' : 'Select one'}</option>{shareableTopics.map((topic) => <option key={topic.id} value={topic.id}>{topic.title}</option>)}</select></label>}
+      {reservation.locked && <InlineNotice>{lang === 'zh-CN' ? '当前 Companion 已为一场 Visit 保留。在邀请结束或房间关闭前不能创建另一场 Visit，也不会执行 Discovery。' : 'This Companion is reserved for one Visit. Another Visit and Discovery are disabled until the reservation is released.'}</InlineNotice>}
+    </section>}
+    {joinableRooms.length > 0 && <section className="social-overview" data-testid="joinable-social-rooms">
+      <h3>{lang === 'zh-CN' ? '可加入的好友房间' : 'Joinable friend rooms'}</h3>
+      <label><span>{lang === 'zh-CN' ? '加入时排队的主题（可选）' : 'Topic to queue when joining (optional)'}</span><select value={selectedJoinTopicId} onChange={(event) => setSelectedJoinTopicId(event.target.value)}><option value="">{lang === 'zh-CN' ? '不携带主题' : 'Join without a topic'}</option>{shareableTopics.map((topic) => <option key={topic.id} value={topic.id}>{topic.title}</option>)}</select></label>
+      {joinableRooms.map((room) => <article key={room.sessionId} className="online-user-info">
+        <div className="operational-row-main"><strong>{room.hostCompanionName ?? room.hostUsername}</strong><span className="soft-pill">{room.participantCount} / {room.roomCapacity}</span></div>
+        <p>{room.participants.map((participant) => participant.companionName ?? participant.role).join(' · ')}</p>
+        {room.activeTopic && <p><strong>{lang === 'zh-CN' ? '当前主题：' : 'Current topic: '}</strong>{room.activeTopic.title}</p>}
+        <button type="button" className="btn-primary btn-sm" disabled={busyAction || reservation.locked} onClick={() => void action(() => window.ourCompanion.network.visits.rooms.requestJoin(room.sessionId, selectedJoinTopicId || undefined), { phase: 'sending' }).then(() => void refreshVisitOptions())}>{lang === 'zh-CN' ? '申请加入' : 'Request to join'}</button>
+      </article>)}
     </section>}
     <h3>{t(lang, 'social_friends')}</h3>{domainErrors.friends && <SectionPartialError message={t(lang, domainErrors.friends)} onRetry={() => void refresh()} />}{domainErrors.presence && <SectionPartialError message={t(lang, domainErrors.presence)} onRetry={() => void refresh()} />}{loadedDomains.friends && (friends.length ? friends.map((friend) => {
       const pendingVisit = visitOutgoing.some((invite) => invite.status === 'pending' && invite.hostUserId === friend.userId);
       const visitDisabledCode = hostOccupancy > 0 ? 'VISIT_HOST_HAS_ACTIVE_GUESTS' : localCompanionAway ? 'VISIT_HOST_COMPANION_AWAY' : undefined;
-      const visitDisabledReason = mutationReason ?? (!available ? t(lang, 'online_state_detail_reconnecting') : !visitsAvailable ? t(lang, 'social_visit_unavailable') : !publicationAvailability.loaded ? t(lang, 'social_partial_publishing') : !publicationAvailability.canSendVisit ? t(lang, 'social_publish_before_visit_hint') : visitDisabledCode ? visitAdmissionMessage(lang, visitDisabledCode) : pendingVisit ? t(lang, 'social_pending') : undefined);
+      const visitDisabledReason = mutationReason ?? (reservation.locked ? (lang === 'zh-CN' ? '当前 Companion 已保留给另一场 Visit。' : 'This Companion already has a Visit reservation.') : !available ? t(lang, 'online_state_detail_reconnecting') : !visitsAvailable ? t(lang, 'social_visit_unavailable') : !publicationAvailability.loaded ? t(lang, 'social_partial_publishing') : !publicationAvailability.canSendVisit ? t(lang, 'social_publish_before_visit_hint') : visitDisabledCode ? visitAdmissionMessage(lang, visitDisabledCode) : pendingVisit ? t(lang, 'social_pending') : undefined);
       return <FriendRow key={friend.userId} lang={lang} friend={friend} disabled={busyAction} visitDisabledReason={visitDisabledReason}
         onView={() => void action(() => window.ourCompanion.network.companions.getFriendCompanion(friend.userId), { phase: 'sending', onSuccess: (companion) => { setFriendCompanion(companion); setFriendAssetStatus(''); } })}
-        onVisit={() => selectedDiscoveryId
-          ? void action(() => socialVisitApi().invitations.sendDiscovery({ hostUserId: friend.userId, discoveryId: selectedDiscoveryId }), { phase: 'sending' })
-          : setActionError('social_error_action_unavailable')}
+        onVisit={() => {
+          if (reservation.locked) return setActionError('social_error_action_unavailable');
+          const operation = visitMode === 'visitor_topic'
+            ? selectedTopicId ? () => window.ourCompanion.network.visits.invitations.send(friend.userId, { mode: 'visitor_topic', topicId: selectedTopicId }) : undefined
+            : visitMode === 'random_host_topic'
+              ? () => window.ourCompanion.network.visits.invitations.send(friend.userId, { mode: 'random_host_topic' })
+              : selectedDiscoveryId ? () => window.ourCompanion.network.visits.invitations.sendDiscovery({ hostUserId: friend.userId, discoveryId: selectedDiscoveryId }) : undefined;
+          if (!operation) return setActionError('social_error_action_unavailable');
+          void action(operation, { phase: 'sending' }).then(() => void refreshVisitOptions());
+        }}
         onRemove={() => setPendingDestructiveAction({ title: t(lang, 'social_remove_friend_title'), description: t(lang, 'social_remove_friend_desc', { username: friend.username }), confirmLabel: t(lang, 'social_remove_friend'), phase: 'removing', operation: () => window.ourCompanion.network.friends.remove(friend.userId) })}
         onBlock={() => setPendingDestructiveAction({ title: t(lang, 'social_block_user_title'), description: t(lang, 'social_block_user_desc', { username: friend.username }), confirmLabel: t(lang, 'social_block_user'), phase: 'blocking', operation: () => window.ourCompanion.network.blocks.block(friend.userId) })}
       />;
@@ -148,7 +210,7 @@ export function SocialPage() {
 }
 
 function CurrentVisitSection({
-  lang, stale, liveVisits, latestTerminalVisit, userId, visualVisit, busyAction, action,
+  lang, stale, liveVisits, latestTerminalVisit, userId, visualVisit, busyAction, action, refreshVisitOptions,
 }: {
   lang: Lang;
   stale: boolean;
@@ -158,31 +220,80 @@ function CurrentVisitSection({
   visualVisit: ReturnType<typeof useVisualVisitState>;
   busyAction: boolean;
   action: (operation: () => Promise<unknown>, options?: { phase?: SocialMutationPhase }) => Promise<void>;
+  refreshVisitOptions: () => Promise<void>;
 }) {
   const sessions = liveVisits.length ? liveVisits : latestTerminalVisit ? [latestTerminalVisit] : [];
-  const hostOccupancy = liveVisits.filter((session) => session.hostUserId === userId).length;
+  const visibleVisitors = Object.values(visualVisit.visitors).length;
   return <section aria-labelledby="current-visit-heading">
     <h3 id="current-visit-heading">{t(lang, 'social_visit_session')}</h3>
-    <p data-testid="visit-capacity">Visitors: {hostOccupancy} / {visualVisit.capacity}</p>
-    {sessions.length ? sessions.map((session) => {
-      const live = liveVisits.some((candidate) => candidate.id === session.id);
-      const presentation = VISIT_SESSION_PRESENTATION[session.state];
-      const currentUserReady = session.visitorOwnerUserId === userId ? session.visitorOwnerReady : session.hostReady;
-      return <div key={session.id} data-testid="visit-session-state" data-session-id={session.id} data-state={session.state} className="operational-row">
-        <div className="operational-row-main"><strong>{stale && live ? t(lang, 'social_visit_reconnecting') : visitSessionMessage(session, userId, lang)}</strong>{presentation && <span className={`status-badge status-badge-${presentation.tone}`}><span className="status-badge-marker" aria-hidden="true" />{t(lang, presentation.labelKey)}</span>}</div>
-        {session.state === 'preparing' && <p>{t(lang, 'social_visit_readiness', { owner: session.visitorOwnerReady ? t(lang, 'social_ready') : t(lang, 'social_not_ready'), host: session.hostReady ? t(lang, 'social_ready') : t(lang, 'social_not_ready') })}</p>}
-        {!stale && session.state === 'active' && <p>{visualVisitMessage(visualVisit, session, userId, lang)}</p>}
-        {stale && live && <p className="state-reason">{t(lang, 'operational_content_stale')}</p>}
-        {!live && <p>{t(lang, session.endReason ? visitEndReasonPresentation(session.endReason) : visitFailurePresentation(session.failureCode))}</p>}
-        {live && session.state !== 'ending' && <div className="operational-row-actions">
-          {session.state === 'preparing' && !currentUserReady && <button data-testid="prepare-visit" disabled={busyAction || stale} onClick={() => void action(() => window.ourCompanion.network.visits.sessions.prepare(session.id), { phase: 'preparing' })}>{busyAction ? t(lang, 'social_preparing') : t(lang, 'social_prepare')}</button>}
-          {session.state === 'ready' && session.hostUserId === userId && <button data-testid="start-visit" disabled={busyAction || stale} onClick={() => void action(() => window.ourCompanion.network.visits.sessions.start(session.id), { phase: 'starting' })}>{t(lang, 'social_start_visit')}</button>}
-          <button data-testid="end-visit" disabled={busyAction || stale} onClick={() => void action(() => window.ourCompanion.network.visits.sessions.end(session.id), { phase: 'ending' })}>{session.state === 'preparing' || session.state === 'ready' ? t(lang, 'social_cancel_visit') : t(lang, 'social_end_visit')}</button>
-        </div>}
-        <SocialVisitConversation session={session} userId={userId} lang={lang} stale={stale} />
-      </div>;
-    }) : <p data-testid="visit-session-state">{t(lang, 'social_no_current_visit')}</p>}
+    <p data-testid="visit-capacity">Visitors: {visibleVisitors} / {visualVisit.capacity}</p>
+    {sessions.length ? sessions.map((session) => <CurrentVisitCard key={session.id} session={session} live={liveVisits.some((candidate) => candidate.id === session.id)} lang={lang} stale={stale} userId={userId} visualVisit={visualVisit} busyAction={busyAction} action={action} refreshVisitOptions={refreshVisitOptions} />) : <p data-testid="visit-session-state">{t(lang, 'social_no_current_visit')}</p>}
   </section>;
+}
+
+function CurrentVisitCard({ session, live, lang, stale, userId, visualVisit, busyAction, action, refreshVisitOptions }: {
+  session: VisitSessionSummary;
+  live: boolean;
+  lang: Lang;
+  stale: boolean;
+  userId: string;
+  visualVisit: ReturnType<typeof useVisualVisitState>;
+  busyAction: boolean;
+  action: (operation: () => Promise<unknown>, options?: { phase?: SocialMutationPhase }) => Promise<void>;
+  refreshVisitOptions: () => Promise<void>;
+}) {
+  const [room, setRoom] = useState<VisitRoomState>();
+  const loadRoom = useCallback(async () => {
+    try { setRoom(await window.ourCompanion.network.visits.rooms.get(session.id)); }
+    catch { setRoom(undefined); }
+  }, [session.id]);
+
+  useEffect(() => {
+    void loadRoom();
+    if (!live) return;
+    const unsubscribe = window.ourCompanion.network.onStatusChanged((status) => {
+      if (status.socialInvalidation?.type === 'visit_session' && status.socialInvalidation.sessionId === session.id) void loadRoom();
+    });
+    const timer = window.setInterval(() => void loadRoom(), 30_000);
+    return () => { unsubscribe(); window.clearInterval(timer); };
+  }, [live, loadRoom, session.id]);
+
+  const me = room?.participants.find((participant) => participant.userId === userId && participant.state !== 'left');
+  const currentUserReady = me ? ['ready', 'active'].includes(me.state) : session.visitorOwnerUserId === userId ? session.visitorOwnerReady : session.hostReady;
+  const presentation = VISIT_SESSION_PRESENTATION[session.state];
+  const run = async (operation: () => Promise<unknown>, phase: SocialMutationPhase) => {
+    await action(operation, { phase });
+    await Promise.all([loadRoom(), refreshVisitOptions()]);
+  };
+  const guestPreparing = session.state === 'active' && me?.role === 'guest' && me.state === 'preparing';
+  const canEndRoom = me?.role !== 'guest';
+
+  return <div data-testid="visit-session-state" data-session-id={session.id} data-state={session.state} className="operational-row">
+    <div className="operational-row-main"><strong>{stale && live ? t(lang, 'social_visit_reconnecting') : visitSessionMessage(session, userId, lang)}</strong>{presentation && <span className={`status-badge status-badge-${presentation.tone}`}><span className="status-badge-marker" aria-hidden="true" />{t(lang, presentation.labelKey)}</span>}</div>
+    {room && <div className="social-room-members" data-testid="social-room-members">
+      <p><strong>{lang === 'zh-CN' ? '房间成员：' : 'Room members: '}</strong>{room.participants.filter((item) => item.state !== 'left').map((item) => `${item.companionName ?? item.role} (${item.role})`).join(' · ')}</p>
+      {room.topics.length > 0 && <ol className="social-room-topic-queue">{room.topics.map((topic) => <li key={topic.id} data-topic-state={topic.state}><strong>{topic.title}</strong> <span className="soft-pill">{topic.state}</span></li>)}</ol>}
+    </div>}
+    {session.state === 'preparing' && <p>{t(lang, 'social_visit_readiness', { owner: session.visitorOwnerReady ? t(lang, 'social_ready') : t(lang, 'social_not_ready'), host: session.hostReady ? t(lang, 'social_ready') : t(lang, 'social_not_ready') })}</p>}
+    {!stale && session.state === 'active' && <p>{visualVisitMessage(visualVisit, session, userId, lang)}</p>}
+    {stale && live && <p className="state-reason">{t(lang, 'operational_content_stale')}</p>}
+    {!live && <p>{t(lang, session.endReason ? visitEndReasonPresentation(session.endReason) : visitFailurePresentation(session.failureCode))}</p>}
+    {live && session.state !== 'ending' && <div className="operational-row-actions">
+      {((session.state === 'preparing' && !currentUserReady) || guestPreparing) && <button data-testid="prepare-visit" disabled={busyAction || stale} onClick={() => void run(() => guestPreparing ? window.ourCompanion.network.visits.rooms.markParticipantReady(session.id) : window.ourCompanion.network.visits.sessions.prepare(session.id), 'preparing')}>{busyAction ? t(lang, 'social_preparing') : t(lang, 'social_prepare')}</button>}
+      {session.state === 'ready' && session.hostUserId === userId && <button data-testid="start-visit" disabled={busyAction || stale} onClick={() => void run(() => window.ourCompanion.network.visits.sessions.start(session.id), 'starting')}>{t(lang, 'social_start_visit')}</button>}
+      {me?.role === 'guest' && <button type="button" className="btn-secondary btn-sm" disabled={busyAction || stale} onClick={() => void run(() => window.ourCompanion.network.visits.rooms.leave(session.id), 'ending')}>{lang === 'zh-CN' ? '离开房间' : 'Leave room'}</button>}
+      {canEndRoom && <button data-testid="end-visit" disabled={busyAction || stale} onClick={() => void run(() => window.ourCompanion.network.visits.sessions.end(session.id), 'ending')}>{session.state === 'preparing' || session.state === 'ready' ? t(lang, 'social_cancel_visit') : t(lang, 'social_end_visit')}</button>}
+    </div>}
+    {room?.session.hostUserId === userId && room.pendingJoinRequests.length > 0 && <section className="social-room-join-requests" data-testid="social-room-join-requests">
+      <h4>{lang === 'zh-CN' ? '加入申请' : 'Join requests'}</h4>
+      {room.pendingJoinRequests.map((request) => <article key={request.id} className="online-user-info">
+        <strong>{request.companionName ?? (lang === 'zh-CN' ? 'Guest Companion' : 'Guest Companion')}</strong>
+        {request.topic && <><p><strong>{lang === 'zh-CN' ? '排队主题：' : 'Queued topic: '}</strong>{request.topic.title}</p><p>{request.topic.summary}</p></>}
+        <div className="operational-row-actions"><button type="button" disabled={busyAction || stale} onClick={() => void run(() => window.ourCompanion.network.visits.rooms.acceptJoinRequest(request.id), 'accepting')}>{t(lang, 'social_accept')}</button><button type="button" disabled={busyAction || stale} onClick={() => void run(() => window.ourCompanion.network.visits.rooms.declineJoinRequest(request.id), 'rejecting')}>{t(lang, 'social_decline')}</button></div>
+      </article>)}
+    </section>}
+    <SocialVisitConversation session={session} userId={userId} lang={lang} stale={stale} />
+  </div>;
 }
 
 function socialAvailabilityMessage(status: NetworkStatus | undefined, lang: Lang): string {
@@ -206,14 +317,14 @@ function visualVisitMessage(visual: import('@our-companion/shared').VisualVisitR
   if (error === 'VISUAL_VISIT_ASSET_UNAVAILABLE' || error === 'VISUAL_VISIT_RENDERER_UNAVAILABLE') return t(lang, 'social_visitor_unavailable');
   if (error === 'VISUAL_VISIT_OWNER_MAPPING_UNAVAILABLE') return t(lang, 'social_owner_mapping_unavailable');
   if (session.visitorOwnerUserId === userId && visual.ownerPresenceMode === 'away_visiting') return t(lang, 'social_owner_visiting');
-  const visitor = visual.visitors[session.id];
+  const visitor = Object.values(visual.visitors).find((candidate) => candidate.sessionId === session.id);
   if (visitor) return t(lang, 'social_visitor_visiting', { name: visitor.name });
   return t(lang, 'social_preparing_visitor_assets');
 }
 
 function messageKeyForSocialError(cause: unknown): TranslationKey {
   const code = cause instanceof Error ? cause.message : 'SOCIAL_ACTION_NOT_ALLOWED';
-  return ({ INVALID_FRIEND_CODE: 'social_error_invalid_code', FRIEND_REQUEST_ALREADY_EXISTS: 'social_error_request_exists', FRIENDSHIP_ALREADY_EXISTS: 'social_error_friendship_exists', CANNOT_FRIEND_SELF: 'social_error_self', SOCIAL_ACTION_NOT_ALLOWED: 'social_error_action_unavailable', SOCIAL_DATA_OUT_OF_SYNC: 'social_error_sync', COMPANION_NOT_AVAILABLE: 'social_error_companion_unavailable', ASSET_STORAGE_UNAVAILABLE: 'social_error_storage_unavailable', VISIT_VISUAL_ASSETS_UNAVAILABLE: 'visit_failure_visual_assets', VISUAL_VISIT_ASSET_UNAVAILABLE: 'visit_failure_visual_assets', VISIT_HOST_COMPANION_AWAY: 'social_visit_host_companion_away', VISIT_HOST_CAPACITY_REACHED: 'social_visit_host_capacity_reached', VISIT_HOST_HAS_ACTIVE_GUESTS: 'social_visit_host_has_active_guests', VISIT_HOST_COMPANION_SWITCH_BLOCKED: 'social_visit_host_companion_switch_blocked', RATE_LIMITED: 'social_error_rate_limited' } as const)[code] ?? 'social_error_sync';
+  return ({ INVALID_FRIEND_CODE: 'social_error_invalid_code', FRIEND_REQUEST_ALREADY_EXISTS: 'social_error_request_exists', FRIENDSHIP_ALREADY_EXISTS: 'social_error_friendship_exists', CANNOT_FRIEND_SELF: 'social_error_self', SOCIAL_ACTION_NOT_ALLOWED: 'social_error_action_unavailable', SOCIAL_DATA_OUT_OF_SYNC: 'social_error_sync', COMPANION_NOT_AVAILABLE: 'social_error_companion_unavailable', ASSET_STORAGE_UNAVAILABLE: 'social_error_storage_unavailable', VISIT_VISUAL_ASSETS_UNAVAILABLE: 'visit_failure_visual_assets', VISUAL_VISIT_ASSET_UNAVAILABLE: 'visit_failure_visual_assets', VISIT_HOST_COMPANION_AWAY: 'social_visit_host_companion_away', VISIT_HOST_CAPACITY_REACHED: 'social_visit_host_capacity_reached', VISIT_HOST_HAS_ACTIVE_GUESTS: 'social_visit_host_has_active_guests', VISIT_HOST_COMPANION_SWITCH_BLOCKED: 'social_visit_host_companion_switch_blocked', VISIT_COMPANION_RESERVED: 'social_error_action_unavailable', VISIT_RESERVATION_EXISTS: 'social_error_action_unavailable', VISIT_ROOM_NOT_JOINABLE: 'social_error_action_unavailable', VISIT_ROOM_CAPACITY_REACHED: 'social_visit_host_capacity_reached', VISIT_JOIN_REQUESTS_DISABLED: 'social_error_action_unavailable', VISIT_JOIN_REQUEST_EXISTS: 'social_error_action_unavailable', RATE_LIMITED: 'social_error_rate_limited' } as const)[code] ?? 'social_error_sync';
 }
 
 function visitAdmissionMessage(lang: Lang, code: 'VISIT_HOST_COMPANION_AWAY' | 'VISIT_HOST_CAPACITY_REACHED' | 'VISIT_HOST_HAS_ACTIVE_GUESTS' | 'VISIT_HOST_COMPANION_SWITCH_BLOCKED'): string {
