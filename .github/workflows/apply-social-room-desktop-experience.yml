@@ -26,6 +26,7 @@ jobs:
         run: |
           cat scripts/social-room-patch/part* | base64 -d | gzip -d > /tmp/social-room.patch
           git apply --whitespace=error-all /tmp/social-room.patch
+          python scripts/social-room-patch/fix.py
       - run: npm run typecheck
       - run: npm test
       - run: npm run arch:check
