@@ -1,0 +1,27 @@
+name: Export Social Room Source
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: github.head_ref == 'agent/social-room-desktop-experience'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/social-room-desktop-experience
+          fetch-depth: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: social-room-source
+          path: |
+            .
+            !.git/**
+          include-hidden-files: true
+          retention-days: 1
