@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 const page = readFileSync(new URL('../../pages/SocialPage.tsx', import.meta.url), 'utf8');
 const rows = readFileSync(new URL('./SocialRows.tsx', import.meta.url), 'utf8');
 const model = readFileSync(new URL('./useSocialViewModel.ts', import.meta.url), 'utf8');
+const conversation = readFileSync(new URL('./SocialVisitConversation.tsx', import.meta.url), 'utf8');
 
 describe('Social lifecycle UI contract', () => {
   it('uses independently loaded domain snapshots instead of global empty claims', () => {
@@ -45,4 +46,21 @@ describe('Social lifecycle UI contract', () => {
     expect(page).toContain('VISIT_HOST_COMPANION_SWITCH_BLOCKED');
     expect(page).not.toContain("disabledReason={mutationReason ?? (hostAtCapacity ? 'VISIT_HOST_CAPACITY_REACHED'");
   });
+  it('does not permanently consume an automatic turn when a refresh cancels its delay', () => {
+    const timerIndex = conversation.indexOf('const timer = window.setTimeout(() => {');
+    const requestIndex = conversation.indexOf('requestedTurnKey.current = turnKey;', timerIndex);
+    expect(timerIndex).toBeGreaterThan(-1);
+    expect(requestIndex).toBeGreaterThan(timerIndex);
+    expect(conversation).toContain('void respond(turnKey);');
+    expect(conversation).toContain('}, 2800);');
+  });
+
+  it('allows terminal Visit cards to be dismissed only from the current client scope', () => {
+    expect(page).toContain('dismissedTerminalVisitIds');
+    expect(page).toContain('readDismissedTerminalVisitIds(scopeKey)');
+    expect(page).toContain('writeDismissedTerminalVisitIds(scopeKey, next)');
+    expect(page).toContain('data-testid="clear-terminal-visit"');
+    expect(page).toContain('Network Portal Social Journal is preserved.');
+  });
+
 });

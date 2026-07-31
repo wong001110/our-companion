@@ -405,11 +405,16 @@ export class VisitService {
     if (!state.sharedMoment) throw new Error('VISIT_SHARED_MOMENT_NOT_READY');
     const key = `${SAVED_MOMENT_PREFIX}${sessionId}`;
     let discoveryId = this.db.getAppSetting<string>(key);
-    if (!discoveryId) {
+    let discovery = discoveryId ? this.db.getDiscovery(discoveryId) : undefined;
+    if (!discovery) {
       discoveryId = `shared-moment-${randomUUID()}`;
-      this.db.insertDiscovery(discoveryFromMoment(discoveryId, state.sharedMoment, state.topics, this.db.resolveActiveCompanionId()));
+      discovery = this.db.insertDiscovery(discoveryFromMoment(discoveryId, state.sharedMoment, state.topics, this.db.resolveActiveCompanionId()));
       this.db.setAppSetting(key, discoveryId);
-      if (this.addDiscoveryToJourney) await this.addDiscoveryToJourney(discoveryId);
+    }
+    discovery = this.prepareSharedMomentDiscoveryForJourney(discovery);
+    if (discovery.status !== 'saved') {
+      if (!this.addDiscoveryToJourney) throw new Error('VISIT_JOURNEY_UNAVAILABLE');
+      await this.addDiscoveryToJourney(discovery.id);
     }
     return this.getSocialState(sessionId);
   };
@@ -498,13 +503,28 @@ export class VisitService {
   private withLocalSocialState(sessionId: string, state: SocialVisitState): SocialVisitState {
     const savedTopicIds = state.topics.filter((topic) => Boolean(this.db?.getAppSetting<string>(`${SAVED_TOPIC_PREFIX}${sessionId}.${topic.id}`))).map((topic) => topic.id);
     const suppressedTopicIds = state.topics.filter((topic) => Boolean(this.db?.getAppSetting<boolean>(`${SUPPRESSED_TOPIC_PREFIX}${topic.id}`))).map((topic) => topic.id);
+    const savedMomentDiscoveryId = this.db?.getAppSetting<string>(`${SAVED_MOMENT_PREFIX}${sessionId}`);
+    const savedMomentDiscovery = savedMomentDiscoveryId ? this.db?.getDiscovery?.(savedMomentDiscoveryId) : undefined;
     return {
       ...state,
       privateReflection: this.db?.getAppSetting<string>(`${REFLECTION_PREFIX}${sessionId}`),
       savedTopicIds,
       suppressedTopicIds,
-      sharedMomentSaved: Boolean(this.db?.getAppSetting<string>(`${SAVED_MOMENT_PREFIX}${sessionId}`)),
+      sharedMomentSaved: savedMomentDiscovery?.status === 'saved',
     };
+  }
+
+  private prepareSharedMomentDiscoveryForJourney(discovery: Discovery): Discovery {
+    if (!this.db) return discovery;
+    let current = discovery;
+    const reason = { reason: 'social_visit_shared_moment_recovery' };
+    if (current.status === 'eligible') current = this.db.transitionDiscoveryStatus(current.id, 'queued', reason);
+    if (current.status === 'queued') current = this.db.transitionDiscoveryStatus(current.id, 'presenting', reason);
+    if (current.status === 'presenting') current = this.db.transitionDiscoveryStatus(current.id, 'announced', reason);
+    if (current.status !== 'announced' && current.status !== 'saved') {
+      throw new Error(`VISIT_SHARED_MOMENT_DISCOVERY_STATE_INVALID:${current.status}`);
+    }
+    return current;
   }
 
   private attachApprovedShare = async (session: VisitSessionSummary): Promise<void> => {
@@ -739,7 +759,7 @@ function discoveryFromTopic(id: string, topic: VisitRoomTopic, companionId: stri
 
 function discoveryFromMoment(id: string, moment: SocialVisitSharedMoment, topics: VisitRoomTopic[], companionId: string): Discovery {
   const now = new Date().toISOString();
-  return { id, source: 'companion', title: moment.title, summary: moment.summary, tags: [...new Set(topics.flatMap((topic) => topic.tags))].slice(0, 8), raw: { kind: 'social_visit_shared_moment', sessionId: moment.sessionId, topicIds: topics.map((topic) => topic.id) }, userInterestScore: 0.6, userHistoryScore: 0.7, characterExpertiseScore: 0.5, noveltyScore: 0.5, usefulnessScore: 0.7, finalScore: 0.65, status: 'eligible', companionId, whyThisMatters: 'A shared moment created by the Companions during a Social Visit.', recommendedAction: 'add_to_journey', createdAt: now, updatedAt: now };
+  return { id, source: 'companion', title: moment.title, summary: moment.summary, tags: [...new Set(topics.flatMap((topic) => topic.tags))].slice(0, 8), raw: { kind: 'social_visit_shared_moment', sessionId: moment.sessionId, topicIds: topics.map((topic) => topic.id) }, userInterestScore: 0.6, userHistoryScore: 0.7, characterExpertiseScore: 0.5, noveltyScore: 0.5, usefulnessScore: 0.7, finalScore: 0.65, status: 'announced', companionId, whyThisMatters: 'A shared moment created by the Companions during a Social Visit.', recommendedAction: 'add_to_journey', createdAt: now, updatedAt: now };
 }
 
 function approvedShareInput(pending: PendingShare): VisitShareInput {

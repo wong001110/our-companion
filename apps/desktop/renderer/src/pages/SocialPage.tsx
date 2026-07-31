@@ -34,6 +34,7 @@ export function SocialPage() {
   const [selectedJoinTopicId, setSelectedJoinTopicId] = useState('');
   const [joinableRooms, setJoinableRooms] = useState<JoinableVisitRoom[]>([]);
   const [reservation, setReservation] = useState<VisitReservationSummary>({ locked: false });
+  const [dismissedTerminalVisitIds, setDismissedTerminalVisitIds] = useState<string[]>([]);
   const scopeKeyRef = useRef(scopeKey);
   useEffect(() => { scopeKeyRef.current = scopeKey; }, [scopeKey]);
   const handlePublicationAvailability = useCallback((next: { loaded: boolean; canSendVisit: boolean }) => {
@@ -80,6 +81,7 @@ export function SocialPage() {
     setSelectedJoinTopicId('');
     setJoinableRooms([]);
     setReservation({ locked: false });
+    setDismissedTerminalVisitIds(readDismissedTerminalVisitIds(scopeKey));
     void window.ourCompanion.discovery.getFeed({ limit: 20 }).then((items) => {
       const candidates = items.filter((item) => item.title && item.summary).map((item) => ({ id: item.id, title: item.title, summary: item.summary ?? item.title }));
       setShareCandidates(candidates);
@@ -91,6 +93,16 @@ export function SocialPage() {
     });
     return unsubscribe;
   }, [refreshVisitOptions, scopeKey]);
+
+  const clearTerminalVisit = useCallback((sessionId: string) => {
+    if (!scopeKey) return;
+    setDismissedTerminalVisitIds((current) => {
+      if (current.includes(sessionId)) return current;
+      const next = [...current, sessionId].slice(-100);
+      writeDismissedTerminalVisitIds(scopeKey, next);
+      return next;
+    });
+  }, [scopeKey]);
 
   if (!status) return <div data-testid="social-panel" className="social-page"><PaperCard title={t(lang, 'social_title')} tape className="settings-panel social-unavailable"><SectionLoading label={t(lang, 'social_availability_loading')} /></PaperCard></div>;
   if (!canShowContent || !status.account) return <div data-testid="social-panel" className="social-page"><PaperCard title={t(lang, 'social_title')} tape className="settings-panel social-unavailable"><ConnectionBanner status={status} onRetry={() => void window.ourCompanion.network.retryConnection()} /><EmptyState title={t(lang, 'social_unavailable')}>{socialAvailabilityMessage(status, lang)}</EmptyState></PaperCard></div>;
@@ -131,7 +143,7 @@ export function SocialPage() {
   const hostOccupancy = liveVisits.filter((session) => session.hostUserId === account.id).length;
   const localCompanionAway = liveVisits.some((session) => session.visitorOwnerUserId === account.id);
   const hostAtCapacity = hostOccupancy >= visualVisit.capacity;
-  const latestTerminalVisit = visitSessions.find((session) => ['ended', 'cancelled', 'failed'].includes(session.state));
+  const latestTerminalVisit = visitSessions.find((session) => ['ended', 'cancelled', 'failed'].includes(session.state) && !dismissedTerminalVisitIds.includes(session.id));
   const userId = account.id;
   const friendsById = new Map(friends.map((friend) => [friend.userId, friend]));
   const suggestedFriend = friends.find((friend) => friend.presence === 'online');
@@ -146,7 +158,7 @@ export function SocialPage() {
       <p><strong>{account.username}</strong> <span className="soft-pill">UID: {account.uid}</span></p>
       <div className="action-row"><button type="button" onClick={() => void copyOwnUid()}>{copiedUid ? t(lang, 'social_friend_code_copied') : t(lang, 'social_copy_friend_code')}</button><span>{t(lang, 'social_friend_count', { count: friends.length, plural: friends.length === 1 ? '' : 's' })} · {t(lang, 'social_pending_request_count', { count: incoming.length, plural: incoming.length === 1 ? '' : 's' })}</span></div>
     </section>
-    {loadedDomains.visitSessions && <CurrentVisitSection lang={lang} stale={stale} liveVisits={liveVisits} latestTerminalVisit={latestTerminalVisit} userId={userId} visualVisit={visualVisit} busyAction={busyAction} action={action} refreshVisitOptions={refreshVisitOptions} />}
+    {loadedDomains.visitSessions && <CurrentVisitSection lang={lang} stale={stale} liveVisits={liveVisits} latestTerminalVisit={latestTerminalVisit} userId={userId} visualVisit={visualVisit} busyAction={busyAction} action={action} refreshVisitOptions={refreshVisitOptions} onClearTerminalVisit={clearTerminalVisit} />}
     <section aria-labelledby="published-companion-heading"><h3 id="published-companion-heading">{t(lang, 'social_published_companion')}</h3><PublishedCompanionSection onVisitAvailabilityChange={handlePublicationAvailability} /></section>
     <div className="online-auth-form"><label><span>{t(lang, 'social_add_friend_by_code')}</span><input value={uid} onChange={(event) => setUid(event.target.value.toUpperCase())} placeholder="OC-7K4M92QX" /></label><button className="btn-secondary btn-sm" onClick={() => { setLookup(undefined); setActionError(undefined); void action(() => window.ourCompanion.network.friends.lookup(uid.trim()), { clearLookup: false, phase: 'sending', onSuccess: setLookup }); }} disabled={!uid.trim() || busyAction}>{t(lang, 'social_find')}</button></div>
     {lookup && <div data-testid="friend-lookup-result" className="online-user-info"><p><strong>{lookup.username}</strong> · UID: {lookup.uid}</p>{canSendFriendRequest(lookup.relationship) && <button data-testid="send-friend-request" className="btn-primary btn-sm" disabled={busyAction} onClick={() => void action(() => window.ourCompanion.network.friends.sendRequest(lookup.id), { phase: 'sending' })}>{t(lang, 'social_send_request')}</button>}<p data-testid="friend-lookup-relationship" aria-live="polite">{friendLookupRelationshipMessage(lookup.relationship, lang)}</p></div>}
@@ -210,7 +222,7 @@ export function SocialPage() {
 }
 
 function CurrentVisitSection({
-  lang, stale, liveVisits, latestTerminalVisit, userId, visualVisit, busyAction, action, refreshVisitOptions,
+  lang, stale, liveVisits, latestTerminalVisit, userId, visualVisit, busyAction, action, refreshVisitOptions, onClearTerminalVisit,
 }: {
   lang: Lang;
   stale: boolean;
@@ -221,17 +233,18 @@ function CurrentVisitSection({
   busyAction: boolean;
   action: (operation: () => Promise<unknown>, options?: { phase?: SocialMutationPhase }) => Promise<void>;
   refreshVisitOptions: () => Promise<void>;
+  onClearTerminalVisit: (sessionId: string) => void;
 }) {
   const sessions = liveVisits.length ? liveVisits : latestTerminalVisit ? [latestTerminalVisit] : [];
   const visibleVisitors = Object.values(visualVisit.visitors).length;
   return <section aria-labelledby="current-visit-heading">
     <h3 id="current-visit-heading">{t(lang, 'social_visit_session')}</h3>
     <p data-testid="visit-capacity">Visitors: {visibleVisitors} / {visualVisit.capacity}</p>
-    {sessions.length ? sessions.map((session) => <CurrentVisitCard key={session.id} session={session} live={liveVisits.some((candidate) => candidate.id === session.id)} lang={lang} stale={stale} userId={userId} visualVisit={visualVisit} busyAction={busyAction} action={action} refreshVisitOptions={refreshVisitOptions} />) : <p data-testid="visit-session-state">{t(lang, 'social_no_current_visit')}</p>}
+    {sessions.length ? sessions.map((session) => <CurrentVisitCard key={session.id} session={session} live={liveVisits.some((candidate) => candidate.id === session.id)} lang={lang} stale={stale} userId={userId} visualVisit={visualVisit} busyAction={busyAction} action={action} refreshVisitOptions={refreshVisitOptions} onClearTerminalVisit={onClearTerminalVisit} />) : <p data-testid="visit-session-state">{t(lang, 'social_no_current_visit')}</p>}
   </section>;
 }
 
-function CurrentVisitCard({ session, live, lang, stale, userId, visualVisit, busyAction, action, refreshVisitOptions }: {
+function CurrentVisitCard({ session, live, lang, stale, userId, visualVisit, busyAction, action, refreshVisitOptions, onClearTerminalVisit }: {
   session: VisitSessionSummary;
   live: boolean;
   lang: Lang;
@@ -241,6 +254,7 @@ function CurrentVisitCard({ session, live, lang, stale, userId, visualVisit, bus
   busyAction: boolean;
   action: (operation: () => Promise<unknown>, options?: { phase?: SocialMutationPhase }) => Promise<void>;
   refreshVisitOptions: () => Promise<void>;
+  onClearTerminalVisit: (sessionId: string) => void;
 }) {
   const [room, setRoom] = useState<VisitRoomState>();
   const loadRoom = useCallback(async () => {
@@ -277,7 +291,13 @@ function CurrentVisitCard({ session, live, lang, stale, userId, visualVisit, bus
     {session.state === 'preparing' && <p>{t(lang, 'social_visit_readiness', { owner: session.visitorOwnerReady ? t(lang, 'social_ready') : t(lang, 'social_not_ready'), host: session.hostReady ? t(lang, 'social_ready') : t(lang, 'social_not_ready') })}</p>}
     {!stale && session.state === 'active' && <p>{visualVisitMessage(visualVisit, session, userId, lang)}</p>}
     {stale && live && <p className="state-reason">{t(lang, 'operational_content_stale')}</p>}
-    {!live && <p>{t(lang, session.endReason ? visitEndReasonPresentation(session.endReason) : visitFailurePresentation(session.failureCode))}</p>}
+    {!live && <div className="terminal-visit-summary">
+      <p>{t(lang, session.endReason ? visitEndReasonPresentation(session.endReason) : visitFailurePresentation(session.failureCode))}</p>
+      <div className="operational-row-actions">
+        <button type="button" className="btn-secondary btn-sm" data-testid="clear-terminal-visit" onClick={() => onClearTerminalVisit(session.id)}>{lang === 'zh-CN' ? '从此设备清除' : 'Clear from this device'}</button>
+        <span className="state-reason">{lang === 'zh-CN' ? '只隐藏此设备上的记录；Network Portal 的 Social Journal 不会删除。' : 'This only hides the local card. The Network Portal Social Journal is preserved.'}</span>
+      </div>
+    </div>}
     {live && session.state !== 'ending' && <div className="operational-row-actions">
       {((session.state === 'preparing' && !currentUserReady) || guestPreparing) && <button data-testid="prepare-visit" disabled={busyAction || stale} onClick={() => void run(() => guestPreparing ? window.ourCompanion.network.visits.rooms.markParticipantReady(session.id) : window.ourCompanion.network.visits.sessions.prepare(session.id), 'preparing')}>{busyAction ? t(lang, 'social_preparing') : t(lang, 'social_prepare')}</button>}
       {session.state === 'ready' && session.hostUserId === userId && <button data-testid="start-visit" disabled={busyAction || stale} onClick={() => void run(() => window.ourCompanion.network.visits.sessions.start(session.id), 'starting')}>{t(lang, 'social_start_visit')}</button>}
@@ -335,6 +355,32 @@ function visitAdmissionMessage(lang: Lang, code: 'VISIT_HOST_COMPANION_AWAY' | '
     VISIT_HOST_COMPANION_SWITCH_BLOCKED: 'social_visit_host_companion_switch_blocked',
   } as const;
   return t(lang, key[code]);
+}
+
+const DISMISSED_TERMINAL_VISITS_STORAGE_PREFIX = 'our-companion.social.dismissed-terminal-visits.';
+
+function dismissedTerminalVisitsStorageKey(scopeKey: string): string {
+  return `${DISMISSED_TERMINAL_VISITS_STORAGE_PREFIX}${encodeURIComponent(scopeKey)}`;
+}
+
+function readDismissedTerminalVisitIds(scopeKey?: string): string[] {
+  if (!scopeKey) return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(dismissedTerminalVisitsStorageKey(scopeKey)) ?? '[]');
+    return Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === 'string' && value.length > 0).slice(-100)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeDismissedTerminalVisitIds(scopeKey: string, sessionIds: string[]): void {
+  try {
+    window.localStorage.setItem(dismissedTerminalVisitsStorageKey(scopeKey), JSON.stringify(sessionIds.slice(-100)));
+  } catch {
+    // Local history dismissal is optional and must not block the Social page.
+  }
 }
 
 function visibleInvitations(invitations: VisitInvitationSummary[]): VisitInvitationSummary[] {
