@@ -27,12 +27,16 @@ describe('Visit activity lock', () => {
     expect(visitSource).toContain("kind: 'outgoing_invitation'");
     expect(visitSource).toContain("kind: 'session_participant'");
     expect(visitSource).toContain('VISIT_COMPANION_RESERVED');
-    expect(visitSource).toContain("kind: 'outgoing_invitation'");
-    expect(visitSource).toContain("kind: 'session_participant'");
     expect(visitSource).toContain('void this.refreshActivityLock().catch(() => undefined)');
     expect(visitSource).toContain("typeof getReservation === 'function'");
     expect(visitSource).toContain("Array.isArray(results[0])");
+  });
+
+  it('keeps the known reservation through temporary transport loss', () => {
     expect(visitSource).toContain("code.includes('ONLINE_MODE_DISABLED')");
+    expect(visitSource).toContain("code.includes('NETWORK_')");
+    expect(visitSource).toContain('return this.getActivityLock()');
+    expect(visitSource).not.toContain("this.activityLock = { locked: false };\n      return this.getActivityLock();");
   });
 
   it('blocks autonomous execution and proactive Discovery but keeps read/chat paths outside the blocklist', () => {
