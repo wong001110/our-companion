@@ -49,6 +49,9 @@ export async function seedTwoDeviceNetwork(owner: SmokeElectronDevice, host: Smo
   const [ownerState, hostState] = await Promise.all([registerDevice(owner, ownerCredentials), registerDevice(host, hostCredentials)]);
   if (!ownerState.network.accountId || !hostState.network.accountId) throw new Error('SMOKE_ACCOUNT_UNAVAILABLE');
   await establishFriendship(owner, host);
-  const published = await publishOwnerFixture(owner, runId);
+  const [published] = await Promise.all([
+    publishOwnerFixture(owner, runId),
+    publishOwnerFixture(host, `${runId}-host`),
+  ]);
   return { ownerAccountId: ownerState.network.accountId, hostAccountId: hostState.network.accountId, ownerPackId: published.assetPackId, ownerNetworkCompanionId: published.networkCompanionId };
 }

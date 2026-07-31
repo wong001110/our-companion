@@ -594,6 +594,7 @@ export class AppServices {
       this.publicCompanions,
       this.db,
       async (messages, source) => (await this.sendToAi({ messages, channel: 'turn', source })).content,
+      async (discoveryId) => this.discovery.addToJourney({ discoveryId }),
     );
     visits = this.visits;
     this.visualVisits = new VisualVisitService(this.network, this.visits, this.publicCompanions, (state) => {

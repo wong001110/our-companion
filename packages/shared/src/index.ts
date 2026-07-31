@@ -2472,6 +2472,9 @@ export interface PublicCompanionProfile {
   publicTags: string[];
   visibility: 'friends_only';
   published: boolean;
+  randomVisitsEnabled?: boolean;
+  randomVisitAudience?: 'friends';
+  allowJoinRequests?: boolean;
   activeAssetPackId?: string;
   createdAt: string;
   updatedAt: string;
@@ -2491,6 +2494,50 @@ export interface AssetUploadProgress { assetPackId?: string; completedFiles: num
 export interface CachedAssetPack { serverOrigin: string; assetPackId: string; networkCompanionId: string; manifestHash: string; totalBytes: number; downloadedAt: string; lastUsedAt: string; pinned: boolean; verified: boolean; }
 export type VisitInvitationStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired';
 export type VisitSessionState = 'preparing' | 'ready' | 'active' | 'ending' | 'ended' | 'cancelled' | 'failed';
+export type VisitMode = 'standard' | 'random_host_topic' | 'visitor_topic';
+export type VisitParticipantRole = 'host' | 'visitor' | 'guest';
+export type VisitParticipantState = 'preparing' | 'ready' | 'active' | 'left';
+export type VisitRoomTopicState = 'queued' | 'active' | 'completed';
+export type VisitJoinRequestStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired';
+export type ShareableTopicShareScope = 'summary_only' | 'summary_and_source';
+
+export interface ShareableTopicInput {
+  title: string;
+  summary: string;
+  tags?: string[];
+  sourceUrl?: string;
+  audience?: 'friends';
+  shareScope?: ShareableTopicShareScope;
+  allowRecipientSave?: boolean;
+  eligibleForRandomVisit?: boolean;
+  expiresAt?: string;
+}
+export interface ShareableTopicSummary {
+  id: string;
+  companionId: string;
+  title: string;
+  summary: string;
+  tags: string[];
+  sourceUrl?: string;
+  audience: 'friends';
+  shareScope: ShareableTopicShareScope;
+  allowRecipientSave: boolean;
+  eligibleForRandomVisit: boolean;
+  expiresAt?: string;
+  revokedAt?: string;
+  lastUsedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface VisitTopicSnapshot {
+  ownerCompanionId: string;
+  title: string;
+  summary: string;
+  tags: string[];
+  sourceUrl?: string;
+  shareScope?: ShareableTopicShareScope;
+  allowRecipientSave: boolean;
+}
 export interface VisitReservationSummary {
   locked: boolean;
   kind?: 'outgoing_invitation' | 'session_participant' | 'join_request';
@@ -2511,6 +2558,9 @@ export interface VisitInvitationSummary {
   companionName: string;
   companionDescription?: string;
   companionTags: string[];
+  visitMode?: VisitMode;
+  topic?: VisitTopicSnapshot;
+  topicSelectedAt?: string;
   status: VisitInvitationStatus;
   expiresAt: string;
   respondedAt?: string;
@@ -2523,8 +2573,12 @@ export interface VisitSessionSummary {
   invitationId: string;
   visitorOwnerUserId: string;
   hostUserId: string;
+  hostNetworkCompanionId?: string;
   networkCompanionId: string;
   assetPackId: string;
+  visitMode?: VisitMode;
+  roomCapacity?: number;
+  currentTopicSequence?: number;
   state: VisitSessionState;
   visitorOwnerReady: boolean;
   hostReady: boolean;
@@ -2536,18 +2590,149 @@ export interface VisitSessionSummary {
   createdAt: string;
   updatedAt: string;
 }
-export type VisualVisitState = 'entering' | 'idle' | 'walking' | 'leaving';
+export interface VisitRoomParticipant {
+  id: string;
+  sessionId?: string;
+  userId: string;
+  networkCompanionId: string;
+  companionName?: string;
+  assetPackId?: string;
+  role: VisitParticipantRole;
+  state: VisitParticipantState;
+  readyAt?: string;
+  seenAt?: string;
+  joinedAt: string;
+  leftAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+export interface VisitRoomTopic {
+  id: string;
+  sessionId: string;
+  sequence: number;
+  state: VisitRoomTopicState;
+  ownerCompanionId: string;
+  createdByUserId?: string;
+  title: string;
+  summary: string;
+  tags: string[];
+  sourceUrl?: string;
+  shareScope?: ShareableTopicShareScope;
+  allowRecipientSave: boolean;
+  minimumTurns: number;
+  maximumTurns: number;
+  startedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface VisitJoinRequestSummary {
+  id: string;
+  sessionId: string;
+  requesterUserId: string;
+  networkCompanionId: string;
+  companionName?: string;
+  assetPackId: string;
+  status: VisitJoinRequestStatus;
+  topic?: VisitTopicSnapshot;
+  expiresAt: string;
+  respondedAt?: string;
+  cancelledAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface VisitRoomState {
+  session: Pick<VisitSessionSummary, 'id' | 'state' | 'hostUserId' | 'createdAt' | 'updatedAt'> & { roomCapacity: number; currentTopicSequence: number };
+  participants: VisitRoomParticipant[];
+  topics: VisitRoomTopic[];
+  activeTopic?: VisitRoomTopic;
+  pendingJoinRequests: VisitJoinRequestSummary[];
+}
+export interface JoinableVisitRoom {
+  sessionId: string;
+  state: 'ready' | 'active';
+  hostUserId: string;
+  hostUsername: string;
+  hostNetworkCompanionId?: string;
+  hostCompanionName?: string;
+  roomCapacity: number;
+  participantCount: number;
+  currentTopicSequence: number;
+  participants: Array<Pick<VisitRoomParticipant, 'userId' | 'networkCompanionId' | 'companionName' | 'role'>>;
+  activeTopic?: VisitRoomTopic;
+  updatedAt: string;
+}
+export interface SocialVisitTurn {
+  id: string;
+  sessionId: string;
+  sequence: number;
+  senderUserId: string;
+  roomTopicId?: string;
+  intent: string;
+  message: string;
+  emotion?: string;
+  topic?: string;
+  createdAt: string;
+}
+export interface SocialVisitShare {
+  id: string;
+  sessionId: string;
+  kind: 'discovery';
+  title: string;
+  summary: string;
+  tags: string[];
+  sourceUrl?: string;
+  createdAt: string;
+}
+export interface SocialVisitSharedMoment {
+  id: string;
+  sessionId: string;
+  title: string;
+  summary: string;
+  turnCount: number;
+  createdAt: string;
+}
+export interface SocialVisitState {
+  sessionId: string;
+  maxTurns: number;
+  currentTopicSequence?: number;
+  nextActorUserId?: string;
+  share?: SocialVisitShare;
+  activeTopic?: VisitRoomTopic;
+  topics: VisitRoomTopic[];
+  participants: VisitRoomParticipant[];
+  turns: SocialVisitTurn[];
+  sharedMoment?: SocialVisitSharedMoment;
+  privateReflection?: string;
+  savedTopicIds?: string[];
+  sharedMomentSaved?: boolean;
+  suppressedTopicIds?: string[];
+}
+export type VisualVisitState = 'entering' | 'idle' | 'walking' | 'talking' | 'reacting' | 'leaving';
 export type VisualVisitFacing = 'left' | 'right' | 'up' | 'down' | 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right';
+export interface SocialVisitPresentation {
+  turnId: string;
+  sessionId: string;
+  senderUserId: string;
+  message: string;
+  intent: string;
+  emotion?: string;
+  animationName: string;
+}
 /** Sanitized, renderer-safe description of one remote visual-only Visit participant. */
 export interface VisualVisitRenderModel {
   runtimeId: string;
   sessionId: string;
+  participantId?: string;
+  userId?: string;
+  participantRole?: VisitParticipantRole;
   networkCompanionId: string;
   assetPackId: string;
   name: string;
   role: 'remote_visitor';
   state: VisualVisitState;
   animationName: string;
+  presentation?: SocialVisitPresentation;
   x: number;
   y: number;
   facing: VisualVisitFacing;
@@ -2564,6 +2749,7 @@ export interface VisualVisitRendererState {
   departingVisitors: Record<string, VisualVisitRenderModel>;
   visitorOrder: string[];
   errors: Record<string, VisualVisitRendererError>;
+  localPresentation?: SocialVisitPresentation;
 }
 /** Sanitized, smoke-runtime-only state. It is unavailable from normal builds. */
 export interface SmokeTestState {
@@ -2579,7 +2765,7 @@ export interface SmokeTestState {
     errors?: Record<string, VisualVisitRendererError>;
   };
 }
-export interface SmokeVisualRuntimeUpdate { sessionId: string; animationName: string; x: number; y: number; }
+export interface SmokeVisualRuntimeUpdate { runtimeId: string; sessionId: string; animationName: string; x: number; y: number; }
 export interface SocialState {
   scope?: { serverUrl: string; accountId: string };
   friends: FriendSummary[];
@@ -2902,6 +3088,11 @@ export interface OurCompanionApi {
       activate(companionId: string): Promise<{ activeNetworkCompanionId: string; changed: boolean }>;
       publish(companionId: string): Promise<PublicCompanionProfile>;
       unpublish(companionId: string): Promise<PublicCompanionProfile>;
+      updateSocialPolicy(companionId: string, input: { randomVisitsEnabled?: boolean; randomVisitAudience?: 'friends'; allowJoinRequests?: boolean }): Promise<PublicCompanionProfile>;
+      listShareableTopics(companionId: string): Promise<ShareableTopicSummary[]>;
+      createShareableTopic(companionId: string, input: ShareableTopicInput): Promise<ShareableTopicSummary>;
+      updateShareableTopic(companionId: string, topicId: string, input: ShareableTopicInput): Promise<ShareableTopicSummary>;
+      revokeShareableTopic(companionId: string, topicId: string): Promise<ShareableTopicSummary>;
       getFriendCompanion(friendUserId: string): Promise<PublicCompanionProfile>;
     };
     assets: {
@@ -2915,12 +3106,25 @@ export interface OurCompanionApi {
       clearUnusedCache(): Promise<{ removed: number; bytesFreed: number }>;
     };
     visits: {
+      getReservation(): Promise<VisitReservationSummary>;
       invitations: {
         list(input?: { direction?: 'incoming' | 'outgoing'; status?: VisitInvitationStatus }): Promise<VisitInvitationSummary[]>;
-        send(hostUserId: string): Promise<VisitInvitationSummary>;
+        send(hostUserId: string, input?: { mode?: VisitMode; topicId?: string }): Promise<VisitInvitationSummary>;
+        sendDiscovery(input: { hostUserId: string; discoveryId: string }): Promise<VisitInvitationSummary>;
         accept(invitationId: string): Promise<{ invitation: VisitInvitationSummary; session: VisitSessionSummary }>;
         decline(invitationId: string): Promise<VisitInvitationSummary>;
         cancel(invitationId: string): Promise<VisitInvitationSummary>;
+      };
+      rooms: {
+        listJoinable(): Promise<JoinableVisitRoom[]>;
+        get(sessionId: string): Promise<VisitRoomState>;
+        requestJoin(sessionId: string, topicId?: string): Promise<VisitJoinRequestSummary>;
+        listJoinRequests(sessionId: string): Promise<VisitJoinRequestSummary[]>;
+        acceptJoinRequest(joinRequestId: string): Promise<VisitRoomState>;
+        declineJoinRequest(joinRequestId: string): Promise<VisitJoinRequestSummary>;
+        cancelJoinRequest(joinRequestId: string): Promise<VisitJoinRequestSummary>;
+        markParticipantReady(sessionId: string): Promise<VisitSessionSummary>;
+        leave(sessionId: string): Promise<VisitRoomParticipant>;
       };
       sessions: {
         list(): Promise<VisitSessionSummary[]>;
@@ -2928,11 +3132,18 @@ export interface OurCompanionApi {
         prepare(sessionId: string): Promise<VisitSessionSummary>;
         start(sessionId: string): Promise<VisitSessionSummary>;
         end(sessionId: string): Promise<VisitSessionSummary>;
+        getSocial(sessionId: string): Promise<SocialVisitState>;
+        respondSocial(sessionId: string): Promise<SocialVisitState>;
+        finalizeSocial(sessionId: string): Promise<SocialVisitState>;
+        saveTopic(sessionId: string, topicId: string): Promise<SocialVisitState>;
+        saveSharedMoment(sessionId: string): Promise<SocialVisitState>;
+        suppressTopic(sessionId: string, topicId: string): Promise<SocialVisitState>;
       };
       visual: {
         getState(): Promise<VisualVisitRendererState>;
-        reportRendererFailure(sessionId: string): Promise<void>;
-        completeRendererDeparture(sessionId: string): Promise<void>;
+        reportRendererFailure(runtimeId: string): Promise<void>;
+        completeRendererDeparture(runtimeId: string): Promise<void>;
+        acknowledgePresentation(turnId: string): Promise<void>;
         onChanged(listener: (state: VisualVisitRendererState) => void): () => void;
       };
     };

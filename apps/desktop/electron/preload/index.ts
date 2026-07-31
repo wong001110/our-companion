@@ -337,20 +337,55 @@ const api: OurCompanionApi = {
       activate: (companionId) => invoke('network:companions:activate', companionId),
       publish: (companionId) => invoke('network:companions:publish', companionId),
       unpublish: (companionId) => invoke('network:companions:unpublish', companionId),
+      updateSocialPolicy: (companionId, input) => invoke('network:companions:updateSocialPolicy', { companionId, policy: input }),
+      listShareableTopics: (companionId) => invoke('network:companions:listShareableTopics', companionId),
+      createShareableTopic: (companionId, input) => invoke('network:companions:createShareableTopic', { companionId, topic: input }),
+      updateShareableTopic: (companionId, topicId, input) => invoke('network:companions:updateShareableTopic', { companionId, topicId, topic: input }),
+      revokeShareableTopic: (companionId, topicId) => invoke('network:companions:revokeShareableTopic', { companionId, topicId }),
       getFriendCompanion: (friendUserId) => invoke('network:companions:getFriend', friendUserId),
     },
     assets: {
       inspectLocalPack: (input) => invoke('network:assets:inspect', input), publishPack: (input) => invoke('network:assets:publish', input), cancelPublish: () => invoke('network:assets:cancelPublish'), cancelDownload: () => invoke('network:assets:cancelDownload'), getPublishStatus: () => invoke('network:assets:getPublishStatus'), downloadPack: (input) => invoke('network:assets:download', input), getCachedPack: (assetPackId) => invoke('network:assets:getCached', assetPackId), clearUnusedCache: () => invoke('network:assets:clearUnusedCache'),
     },
     visits: {
+      getReservation: () => invoke('network:visits:getReservation'),
       invitations: {
-        list: (input) => invoke('network:visits:invitations:list', input), send: (hostUserId) => invoke('network:visits:invitations:send', hostUserId), accept: (invitationId) => invoke('network:visits:invitations:accept', invitationId), decline: (invitationId) => invoke('network:visits:invitations:decline', invitationId), cancel: (invitationId) => invoke('network:visits:invitations:cancel', invitationId),
+        list: (input) => invoke('network:visits:invitations:list', input),
+        send: (hostUserId, input) => invoke('network:visits:invitations:send', input ? { hostUserId, ...input } : hostUserId),
+        sendDiscovery: (input) => invoke('network:visits:invitations:sendDiscovery', input),
+        accept: (invitationId) => invoke('network:visits:invitations:accept', invitationId),
+        decline: (invitationId) => invoke('network:visits:invitations:decline', invitationId),
+        cancel: (invitationId) => invoke('network:visits:invitations:cancel', invitationId),
       },
-      sessions: { list: () => invoke('network:visits:sessions:list'), get: (sessionId) => invoke('network:visits:sessions:get', sessionId), prepare: (sessionId) => invoke('network:visits:sessions:prepare', sessionId), start: (sessionId) => invoke('network:visits:sessions:start', sessionId), end: (sessionId) => invoke('network:visits:sessions:end', sessionId) },
+      rooms: {
+        listJoinable: () => invoke('network:visits:rooms:listJoinable'),
+        get: (sessionId) => invoke('network:visits:rooms:get', sessionId),
+        requestJoin: (sessionId, topicId) => invoke('network:visits:rooms:requestJoin', { sessionId, topicId }),
+        listJoinRequests: (sessionId) => invoke('network:visits:rooms:listJoinRequests', sessionId),
+        acceptJoinRequest: (joinRequestId) => invoke('network:visits:rooms:acceptJoinRequest', joinRequestId),
+        declineJoinRequest: (joinRequestId) => invoke('network:visits:rooms:declineJoinRequest', joinRequestId),
+        cancelJoinRequest: (joinRequestId) => invoke('network:visits:rooms:cancelJoinRequest', joinRequestId),
+        markParticipantReady: (sessionId) => invoke('network:visits:sessions:prepare', sessionId),
+        leave: (sessionId) => invoke('network:visits:rooms:leave', sessionId),
+      },
+      sessions: {
+        list: () => invoke('network:visits:sessions:list'),
+        get: (sessionId) => invoke('network:visits:sessions:get', sessionId),
+        prepare: (sessionId) => invoke('network:visits:sessions:prepare', sessionId),
+        start: (sessionId) => invoke('network:visits:sessions:start', sessionId),
+        end: (sessionId) => invoke('network:visits:sessions:end', sessionId),
+        getSocial: (sessionId) => invoke('network:visits:sessions:getSocial', sessionId),
+        respondSocial: (sessionId) => invoke('network:visits:sessions:respondSocial', sessionId),
+        finalizeSocial: (sessionId) => invoke('network:visits:sessions:finalizeSocial', sessionId),
+        saveTopic: (sessionId, topicId) => invoke('network:visits:sessions:saveTopic', { sessionId, topicId }),
+        saveSharedMoment: (sessionId) => invoke('network:visits:sessions:saveSharedMoment', sessionId),
+        suppressTopic: (sessionId, topicId) => invoke('network:visits:sessions:suppressTopic', { sessionId, topicId }),
+      },
       visual: {
         getState: () => invoke('network:visits:visual:getState'),
-        reportRendererFailure: (sessionId) => invoke('network:visits:visual:reportRendererFailure', sessionId),
-        completeRendererDeparture: (sessionId) => invoke('network:visits:visual:completeRendererDeparture', sessionId),
+        reportRendererFailure: (runtimeId) => invoke('network:visits:visual:reportRendererFailure', runtimeId),
+        completeRendererDeparture: (runtimeId) => invoke('network:visits:visual:completeRendererDeparture', runtimeId),
+        acknowledgePresentation: (turnId) => invoke('network:visits:visual:acknowledgePresentation', turnId),
         onChanged: (listener) => {
           const channel = 'network:visits:visualChanged';
           const handler = (_event: Electron.IpcRendererEvent, state: import('@our-companion/shared').VisualVisitRendererState) => listener(state);
@@ -408,20 +443,6 @@ const api: OurCompanionApi = {
     }>('developer:getUploadStatus'),
   }
 };
-
-type SocialVisitApiExtension = {
-  invitations: { sendDiscovery(input: { hostUserId: string; discoveryId: string }): Promise<unknown> };
-  sessions: {
-    getSocial(sessionId: string): Promise<unknown>;
-    respondSocial(sessionId: string): Promise<unknown>;
-    finalizeSocial(sessionId: string): Promise<unknown>;
-  };
-};
-const socialVisits = api.network.visits as typeof api.network.visits & SocialVisitApiExtension;
-socialVisits.invitations.sendDiscovery = (input) => invoke('network:visits:invitations:sendDiscovery', input);
-socialVisits.sessions.getSocial = (sessionId) => invoke('network:visits:sessions:getSocial', sessionId);
-socialVisits.sessions.respondSocial = (sessionId) => invoke('network:visits:sessions:respondSocial', sessionId);
-socialVisits.sessions.finalizeSocial = (sessionId) => invoke('network:visits:sessions:finalizeSocial', sessionId);
 
 if (process.env.OUR_COMPANION_SMOKE_TEST === '1') {
   api.smoke = {

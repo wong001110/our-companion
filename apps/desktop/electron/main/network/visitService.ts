@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseService } from '@our-companion/database';
-import type { VisitInvitationStatus, VisitInvitationSummary, VisitReservationSummary, VisitSessionSummary } from '@our-companion/shared';
+import type { Discovery, JoinableVisitRoom, SocialVisitState as SharedSocialVisitState, SocialVisitSharedMoment, VisitInvitationStatus, VisitInvitationSummary, VisitJoinRequestSummary, VisitMode, VisitReservationSummary, VisitRoomParticipant, VisitRoomState, VisitRoomTopic, VisitSessionSummary } from '@our-companion/shared';
 import type { NetworkConnectionService } from '../networkConnection';
 import type { PublicCompanionService } from './publicCompanionService';
 
@@ -11,6 +11,9 @@ const PENDING_SHARE_PREFIX = 'social.visit.pending-share.';
 const REFLECTION_PREFIX = 'social.visit.private-reflection.';
 const COMPLETED_PREFIX = 'social.visit.completed.';
 const RELATIONSHIP_PREFIX = 'social.relationship.';
+const SAVED_TOPIC_PREFIX = 'social.visit.saved-topic.';
+const SAVED_MOMENT_PREFIX = 'social.visit.saved-moment.';
+const SUPPRESSED_TOPIC_PREFIX = 'social.visit.suppressed-topic.';
 
 type SocialVisitTurn = {
   id: string;
@@ -44,13 +47,12 @@ type SharedMoment = {
   createdAt: string;
 };
 
-type SocialVisitState = {
-  sessionId: string;
-  maxTurns: number;
-  nextActorUserId?: string;
+type SocialVisitState = SharedSocialVisitState & {
   share?: SocialVisitShare;
   turns: SocialVisitTurn[];
   sharedMoment?: SharedMoment;
+  topics: VisitRoomTopic[];
+  participants: VisitRoomParticipant[];
 };
 
 function isSocialVisitState(value: unknown): value is SocialVisitState {
@@ -107,12 +109,16 @@ export class VisitService {
     private readonly companions: PublicCompanionService,
     private readonly db?: DatabaseService,
     private readonly generateSocialMessage?: GenerateSocialMessage,
+    private readonly addDiscoveryToJourney?: (discoveryId: string) => Promise<unknown>,
   ) {}
 
   listInvitations = (input?: { direction?: 'incoming' | 'outgoing'; status?: VisitInvitationStatus }): Promise<VisitInvitationSummary[]> => this.network.listVisitInvitations(input);
-  sendInvitation = async (hostUserId: string): Promise<VisitInvitationSummary> => {
+  getReservation = (): Promise<VisitReservationSummary> => this.refreshActivityLock();
+  sendInvitation = async (hostUserId: string, input: { mode?: VisitMode; topicId?: string } = {}): Promise<VisitInvitationSummary> => {
     await this.assertCanStartOutgoingVisit();
-    const invitation = await this.network.createVisitInvitation(hostUserId);
+    const invitation = input.mode || input.topicId
+      ? await this.network.createVisitInvitation(hostUserId, input)
+      : await this.network.createVisitInvitation(hostUserId);
     this.activityLock = {
       locked: true,
       kind: 'outgoing_invitation',
@@ -128,16 +134,30 @@ export class VisitService {
     if (!this.db) throw new Error('VISIT_SOCIAL_LOCAL_STORE_UNAVAILABLE');
     const discovery = this.db.getDiscovery(input.discoveryId);
     if (!discovery) throw new Error('DISCOVERY_NOT_FOUND');
+    const approved = approvedDiscovery(discovery);
+    const topicCapable = this.companions as PublicCompanionService & Partial<Pick<PublicCompanionService, 'getMine' | 'createShareableTopic'>>;
+    if (typeof topicCapable.getMine === 'function' && typeof topicCapable.createShareableTopic === 'function') {
+      try {
+        const mine = await topicCapable.getMine();
+        const companionId = mine.activeNetworkCompanionId;
+        if (companionId) {
+          const topic = await topicCapable.createShareableTopic(companionId, {
+            title: approved.title,
+            summary: approved.summary,
+            tags: approved.tags,
+            ...(approved.sourceUrl ? { sourceUrl: approved.sourceUrl, shareScope: 'summary_and_source' as const } : { shareScope: 'summary_only' as const }),
+            allowRecipientSave: true,
+            eligibleForRandomVisit: false,
+          });
+          return this.sendInvitation(input.hostUserId, { mode: 'visitor_topic', topicId: topic.id });
+        }
+      } catch (error) {
+        const code = error instanceof Error ? error.message : String(error);
+        if (!['NETWORK_ERROR', 'NOT_FOUND'].includes(code)) throw error;
+      }
+    }
     const invitation = await this.sendInvitation(input.hostUserId);
-    const pending: PendingShare = {
-      invitationId: invitation.id,
-      discoveryId: discovery.id,
-      title: discovery.title.slice(0, 120),
-      summary: (discovery.summary ?? discovery.whyThisMatters ?? discovery.title).slice(0, 600),
-      tags: [...new Set(discovery.tags)].slice(0, 5),
-      ...(discovery.url ? { sourceUrl: discovery.url } : {}),
-      approvedAt: new Date().toISOString(),
-    };
+    const pending: PendingShare = { invitationId: invitation.id, discoveryId: discovery.id, ...approved, approvedAt: new Date().toISOString() };
     this.db.setAppSetting(`${PENDING_SHARE_PREFIX}${invitation.id}`, pending);
     return invitation;
   };
@@ -167,6 +187,42 @@ export class VisitService {
     if (this.activityLock.invitationId === invitationId) this.activityLock = { locked: false };
     void this.refreshActivityLock().catch(() => undefined);
     return invitation;
+  };
+
+  listJoinableRooms = async (): Promise<JoinableVisitRoom[]> => {
+    if ((await this.refreshActivityLock()).locked) return [];
+    return typeof this.network.listJoinableVisitRooms === 'function' ? this.network.listJoinableVisitRooms() : [];
+  };
+  getRoom = async (sessionId: string): Promise<VisitRoomState> => this.network.getVisitRoom(sessionId);
+  requestJoin = async (sessionId: string, topicId?: string): Promise<VisitJoinRequestSummary> => {
+    await this.assertCanStartOutgoingVisit();
+    const request = await this.network.createVisitJoinRequest(sessionId, topicId);
+    this.activityLock = { locked: true, kind: 'join_request', networkCompanionId: request.networkCompanionId, sessionId, joinRequestId: request.id, expiresAt: request.expiresAt, updatedAt: request.updatedAt };
+    void this.refreshActivityLock().catch(() => undefined);
+    return request;
+  };
+  listJoinRequests = (sessionId: string): Promise<VisitJoinRequestSummary[]> => this.network.listVisitJoinRequests(sessionId);
+  acceptJoinRequest = async (joinRequestId: string): Promise<VisitRoomState> => {
+    const room = await this.network.acceptVisitJoinRequest(joinRequestId);
+    void this.refreshActivityLock().catch(() => undefined);
+    return room;
+  };
+  declineJoinRequest = async (joinRequestId: string): Promise<VisitJoinRequestSummary> => {
+    const request = await this.network.declineVisitJoinRequest(joinRequestId);
+    void this.refreshActivityLock().catch(() => undefined);
+    return request;
+  };
+  cancelJoinRequest = async (joinRequestId: string): Promise<VisitJoinRequestSummary> => {
+    const request = await this.network.cancelVisitJoinRequest(joinRequestId);
+    if (this.activityLock.joinRequestId === joinRequestId) this.activityLock = { locked: false };
+    void this.refreshActivityLock().catch(() => undefined);
+    return request;
+  };
+  leaveRoom = async (sessionId: string): Promise<VisitRoomParticipant> => {
+    const participant = await this.network.leaveVisitRoom(sessionId);
+    if (this.activityLock.sessionId === sessionId) this.activityLock = { locked: false };
+    void this.refreshActivityLock().catch(() => undefined);
+    return participant;
   };
 
   listSessions = async (): Promise<VisitSessionSummary[]> => {
@@ -209,14 +265,34 @@ export class VisitService {
     const session = await this.network.getVisitSession(sessionId);
     const status = await this.network.getStatus();
     if (!status.onlineModeEnabled || status.state !== 'online' || !status.account) throw new Error('ONLINE_MODE_DISABLED');
-    const alreadyReady = status.account.id === session.visitorOwnerUserId ? session.visitorOwnerReady : status.account.id === session.hostUserId ? session.hostReady : undefined;
+    let room: VisitRoomState | undefined;
+    if (typeof this.network.getVisitRoom === 'function') room = await this.network.getVisitRoom(sessionId).catch(() => undefined);
+    const me = room?.participants.find((participant) => participant.userId === status.account!.id && participant.state !== 'left');
+    const alreadyReady = me ? ['ready', 'active'].includes(me.state) : status.account.id === session.visitorOwnerUserId ? session.visitorOwnerReady : status.account.id === session.hostUserId ? session.hostReady : undefined;
     if (alreadyReady) { this.track(session); return session; }
+
+    if (me?.role === 'guest') {
+      if (!(await this.companions.hasNetworkCompanionMapping(me.networkCompanionId))) throw new Error('VISIT_PARTICIPANT_UNAVAILABLE');
+      await this.network.markVisitParticipantReady(sessionId);
+      this.track(session);
+      return this.network.getVisitSession(sessionId);
+    }
+
     if (status.account.id === session.visitorOwnerUserId) {
       if (!(await this.companions.hasNetworkCompanionMapping(session.networkCompanionId))) throw new Error('VISIT_PARTICIPANT_UNAVAILABLE');
       await this.attachApprovedShare(session);
     } else if (status.account.id === session.hostUserId) {
       await this.assertHostSessionAllowed(session);
-      await this.companions.downloadVisitPack({ sessionId, assetPackId: session.assetPackId, networkCompanionId: session.networkCompanionId });
+      const remotes = room?.participants.filter((participant) => participant.userId !== status.account!.id && participant.state !== 'left' && participant.assetPackId) ?? [];
+      if (remotes.length && typeof this.companions.downloadVisitParticipantPack === 'function') {
+        await Promise.all(remotes.map((participant) => this.companions.downloadVisitParticipantPack({ sessionId, participantId: participant.id, assetPackId: participant.assetPackId!, networkCompanionId: participant.networkCompanionId })));
+      } else {
+        await this.companions.downloadVisitPack({ sessionId, assetPackId: session.assetPackId, networkCompanionId: session.networkCompanionId });
+      }
+    } else if (me) {
+      if (!(await this.companions.hasNetworkCompanionMapping(me.networkCompanionId))) throw new Error('VISIT_PARTICIPANT_UNAVAILABLE');
+      await this.network.markVisitParticipantReady(sessionId);
+      return this.network.getVisitSession(sessionId);
     } else {
       throw new Error('VISIT_SESSION_NOT_PARTICIPANT');
     }
@@ -239,29 +315,27 @@ export class VisitService {
     return updated;
   };
 
-  getSocialState = async (sessionId: string) => {
-    const state = await this.network.getVisitSocialState(sessionId) as SocialVisitState;
-    return {
-      ...state,
-      privateReflection: this.db?.getAppSetting<string>(`${REFLECTION_PREFIX}${sessionId}`),
-    };
+  getSocialState = async (sessionId: string): Promise<SocialVisitState> => {
+    const state = normalizeSocialState(await this.network.getVisitSocialState(sessionId));
+    return this.withLocalSocialState(sessionId, state);
   };
 
   respondSocial = async (sessionId: string) => {
     const [session, status, state] = await Promise.all([
       this.network.getVisitSession(sessionId),
       this.network.getStatus(),
-      this.network.getVisitSocialState(sessionId) as Promise<SocialVisitState>,
+      this.network.getVisitSocialState(sessionId).then(normalizeSocialState),
     ]);
     if (!status.account || status.state !== 'online') throw new Error('ONLINE_MODE_DISABLED');
     if (session.state !== 'active') throw new Error('VISIT_SESSION_NOT_ACTIVE');
-    if (!state.share) throw new Error('VISIT_SHARE_REQUIRED');
+    if (!state.share && !state.activeTopic) throw new Error('VISIT_SHARE_REQUIRED');
     if (state.nextActorUserId !== status.account.id) throw new Error('VISIT_TURN_ORDER_INVALID');
 
     const localCompanion = this.db?.getPrimaryCompanion();
     const name = localCompanion?.name ?? 'Companion';
     const personality = localCompanion?.personalityDescription ?? 'gentle, curious, and concise';
-    const role = session.visitorOwnerUserId === status.account.id ? 'visiting Companion' : 'host Companion';
+    const participant = state.participants.find((item) => item.userId === status.account!.id);
+    const role = participant?.role === 'guest' ? 'guest Companion' : session.visitorOwnerUserId === status.account.id ? 'visiting Companion' : 'host Companion';
     const fallback = this.fallbackTurn(state, role);
     let proposal = fallback;
     if (this.generateSocialMessage) {
@@ -280,7 +354,7 @@ export class VisitService {
           },
           {
             role: 'user',
-            content: JSON.stringify({ approvedDiscovery: state.share, transcript: state.turns.map((turn) => ({ sender: turn.senderUserId, message: turn.message, intent: turn.intent })) }),
+            content: JSON.stringify({ approvedDiscovery: state.activeTopic ?? state.share, roomParticipants: state.participants.map((item) => ({ userId: item.userId, role: item.role })), transcript: state.turns.map((turn) => ({ sender: turn.senderUserId, message: turn.message, intent: turn.intent, roomTopicId: turn.roomTopicId })) }),
           },
         ], 'social_visit');
         proposal = this.parseTurnProposal(raw, fallback);
@@ -299,17 +373,50 @@ export class VisitService {
     // During a rolling deployment an older Network server returns only the
     // appended turn. Newer servers return the full state and save one request.
     const next = isSocialVisitState(appended)
-      ? appended
-      : await this.network.getVisitSocialState(sessionId) as SocialVisitState;
-    return {
-      ...next,
-      privateReflection: this.db?.getAppSetting<string>(`${REFLECTION_PREFIX}${sessionId}`),
-    };
+      ? normalizeSocialState(appended)
+      : normalizeSocialState(await this.network.getVisitSocialState(sessionId));
+    return this.withLocalSocialState(sessionId, next);
   };
 
   finalizeSocial = async (sessionId: string) => {
     const moment = await this.network.finalizeVisitSharedMoment(sessionId) as SharedMoment;
     await this.savePrivateOutcome(sessionId, moment);
+    return this.getSocialState(sessionId);
+  };
+
+  saveTopic = async (sessionId: string, topicId: string): Promise<SocialVisitState> => {
+    if (!this.db) throw new Error('VISIT_SOCIAL_LOCAL_STORE_UNAVAILABLE');
+    const state = normalizeSocialState(await this.network.getVisitSocialState(sessionId));
+    const topic = state.topics.find((candidate) => candidate.id === topicId);
+    if (!topic || !topic.allowRecipientSave) throw new Error('VISIT_TOPIC_SAVE_NOT_ALLOWED');
+    const key = `${SAVED_TOPIC_PREFIX}${sessionId}.${topicId}`;
+    let discoveryId = this.db.getAppSetting<string>(key);
+    if (!discoveryId) {
+      discoveryId = `social-topic-${randomUUID()}`;
+      this.db.insertDiscovery(discoveryFromTopic(discoveryId, topic, this.db.resolveActiveCompanionId()));
+      this.db.setAppSetting(key, discoveryId);
+    }
+    return this.getSocialState(sessionId);
+  };
+
+  saveSharedMoment = async (sessionId: string): Promise<SocialVisitState> => {
+    if (!this.db) throw new Error('VISIT_SOCIAL_LOCAL_STORE_UNAVAILABLE');
+    const state = normalizeSocialState(await this.network.getVisitSocialState(sessionId));
+    if (!state.sharedMoment) throw new Error('VISIT_SHARED_MOMENT_NOT_READY');
+    const key = `${SAVED_MOMENT_PREFIX}${sessionId}`;
+    let discoveryId = this.db.getAppSetting<string>(key);
+    if (!discoveryId) {
+      discoveryId = `shared-moment-${randomUUID()}`;
+      this.db.insertDiscovery(discoveryFromMoment(discoveryId, state.sharedMoment, state.topics, this.db.resolveActiveCompanionId()));
+      this.db.setAppSetting(key, discoveryId);
+      if (this.addDiscoveryToJourney) await this.addDiscoveryToJourney(discoveryId);
+    }
+    return this.getSocialState(sessionId);
+  };
+
+  suppressTopic = async (sessionId: string, topicId: string): Promise<SocialVisitState> => {
+    if (!this.db) throw new Error('VISIT_SOCIAL_LOCAL_STORE_UNAVAILABLE');
+    this.db.setAppSetting(`${SUPPRESSED_TOPIC_PREFIX}${topicId}`, true);
     return this.getSocialState(sessionId);
   };
 
@@ -370,6 +477,10 @@ export class VisitService {
   };
 
   /** Desktop-side authority; the server remains responsible for atomic cross-device capacity enforcement. */
+  assertCanRunCompanionActivity = async (): Promise<void> => {
+    if ((await this.refreshActivityLock()).locked) throw new Error('VISIT_COMPANION_RESERVED');
+  };
+
   assertCanSwitchLocalCompanion = async (): Promise<void> => {
     if ((await this.refreshActivityLock()).locked) throw new Error('VISIT_COMPANION_RESERVED');
     const status = await this.network.getStatus();
@@ -384,6 +495,18 @@ export class VisitService {
     if (this.hostOccupancy(sessions, status.account.id) > 0) throw new Error('VISIT_HOST_COMPANION_SWITCH_BLOCKED');
   };
 
+  private withLocalSocialState(sessionId: string, state: SocialVisitState): SocialVisitState {
+    const savedTopicIds = state.topics.filter((topic) => Boolean(this.db?.getAppSetting<string>(`${SAVED_TOPIC_PREFIX}${sessionId}.${topic.id}`))).map((topic) => topic.id);
+    const suppressedTopicIds = state.topics.filter((topic) => Boolean(this.db?.getAppSetting<boolean>(`${SUPPRESSED_TOPIC_PREFIX}${topic.id}`))).map((topic) => topic.id);
+    return {
+      ...state,
+      privateReflection: this.db?.getAppSetting<string>(`${REFLECTION_PREFIX}${sessionId}`),
+      savedTopicIds,
+      suppressedTopicIds,
+      sharedMomentSaved: Boolean(this.db?.getAppSetting<string>(`${SAVED_MOMENT_PREFIX}${sessionId}`)),
+    };
+  }
+
   private attachApprovedShare = async (session: VisitSessionSummary): Promise<void> => {
     if (!this.db) return;
     const existing = await this.network.getVisitSocialState(session.id) as SocialVisitState;
@@ -394,21 +517,22 @@ export class VisitService {
   };
 
   private fallbackTurn(state: SocialVisitState, role: string): { intent: string; message: string; emotion: string; topic: string } {
+    const share = state.activeTopic ?? state.share;
     const last = state.turns[state.turns.length - 1];
     if (!last) {
       return {
         intent: 'SHARE',
-        message: `I found “${state.share?.title}” and thought it might be worth sharing. What stands out to you?`,
+        message: `I found “${share?.title}” and thought it might be worth sharing. What stands out to you?`,
         emotion: 'curious',
-        topic: state.share?.title ?? 'shared discovery',
+        topic: share?.title ?? 'shared discovery',
       };
     }
     const prefix = role === 'host Companion' ? 'That is interesting.' : 'I see what you mean.';
     return {
       intent: state.turns.length + 1 >= state.maxTurns ? 'LEAVE' : 'REACT',
-      message: `${prefix} The part about “${state.share?.title}” feels worth remembering.`,
+      message: `${prefix} The part about “${share?.title}” feels worth remembering.`,
       emotion: 'thoughtful',
-      topic: state.share?.title ?? 'shared discovery',
+      topic: share?.title ?? 'shared discovery',
     };
   }
 
@@ -433,23 +557,31 @@ export class VisitService {
     if (!this.db || this.db.getAppSetting<boolean>(`${COMPLETED_PREFIX}${sessionId}`)) return;
     const [session, state, status] = await Promise.all([
       this.network.getVisitSession(sessionId),
-      this.network.getVisitSocialState(sessionId) as Promise<SocialVisitState>,
+      this.network.getVisitSocialState(sessionId).then(normalizeSocialState),
       this.network.getStatus(),
     ]);
-    if (!status.account || !state.share) return;
-    const remoteUserId = session.visitorOwnerUserId === status.account.id ? session.hostUserId : session.visitorOwnerUserId;
-    const previous = this.db.getAppSetting<SocialRelationship>(`${RELATIONSHIP_PREFIX}${remoteUserId}`);
+    const share = state.activeTopic ?? state.topics[0] ?? state.share;
+    if (!status.account || !share) return;
+    const remoteUserIds = state.participants.length
+      ? [...new Set(state.participants.filter((participant) => participant.userId !== status.account!.id).map((participant) => participant.userId))]
+      : [session.visitorOwnerUserId === status.account.id ? session.hostUserId : session.visitorOwnerUserId];
     const now = new Date().toISOString();
-    const relationship: SocialRelationship = {
-      remoteUserId,
-      familiarity: Math.min(1, (previous?.familiarity ?? 0) + 0.08),
-      trust: Math.min(1, (previous?.trust ?? 0) + 0.04),
-      comfort: Math.min(1, (previous?.comfort ?? 0) + 0.05),
-      sharedInterests: [...new Set([...(previous?.sharedInterests ?? []), ...state.share.tags])].slice(0, 20),
-      interactionCount: (previous?.interactionCount ?? 0) + 1,
-      lastInteractionAt: now,
-    };
-    let reflection = `We shared “${state.share.title}”. The conversation lasted ${moment.turnCount} turns, and ${state.share.tags.length ? `our common interests included ${state.share.tags.join(', ')}` : 'it gave us something new to discuss'}.`;
+    const sharedTags = [...new Set(state.topics.flatMap((topic) => topic.tags).concat(share.tags))].slice(0, 20);
+    for (const remoteUserId of remoteUserIds) {
+      const previous = this.db.getAppSetting<SocialRelationship>(`${RELATIONSHIP_PREFIX}${remoteUserId}`);
+      const relationship: SocialRelationship = {
+        remoteUserId,
+        familiarity: Math.min(1, (previous?.familiarity ?? 0) + 0.08),
+        trust: Math.min(1, (previous?.trust ?? 0) + 0.04),
+        comfort: Math.min(1, (previous?.comfort ?? 0) + 0.05),
+        sharedInterests: [...new Set([...(previous?.sharedInterests ?? []), ...sharedTags])].slice(0, 20),
+        interactionCount: (previous?.interactionCount ?? 0) + 1,
+        lastInteractionAt: now,
+      };
+      this.db.setAppSetting(`${RELATIONSHIP_PREFIX}${remoteUserId}`, relationship);
+    }
+    const topicTitles = state.topics.length ? state.topics.map((topic) => `“${topic.title}”`).join(' and ') : `“${share.title}”`;
+    let reflection = `We shared ${topicTitles}. The conversation lasted ${moment.turnCount} turns, and ${sharedTags.length ? `our common interests included ${sharedTags.join(', ')}` : 'it gave us something new to discuss'}.`;
     if (this.generateSocialMessage) {
       try {
         const generated = await this.generateSocialMessage([
@@ -459,7 +591,7 @@ export class VisitService {
           },
           {
             role: 'user',
-            content: JSON.stringify({ approvedDiscovery: state.share, transcript: state.turns.map((turn) => turn.message), sharedMoment: moment }),
+            content: JSON.stringify({ approvedTopics: state.topics.length ? state.topics : [share], transcript: state.turns.map((turn) => turn.message), sharedMoment: moment }),
           },
         ], 'social_visit_reflection');
         const normalized = generated.replace(/\s+/g, ' ').trim().slice(0, 280);
@@ -469,16 +601,17 @@ export class VisitService {
       }
     }
     this.db.setAppSetting(`${REFLECTION_PREFIX}${sessionId}`, reflection);
-    this.db.setAppSetting(`${RELATIONSHIP_PREFIX}${remoteUserId}`, relationship);
     this.db.setAppSetting(`${COMPLETED_PREFIX}${sessionId}`, true);
   };
 
   private assertCanStartOutgoingVisit = async (): Promise<void> => {
+    if ((await this.refreshActivityLock()).locked) throw new Error('VISIT_COMPANION_RESERVED');
     const context = await this.currentContext();
     if (this.hostOccupancy(context.sessions, context.accountId) > 0) throw new Error('VISIT_HOST_HAS_ACTIVE_GUESTS');
   };
 
   private assertCanAcceptIncomingInvitation = async (invitationId: string): Promise<void> => {
+    if ((await this.refreshActivityLock()).locked) throw new Error('VISIT_COMPANION_RESERVED');
     const context = await this.currentContext();
     const invitations = await this.network.listVisitInvitations({ direction: 'incoming', status: 'pending' });
     const invitation = invitations.find((candidate) => candidate.id === invitationId);
@@ -575,6 +708,38 @@ function sanitizeReservation(input: VisitReservationSummary): VisitReservationSu
     ...(typeof input.createdAt === 'string' ? { createdAt: input.createdAt } : {}),
     ...(typeof input.updatedAt === 'string' ? { updatedAt: input.updatedAt } : {}),
   };
+}
+
+function normalizeSocialState(value: SharedSocialVisitState | SocialVisitState): SocialVisitState {
+  return {
+    ...value,
+    topics: Array.isArray(value.topics) ? value.topics : value.share ? [shareAsTopic(value.share)] : [],
+    participants: Array.isArray(value.participants) ? value.participants : [],
+    turns: Array.isArray(value.turns) ? value.turns : [],
+  } as SocialVisitState;
+}
+
+function shareAsTopic(share: SocialVisitShare): VisitRoomTopic {
+  return { id: share.id, sessionId: share.sessionId, sequence: 1, state: 'active', ownerCompanionId: '', title: share.title, summary: share.summary, tags: share.tags, sourceUrl: share.sourceUrl, allowRecipientSave: false, minimumTurns: 3, maximumTurns: 6, createdAt: share.createdAt, updatedAt: share.createdAt };
+}
+
+function approvedDiscovery(discovery: Pick<Discovery, 'id' | 'title' | 'summary' | 'whyThisMatters' | 'tags' | 'url'>): Omit<PendingShare, 'invitationId' | 'discoveryId' | 'approvedAt'> {
+  return {
+    title: discovery.title.slice(0, 120),
+    summary: (discovery.summary ?? discovery.whyThisMatters ?? discovery.title).slice(0, 600),
+    tags: [...new Set(discovery.tags)].slice(0, 5),
+    ...(discovery.url ? { sourceUrl: discovery.url } : {}),
+  };
+}
+
+function discoveryFromTopic(id: string, topic: VisitRoomTopic, companionId: string): Discovery {
+  const now = new Date().toISOString();
+  return { id, source: 'community', title: topic.title, summary: topic.summary, url: topic.sourceUrl, tags: topic.tags, raw: { kind: 'social_visit_topic', sessionId: topic.sessionId, topicId: topic.id }, userInterestScore: 0.5, userHistoryScore: 0.5, characterExpertiseScore: 0.5, noveltyScore: 0.6, usefulnessScore: 0.6, finalScore: 0.6, status: 'saved', companionId, whyThisMatters: 'Saved from a Companion Social Visit.', recommendedAction: 'view', createdAt: now, updatedAt: now };
+}
+
+function discoveryFromMoment(id: string, moment: SocialVisitSharedMoment, topics: VisitRoomTopic[], companionId: string): Discovery {
+  const now = new Date().toISOString();
+  return { id, source: 'companion', title: moment.title, summary: moment.summary, tags: [...new Set(topics.flatMap((topic) => topic.tags))].slice(0, 8), raw: { kind: 'social_visit_shared_moment', sessionId: moment.sessionId, topicIds: topics.map((topic) => topic.id) }, userInterestScore: 0.6, userHistoryScore: 0.7, characterExpertiseScore: 0.5, noveltyScore: 0.5, usefulnessScore: 0.7, finalScore: 0.65, status: 'eligible', companionId, whyThisMatters: 'A shared moment created by the Companions during a Social Visit.', recommendedAction: 'add_to_journey', createdAt: now, updatedAt: now };
 }
 
 function approvedShareInput(pending: PendingShare): VisitShareInput {

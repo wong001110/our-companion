@@ -35,6 +35,7 @@ function networkMock(overrides: Record<string, unknown> = {}) {
   return {
     getStatus: vi.fn().mockResolvedValue({ onlineModeEnabled: true, state: 'online', account: { id: 'owner' } }),
     getStatusSnapshot: vi.fn().mockReturnValue({ visit: { heartbeatIntervalSeconds: 60 } }),
+    getVisitReservation: vi.fn().mockResolvedValue({ locked: false }),
     listVisitSessions: vi.fn().mockResolvedValue([]),
     createVisitInvitation: vi.fn().mockResolvedValue(invitation),
     getVisitSession: vi.fn().mockResolvedValue(session),

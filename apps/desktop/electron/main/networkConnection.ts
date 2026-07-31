@@ -3,7 +3,7 @@ import { safeStorage } from 'electron';
 import { io, type Socket } from 'socket.io-client';
 import type { DatabaseService } from '@our-companion/database';
 import { assertSmokeTestRuntime, hashSmokeDeviceId, isSmokeTestRuntime } from './platform/smokeRuntime';
-import type { BlockedUserSummary, CompanionAssetManifest, CompleteAssetPackResult, DeveloperDebugUploadEvent, FriendLookupRelationship, FriendLookupResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile, SocialOverview, VisitInvitationStatus, VisitInvitationSummary, VisitReservationSummary, VisitRuntimeConfig, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
+import type { BlockedUserSummary, CompanionAssetManifest, CompleteAssetPackResult, DeveloperDebugUploadEvent, FriendLookupRelationship, FriendLookupResult, FriendPresence, FriendRequestSummary, FriendSummary, JoinableVisitRoom, NetworkAssetPack, PublicCompanionProfile, ShareableTopicInput, ShareableTopicSummary, SocialOverview, SocialVisitState, VisitInvitationStatus, VisitInvitationSummary, VisitJoinRequestSummary, VisitMode, VisitReservationSummary, VisitRoomParticipant, VisitRoomState, VisitRuntimeConfig, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
 
 export const NETWORK_PROTOCOL_VERSION = '0.4';
 export const NETWORK_CLIENT_VERSION = '0.4.0';
@@ -229,6 +229,11 @@ export class NetworkConnectionService {
   activateNetworkCompanion = (companionId: string) => this.socialRequest<{ activeNetworkCompanionId: string; changed: boolean }>(`/api/companions/${companionId}/activate`, {});
   publishNetworkCompanion = (companionId: string) => this.socialRequest<PublicCompanionProfile>(`/api/companions/${companionId}/publish`, {});
   unpublishNetworkCompanion = (companionId: string) => this.socialRequest<PublicCompanionProfile>(`/api/companions/${companionId}/unpublish`, {});
+  updateNetworkCompanionSocialPolicy = (companionId: string, input: { randomVisitsEnabled?: boolean; randomVisitAudience?: 'friends'; allowJoinRequests?: boolean }) => this.socialRequest<PublicCompanionProfile>(`/api/companions/${companionId}/social-policy`, input, 'PATCH');
+  listShareableTopics = (companionId: string) => this.socialRequest<ShareableTopicSummary[]>(`/api/companions/${companionId}/shareable-topics`);
+  createShareableTopic = (companionId: string, input: ShareableTopicInput) => this.socialRequest<ShareableTopicSummary>(`/api/companions/${companionId}/shareable-topics`, input);
+  updateShareableTopic = (companionId: string, topicId: string, input: ShareableTopicInput) => this.socialRequest<ShareableTopicSummary>(`/api/companions/${companionId}/shareable-topics/${topicId}`, input, 'PATCH');
+  revokeShareableTopic = (companionId: string, topicId: string) => this.socialRequest<ShareableTopicSummary>(`/api/companions/${companionId}/shareable-topics/${topicId}`, undefined, 'DELETE');
   getFriendCompanion = (friendUserId: string) => this.socialRequest<PublicCompanionProfile>(`/api/friends/${friendUserId}/companion`);
   initiateAssetPack = (companionId: string, input: { schemaVersion: 1; manifestHash: string; totalFiles: number; totalBytes: number; manifest: CompanionAssetManifest }) => this.socialRequest<{ reused: boolean; resumed?: boolean; requiresActivation?: boolean; assetPack: NetworkAssetPack; fileIds?: string[] }>(`/api/companions/${companionId}/asset-packs`, input);
   getUploadUrls = (assetPackId: string, fileIds: string[]) => this.socialRequest<{ uploads: Array<{ fileId: string; relativePath: string; uploadUrl: string; expiresAt: string; requiredHeaders: { 'content-type': string } }> }>(`/api/asset-packs/${assetPackId}/upload-urls`, { fileIds });
@@ -251,7 +256,7 @@ export class NetworkConnectionService {
     const params = new URLSearchParams(); if (input.direction) params.set('direction', input.direction); if (input.status) params.set('status', input.status);
     return this.socialRequest<VisitInvitationSummary[]>(`/api/visit-invitations${params.size ? `?${params}` : ''}`);
   };
-  createVisitInvitation = (hostUserId: string) => this.socialRequest<VisitInvitationSummary>('/api/visit-invitations', { hostUserId });
+  createVisitInvitation = (hostUserId: string, input: { mode?: VisitMode; topicId?: string } = {}) => this.socialRequest<VisitInvitationSummary>('/api/visit-invitations', { hostUserId, ...input });
   acceptVisitInvitation = (invitationId: string) => this.socialRequest<{ invitation: VisitInvitationSummary; session: VisitSessionSummary }>(`/api/visit-invitations/${invitationId}/accept`, {});
   declineVisitInvitation = (invitationId: string) => this.socialRequest<VisitInvitationSummary>(`/api/visit-invitations/${invitationId}/decline`, {});
   cancelVisitInvitation = (invitationId: string) => this.socialRequest<VisitInvitationSummary>(`/api/visit-invitations/${invitationId}/cancel`, {});
@@ -261,11 +266,22 @@ export class NetworkConnectionService {
   startVisitSession = (sessionId: string) => this.socialRequest<VisitSessionSummary>(`/api/visit-sessions/${sessionId}/start`, {});
   endVisitSession = (sessionId: string) => this.socialRequest<VisitSessionSummary>(`/api/visit-sessions/${sessionId}/end`, {});
   heartbeatVisitSession = (sessionId: string) => this.socialRequest<VisitSessionSummary>(`/api/visit-sessions/${sessionId}/heartbeat`, {});
+  listJoinableVisitRooms = () => this.socialRequest<JoinableVisitRoom[]>('/api/visit-rooms/joinable');
+  getVisitRoom = (sessionId: string) => this.socialRequest<VisitRoomState>(`/api/visit-sessions/${sessionId}/room`);
+  createVisitJoinRequest = (sessionId: string, topicId?: string) => this.socialRequest<VisitJoinRequestSummary>(`/api/visit-sessions/${sessionId}/join-requests`, topicId ? { topicId } : {});
+  listVisitJoinRequests = (sessionId: string) => this.socialRequest<VisitJoinRequestSummary[]>(`/api/visit-sessions/${sessionId}/join-requests`);
+  acceptVisitJoinRequest = (joinRequestId: string) => this.socialRequest<VisitRoomState>(`/api/visit-join-requests/${joinRequestId}/accept`, {});
+  declineVisitJoinRequest = (joinRequestId: string) => this.socialRequest<VisitJoinRequestSummary>(`/api/visit-join-requests/${joinRequestId}/decline`, {});
+  cancelVisitJoinRequest = (joinRequestId: string) => this.socialRequest<VisitJoinRequestSummary>(`/api/visit-join-requests/${joinRequestId}/cancel`, {});
+  markVisitParticipantReady = (sessionId: string) => this.socialRequest<VisitRoomParticipant>(`/api/visit-sessions/${sessionId}/participants/ready`, {});
+  leaveVisitRoom = (sessionId: string) => this.socialRequest<VisitRoomParticipant>(`/api/visit-sessions/${sessionId}/participants/leave`, {});
+  getVisitParticipantManifest = (sessionId: string, participantId: string) => this.socialRequest<{ manifest: CompanionAssetManifest; files: Array<{ id: string; relativePath: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/visit-sessions/${sessionId}/participants/${participantId}/assets/manifest`);
+  getVisitParticipantDownloadUrls = (sessionId: string, participantId: string, fileIds: string[]) => this.socialRequest<{ downloads: Array<{ fileId: string; relativePath: string; downloadUrl: string; expiresAt: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/visit-sessions/${sessionId}/participants/${participantId}/assets/download-urls`, { fileIds });
   getVisitSessionManifest = (sessionId: string) => this.socialRequest<{ manifest: CompanionAssetManifest; files: Array<{ id: string; relativePath: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/visit-sessions/${sessionId}/assets/manifest`);
   getVisitSessionDownloadUrls = (sessionId: string, fileIds: string[]) => this.socialRequest<{ downloads: Array<{ fileId: string; relativePath: string; downloadUrl: string; expiresAt: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/visit-sessions/${sessionId}/assets/download-urls`, { fileIds });
-  getVisitSocialState = (sessionId: string) => this.socialRequest<unknown>(`/api/visit-sessions/${sessionId}/social`);
+  getVisitSocialState = (sessionId: string) => this.socialRequest<SocialVisitState>(`/api/visit-sessions/${sessionId}/social`);
   setVisitSocialShare = (sessionId: string, input: { title: string; summary: string; tags?: string[]; sourceUrl?: string }) => this.socialRequest<unknown>(`/api/visit-sessions/${sessionId}/social/share`, input);
-  appendVisitSocialTurn = (sessionId: string, input: { clientTurnId: string; intent: string; message: string; emotion?: string; topic?: string }) => this.socialRequest<unknown>(`/api/visit-sessions/${sessionId}/social/turns`, input);
+  appendVisitSocialTurn = (sessionId: string, input: { clientTurnId: string; intent: string; message: string; emotion?: string; topic?: string }) => this.socialRequest<SocialVisitState>(`/api/visit-sessions/${sessionId}/social/turns`, input);
   finalizeVisitSharedMoment = (sessionId: string) => this.socialRequest<unknown>(`/api/visit-sessions/${sessionId}/social/shared-moment`, {});
 
   setTransferLifecycleHandler(handler: (reason: string) => void) { this.transferLifecycleHandler = handler; }
@@ -373,7 +389,7 @@ export class NetworkConnectionService {
     for (const event of ['visit.invitation.created', 'visit.invitation.updated']) {
       socket.on(event, (payload: Partial<{ invitationId: string }>) => { if (payload.invitationId) this.setStatus({ socialRevision: ++this.socialRevision, socialInvalidation: { type: 'visit_invitation', invitationId: payload.invitationId } }); });
     }
-    for (const event of ['visit.session.created', 'visit.session.updated', 'visit.session.ended', 'visit.share.updated', 'visit.turn.created', 'visit.shared_moment.created']) {
+    for (const event of ['visit.session.created', 'visit.session.updated', 'visit.session.ended', 'visit.share.updated', 'visit.turn.created', 'visit.shared_moment.created', 'visit.join_request.created', 'visit.join_request.updated', 'visit.participant.joined', 'visit.participant.ready', 'visit.participant.left', 'visit.topic.changed']) {
       socket.on(event, (payload: Partial<{ sessionId: string; state: VisitSessionState }>) => { if (payload.sessionId) this.setStatus({ socialRevision: ++this.socialRevision, socialInvalidation: { type: 'visit_session', sessionId: payload.sessionId, state: payload.state } }); });
     }
     socket.connect();

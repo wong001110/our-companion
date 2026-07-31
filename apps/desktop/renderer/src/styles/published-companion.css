@@ -24,3 +24,9 @@
 @media (max-width: 620px) {
   .published-companion-actions { justify-content: flex-start; }
 }
+
+.published-shareable-topics { display: grid; gap: var(--space-3); padding-block: var(--space-4); border-top: 1px solid var(--border-subtle); }
+.shareable-topic-policy,
+.shareable-topic-editor,
+.shareable-topic-list { display: grid; gap: var(--space-2); }
+.shareable-topic-policy { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }

@@ -213,12 +213,27 @@ function CompanionShell({ companion, onSwitchCompanion }: { companion: Companion
   const behaviorRef = useRef<CharacterBehaviorSettings | undefined>(undefined);
   const stateRef = useRef<CharacterRuntimeState | undefined>(undefined);
   const langRef = useRef<Lang>('en');
+  const presentedVisitTurnRef = useRef<string | undefined>(undefined);
   const isDraggingRef = useRef(false);
   const sessionActiveRef = useRef(false);
   const dragOriginRef = useRef<{ screenX: number; screenY: number } | undefined>(undefined);
   const [dragHandleVisible, setDragHandleVisible] = useState(false);
   const quickActions = useQuickActionVisibility();
   const cancelCommandRef = useRef<(reason: string) => void>(() => undefined);
+
+  useEffect(() => {
+    const presentation = visualVisit.localPresentation;
+    if (!presentation || localCompanionAway || presentedVisitTurnRef.current === presentation.turnId) return;
+    presentedVisitTurnRef.current = presentation.turnId;
+    const animation = isCompanionAnimationName(presentation.animationName) ? presentation.animationName : 'Talk_Neutral';
+    setPerformanceAnimation(animation);
+    speech.showInstant(presentation.message);
+    const timer = window.setTimeout(() => {
+      setPerformanceAnimation((current) => current === animation ? undefined : current);
+      void window.ourCompanion.network.visits.visual.acknowledgePresentation(presentation.turnId).catch(() => undefined);
+    }, 2600);
+    return () => window.clearTimeout(timer);
+  }, [localCompanionAway, speech.showInstant, visualVisit.localPresentation?.turnId]);
 
   useEffect(() => {
     const unsub = window.ourCompanion.app.onExitAnimation(() => {

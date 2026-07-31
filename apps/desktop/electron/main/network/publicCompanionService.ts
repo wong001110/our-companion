@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { DatabaseService } from '@our-companion/database';
-import type { AssetUploadProgress, BuiltAssetPack, CachedAssetPack, CompanionAssetManifest, NetworkAssetPack, PublicCompanionProfile } from '@our-companion/shared';
+import type { AssetUploadProgress, BuiltAssetPack, CachedAssetPack, CompanionAssetManifest, NetworkAssetPack, PublicCompanionProfile, ShareableTopicInput, ShareableTopicSummary } from '@our-companion/shared';
 import type { NetworkConnectionService } from '../networkConnection';
 import { buildAssetManifest, canonicalJson } from './assetManifestBuilder';
 
@@ -35,6 +35,11 @@ export class PublicCompanionService {
   activate = (companionId: string) => this.network.activateNetworkCompanion(companionId);
   publish = (companionId: string) => this.network.publishNetworkCompanion(companionId);
   unpublish = (companionId: string) => this.network.unpublishNetworkCompanion(companionId);
+  updateSocialPolicy = (companionId: string, input: { randomVisitsEnabled?: boolean; randomVisitAudience?: 'friends'; allowJoinRequests?: boolean }): Promise<PublicCompanionProfile> => this.network.updateNetworkCompanionSocialPolicy(companionId, input);
+  listShareableTopics = (companionId: string): Promise<ShareableTopicSummary[]> => this.network.listShareableTopics(companionId);
+  createShareableTopic = (companionId: string, input: ShareableTopicInput): Promise<ShareableTopicSummary> => this.network.createShareableTopic(companionId, input);
+  updateShareableTopic = (companionId: string, topicId: string, input: ShareableTopicInput): Promise<ShareableTopicSummary> => this.network.updateShareableTopic(companionId, topicId, input);
+  revokeShareableTopic = (companionId: string, topicId: string): Promise<ShareableTopicSummary> => this.network.revokeShareableTopic(companionId, topicId);
   getFriendCompanion = (friendUserId: string) => this.network.getFriendCompanion(friendUserId);
 
   inspectLocalPack(input: { localCompanionId: string; includeVoices?: boolean }): BuiltAssetPack {
@@ -84,7 +89,7 @@ export class PublicCompanionService {
 
   cancelPublish = async () => { this.publishAbort?.abort(); };
   cancelDownload = async () => { this.downloadAbort?.abort(); };
-  cancelVisitDownload = async (sessionId: string) => { this.activeVisitDownloads.get(sessionId)?.abort(); };
+  cancelVisitDownload = async (sessionId: string) => { for (const [key, abort] of this.activeVisitDownloads) if (key === sessionId || key.startsWith(`${sessionId}:`)) abort.abort(); };
   cancelTransfers = () => { this.publishAbort?.abort(); this.downloadAbort?.abort(); this.activeVisitDownloads.forEach((abort) => abort.abort()); };
   getPublishStatus = async () => this.publishProgress ? { ...this.publishProgress } : undefined;
 
@@ -104,6 +109,21 @@ export class PublicCompanionService {
   /** Returns only the verified immutable manifest used to construct a remote visual runtime. */
   async getVerifiedVisitVisualManifest(input: { sessionId: string; assetPackId: string; networkCompanionId: string }): Promise<CompanionAssetManifest> {
     await this.downloadVisitPack(input);
+    return this.readVerifiedCachedManifest(input.assetPackId);
+  }
+
+  async downloadVisitParticipantPack(input: { sessionId: string; participantId: string; assetPackId: string; networkCompanionId: string }): Promise<CachedAssetPack> {
+    const key = `${input.sessionId}:${input.participantId}`;
+    const existing = this.visitDownloadPromises.get(key);
+    if (existing) return existing;
+    const download = this.downloadPackFromSource(input, () => this.network.getVisitParticipantManifest(input.sessionId, input.participantId), (fileIds) => this.network.getVisitParticipantDownloadUrls(input.sessionId, input.participantId, fileIds), { authorizationFirst: true, sessionId: key })
+      .finally(() => this.visitDownloadPromises.delete(key));
+    this.visitDownloadPromises.set(key, download);
+    return download;
+  }
+
+  async getVerifiedVisitParticipantVisualManifest(input: { sessionId: string; participantId: string; assetPackId: string; networkCompanionId: string }): Promise<CompanionAssetManifest> {
+    await this.downloadVisitParticipantPack(input);
     return this.readVerifiedCachedManifest(input.assetPackId);
   }
 
