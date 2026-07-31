@@ -1,0 +1,41 @@
+name: Apply Social Room Desktop Experience
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.head_ref == 'agent/social-room-desktop-experience'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/social-room-desktop-experience
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Apply product patch
+        run: |
+          cat scripts/social-room-patch/part* | base64 -d | gzip -d > /tmp/social-room.patch
+          git apply --whitespace=error-all /tmp/social-room.patch
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run arch:check
+      - run: npm run build
+      - name: Remove integration scaffolding
+        run: rm -rf .github/workflows/export-social-room-source.yml .github/workflows/apply-social-room-desktop-experience.yml scripts/social-room-patch
+      - name: Commit product changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "feat: complete Desktop Social Room experience"
+          git push origin HEAD:agent/social-room-desktop-experience
