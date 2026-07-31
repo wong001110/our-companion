@@ -59,7 +59,8 @@ describe('VisitService main-process coordinator', () => {
     const { service, network } = dependencies(owner);
     network.listVisitSessions.mockResolvedValue([session('ready')]);
     await Promise.all([service.reconcile(), service.reconcile()]);
-    expect(network.listVisitSessions).toHaveBeenCalledTimes(2);
+    // Two reconciliation passes plus one legacy reservation derivation per pass.
+    expect(network.listVisitSessions).toHaveBeenCalledTimes(4);
     await vi.advanceTimersByTimeAsync(15_000);
     expect(network.heartbeatVisitSession).toHaveBeenCalledWith('session-1');
   });
@@ -141,7 +142,7 @@ describe('VisitService main-process coordinator', () => {
 
     network.listVisitSessions.mockResolvedValue([{ ...session('active'), hostUserId: host }]);
     await expect(service.sendInvitation(owner)).rejects.toThrow('VISIT_HOST_HAS_ACTIVE_GUESTS');
-    await expect(service.assertCanSwitchLocalCompanion()).rejects.toThrow('VISIT_HOST_COMPANION_SWITCH_BLOCKED');
+    await expect(service.assertCanSwitchLocalCompanion()).rejects.toThrow('VISIT_COMPANION_RESERVED');
   });
 
   it('permits local switching while optimistic online status has no authenticated Session transport', async () => {

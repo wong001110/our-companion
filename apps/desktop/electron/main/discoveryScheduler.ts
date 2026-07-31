@@ -18,6 +18,7 @@ export interface DiscoverySchedulerDeps {
   countAnnouncedToday: () => number;
   getOldestQueuedDiscovery: () => Promise<Discovery | null>;
   presentationGateway: DiscoveryPresentationGateway;
+  isCompanionReserved?: () => boolean;
   setTimer?: typeof setTimeout;
   clearTimer?: typeof clearTimeout;
 }
@@ -79,6 +80,7 @@ export class DiscoveryScheduler {
 
   async runOnce(): Promise<DiscoverySchedulerTickResult> {
     if (this.stopped) return { status: 'skipped', reason: 'stopped' };
+    if (this.deps.isCompanionReserved?.()) return { status: 'skipped', reason: 'visit_reserved' };
     if (this.deps.presentationGateway.isBusy() || this.deps.presentationGateway.hasPending()) {
       return { status: 'skipped', reason: 'presentation_busy' };
     }

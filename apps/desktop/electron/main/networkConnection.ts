@@ -3,7 +3,7 @@ import { safeStorage } from 'electron';
 import { io, type Socket } from 'socket.io-client';
 import type { DatabaseService } from '@our-companion/database';
 import { assertSmokeTestRuntime, hashSmokeDeviceId, isSmokeTestRuntime } from './platform/smokeRuntime';
-import type { BlockedUserSummary, CompanionAssetManifest, CompleteAssetPackResult, DeveloperDebugUploadEvent, FriendLookupRelationship, FriendLookupResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile, SocialOverview, VisitInvitationStatus, VisitInvitationSummary, VisitRuntimeConfig, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
+import type { BlockedUserSummary, CompanionAssetManifest, CompleteAssetPackResult, DeveloperDebugUploadEvent, FriendLookupRelationship, FriendLookupResult, FriendPresence, FriendRequestSummary, FriendSummary, NetworkAssetPack, PublicCompanionProfile, SocialOverview, VisitInvitationStatus, VisitInvitationSummary, VisitReservationSummary, VisitRuntimeConfig, VisitSessionSummary, VisitSessionState } from '@our-companion/shared';
 
 export const NETWORK_PROTOCOL_VERSION = '0.4';
 export const NETWORK_CLIENT_VERSION = '0.4.0';
@@ -236,6 +236,17 @@ export class NetworkConnectionService {
   activateAssetPack = (assetPackId: string) => this.socialRequest<PublicCompanionProfile>(`/api/asset-packs/${assetPackId}/activate`, {});
   getAssetPackManifest = (assetPackId: string) => this.socialRequest<{ manifest: CompanionAssetManifest; files: Array<{ id: string; relativePath: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/asset-packs/${assetPackId}/manifest`);
   getDownloadUrls = (assetPackId: string, fileIds: string[]) => this.socialRequest<{ downloads: Array<{ fileId: string; relativePath: string; downloadUrl: string; expiresAt: string; sizeBytes: number; sha256: string; mimeType: string }> }>(`/api/asset-packs/${assetPackId}/download-urls`, { fileIds });
+  getVisitReservation = async (): Promise<VisitReservationSummary | undefined> => {
+    try {
+      return await this.socialRequest<VisitReservationSummary>('/api/visit-reservation');
+    } catch (error) {
+      const code = error instanceof Error ? error.message : String(error);
+      // A pre-reservation Network server returns a generic 404 envelope. The
+      // VisitService then derives the lock from bounded legacy Visit records.
+      if (code === 'NETWORK_ERROR' || code === 'NOT_FOUND') return undefined;
+      throw error;
+    }
+  };
   listVisitInvitations = (input: { direction?: 'incoming' | 'outgoing'; status?: VisitInvitationStatus } = {}) => {
     const params = new URLSearchParams(); if (input.direction) params.set('direction', input.direction); if (input.status) params.set('status', input.status);
     return this.socialRequest<VisitInvitationSummary[]>(`/api/visit-invitations${params.size ? `?${params}` : ''}`);

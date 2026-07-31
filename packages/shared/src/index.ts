@@ -2491,6 +2491,17 @@ export interface AssetUploadProgress { assetPackId?: string; completedFiles: num
 export interface CachedAssetPack { serverOrigin: string; assetPackId: string; networkCompanionId: string; manifestHash: string; totalBytes: number; downloadedAt: string; lastUsedAt: string; pinned: boolean; verified: boolean; }
 export type VisitInvitationStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired';
 export type VisitSessionState = 'preparing' | 'ready' | 'active' | 'ending' | 'ended' | 'cancelled' | 'failed';
+export interface VisitReservationSummary {
+  locked: boolean;
+  kind?: 'outgoing_invitation' | 'session_participant' | 'join_request';
+  networkCompanionId?: string;
+  invitationId?: string;
+  sessionId?: string;
+  joinRequestId?: string;
+  expiresAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
 export interface VisitInvitationSummary {
   id: string;
   visitorOwnerUserId: string;
