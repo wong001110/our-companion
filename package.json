@@ -14,6 +14,8 @@
     "build": "npm run build -w @our-companion/desktop",
     "build:clean": "rm -rf apps/desktop/dist && rm -rf node_modules/.vite && npm run build",
     "start": "npm run start -w @our-companion/desktop",
+    "start:profile": "node scripts/start-dev-profile.mjs",
+    "start:social-lab": "node scripts/start-social-profiles.mjs",
     "typecheck": "tsc -b --force",
     "test": "vitest run",
     "lint": "tsc -b --pretty false",
