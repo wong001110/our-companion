@@ -19,7 +19,7 @@ export function SocialVisitConversation({
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [autoContinue, setAutoContinue] = useState(true);
-  const requestedSequence = useRef<number | undefined>(undefined);
+  const requestedTurnKey = useRef<string | undefined>(undefined);
   const finalized = useRef(false);
   const live = ['preparing', 'ready', 'active', 'ending'].includes(session.state);
   const api = window.ourCompanion.network.visits.sessions;
@@ -56,12 +56,15 @@ export function SocialVisitConversation({
   useEffect(() => {
     if (!autoContinue || stale || busy || session.state !== 'active' || !state || state.nextActorUserId !== userId) return;
     if (!state.activeTopic && !state.share) return;
-    const sequence = state.turns.length;
-    if (requestedSequence.current === sequence) return;
-    requestedSequence.current = sequence;
-    const timer = window.setTimeout(() => void respond(), 700);
+    const topicId = state.activeTopic?.id ?? state.share?.id ?? 'legacy-topic';
+    const turnKey = `${session.id}:${topicId}:${state.turns.length}:${state.nextActorUserId}`;
+    if (requestedTurnKey.current === turnKey) return;
+    const timer = window.setTimeout(() => {
+      requestedTurnKey.current = turnKey;
+      void respond(turnKey);
+    }, 2800);
     return () => window.clearTimeout(timer);
-  }, [autoContinue, busy, session.state, stale, state, userId]);
+  }, [autoContinue, busy, session.id, session.state, stale, state, userId]);
 
   useEffect(() => {
     if (session.state !== 'ended' || finalized.current || !state || (!state.turns.length && !state.share && !state.topics.length)) return;
@@ -69,14 +72,14 @@ export function SocialVisitConversation({
     void finalize();
   }, [session.state, state]);
 
-  const respond = async () => {
+  const respond = async (turnKey?: string) => {
     if (busy || stale) return;
     setBusy(true);
     setError(undefined);
     try {
       setState(await api.respondSocial(session.id));
     } catch (cause) {
-      requestedSequence.current = undefined;
+      if (!turnKey || requestedTurnKey.current === turnKey) requestedTurnKey.current = undefined;
       setError(messageFor(cause, lang));
     } finally {
       setBusy(false);

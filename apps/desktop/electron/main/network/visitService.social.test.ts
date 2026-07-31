@@ -185,4 +185,62 @@ describe('VisitService social MVP', () => {
 
     expect(network.appendVisitSocialTurn).toHaveBeenCalledWith(session.id, expect.objectContaining({ intent: 'SHARE' }));
   });
+  it('creates Shared Moment discoveries as announced before adding them to Journey', async () => {
+    const now = new Date().toISOString();
+    const topic = { id: 'topic-1', sessionId: session.id, sequence: 1, state: 'completed', ownerCompanionId: 'network-companion', title: 'A gentle topic', summary: 'A shared summary.', tags: ['care'], allowRecipientSave: true, minimumTurns: 3, maximumTurns: 6, createdAt: now, updatedAt: now };
+    const sharedMoment = { id: 'moment-1', sessionId: session.id, title: 'Shared care', summary: 'A meaningful exchange.', turnCount: 4, createdAt: now };
+    const network = networkMock({ getVisitSocialState: vi.fn().mockResolvedValue({ sessionId: session.id, maxTurns: 15, topics: [topic], participants: [], turns: [], sharedMoment }) });
+    const settings = new Map<string, unknown>();
+    let storedDiscovery: Record<string, unknown> | undefined;
+    const db = {
+      getAppSetting: vi.fn((key: string) => settings.get(key)),
+      setAppSetting: vi.fn((key: string, value: unknown) => { settings.set(key, value); }),
+      insertDiscovery: vi.fn((discovery: Record<string, unknown>) => { storedDiscovery = discovery; return discovery; }),
+      getDiscovery: vi.fn((id: string) => storedDiscovery?.id === id ? storedDiscovery : undefined),
+      resolveActiveCompanionId: vi.fn().mockReturnValue('companion-1'),
+      transitionDiscoveryStatus: vi.fn((id: string, status: string) => {
+        if (!storedDiscovery || storedDiscovery.id !== id) throw new Error('missing discovery');
+        storedDiscovery = { ...storedDiscovery, status };
+        return storedDiscovery;
+      }),
+    };
+    const addToJourney = vi.fn(async () => { storedDiscovery = { ...storedDiscovery, status: 'saved' }; });
+    const service = new VisitService(network as never, companionsMock() as never, db as never, undefined, addToJourney);
+    services.push(service);
+
+    const result = await service.saveSharedMoment(session.id);
+
+    expect(db.insertDiscovery).toHaveBeenCalledWith(expect.objectContaining({ source: 'companion', status: 'announced' }));
+    expect(addToJourney).toHaveBeenCalledWith(expect.stringMatching(/^shared-moment-/));
+    expect(result.sharedMomentSaved).toBe(true);
+  });
+
+  it('recovers the eligible Shared Moment record left by the previous failed save', async () => {
+    const now = new Date().toISOString();
+    const topic = { id: 'topic-1', sessionId: session.id, sequence: 1, state: 'completed', ownerCompanionId: 'network-companion', title: 'A gentle topic', summary: 'A shared summary.', tags: ['care'], allowRecipientSave: true, minimumTurns: 3, maximumTurns: 6, createdAt: now, updatedAt: now };
+    const sharedMoment = { id: 'moment-1', sessionId: session.id, title: 'Shared care', summary: 'A meaningful exchange.', turnCount: 4, createdAt: now };
+    const network = networkMock({ getVisitSocialState: vi.fn().mockResolvedValue({ sessionId: session.id, maxTurns: 15, topics: [topic], participants: [], turns: [], sharedMoment }) });
+    let storedDiscovery: Record<string, unknown> = { id: 'shared-moment-existing', status: 'eligible' };
+    const db = {
+      getAppSetting: vi.fn((key: string) => key.includes('social.visit.saved-moment.') ? 'shared-moment-existing' : undefined),
+      setAppSetting: vi.fn(),
+      insertDiscovery: vi.fn(),
+      getDiscovery: vi.fn(() => storedDiscovery),
+      resolveActiveCompanionId: vi.fn().mockReturnValue('companion-1'),
+      transitionDiscoveryStatus: vi.fn((id: string, status: string) => {
+        storedDiscovery = { ...storedDiscovery, id, status };
+        return storedDiscovery;
+      }),
+    };
+    const addToJourney = vi.fn(async () => { storedDiscovery = { ...storedDiscovery, status: 'saved' }; });
+    const service = new VisitService(network as never, companionsMock() as never, db as never, undefined, addToJourney);
+    services.push(service);
+
+    const result = await service.saveSharedMoment(session.id);
+
+    expect(db.transitionDiscoveryStatus.mock.calls.map((call) => call[1])).toEqual(['queued', 'presenting', 'announced']);
+    expect(addToJourney).toHaveBeenCalledWith('shared-moment-existing');
+    expect(result.sharedMomentSaved).toBe(true);
+  });
+
 });
