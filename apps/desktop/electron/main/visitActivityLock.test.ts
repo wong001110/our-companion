@@ -30,6 +30,8 @@ describe('Visit activity lock', () => {
     expect(visitSource).toContain('void this.refreshActivityLock().catch(() => undefined)');
     expect(visitSource).toContain('not necessarily this device\'s Host Companion');
     expect(indexSource).toContain('refreshActivityLock().catch(() => undefined)');
+    expect(indexSource).toContain('.then(() => services.visits.reconcile())');
+    expect(indexSource).toContain('.catch(() => undefined)');
     expect(visitSource).toContain("typeof getReservation === 'function'");
     expect(visitSource).toContain("Array.isArray(results[0])");
   });
