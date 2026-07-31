@@ -26,6 +26,7 @@ jobs:
       - run: python scripts/apply-visit-activity-lock.py
       - run: python scripts/patch-visit-activity-lock-types.py
       - run: python scripts/patch-visit-activity-lock-runtime-and-tests.py
+      - run: python scripts/patch-visit-activity-lock-compatibility.py
       - run: npm run typecheck
       - run: npm test -- --run
       - run: npm run arch:check
@@ -35,6 +36,7 @@ jobs:
           rm scripts/patch-visit-activity-lock-integration.py
           rm scripts/patch-visit-activity-lock-types.py
           rm scripts/patch-visit-activity-lock-runtime-and-tests.py
+          rm scripts/patch-visit-activity-lock-compatibility.py
           rm scripts/apply-visit-activity-lock.py
           rm .github/workflows/apply-visit-activity-lock.yml
       - name: Commit integrated product changes
