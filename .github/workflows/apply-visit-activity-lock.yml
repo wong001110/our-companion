@@ -22,6 +22,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: python scripts/patch-visit-activity-lock-integration.py
       - run: python scripts/apply-visit-activity-lock.py
       - run: npm run typecheck
       - run: npm test -- --run
@@ -29,6 +30,7 @@ jobs:
       - run: npm run build
       - name: Remove one-time integration files
         run: |
+          rm scripts/patch-visit-activity-lock-integration.py
           rm scripts/apply-visit-activity-lock.py
           rm .github/workflows/apply-visit-activity-lock.yml
       - name: Commit integrated product changes
