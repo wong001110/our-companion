@@ -70,6 +70,19 @@ type UiBetaSmokeFixture = {
 };
 let smokeUiBetaFixture: UiBetaSmokeFixture | undefined;
 
+const VISIT_RESERVED_ACTIVITY_CHANNELS = new Set([
+  'character:triggerBehavior',
+  'discovery:refresh',
+  'discovery:runBaseNow',
+  'discovery:exploreChannelNow',
+  'discovery:generateNow',
+  'discovery:presentNext',
+  'autonomy:startExploration',
+  'tool:execute',
+  'action:plan',
+  'action:executePlan',
+]);
+
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const companionListenHotkey = 'CommandOrControl+Shift+Space';
 
@@ -532,6 +545,9 @@ function registerIpc(): void {
         channel === 'ai:updateSettings' || channel.startsWith('user:') || channel.startsWith('network:') || channel.startsWith('workspace:');
       if (!onboardingAllowed && !services.hasActiveCompanion()) {
         throw new Error('NO_ACTIVE_COMPANION: No active Companion. Complete Companion creation first.');
+      }
+      if (VISIT_RESERVED_ACTIVITY_CHANNELS.has(channel) && services.visits.isActivityLocked()) {
+        throw new Error('VISIT_COMPANION_RESERVED');
       }
       const result = await (handler as (input: unknown) => Promise<unknown>)(input);
       if (channel === 'companionNew:create') {
@@ -1024,7 +1040,7 @@ function startDiscoveryAutomation(): void {
     markDeferred: (id, reason) => {
       services.db.transitionDiscoveryStatus(id, 'eligible', { reason });
     },
-    canAnnounce: () => services.canAnnounceDiscovery(),
+    canAnnounce: () => !services.visits.isActivityLocked() && services.canAnnounceDiscovery(),
     shouldInterruptShare: () => services.shouldInterruptShare(),
     eventBus: services.eventBus
   });
@@ -1041,6 +1057,7 @@ function startDiscoveryAutomation(): void {
       const companionId = services.db.resolveActiveCompanionId();
       return Promise.resolve(services.db.getOldestQueuedDiscovery(companionId));
     },
+    isCompanionReserved: () => services.visits.isActivityLocked(),
     presentationGateway: {
       isBusy: () => services.isDiscoveryPresentationBusy(),
       hasPending: () => services.hasPendingDiscoveryPresentation(),
@@ -1112,12 +1129,21 @@ app.whenReady().then(async () => {
       if (companionWindow && !companionWindow.isDestroyed()) companionWindow.webContents.send('companion:proactivePrompt', prompt);
     });
     services.attachNetworkStatusBroadcaster((status) => {
+      if (status.state === 'online' && (
+        !status.socialInvalidation
+        || status.socialInvalidation.type === 'visit_invitation'
+        || status.socialInvalidation.type === 'visit_session'
+      )) void services.visits.refreshActivityLock().catch(() => undefined);
       for (const win of [companionWindow, panelWindow]) {
         if (win && !win.isDestroyed()) win.webContents.send('network:statusChanged', status);
       }
     });
     const networkStatus = await services.network.getStatus();
-    if (networkStatus.onlineModeEnabled) void services.network.enableOnlineMode();
+    if (networkStatus.onlineModeEnabled) {
+      void services.network.enableOnlineMode()
+        .then(() => services.visits.reconcile())
+        .catch(() => undefined);
+    }
     onboardingCompletion = createOnboardingCompletionCoordinator();
     registerCompanionProtocol();
     registerIpc();

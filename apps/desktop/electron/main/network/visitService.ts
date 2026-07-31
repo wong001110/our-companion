@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseService } from '@our-companion/database';
-import type { VisitInvitationStatus, VisitInvitationSummary, VisitSessionSummary } from '@our-companion/shared';
+import type { VisitInvitationStatus, VisitInvitationSummary, VisitReservationSummary, VisitSessionSummary } from '@our-companion/shared';
 import type { NetworkConnectionService } from '../networkConnection';
 import type { PublicCompanionService } from './publicCompanionService';
 
@@ -100,6 +100,7 @@ export class VisitService {
   private readonly preparePromises = new Map<string, Promise<VisitSessionSummary>>();
   private reconcilePromise?: Promise<void>;
   private reconcileRequested = false;
+  private activityLock: VisitReservationSummary = { locked: false };
 
   constructor(
     private readonly network: NetworkConnectionService,
@@ -111,7 +112,17 @@ export class VisitService {
   listInvitations = (input?: { direction?: 'incoming' | 'outgoing'; status?: VisitInvitationStatus }): Promise<VisitInvitationSummary[]> => this.network.listVisitInvitations(input);
   sendInvitation = async (hostUserId: string): Promise<VisitInvitationSummary> => {
     await this.assertCanStartOutgoingVisit();
-    return this.network.createVisitInvitation(hostUserId);
+    const invitation = await this.network.createVisitInvitation(hostUserId);
+    this.activityLock = {
+      locked: true,
+      kind: 'outgoing_invitation',
+      networkCompanionId: invitation.networkCompanionId,
+      invitationId: invitation.id,
+      expiresAt: invitation.expiresAt,
+      updatedAt: invitation.updatedAt,
+    };
+    void this.refreshActivityLock().catch(() => undefined);
+    return invitation;
   };
   sendDiscoveryInvitation = async (input: { hostUserId: string; discoveryId: string }): Promise<VisitInvitationSummary> => {
     if (!this.db) throw new Error('VISIT_SOCIAL_LOCAL_STORE_UNAVAILABLE');
@@ -134,10 +145,29 @@ export class VisitService {
     await this.assertCanAcceptIncomingInvitation(invitationId);
     const result = await this.network.acceptVisitInvitation(invitationId);
     this.track(result.session);
+    // The accepted Session summary identifies the visiting Companion, which is
+    // not necessarily this device's Host Companion. Keep the lock immediately
+    // without publishing a misleading Companion ID; server reconciliation fills it.
+    this.activityLock = {
+      locked: true,
+      kind: 'session_participant',
+      sessionId: result.session.id,
+      updatedAt: result.session.updatedAt,
+    };
+    void this.refreshActivityLock().catch(() => undefined);
     return result;
   };
-  declineInvitation = (invitationId: string): Promise<VisitInvitationSummary> => this.network.declineVisitInvitation(invitationId);
-  cancelInvitation = (invitationId: string): Promise<VisitInvitationSummary> => this.network.cancelVisitInvitation(invitationId);
+  declineInvitation = async (invitationId: string): Promise<VisitInvitationSummary> => {
+    const invitation = await this.network.declineVisitInvitation(invitationId);
+    void this.refreshActivityLock().catch(() => undefined);
+    return invitation;
+  };
+  cancelInvitation = async (invitationId: string): Promise<VisitInvitationSummary> => {
+    const invitation = await this.network.cancelVisitInvitation(invitationId);
+    if (this.activityLock.invitationId === invitationId) this.activityLock = { locked: false };
+    void this.refreshActivityLock().catch(() => undefined);
+    return invitation;
+  };
 
   listSessions = async (): Promise<VisitSessionSummary[]> => {
     const sessions = await this.network.listVisitSessions();
@@ -158,7 +188,7 @@ export class VisitService {
   private reconcileLoop = async (): Promise<void> => {
     do {
       this.reconcileRequested = false;
-      await this.listSessions();
+      await Promise.all([this.listSessions(), this.refreshActivityLock()]);
     } while (this.reconcileRequested);
   };
   getSession = async (sessionId: string): Promise<VisitSessionSummary> => {
@@ -204,6 +234,8 @@ export class VisitService {
   end = async (sessionId: string): Promise<VisitSessionSummary> => {
     const updated = await this.network.endVisitSession(sessionId);
     this.track(updated);
+    if (this.activityLock.sessionId === sessionId) this.activityLock = { locked: false };
+    void this.refreshActivityLock().catch(() => undefined);
     return updated;
   };
 
@@ -285,10 +317,61 @@ export class VisitService {
     for (const timer of this.heartbeatTimers.values()) clearInterval(timer);
     this.heartbeatTimers.clear();
     this.heartbeatFailures.clear();
+    this.activityLock = { locked: false };
+  };
+
+  isActivityLocked = (): boolean => this.activityLock.locked;
+  getActivityLock = (): VisitReservationSummary => ({ ...this.activityLock });
+
+  refreshActivityLock = async (): Promise<VisitReservationSummary> => {
+    const status = await this.network.getStatus();
+    if (!status.onlineModeEnabled || status.state !== 'online' || !status.account) {
+      return this.getActivityLock();
+    }
+    const getReservation = this.network.getVisitReservation;
+    let serverReservation: VisitReservationSummary | undefined;
+    try {
+      serverReservation = typeof getReservation === 'function'
+        ? await getReservation.call(this.network)
+        : undefined;
+    } catch (error) {
+      const code = error instanceof Error ? error.message : String(error);
+      if (code.includes('ONLINE_MODE_DISABLED') || code.includes('NETWORK_')) return this.getActivityLock();
+      throw error;
+    }
+    if (serverReservation) {
+      this.activityLock = sanitizeReservation(serverReservation);
+      return this.getActivityLock();
+    }
+    // Rolling-deployment compatibility: before /visit-reservation exists, a
+    // pending outgoing invitation or live two-person session is the lock.
+    let outgoing: VisitInvitationSummary[] = [];
+    let sessions: VisitSessionSummary[] = [];
+    try {
+      const results = await Promise.all([
+        this.network.listVisitInvitations({ direction: 'outgoing', status: 'pending' }),
+        this.network.listVisitSessions(),
+      ]);
+      outgoing = Array.isArray(results[0]) ? results[0] : [];
+      sessions = Array.isArray(results[1]) ? results[1] : [];
+    } catch (error) {
+      const code = error instanceof Error ? error.message : String(error);
+      if (code.includes('ONLINE_MODE_DISABLED') || code.includes('NETWORK_')) return this.getActivityLock();
+      throw error;
+    }
+    const session = sessions.find((candidate) => LIVE_STATES.has(candidate.state));
+    const invitation = outgoing.find((candidate) => candidate.status === 'pending');
+    this.activityLock = session
+      ? { locked: true, kind: 'session_participant', networkCompanionId: session.networkCompanionId, sessionId: session.id, updatedAt: session.updatedAt }
+      : invitation
+        ? { locked: true, kind: 'outgoing_invitation', networkCompanionId: invitation.networkCompanionId, invitationId: invitation.id, expiresAt: invitation.expiresAt, updatedAt: invitation.updatedAt }
+        : { locked: false };
+    return this.getActivityLock();
   };
 
   /** Desktop-side authority; the server remains responsible for atomic cross-device capacity enforcement. */
   assertCanSwitchLocalCompanion = async (): Promise<void> => {
+    if ((await this.refreshActivityLock()).locked) throw new Error('VISIT_COMPANION_RESERVED');
     const status = await this.network.getStatus();
     if (!status.onlineModeEnabled || status.state !== 'online' || !status.account) return;
     const sessions = await this.network.listVisitSessions().catch((error: unknown) => {
@@ -477,6 +560,23 @@ export class VisitService {
  * constraints. Keep the approved content bounded and never let an optional,
  * non-web source URL prevent a Visit from becoming ready.
  */
+function sanitizeReservation(input: VisitReservationSummary): VisitReservationSummary {
+  if (!input || typeof input !== 'object' || typeof input.locked !== 'boolean') return { locked: false };
+  if (!input.locked) return { locked: false };
+  if (!input.kind || !['outgoing_invitation', 'session_participant', 'join_request'].includes(input.kind)) return { locked: false };
+  return {
+    locked: true,
+    kind: input.kind,
+    ...(typeof input.networkCompanionId === 'string' ? { networkCompanionId: input.networkCompanionId } : {}),
+    ...(typeof input.invitationId === 'string' ? { invitationId: input.invitationId } : {}),
+    ...(typeof input.sessionId === 'string' ? { sessionId: input.sessionId } : {}),
+    ...(typeof input.joinRequestId === 'string' ? { joinRequestId: input.joinRequestId } : {}),
+    ...(typeof input.expiresAt === 'string' ? { expiresAt: input.expiresAt } : {}),
+    ...(typeof input.createdAt === 'string' ? { createdAt: input.createdAt } : {}),
+    ...(typeof input.updatedAt === 'string' ? { updatedAt: input.updatedAt } : {}),
+  };
+}
+
 function approvedShareInput(pending: PendingShare): VisitShareInput {
   const title = normalizeShareText(pending.title, 120) || 'Shared Discovery';
   const summary = normalizeShareText(pending.summary, 600) || title;

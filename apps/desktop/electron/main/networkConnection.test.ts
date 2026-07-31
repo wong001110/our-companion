@@ -105,9 +105,11 @@ describe('NetworkConnectionService', () => {
         .mockResolvedValueOnce(response({ accessToken: 'new', refreshToken: 'rotated' }))
         .mockResolvedValueOnce(response({ id: 'owner', email: 'owner@example.com', username: 'owner', uid: 'OC-OWNER8X', friendCode: 'OWNER123' }))
         .mockResolvedValueOnce(response([session]))
+        .mockResolvedValueOnce(response({ locked: true, kind: 'session_participant', networkCompanionId: 'companion-1', sessionId: 'session-1' }))
         .mockResolvedValueOnce(response(session))
         .mockResolvedValueOnce(response({ compatible: true, visit: { heartbeatIntervalSeconds: 5, heartbeatTimeoutSeconds: 30 } }))
         .mockResolvedValueOnce(response([session]))
+        .mockResolvedValueOnce(response({ locked: true, kind: 'session_participant', networkCompanionId: 'companion-1', sessionId: 'session-1' }))
         .mockResolvedValueOnce(response(session));
       const listeners = [new Map<string, (...args: any[]) => void>(), new Map<string, (...args: any[]) => void>()];
       const sockets = listeners.map((socketListeners) => {
@@ -131,17 +133,17 @@ describe('NetworkConnectionService', () => {
       listeners[0].get('connect')?.();
       await vi.runAllTicks();
       await vi.advanceTimersByTimeAsync(15_000);
-      expect(fetch).toHaveBeenCalledTimes(5);
+      expect(fetch).toHaveBeenCalledTimes(6);
 
       listeners[0].get('disconnect')?.('transport close');
       await vi.advanceTimersByTimeAsync(1_000);
-      expect(fetch.mock.calls[5][0]).toBe('http://localhost:3001/api/meta/client-compatibility');
+      expect(fetch.mock.calls[6][0]).toBe('http://localhost:3001/api/meta/client-compatibility');
       expect(service.getStatusSnapshot().visit?.heartbeatIntervalSeconds).toBe(5);
 
       listeners[1].get('connect')?.();
       await vi.runAllTicks();
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(fetch).toHaveBeenCalledTimes(8);
+      expect(fetch).toHaveBeenCalledTimes(10);
     } finally {
       vi.useRealTimers();
     }
