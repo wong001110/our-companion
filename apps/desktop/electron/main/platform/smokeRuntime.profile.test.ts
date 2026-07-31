@@ -19,7 +19,7 @@ describe('normal-runtime development profile isolation', () => {
   });
 
   it('resolves an isolated directory without enabling smoke runtime', () => {
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       OUR_COMPANION_DEV_PROFILE_ENABLED: '1',
       OUR_COMPANION_DEV_PROFILE: 'Social-A',
       OUR_COMPANION_DEV_PROFILE_ROOT: '/tmp/our-companion-dev',
