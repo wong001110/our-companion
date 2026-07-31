@@ -1133,14 +1133,16 @@ app.whenReady().then(async () => {
         !status.socialInvalidation
         || status.socialInvalidation.type === 'visit_invitation'
         || status.socialInvalidation.type === 'visit_session'
-      )) void services.visits.refreshActivityLock();
+      )) void services.visits.refreshActivityLock().catch(() => undefined);
       for (const win of [companionWindow, panelWindow]) {
         if (win && !win.isDestroyed()) win.webContents.send('network:statusChanged', status);
       }
     });
     const networkStatus = await services.network.getStatus();
     if (networkStatus.onlineModeEnabled) {
-      void services.network.enableOnlineMode().then(() => services.visits.reconcile());
+      void services.network.enableOnlineMode()
+        .then(() => services.visits.reconcile())
+        .catch(() => undefined);
     }
     onboardingCompletion = createOnboardingCompletionCoordinator();
     registerCompanionProtocol();

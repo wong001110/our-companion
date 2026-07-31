@@ -145,10 +145,12 @@ export class VisitService {
     await this.assertCanAcceptIncomingInvitation(invitationId);
     const result = await this.network.acceptVisitInvitation(invitationId);
     this.track(result.session);
+    // The accepted Session summary identifies the visiting Companion, which is
+    // not necessarily this device's Host Companion. Keep the lock immediately
+    // without publishing a misleading Companion ID; server reconciliation fills it.
     this.activityLock = {
       locked: true,
       kind: 'session_participant',
-      networkCompanionId: result.session.networkCompanionId,
       sessionId: result.session.id,
       updatedAt: result.session.updatedAt,
     };
@@ -157,7 +159,7 @@ export class VisitService {
   };
   declineInvitation = async (invitationId: string): Promise<VisitInvitationSummary> => {
     const invitation = await this.network.declineVisitInvitation(invitationId);
-    await this.refreshActivityLock();
+    void this.refreshActivityLock().catch(() => undefined);
     return invitation;
   };
   cancelInvitation = async (invitationId: string): Promise<VisitInvitationSummary> => {
